@@ -99,7 +99,7 @@
     .loading-pulse { animation: pulseLoading 1.5s infinite ease-in-out; text-align: center; color: #7E57C2; font-weight: 800; padding: 80px 20px; }
     .reset-btn { background-color: #f0f0f0; color: #888888; border: none; border-radius: 12px; padding: 10px 14px; font-weight: bold; margin-left: 10px; cursor: pointer; }
     textarea#comment { width: 100%; border: 2px solid #f8f8f8; border-radius: 22px; padding: 20px; margin: 20px 0; font-family: inherit; font-size: 16px; resize: none; background-color: #fafafa; }
-    .btn-repeat-last { background: var(--boss-gradient) !important; margin-top: 12px; }
+    .btn-repeat-last { background: var(--boss-gradient) !important; margin-top: 12px; color: white; }
     .btn-remove-item { background: #fff0f0; color: #e53935; border: none; padding: 10px; border-radius: 12px; font-size: 22px; font-weight: bold; margin-left: 8px; line-height: 1; }
 
     .validation-error-banner {
@@ -190,7 +190,7 @@
     <div id="step-admin-purchase" style="display:none;">
       <h3 style="text-align:center; color:#EC407A; margin-bottom: 20px;">📦 Управление закупкой</h3>
       <div class="grid-2">
-        <div class="card btn-boss-table" onclick="executeAdminAction('svod')">
+        <div class="card btn-boss-table" onclick="buildSvodReport()">
           <span style="font-size: 26px; margin-bottom: 6px;">📋</span><span>Собрать Свод</span>
         </div>
         <div class="card" style="background: #005bff; color: white;" onclick="triggerPcBuild('START_OZON')">
@@ -257,7 +257,7 @@
   <div id="nav-buttons">
     <button class="btn-nav btn-back" onclick="navigateToStep2()">Назад</button>
     <button id="main-action-button" class="btn-nav btn-send" onclick="validateAndSubmit(false)">ОТПРАВИТЬ</button>
-    <button id="cart-fab" class="btn-nav" onclick="toggleCartModal(true)">
+    <button id="cart-fab" class="btn-nav" style="background: var(--admin-gradient); color: white; display: none;" onclick="toggleCartModal(true)">
       🛒<div id="cart-count-badge" class="cart-count-badge" style="display:none">0</div>
     </button>
   </div>
@@ -265,15 +265,15 @@
   <div id="cart-modal" onclick="closeCartOnOverlay(event)">
     <div class="modal-content" onclick="event.stopPropagation()">
       <div class="cart-close-btn" onclick="toggleCartModal(false)">✕</div>
-      <h3 id="cart-modal-title" style="margin-top:0; text-align:center; font-size: 23px; font-weight: 800;">Ваш заказ</h3>
+      <h3 id="cart-modal-title" style="margin-top:0; text-align:center; font-size: 23px; font-weight: 800;">Ваш список</h3>
       <div id="cart-items-list" style="margin-top: 20px;"></div>
       <textarea id="comment" rows="3" placeholder="Ваш комментарий (если нужно)..." onfocus="handleInputFocus(this)" onblur="handleInputBlur(this)"></textarea>
-      <button id="modal-submit-button" class="btn-nav btn-send" style="width:100%;" onclick="validateAndSubmit(true)">ОТПРАВИТЬ ЗАКАЗ</button>
+      <button id="modal-submit-button" class="btn-nav btn-send" style="width:100%;" onclick="validateAndSubmit(true)">ОТПРАВИТЬ</button>
     </div>
   </div>
 
   <script>
-    // ИНИЦИАЛИЗАЦИЯ FIREBASE
+    // --- ИНИЦИАЛИЗАЦИЯ FIREBASE ---
     const firebaseConfig = {
       apiKey: "AIzaSyDQ_-YPu7gxKruOzOFy_zeNfDqF3xs3xts",
       authDomain: "project-lenta22.firebaseapp.com",
@@ -289,33 +289,22 @@
     const TG_ADMIN_IDS = ["708179577"];
     const TG_BOSS_IDS = ["501871781","708179577"];
 
-    // Ссылка на GAS пока остается для ЧТЕНИЯ каталога и истории, 
-    // пока мы не перенесем каталог товаров в Firebase.
+    // Ссылка на GAS пока остается как запасной вариант для старых функций
     const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbznmxg2pUe_SfH6SllW9L-BrvBOg_QOnJfX9DF05mE2gCdDNTHSyKFi31Vra3T0BgstcQ/exec";
 
     var globalTgUserId = "";
     var state = { currentShop: "", currentMode: "", productCatalog: {}, userBasket: {}, isProcessing: false, dynamicCategories: [], orderedItems: [] };
 
     function callGas(funcName, args, onSuccess) {
-      if (typeof google !== 'undefined' && google.script && google.script.run) {
-        if (onSuccess) { google.script.run.withSuccessHandler(onSuccess)[funcName].apply(null, args); }
-        else { google.script.run[funcName].apply(null, args); }
-      } else {
-        var url = GAS_WEB_APP_URL + "?func=" + encodeURIComponent(funcName) + "&args=" + encodeURIComponent(JSON.stringify(args));
-        var cbName = 'cb_' + Math.round(Math.random() * 1000000);
-        window[cbName] = function(data) { if (onSuccess) { onSuccess(data); } delete window[cbName]; };
-        var script = document.createElement('script'); script.src = url + "&callback=" + cbName; document.body.appendChild(script);
-      }
+      var url = GAS_WEB_APP_URL + "?func=" + encodeURIComponent(funcName) + "&args=" + encodeURIComponent(JSON.stringify(args));
+      var cbName = 'cb_' + Math.round(Math.random() * 1000000);
+      window[cbName] = function(data) { if (onSuccess) { onSuccess(data); } delete window[cbName]; };
+      var script = document.createElement('script'); script.src = url + "&callback=" + cbName; document.body.appendChild(script);
     }
 
     function openExternalDashboard(role) {
       triggerHaptic();
-      var url = GAS_WEB_APP_URL + "?page=dashboard&role=" + role;
-      if (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.openLink) {
-        window.Telegram.WebApp.openLink(url);
-      } else {
-        window.open(url, '_blank');
-      }
+      window.open('https://adrimangir-cpu.github.io/Coffee-app/dashboard.html', '_blank');
     }
 
     function triggerHaptic() { try { if (window.Telegram && Telegram.WebApp && Telegram.WebApp.HapticFeedback) { Telegram.WebApp.HapticFeedback.impactOccurred('medium'); } } catch (e) {} }
@@ -327,18 +316,6 @@
           if (window.Telegram.WebApp.initDataUnsafe.user.id) { globalTgUserId = String(window.Telegram.WebApp.initDataUnsafe.user.id); return; }
         }
       } catch (e) {}
-      if (typeof google !== 'undefined' && google.script && google.script.url) {
-        google.script.url.getLocation(function(location) {
-          try {
-            var queryStr = location.hash || location.search;
-            if (queryStr) {
-              var decoded = decodeURIComponent(decodeURIComponent(queryStr));
-              var match = decoded.match(/"id"\s*:\s*(\d+)/);
-              if (match && match[1]) { globalTgUserId = String(match[1]); }
-            }
-          } catch(e) {}
-        });
-      }
     }
 
     function handleShopSelection(name) {
@@ -346,59 +323,21 @@
       document.getElementById('step-1').style.display = 'none'; document.getElementById('step-2').style.display = 'block'; scrollToTop();
     }
 
-    function returnToStart() {
-      triggerHaptic(); document.body.classList.remove('workflow-active');
-      state.currentShop = ""; state.currentMode = ""; state.userBasket = {}; state.isProcessing = false;
-      document.getElementById('title').innerText = "Выбор кофейни";
-     
-      document.getElementById('step-1').style.display = 'block';
-      document.getElementById('step-2').style.display = 'none';
-      document.getElementById('step-3').style.display = 'none';
-      document.getElementById('step-panel').style.display = 'none';
-      document.getElementById('step-stoplist').style.display = 'none';
-      document.getElementById('step-admin-purchase').style.display = 'none';
-      document.getElementById('step-missing').style.display = 'none';
-      document.getElementById('step-dashboard').style.display = 'none';
-     
-      document.getElementById('nav-buttons').style.display = 'none';
-      document.getElementById('success-screen').style.display = 'none';
-      document.getElementById('validation-banner').style.display = 'none';
-     
-      var b1 = document.getElementById('main-action-button'); var b2 = document.getElementById('modal-submit-button');
-      [b1, b2].forEach(btn => { if(btn) { btn.innerText = "ОТПРАВИТЬ"; btn.style.background = ""; btn.disabled = false; } });
-      if(document.getElementById('comment')) { document.getElementById('comment').value = ""; }
-      updateBadgeUI(); scrollToTop();
-    }
-
-    function backToAdminPanel() {
-      triggerHaptic();
-      document.getElementById('step-missing').style.display = 'none';
-      document.getElementById('step-admin-purchase').style.display = 'none';
-      document.getElementById('step-panel').style.display = 'block';
-      scrollToTop();
-    }
-
-    function navigateToStep2FromSuccess() {
-      triggerHaptic(); document.getElementById('success-screen').style.display = 'none'; document.body.classList.remove('workflow-active');
-      state.currentMode = ""; state.userBasket = {}; state.isProcessing = false;
-     
-      document.getElementById('step-3').style.display = 'none'; document.getElementById('step-panel').style.display = 'none';
-      document.getElementById('step-stoplist').style.display = 'none'; document.getElementById('nav-buttons').style.display = 'none';
-     
-      var b1 = document.getElementById('main-action-button'); var b2 = document.getElementById('modal-submit-button');
-      [b1, b2].forEach(btn => { if(btn) { btn.innerText = "ОТПРАВИТЬ"; btn.style.background = ""; btn.disabled = false; } });
-      if(document.getElementById('comment')) { document.getElementById('comment').value = ""; }
-      updateBadgeUI(); document.getElementById('title').innerText = state.currentShop; document.getElementById('step-2').style.display = 'block'; scrollToTop();
+    function returnToStart() { location.reload(); }
+    function backToAdminPanel() { 
+        document.getElementById('step-missing').style.display = 'none'; 
+        document.getElementById('step-admin-purchase').style.display = 'none';
+        document.getElementById('step-panel').style.display = 'block'; 
+        scrollToTop(); 
     }
 
     function showStopListSubmenu() { triggerHaptic(); document.getElementById('step-2').style.display = 'none'; document.getElementById('step-stoplist').style.display = 'block'; scrollToTop(); }
     function hideStopListSubmenu() { triggerHaptic(); document.getElementById('step-stoplist').style.display = 'none'; document.getElementById('step-2').style.display = 'block'; scrollToTop(); }
-    function viewStopList() { triggerHaptic(); showReportOverlay("Сбор данных..."); callGas('getStopListReport', [state.currentShop], renderReport); }
-    function navigateToStep2() { triggerHaptic(); document.body.classList.remove('workflow-active'); document.getElementById('step-3').style.display = 'none'; document.getElementById('nav-buttons').style.display = 'none'; document.getElementById('step-2').style.display = 'block'; scrollToTop(); }
+    function navigateToStep2() { document.body.classList.remove('workflow-active'); document.getElementById('step-3').style.display = 'none'; document.getElementById('nav-buttons').style.display = 'none'; document.getElementById('step-2').style.display = 'block'; scrollToTop(); }
 
-    function initWorkflow(mode, isRepeatCall) {
+    async function initWorkflow(mode) {
       triggerHaptic(); state.currentMode = mode; document.body.classList.add('workflow-active');
-      if(!isRepeatCall) { state.userBasket = {}; }
+      state.userBasket = {};
       document.getElementById('step-2').style.display = 'none'; document.getElementById('step-stoplist').style.display = 'none';
       document.getElementById('step-3').style.display = 'block'; document.getElementById('nav-buttons').style.display = 'flex';
      
@@ -406,509 +345,210 @@
       if (mode === 'checklist' || mode === 'stoplist_fill') { mainBtn.style.display = 'flex'; cartFab.style.display = 'none'; }
       else { mainBtn.style.display = 'none'; cartFab.style.display = 'flex'; }
      
-      document.getElementById('dynamic-list-container').innerHTML = `<div class="loading-pulse"><div style="font-size: 40px; margin-bottom: 15px;">⏳</div><div>Загрузка из базы...</div></div>`;
+      document.getElementById('dynamic-list-container').innerHTML = `<div class="loading-pulse">⏳ Загрузка из базы...</div>`;
       scrollToTop();
      
-      callGas('getDataForWebApp', [mode, state.currentShop], function(response) {
-        state.productCatalog = response.products;
-        state.dynamicCategories = response.categories || [];
-        state.orderedItems = response.orderedItems || [];
-       
-        var autoAddedCount = 0;
-        if (mode === 'order' && response.autoAdd && !isRepeatCall) {
-          response.autoAdd.forEach(function(item) {
-            if (state.productCatalog[item.name]) { state.userBasket[item.name] = item.qty; autoAddedCount++; }
-          });
-        }
-       
-        renderProductList(); restoreFromDraft();
-        if (autoAddedCount > 0) { showPopupError("Внимание!", "В корзину автоматически добавлены отмененные товары и стоп-лист. <b>Обязательно проверьте их количество!</b>"); }
-      });
+      // ВЫБОР КАТАЛОГА В ЗАВИСИМОСТИ ОТ РЕЖИМА
+      let path = (mode === 'checklist') ? "catalogs/checklist" : "catalogs/order";
+      const snapshot = await database.ref(path).once("value");
+      state.productCatalog = snapshot.val() || {};
+      
+      renderProductList();
+      restoreFromDraft();
     }
 
     function renderProductList() {
-      var groups = {}; var catalog = state.productCatalog;
-      state.dynamicCategories.forEach(function(cat) { groups[cat] = []; });
-     
-      if (state.orderedItems && state.orderedItems.length > 0) {
-        state.orderedItems.forEach(function(item) {
-          if (groups[item.cat] && groups[item.cat].indexOf(item.name) === -1) { groups[item.cat].push(item.name); }
-        });
-      }
-     
-      for (var cat in groups) {
-          if (cat.toLowerCase().indexOf('сироп') !== -1) { groups[cat].sort(function(a, b) { return a.localeCompare(b); }); }
-      }
-     
-      var htmlBuffer = "";
-      state.dynamicCategories.forEach(function(catName) {
-        if (!groups[catName] || groups[catName].length === 0) return;
-        var categoryId = "cat-" + catName.replace(/\s/g, '-');
-        htmlBuffer += `<div class="category-block" id="block-${categoryId}"><div class="category-header" onclick="handleCategoryToggle(this)"><span>${catName}</span><span style="font-size: 14px; opacity: 0.5;">▼</span></div><div class="category-content">`;
-           
-        groups[catName].forEach(function(product) {
-          var unitStr = (catalog[product] && catalog[product].unit) ? catalog[product].unit.toLowerCase() : "";
-          var isVolumeType = (state.currentMode === 'checklist' && (unitStr.includes("объем") || unitStr.includes("объём")));
-          var safeId = product.replace(/\s/g, '-').replace(/['"]/g, '');
-          htmlBuffer += `<div class="item"><span>${product}</span><div class="controls" id="controls-${safeId}">`;
-         
-          if (state.currentMode === 'stoplist_fill') {
-            var isStopped = (state.userBasket[product] === 'Закончилось');
-            var btnStyle = isStopped ? 'background-color: #FF5252; color: white;' : 'background-color: #E8F5E9; color: #4CAF50;';
-            var btnText = isStopped ? 'ЗАКОНЧИЛОСЬ' : 'В НАЛИЧИИ';
-            htmlBuffer += `<button id="stop-btn-${safeId}" style="border:none; padding:10px 15px; border-radius:12px; font-weight:bold; font-size:14px; ${btnStyle}" onclick="toggleStopItem('${product}', '${catName}', this)">${btnText}</button>`;
-          } else if (isVolumeType) {
-            htmlBuffer += `<select class="vol-select" onchange="handleVolumeSelection(this, '${product}', '${catName}')"><option value="-">--</option><option value="Полная">Полная</option><option value="Половина">Половина</option><option value="Меньше половины">Меньше половины</option><option value="0">0</option><option value="CUSTOM">✍️ Свой вариант</option></select>`;
-          } else {
-            var defaultVal = (state.currentMode === 'checklist') ? "-" : "0";
-            if(state.currentMode === 'order' && state.userBasket[product]) { defaultVal = state.userBasket[product]; }
-            var currentInputMode = (state.currentMode === 'checklist') ? "text" : "decimal";
-            htmlBuffer += `<button class="qty-btn" onclick="adjustQuantity('${product}', -1, '${catName}')">−</button><input type="text" inputmode="${currentInputMode}" class="qty-input" id="input-${safeId}" value="${defaultVal}" onfocus="handleInputFocus(this)" onblur="handleInputBlur(this)" oninput="registerInputChange('${product}', this.value, '${catName}')"><button class="qty-btn" onclick="adjustQuantity('${product}', 1, '${catName}')">+</button>`;
+      var html = "";
+      var categories = [...new Set(Object.values(state.productCatalog).map(i => i.cat))].sort();
+
+      categories.forEach(cat => {
+        html += `<div class="category-block">
+                    <div class="category-header" onclick="handleCategoryToggle(this)">
+                        <span>${cat}</span><span>▼</span>
+                    </div>
+                    <div class="category-content">`;
+        
+        for (let k in state.productCatalog) {
+          let item = state.productCatalog[k];
+          if (item.cat === cat) {
+            html += `<div class="item"><span>${item.name}</span><div class="controls" id="controls-${k}">`;
+            
+            if (state.currentMode === 'stoplist_fill') {
+                let isStopped = state.userBasket[item.name] === 'Закончилось';
+                html += `<button style="border:none; padding:10px; border-radius:12px; font-weight:bold; background:${isStopped?'#FF5252':'#E8F5E9'}; color:${isStopped?'#fff':'#4CAF50'};" onclick="toggleStopItem('${item.name}', this)">${isStopped?'ЗАКОНЧИЛОСЬ':'В НАЛИЧИИ'}</button>`;
+            } else if (state.currentMode === 'checklist' && (item.unit && item.unit.toLowerCase().includes("объем"))) {
+                html += `<select class="vol-select" onchange="registerInputChange('${item.name}', this.value)"><option value="-">--</option><option value="Полная">Полная</option><option value="Половина">Половина</option><option value="0">0</option></select>`;
+            } else {
+                let val = state.userBasket[item.name] || (state.currentMode === 'checklist' ? "-" : "0");
+                html += `<button class="qty-btn" onclick="adjustQuantity('${item.name}', -1)">-</button>
+                         <input type="text" class="qty-input" id="input-${k}" value="${val}" onchange="registerInputChange('${item.name}', this.value)">
+                         <button class="qty-btn" onclick="adjustQuantity('${item.name}', 1)">+</button>`;
+            }
+            html += `</div></div>`;
           }
-          htmlBuffer += `</div></div>`;
-        });
-        htmlBuffer += `</div></div>`;
+        }
+        html += `</div></div>`;
       });
-      document.getElementById('dynamic-list-container').innerHTML = htmlBuffer || '<p style="text-align:center; padding: 40px;">Товары не найдены</p>';
+      document.getElementById('dynamic-list-container').innerHTML = html || "<p style='text-align:center; padding:40px;'>Товары не найдены</p>";
       updateBadgeUI();
     }
 
-    function toggleStopItem(productName, category, btn) {
-      triggerHaptic();
-      if (state.userBasket[productName] === 'Закончилось') { state.userBasket[productName] = 'В наличии'; btn.innerText = 'В НАЛИЧИИ'; btn.style.backgroundColor = '#E8F5E9'; btn.style.color = '#4CAF50'; }
-      else { state.userBasket[productName] = 'Закончилось'; btn.innerText = 'ЗАКОНЧИЛОСЬ'; btn.style.backgroundColor = '#FF5252'; btn.style.color = 'white'; }
-      updateCategoryHighlight(category); updateBadgeUI(); persistDraft();
+    function handleCategoryToggle(el) { el.parentElement.classList.toggle('open'); }
+
+    function toggleStopItem(name, btn) {
+        triggerHaptic();
+        if (state.userBasket[name] === 'Закончилось') { delete state.userBasket[name]; btn.innerText = 'В НАЛИЧИИ'; btn.style.background = '#E8F5E9'; btn.style.color = '#4CAF50'; }
+        else { state.userBasket[name] = 'Закончилось'; btn.innerText = 'ЗАКОНЧИЛОСЬ'; btn.style.background = '#FF5252'; btn.style.color = '#fff'; }
+        updateBadgeUI(); persistDraft();
     }
 
-    function handleCategoryToggle(headerElement) {
-      triggerHaptic(); var block = headerElement.parentElement; var alreadyOpen = block.classList.contains('open');
-      document.querySelectorAll('.category-block').forEach(function(b) { b.classList.remove('open'); });
-      if (!alreadyOpen) { block.classList.add('open'); setTimeout(function() { var offset = 100; var bodyRect = document.body.getBoundingClientRect().top; var elementRect = block.getBoundingClientRect().top; window.scrollTo({ top: (elementRect - bodyRect) - offset, behavior: 'smooth' }); }, 150); }
+    function adjustQuantity(name, delta) {
+        triggerHaptic();
+        let current = parseFloat(state.userBasket[name]) || 0;
+        let newVal = Math.max(0, current + delta);
+        registerInputChange(name, newVal);
+        renderProductList(); 
     }
 
-    function handleInputFocus(input) { if (input.tagName !== 'TEXTAREA' && (input.value === "-" || input.value === "0")) { input.value = ""; } if (input.tagName !== 'TEXTAREA') { input.select(); } var navBtns = document.getElementById('nav-buttons'); if (navBtns) { navBtns.style.display = 'none'; } setTimeout(() => { input.scrollIntoView({ behavior: 'smooth', block: 'center' }); }, 350); }
-    function handleInputBlur(input) { if (input.tagName !== 'TEXTAREA' && input.value === "") { input.value = (state.currentMode === 'checklist') ? "-" : "0"; } setTimeout(() => { if (document.body.classList.contains('workflow-active')) { var navBtns = document.getElementById('nav-buttons'); if (navBtns) { navBtns.style.display = 'flex'; } } }, 150); }
-
-    function adjustQuantity(productName, delta, category) {
-      triggerHaptic(); var currentStr = (state.userBasket[productName] || (state.currentMode === 'checklist' ? "-" : "0")).toString();
-      var currentNum = parseFloat(currentStr) || 0; var newVal = Math.max(0, currentNum + delta);
-      registerInputChange(productName, newVal, category);
-      var safeId = productName.replace(/\s/g, '-').replace(/['"]/g, '');
-      var input = document.getElementById('input-' + safeId); if (input) { input.value = newVal; }
-      if (document.getElementById('cart-modal').style.display === 'flex') { renderCartItemsInModal(); }
-    }
-
-    function registerInputChange(productName, value, category) {
-      var val = value.toString().trim();
-      if (val !== "" && val !== "--") { if (state.currentMode === 'order' && val === "0") { delete state.userBasket[productName]; } else { state.userBasket[productName] = val; } }
-      else { if (state.currentMode === 'order') { delete state.userBasket[productName]; } else { state.userBasket[productName] = "-"; } }
-      updateCategoryHighlight(category); updateBadgeUI(); persistDraft(); document.getElementById('validation-banner').style.display = 'none';
-    }
-
-    function handleVolumeSelection(selectElement, productName, category) {
-      triggerHaptic(); var value = selectElement.value; var safeId = productName.replace(/\s/g, '-').replace(/['"]/g, '');
-      if (value === "CUSTOM") {
-        var container = document.getElementById('controls-' + safeId);
-        container.innerHTML = `<input type="text" class="qty-input" style="width:105px; border-bottom:2px solid #7E57C2;" oninput="registerInputChange('${productName}', this.value, '${category}')" onfocus="handleInputFocus(this)" onblur="handleInputBlur(this)"><button class="reset-btn" onclick="revertToSelect('${productName}', '${category}')">✕</button>`;
-        container.querySelector('input').focus();
-      } else { registerInputChange(productName, value, category); }
-    }
-
-    function revertToSelect(productName, category) {
-      triggerHaptic(); state.userBasket[productName] = "-"; var safeId = productName.replace(/\s/g, '-').replace(/['"]/g, '');
-      var container = document.getElementById('controls-' + safeId);
-      container.innerHTML = `<select class="vol-select" onchange="handleVolumeSelection(this, '${productName}', '${category}')"><option value="-">--</option><option value="Полная">Полная</option><option value="Половина">Половина</option><option value="Меньше половины">Меньше половины</option><option value="0">0</option><option value="CUSTOM">✍️ Свой вариант</option></select>`;
-      updateCategoryHighlight(category); updateBadgeUI(); persistDraft();
-    }
-
-    function updateCategoryHighlight(categoryName) {
-      if (state.currentMode !== 'checklist' || !categoryName) return;
-      var catalog = state.productCatalog; var itemsInThisCat = [];
-      for (var p in catalog) { if (catalog[p].cat === categoryName && p !== "Дата заполнения" && p !== "Товар") { itemsInThisCat.push(p); } }
-      var isComplete = itemsInThisCat.every(function(name) { var val = state.userBasket[name]; return val !== undefined && val !== null && val !== "" && val !== "-" && val !== "--"; });
-      var categoryId = "cat-" + categoryName.replace(/\s/g, '-'); var block = document.getElementById('block-' + categoryId);
-      if (block) {
-        if (isComplete) { block.style.backgroundColor = "var(--success-green-bg)"; block.style.borderColor = "var(--success-green-border)"; }
-        else { block.style.backgroundColor = "var(--card-bg)"; block.style.borderColor = "#eeeeee"; }
-      }
-    }
+    function registerInputChange(name, val) { state.userBasket[name] = val; updateBadgeUI(); persistDraft(); }
 
     function updateBadgeUI() {
-      var badge = document.getElementById('cart-count-badge');
-      var realItems = Object.keys(state.userBasket).filter(k => state.userBasket[k] !== "-" && state.userBasket[k] !== "0" && state.userBasket[k] !== 'В наличии' && state.userBasket[k] !== "");
-      var count = realItems.length;
-      if (badge) { badge.innerText = count; badge.style.display = (count > 0) ? 'flex' : 'none'; }
+        let items = Object.keys(state.userBasket).filter(k => state.userBasket[k] != 0 && state.userBasket[k] != "-");
+        let count = items.length;
+        document.getElementById('cart-count-badge').innerText = count;
+        document.getElementById('cart-fab').style.display = (count > 0 && state.currentMode === 'order') ? 'flex' : 'none';
+        document.getElementById('cart-count-badge').style.display = count > 0 ? 'block' : 'none';
     }
 
     function toggleCartModal(show) {
-      triggerHaptic(); var modal = document.getElementById('cart-modal');
-      if (show) {
-          var t = document.getElementById('cart-modal-title');
-          if (t) {
-              if (state.currentMode === 'checklist') { t.innerText = "Предпросмотр Чек-листа"; }
-              else if (state.currentMode === 'stoplist_fill') { t.innerText = "Предпросмотр Стоп-листа"; }
-              else { t.innerText = "Ваш заказ"; }
-          }
-          renderCartItemsInModal(); modal.style.display = 'flex';
-      } else { modal.style.display = 'none'; }
-    }
-
-    function renderCartItemsInModal() {
-      var listHtml = "";
-      for (var key in state.userBasket) {
-        var val = state.userBasket[key];
-        if (val === "-" || val === "0" || val === 'В наличии' || val === "" || val === undefined || val === null || val === "--") continue;
-        var cat = state.productCatalog[key] ? state.productCatalog[key].cat : "-";
-       
-        listHtml += `<div class="item" style="padding: 15px 22px;"><span style="font-size: 15px;">${key}</span><div class="controls" style="transform: scale(0.9);">`;
-                       
-        if (state.currentMode === 'order') {
-          listHtml += `<button class="qty-btn" onclick="adjustQuantity('${key}', -1, '${cat}')">−</button><b style="color:var(--deep-purple); min-width: 32px; text-align: center;">${val}</b><button class="qty-btn" onclick="adjustQuantity('${key}', 1, '${cat}')">+</button>`;
-        } else if (state.currentMode === 'stoplist_fill') {
-          listHtml += `<b style="color:#FF5252; min-width: 32px; text-align: center; margin-right: 10px;">${val}</b>`;
-        } else {
-          listHtml += `<b style="color:var(--deep-purple); min-width: 32px; text-align: center; margin-right: 10px;">${val}</b>`;
+        document.getElementById('cart-modal').style.display = show ? 'flex' : 'none';
+        if(show) {
+            let html = "";
+            for(let name in state.userBasket) {
+                let v = state.userBasket[name];
+                if(v != 0 && v != "-") html += `<div class="item"><span>${name}</span><b>${v}</b></div>`;
+            }
+            document.getElementById('cart-items-list').innerHTML = html || "Пусто";
         }
-        listHtml += `<button class="btn-remove-item" onclick="removeFromCart('${key}', '${cat}')">✕</button></div></div>`;
-      }
-      document.getElementById('cart-items-list').innerHTML = listHtml || "<p style='text-align:center; padding: 20px; opacity: 0.5;'>Список пуст</p>";
     }
 
-    function removeFromCart(productName, category) {
-      triggerHaptic();
-      var newVal = (state.currentMode === 'checklist' ? "-" : "0");
-      if (state.currentMode === 'stoplist_fill') newVal = 'В наличии';
-     
-      registerInputChange(productName, newVal, category);
-      var safeId = productName.replace(/\s/g, '-').replace(/['"]/g, '');
-     
-      if (state.currentMode === 'stoplist_fill') {
-          var btn = document.getElementById('stop-btn-' + safeId);
-          if(btn) { btn.innerText = 'В НАЛИЧИИ'; btn.style.backgroundColor = '#E8F5E9'; btn.style.color = '#4CAF50'; }
-      } else {
-          var input = document.getElementById('input-' + safeId); if (input) { input.value = newVal; }
-          var controls = document.getElementById('controls-' + safeId);
-          if (controls) {
-              var select = controls.querySelector('select');
-              if (select) { select.value = newVal; } else if (controls.querySelector('input')) { revertToSelect(productName, category); }
-          }
-      }
-      renderCartItemsInModal();
-    }
-
-    function closeCartOnOverlay(e) { if (e.target.id === 'cart-modal') { toggleCartModal(false); } }
-
-    function openControlPanel(type) {
-      triggerHaptic(); let userId = globalTgUserId;
-      try {
-        if (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initDataUnsafe && window.Telegram.WebApp.initDataUnsafe.user) {
-          if (window.Telegram.WebApp.initDataUnsafe.user.id) { userId = String(window.Telegram.WebApp.initDataUnsafe.user.id); }
-        }
-      } catch (e) {}
-
-      if (userId === undefined || userId === "undefined" || userId === null || userId === "null") { userId = ""; }
-      userId = String(userId).trim();
-
-      if (!userId) { showPopupError("Подождите", "Связь с Telegram устанавливается..."); extractTelegramDataFromURL(); return; }
-
-      const adminIdsStr = TG_ADMIN_IDS.map(function(id) { return String(id).trim(); });
-      const bossIdsStr  = TG_BOSS_IDS.map(function(id) { return String(id).trim(); });
-      const isAdmin = adminIdsStr.indexOf(userId) !== -1;
-      const isBoss  = bossIdsStr.indexOf(userId) !== -1;
-
-      if (type === 'admin' && !isAdmin) { showPopupError("Доступ запрещен", "Только для администратора."); return; }
-      if (type === 'boss' && !isBoss && !isAdmin) { showPopupError("Доступ запрещен", "Только для руководителя."); return; }
-
-      document.getElementById('step-1').style.display = 'none'; document.getElementById('step-panel').style.display = 'block';
-      var grid = document.getElementById('panel-controls-grid'); scrollToTop();
-
-      if (type === 'admin') {
-        document.getElementById('title').innerText = "Админ-панель";
-        grid.innerHTML = `
-          <div class="card btn-admin-pink" onclick="executeAdminAction('status')"><span>📊</span><span>Кто заполнил?</span></div>
-          <div class="card" style="background: linear-gradient(135deg, #00B4DB 0%, #0083B0 100%); color: white;" onclick="document.getElementById('step-panel').style.display='none'; document.getElementById('step-admin-purchase').style.display='block'; scrollToTop();">
-            <span>📦</span><span>Управление закупкой</span>
-          </div>
-          <div class="card" style="background: linear-gradient(135deg, #FF8A80 0%, #E53935 100%); color: white; grid-column: span 2;" onclick="openMissingItemsPanel()"><span>🚚</span><span>ПРОВЕРКА НЕДОВОЗОВ</span></div>
-          <div class="card" style="background: linear-gradient(135deg, #8E24AA 0%, #512DA8 100%); color: white; grid-column: span 2;" onclick="openCRMDashboard('orders')"><span>👀</span><span>ЛИЧНЫЙ КАБИНЕТ (ЗДЕСЬ)</span></div>`;
-      } else {
-        document.getElementById('title').innerText = "Кабинет Босса";
-        var bossActionsHtml = `<div class="card btn-boss-table" style="grid-column: span 2;" onclick="executeAdminAction('status_checklist')"><span style="font-size: 26px; margin-bottom: 6px;">👥</span><span>КТО ЗАПОЛНИЛ СЕГОДНЯ?</span></div>`;
-        var bossCats = ['Сиропы на исходе', 'Сиропы половина', 'Зерно', 'Стаканы и крышки', 'Расходники', 'Пищевые расходники', 'Пищевые порошки', 'Бабл ти'];
-        bossCats.forEach(function(c) {
-          var cl = (c === 'Сиропы на исходе') ? 'btn-boss-red' : (c === 'Сиропы половина') ? 'btn-boss-yellow' : 'btn-boss-white';
-          var textStyle = (cl === 'btn-boss-white') ? 'boss-category-title' : '';
-          bossActionsHtml += `<div class="card ${cl} ${textStyle}" onclick="fetchBossReport('${c}')"><span>${c}</span></div>`;
-        });
-        bossActionsHtml += `
-          <div class="card" style="background: linear-gradient(135deg, #8E24AA 0%, #512DA8 100%); color: white; grid-column: span 2; margin-top: 10px;" onclick="openCRMDashboard('checklists')">
-            <span style="font-size: 26px; margin-bottom: 6px;">📋</span><span>ПОЛНАЯ ТАБЛИЦА ЧЕК-ЛИСТА</span>
-          </div>
-          <div class="card" style="background: linear-gradient(135deg, #FF416C 0%, #FF4B2B 100%); color: white; grid-column: span 2;" onclick="openCRMDashboard('stoplists')">
-            <span style="font-size: 26px; margin-bottom: 6px;">🛑</span><span>СВОДНЫЙ СТОП-ЛИСТ</span>
-          </div>`;
-        grid.innerHTML = bossActionsHtml;
-      }
-    }
-
-    function openMissingItemsPanel() {
-      triggerHaptic(); document.getElementById('step-panel').style.display = 'none'; document.getElementById('step-missing').style.display = 'block'; scrollToTop();
-    }
-
-    function fetchMissingItemsList(shopName) {
-      triggerHaptic(); showReportOverlay("Ищем последний заказ...");
-      callGas('getLastOrderForShop', [shopName], function(res) {
-        if (!res) { renderReport("<p style='text-align:center;'>Заказов по этой кофейне нет.</p>"); return; }
-        var html = `<div style="text-align:center; border-bottom: 2px solid #eee; margin-bottom: 15px; padding-bottom: 10px;"><b style="color: #7E57C2; font-size:18px;">${shopName}</b><br><span style="font-size:14px; opacity:0.7;">Заказ от: ${res.date}</span></div><div id="missing-form">`;
-        res.items.forEach(function(i) {
-          var safeId = i.name.replace(/\s/g, '-').replace(/['"]/g, '');
-          html += `<div style="padding: 12px; border-bottom: 1px solid #f0f0f0;"><div style="font-weight: 600; margin-bottom: 8px;">${i.name} <span style="color:#888; font-size:14px;">(${i.qty} шт)</span></div>
-                    <select class="vol-select" style="width: 100%; border: 1px solid #ddd; background: #fafafa;" id="status-${safeId}" data-name="${i.name}" data-qty="${i.qty}">
-                      <option value="ok">✅ Приехал (Всё ок)</option><option value="delayed">⏳ В пути</option><option value="cancelled">❌ Отменен (В корзину)</option><option value="oos">🚫 Нет в наличии</option>
-                    </select></div>`;
-        });
-        html += `</div>`; renderReport(html);
-        var actionArea = document.getElementById('report-action-area');
-        actionArea.innerHTML = `<button class="btn-nav btn-send" style="width:100%; border-radius: 20px;" onclick="submitMissingItems('${shopName}')">ПОДТВЕРДИТЬ СТАТУСЫ</button>`;
-        actionArea.style.display = 'block';
-      });
-    }
-
-    function submitMissingItems(shopName) {
-      triggerHaptic(); var selects = document.querySelectorAll('#missing-form select'); var itemsToReorder = [];
-      selects.forEach(function(sel) { if(sel.value === 'cancelled') { itemsToReorder.push({ name: sel.getAttribute('data-name'), qty: sel.getAttribute('data-qty') }); } });
-      document.querySelector('#report-action-area button').innerText = "СОХРАНЯЮ...";
-      callGas('saveMissingItems', [shopName, itemsToReorder], function(response) { hideReportOverlay(); showPopupError("Успешно!", "Статусы подтверждены. Отмененные товары добавлены в корзину кофейни."); });
-    }
-
-    function openCRMDashboard(type) {
-      document.getElementById('step-panel').style.display = 'none';
-      document.getElementById('step-dashboard').style.display = 'block';
-      document.getElementById('title').innerText = "База Данных";
-      scrollToTop();
-
-      var isDesktop = window.innerWidth > 600;
-
-      document.getElementById('dash-orders').innerHTML = '<div class="loading-pulse">⏳ Загрузка заказов...</div>';
-      document.getElementById('dash-checklists').innerHTML = '<div class="loading-pulse">⏳ Загрузка чек-листов...</div>';
-      document.getElementById('dash-stoplists').innerHTML = '<div class="loading-pulse">⏳ Загрузка стоп-листов...</div>';
-
-      if (type === 'orders') {
-        callGas('buildOrderSummary', [], function(res) { document.getElementById('dash-orders').innerHTML = res; });
-      } else {
-        callGas('buildDetailedOrderSummary', [], function(res) { document.getElementById('dash-orders').innerHTML = res; });
-      }
-     
-      callGas('getFullChecklistTable', [isDesktop], function(res) { document.getElementById('dash-checklists').innerHTML = res; });
-      callGas('getAllStoplistsTable', [], function(res) { document.getElementById('dash-stoplists').innerHTML = res; });
-     
-      if (type) {
-        var tabs = document.querySelectorAll('.dash-tab');
-        tabs.forEach(function(t) { t.classList.remove('active'); });
-        var targetTab = document.querySelector(`.dash-tab[onclick*='${type}']`);
-        if(targetTab) targetTab.classList.add('active');
-       
-        var contents = document.querySelectorAll('.dash-content');
-        contents.forEach(function(c) { c.classList.remove('active'); });
-       
-        var targetContent = document.getElementById('dash-' + type);
-        if(targetContent) targetContent.classList.add('active');
-        else document.getElementById('dash-orders').classList.add('active');
-      }
-    }
-   
-    function switchDashTab(tabName, el) {
-      var tabs = document.querySelectorAll('.dash-tab');
-      tabs.forEach(function(t) { t.classList.remove('active'); });
-      el.classList.add('active');
-     
-      var contents = document.querySelectorAll('.dash-content');
-      contents.forEach(function(c) { c.classList.remove('active'); });
-      document.getElementById('dash-' + tabName).classList.add('active');
-    }
-
-    function executeAdminAction(cmd) {
-      triggerHaptic(); if (cmd === 'clear' && !confirm("Вы уверены, что хотите очистить базу текущих заказов?")) return;
-      showReportOverlay("Синхронизация...");
-      if (cmd === 'status') { callGas('getWhoFilledStatus', [], renderReport); }
-      else if (cmd === 'status_checklist') { callGas('getWhoFilledStatus', ['checklist'], renderReport); }
-      else if (cmd === 'svod') { callGas('buildOrderSummary', [], renderReport); }
-      else { callGas('clearSvodSheet', [], renderReport); }
-    }
-   
-    function triggerPcBuild(cmd) { triggerHaptic(); showReportOverlay("Передача сигнала..."); callGas('setPcCommand', [cmd], renderReport); }
-    function fetchBossReport(category) { triggerHaptic(); showReportOverlay("Формирование отчета..."); callGas('getCheckListData', [category], renderReport); }
-
-    function showReportOverlay(msg) {
-      document.getElementById('report-overlay').style.display = 'flex';
-      document.getElementById('report-content-area').innerHTML = `<div class="loading-pulse"><div>${msg}</div></div>`;
-      var actionArea = document.getElementById('report-action-area');
-      if (actionArea) { actionArea.style.display = 'none'; actionArea.innerHTML = ''; }
-    }
-
-    function renderReport(html) { document.getElementById('report-content-area').innerHTML = html; }
-    function hideReportOverlay() { triggerHaptic(); document.getElementById('report-overlay').style.display = 'none'; document.getElementById('report-action-area').style.display = 'none'; }
-
-    function showPopupError(title, message) {
-      var banner = document.getElementById('validation-banner');
-      banner.innerHTML = `<b>${title}</b><br>${message}`; banner.style.display = 'block';
-      setTimeout(() => { banner.style.display = 'none'; }, 6000);
-    }
-
-    function validateAndSubmit(isFromModal) {
+    async function validateAndSubmit(isFromModal) {
+      if (!isFromModal && state.currentMode === 'order') { toggleCartModal(true); return; }
       if (state.isProcessing) return;
-      var catalog = state.productCatalog; var activeCategories = state.dynamicCategories;
 
-      if (state.currentMode === 'checklist') {
-        var missingCategories = new Set(); var totalMissing = 0;
-        for (var p in catalog) {
-          if (p === "Дата заполнения" || p === "Товар") continue;
-          var itemCat = catalog[p].cat || "Прочее";
-          if (activeCategories.indexOf(itemCat) === -1) continue;
-          var val = state.userBasket[p];
-          if (val === undefined || val === null || val === "" || val === "-" || val === "--") { missingCategories.add(itemCat); totalMissing++; }
-        }
-        if (totalMissing > 0) {
-          triggerHaptic(); var catList = Array.from(missingCategories).join(', ');
-          showPopupError("Чек-лист не заполнен!", `Осталось позиций: ${totalMissing}.<br><small>Проверьте: ${catList}</small>`);
-          return;
-        }
-      } else if (state.currentMode === 'order') {
-        var orderItems = Object.keys(state.userBasket).filter(k => state.userBasket[k] !== "0" && state.userBasket[k] !== "-");
-        if (orderItems.length === 0) { showPopupError("Заказ пуст!", "Выберите хотя бы один товар для отправки."); return; }
-      }
+      let flatData = Object.entries(state.userBasket).filter(([n,q]) => q != 0 && q != "-").map(([n,q]) => ({name: n, qty: q}));
+      if (flatData.length === 0) return alert("Заполните данные!");
 
-      if (!isFromModal) {
-          var mBtn = document.getElementById('modal-submit-button');
-          if (mBtn) {
-              if (state.currentMode === 'order') { mBtn.innerText = "ОТПРАВИТЬ ЗАКАЗ"; }
-              else if (state.currentMode === 'checklist') { mBtn.innerText = "ОТПРАВИТЬ ЧЕК-ЛИСТ"; }
-              else { mBtn.innerText = "ОТПРАВИТЬ СТОП-ЛИСТ"; }
-          }
-          toggleCartModal(true); return;
-      }
-      
-      // Вызываем новую функцию отправки в Firebase
-      confirmAndSend();
-    }
-
-    // НОВАЯ ФУНКЦИЯ ОТПРАВКИ В FIREBASE
-    function confirmAndSend() {
-      triggerHaptic(); state.isProcessing = true;
-      var comment = document.getElementById('comment') ? document.getElementById('comment').value : "";
-     
-      var flatData = Object.keys(state.userBasket).filter(k => {
-          if(state.currentMode === 'stoplist_fill') { return state.userBasket[k] === 'Закончилось'; }
-          if(state.currentMode === 'order') { return state.userBasket[k] !== "0" && state.userBasket[k] !== 0 && state.userBasket[k] !== "-"; }
-          return true;
-        }).map(function(k) { return { name: k, qty: state.userBasket[k], cat: (state.productCatalog[k] ? state.productCatalog[k].cat : "-") }; });
-
-      var btn1 = document.getElementById('main-action-button'); var btn2 = document.getElementById('modal-submit-button');
-      [btn1, btn2].forEach(btn => { if(btn) { btn.innerText = "ОТПРАВЛЯЮ..."; btn.style.background = "#aaaaaa"; btn.disabled = true; } });
-
-      // Пишем в твою Realtime Database в папку 'orders'
-      database.ref("orders").push({
-          shop: state.currentShop,
-          mode: state.currentMode,
-          items: flatData,
-          comment: comment,
-          timestamp: firebase.database.ServerValue.TIMESTAMP,
-          userId: globalTgUserId
-      }).then(() => {
-          localStorage.removeItem("draft_" + state.currentShop + "_" + state.currentMode);
-          state.userBasket = {}; updateBadgeUI(); toggleCartModal(false);
-          document.getElementById('success-screen').style.display = 'flex';
-          setTimeout(navigateToStep2FromSuccess, 2000);
-      }).catch((error) => {
-          console.error("Ошибка Firebase: ", error);
-          showPopupError("Ошибка", "Не удалось отправить отчет в базу данных.");
-          state.isProcessing = false;
-          [btn1, btn2].forEach(btn => { if(btn) { btn.innerText = "ОТПРАВИТЬ"; btn.style.background = ""; btn.disabled = false; } });
+      state.isProcessing = true;
+      await database.ref("orders").push({
+          shop: state.currentShop, mode: state.currentMode, items: flatData,
+          comment: document.getElementById('comment').value || "",
+          timestamp: firebase.database.ServerValue.TIMESTAMP, userId: globalTgUserId
       });
+
+      localStorage.removeItem("draft_" + state.currentShop + "_" + state.currentMode);
+      document.getElementById('success-screen').style.display = 'flex';
+      setTimeout(() => location.reload(), 2000);
     }
 
-    // Обработка кнопки "Заказ не нужен" (также переведена на Firebase)
-    function processNoOrder() {
-      if (confirm("Вы уверены, что сегодня заказ не требуется?")) {
-        triggerHaptic(); state.isProcessing = true;
-        database.ref("orders").push({
-            shop: state.currentShop,
-            mode: "order",
-            items: [{name: "НЕТ ЗАКАЗА", qty: 0, cat: "-"}],
-            comment: "Заказ не нужен",
-            timestamp: firebase.database.ServerValue.TIMESTAMP,
-            userId: globalTgUserId
-        }).then(() => {
-            document.getElementById('success-screen').style.display = 'flex';
-            setTimeout(navigateToStep2FromSuccess, 1500);
-        }).catch((error) => {
-            console.error("Ошибка Firebase: ", error);
-            showPopupError("Ошибка", "Не удалось отправить статус в базу данных.");
-            state.isProcessing = false;
-        });
+    async function buildSvodReport() {
+      showReportOverlay("Считаю сумму за сегодня...");
+      let startOfDay = new Date().setHours(0,0,0,0);
+      const [ordersSnap, catalogSnap] = await Promise.all([
+        database.ref("orders").orderByChild("timestamp").startAt(startOfDay).once("value"),
+        database.ref("catalogs/order").once("value")
+      ]);
+
+      let catalog = catalogSnap.val() || {};
+      let summary = {}; let totalSum = 0;
+
+      ordersSnap.forEach(child => {
+        let order = child.val();
+        if (order.mode === 'order' && order.items) {
+          order.items.forEach(item => {
+            if (!summary[item.name]) summary[item.name] = 0;
+            summary[item.name] += parseFloat(item.qty) || 0;
+          });
+        }
+      });
+
+      let html = "<h3>Сводка по сети</h3><hr>";
+      for (let itemName in summary) {
+        let itemData = Object.values(catalog).find(c => c.name === itemName);
+        let price = itemData ? (parseFloat(itemData.price) || 0) : 0;
+        let cost = summary[itemName] * price;
+        totalSum += cost;
+        html += `<div style="display:flex; justify-content:space-between; margin-bottom:8px;">
+                    <span>${itemName} x${summary[itemName]}</span><b>${cost} ₽</b>
+                 </div>`;
       }
+      html += `<hr><div style="text-align:right; font-size:20px;"><b>ИТОГО: ${totalSum} ₽</b></div>`;
+      document.getElementById('report-content-area').innerHTML = html;
+
+      // Сигнал боту
+      database.ref("bot_control/notifications").push({ type: "svod_ready", total: totalSum, timestamp: Date.now() });
+    }
+
+    async function viewStopList() {
+      showReportOverlay("Загрузка стоп-листа...");
+      const snap = await database.ref("orders").limitToLast(50).once("value");
+      let latest = null;
+      snap.forEach(child => {
+          let d = child.val();
+          if(d.shop === state.currentShop && d.mode === 'stoplist_fill') latest = d;
+      });
+      if(!latest) { document.getElementById('report-content-area').innerHTML = "Сегодня стоп-лист пуст."; return; }
+      let h = `<b>Обновлено: ${new Date(latest.timestamp).toLocaleString()}</b><hr>`;
+      latest.items.forEach(i => h += `• ${i.name}<br>`);
+      document.getElementById('report-content-area').innerHTML = h;
+    }
+
+    function showReportOverlay(msg) { document.getElementById('report-overlay').style.display = 'flex'; document.getElementById('report-content-area').innerHTML = msg; }
+    function hideReportOverlay() { document.getElementById('report-overlay').style.display = 'none'; }
+
+    function openControlPanel(role) {
+      if (role === 'admin' && TG_ADMIN_IDS.indexOf(String(globalTgUserId)) === -1) return alert("Доступ запрещен");
+      document.getElementById('step-1').style.display = 'none';
+      if(role === 'admin') {
+          document.getElementById('title').innerText = "Админ-панель";
+          document.getElementById('step-panel').style.display = 'block';
+          document.getElementById('panel-controls-grid').innerHTML = `
+            <div class="card btn-admin-pink" onclick="document.getElementById('step-panel').style.display='none'; document.getElementById('step-admin-purchase').style.display='block';">📦 Закупки</div>
+            <div class="card" style="background:#00B4DB; color:#fff;" onclick="openExternalDashboard()">🌐 CRM</div>
+          `;
+      }
+    }
+
+    function processNoOrder() {
+        if(confirm("Заказ не нужен?")) {
+            database.ref("orders").push({ shop: state.currentShop, mode: "order", items: [{name: "НЕТ ЗАКАЗА", qty:0}], timestamp: Date.now() });
+            location.reload();
+        }
     }
 
     function showLastOrder() {
-      triggerHaptic(); showReportOverlay("Загрузка данных...");
-      callGas('getLastOrderForShop', [state.currentShop], function(res) {
-        if (!res) { renderReport("<p style='text-align:center;'>Заказов еще не было.</p>"); return; }
-        var html = `<div style="text-align:right; border-bottom: 2px solid #eee; margin-bottom: 15px; padding-bottom: 10px;"><b style="color: #7E57C2; font-size:18px;">Заказ от: ${res.date}</b></div>`;
-        res.items.forEach(function(i) {
-          html += `<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; font-size:16px; border-bottom: 1px solid #f9f9f9; width: 100%;">
-                    <span style="flex: 1; padding-right:15px; font-weight: bold;">${i.name}</span><b style="color:#EC407A;">${i.qty}</b></div>`;
+        showReportOverlay("Ищу последний заказ...");
+        database.ref("orders").limitToLast(100).once("value", snap => {
+            let last = null;
+            snap.forEach(c => { if(c.val().shop === state.currentShop && c.val().mode === 'order') last = c.val(); });
+            if(!last) return document.getElementById('report-content-area').innerHTML = "Заказов еще не было.";
+            let h = `<b>Заказ от ${new Date(last.timestamp).toLocaleString()}</b><hr>`;
+            last.items.forEach(i => h += `• ${i.name}: ${i.qty}<br>`);
+            document.getElementById('report-content-area').innerHTML = h;
         });
-        renderReport(html);
-        var actionArea = document.getElementById('report-action-area');
-        actionArea.innerHTML = `<button class="btn-nav btn-send" style="width:100%; border-radius: 20px;" onclick="repeatOrder('${encodeURIComponent(JSON.stringify(res.items))}')">ПОВТОРИТЬ ЭТОТ ЗАКАЗ</button>`;
-        actionArea.style.display = 'block';
-      });
     }
 
-    function repeatOrder(itemsJson) {
-      triggerHaptic(); var items = JSON.parse(decodeURIComponent(itemsJson));
-      state.userBasket = {}; items.forEach(function(i) { state.userBasket[i.name] = i.qty; });
-      persistDraft(); hideReportOverlay(); initWorkflow('order', true);
-    }
-
-    function persistDraft() {
-      if (!state.currentShop || !state.currentMode) return;
-      localStorage.setItem("draft_" + state.currentShop + "_" + state.currentMode, JSON.stringify({ timestamp: Date.now(), basket: state.userBasket }));
-    }
-
+    function persistDraft() { localStorage.setItem("draft_" + state.currentShop + "_" + state.currentMode, JSON.stringify({basket: state.userBasket, time: Date.now()})); }
     function restoreFromDraft() {
-      var rawData = localStorage.getItem("draft_" + state.currentShop + "_" + state.currentMode);
-      if (!rawData) return;
-      try {
-        var draft = JSON.parse(rawData);
-        if (Date.now() - draft.timestamp < 43200000) {
-          state.userBasket = draft.basket || {};
-          for (var pName in state.userBasket) {
-            var val = state.userBasket[pName]; var safeId = pName.replace(/\s/g, '-').replace(/['"]/g, '');
-            if (state.currentMode === 'stoplist_fill') {
-                var btn = document.getElementById('stop-btn-' + safeId);
-                if (btn && val === 'Закончилось') { btn.innerText = 'ЗАКОНЧИЛОСЬ'; btn.style.backgroundColor = '#FF5252'; btn.style.color = 'white'; }
-            } else {
-                var input = document.getElementById('input-' + safeId); if (input) { input.value = val; }
-                var controls = document.getElementById('controls-' + safeId);
-                if (controls) {
-                  var select = controls.querySelector('select');
-                  if (select) {
-                    if (["Полная", "Половина", "Меньше половины", "0"].indexOf(val) !== -1) { select.value = val; }
-                    else if (val !== "-") { handleVolumeSelection({value: "CUSTOM"}, pName, state.productCatalog[pName].cat); var customInput = controls.querySelector('input'); if (customInput) { customInput.value = val; } }
-                  }
-                }
-            }
-          }
-          state.dynamicCategories.forEach(updateCategoryHighlight); updateBadgeUI();
-        }
-      } catch (e) {}
+        let d = localStorage.getItem("draft_" + state.currentShop + "_" + state.currentMode);
+        if(d) { let p = JSON.parse(d); if(Date.now() - p.time < 43200000) state.userBasket = p.basket; }
     }
 
-    window.onload = function() {
-      if (window.Telegram && Telegram.WebApp) { Telegram.WebApp.ready(); Telegram.WebApp.expand(); }
-      extractTelegramDataFromURL();
-    };
+    function handleInputFocus(input) { input.select(); }
+    function handleInputBlur(input) {}
+    function closeCartOnOverlay(e) { if (e.target.id === 'cart-modal') { toggleCartModal(false); } }
+
+    window.onload = () => { try { Telegram.WebApp.ready(); Telegram.WebApp.expand(); globalTgUserId = Telegram.WebApp.initDataUnsafe.user.id; } catch(e){} };
   </script>
 </body>
 </html>

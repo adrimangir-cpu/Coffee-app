@@ -2,34 +2,42 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <title>CRM - Личный Кабинет</title>
+    <title>Coffee CRM - Управление сетью</title>
     <style>
         body { font-family: 'Segoe UI', sans-serif; background: #f0f2f5; margin: 0; padding: 20px; }
         .nav { background: #1a237e; color: white; padding: 20px; border-radius: 12px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; }
-        .tabs { display: flex; gap: 10px; margin-bottom: 20px; }
-        .tab-btn { padding: 12px 25px; border: none; border-radius: 8px; cursor: pointer; background: #ddd; font-weight: bold; }
+        .tabs { display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; }
+        .tab-btn { padding: 12px 25px; border: none; border-radius: 8px; cursor: pointer; background: #ddd; font-weight: bold; transition: 0.3s; }
         .tab-btn.active { background: #283593; color: white; }
-        .card { background: white; padding: 25px; border-radius: 16px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }
-        table { width: 100%; border-collapse: collapse; }
+        .card { background: white; padding: 25px; border-radius: 16px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); overflow-x: auto; }
+        table { width: 100%; border-collapse: collapse; min-width: 900px; }
         th, td { padding: 12px; border-bottom: 1px solid #eee; text-align: left; }
-        .btn-del { color: red; cursor: pointer; border: none; background: none; font-weight: bold; }
-        .btn-save { background: #4caf50; color: white; padding: 15px 30px; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; margin-top: 20px; }
+        input { width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+        .btn-del { color: red; cursor: pointer; border: none; background: none; font-size: 20px; font-weight: bold; }
+        .btn-save { background: #4caf50; color: white; padding: 15px; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; width: 100%; margin-top: 20px; font-size: 16px; }
+        .btn-add { background: #0288d1; color: white; padding: 10px 20px; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; }
+        .order-row:hover { background: #f9f9f9; }
     </style>
 </head>
 <body>
 
-<div class="nav"><h2>💼 Coffee CRM: Личный Кабинет</h2></div>
-
-<div class="tabs">
-    <button class="tab-btn active" onclick="loadTab('orders', this)">Заказы</button>
-    <button class="tab-btn" onclick="loadTab('catalog', this)">📝 Управление товарами</button>
+<div class="nav">
+    <h2>💼 Coffee CRM: Панель Управления</h2>
+    <div id="status" style="font-size: 14px; opacity: 0.8;">☁️ База подключена</div>
 </div>
 
-<div class="card" id="content">Загрузка...</div>
+<div class="tabs">
+    <button class="tab-btn active" onclick="loadTab('orders', this)">📋 Все Заказы</button>
+    <button class="tab-btn" onclick="loadTab('catalog_order', this)">🛒 Товары (Закупка)</button>
+    <button class="tab-btn" onclick="loadTab('catalog_checklist', this)">📝 Товары (Чек-лист)</button>
+</div>
+
+<div class="card" id="content">Загрузка данных...</div>
 
 <script>
     const FB_URL = "https://project-lenta22-default-rtdb.firebaseio.com";
     let currentCatalog = {};
+    let currentPath = "";
 
     async function loadTab(type, btn) {
         document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
@@ -37,33 +45,88 @@
         const box = document.getElementById('content');
         box.innerHTML = "⌛ Синхронизация...";
 
-        if (type === 'catalog') {
-            let res = await fetch(`${FB_URL}/catalogs/order.json`);
+        if (type.startsWith('catalog')) {
+            currentPath = type === 'catalog_order' ? "catalogs/order" : "catalogs/checklist";
+            let res = await fetch(`${FB_URL}/${currentPath}.json`);
             currentCatalog = await res.json() || {};
-            let html = "<h3>Редактор справочника</h3><table><tr><th>Категория</th><th>Товар</th><th>Цена</th><th>Действие</th></tr>";
-            for (let k in currentCatalog) {
-                if (currentCatalog[k].name.toLowerCase().includes("товар")) continue;
-                html += `<tr><td>${currentCatalog[k].cat}</td><td><b>${currentCatalog[k].name}</b></td>
-                <td><input type="number" value="${currentCatalog[k].price}" onchange="currentCatalog['${k}'].price=this.value"></td>
-                <td><button class="btn-del" onclick="deleteItem('${k}')">Удалить</button></td></tr>`;
-            }
-            box.innerHTML = html + "</table><button class='btn-save' onclick='saveCatalog()'>💾 СОХРАНИТЬ ИЗМЕНЕНИЯ</button>";
+            
+            let html = `<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+                <h3>Редактор справочника: ${type === 'catalog_order' ? 'Закупка' : 'Чек-лист'}</h3>
+                <button class="btn-add" onclick="addItem()">➕ Добавить товар</button>
+            </div>
+            <table><tr>
+                <th style="width:150px;">Категория</th>
+                <th>Наименование</th>
+                <th style="width:100px;">Цена (₽)</th>
+                <th>Ссылка</th>
+                <th>Замена (Fallback)</th>
+                <th style="width:50px;">Удалить</th>
+            </tr>`;
+            
+            // Сортировка для удобства
+            let keys = Object.keys(currentCatalog).sort((a,b) => (currentCatalog[a].cat || "").localeCompare(currentCatalog[b].cat || ""));
+
+            keys.forEach(k => {
+                let item = currentCatalog[k];
+                html += `<tr>
+                    <td><input type="text" value="${item.cat || ''}" onchange="updateVal('${k}','cat',this.value)"></td>
+                    <td><input type="text" style="font-weight:bold;" value="${item.name || ''}" onchange="updateVal('${k}','name',this.value)"></td>
+                    <td><input type="number" value="${item.price || 0}" onchange="updateVal('${k}','price',this.value)"></td>
+                    <td><input type="text" placeholder="URL" value="${item.link || ''}" onchange="updateVal('${k}','link',this.value)"></td>
+                    <td><input type="text" placeholder="Запасной URL" value="${item.fallback || ''}" onchange="updateVal('${k}','fallback',this.value)"></td>
+                    <td style="text-align:center;"><button class="btn-del" onclick="deleteItem('${k}')">×</button></td>
+                </tr>`;
+            });
+            box.innerHTML = html + "</table><button class='btn-save' onclick='saveCatalog()'>💾 СОХРАНИТЬ ИЗМЕНЕНИЯ В БАЗУ</button>";
         } else {
             let res = await fetch(`${FB_URL}/orders.json`);
             let orders = await res.json() || {};
-            let html = "<table><tr><th>Точка</th><th>Дата</th><th>Детали</th></tr>";
-            for (let k in orders) {
-                let items = Object.entries(orders[k].items).map(([n,q]) => `${n}(${q})`).join(', ');
-                html += `<tr><td><b>${orders[k].shop}</b></td><td>${orders[k].date}</td><td>${items}</td></tr>`;
-            }
+            let html = "<h3>История всех отчетов</h3><table><tr><th>Точка</th><th>Тип</th><th>Дата</th><th>Состав</th><th>Комментарий</th></tr>";
+            
+            let sorted = Object.keys(orders).sort((a,b) => (orders[b].timestamp || 0) - (orders[a].timestamp || 0));
+            sorted.forEach(k => {
+                let o = orders[k];
+                let date = o.timestamp ? new Date(o.timestamp).toLocaleString('ru-RU') : (o.date || '---');
+                let items = (o.items || []).map(i => `${i.name} <b>(${i.qty})</b>`).join(', ');
+                let mode = o.mode === 'order' ? '📦 Закупка' : (o.mode === 'stoplist_fill' ? '🛑 Стоп' : '📋 Чек');
+                
+                html += `<tr class="order-row">
+                    <td><b>${o.shop}</b></td>
+                    <td style="font-size:12px;">${mode}</td>
+                    <td style="font-size:12px; color:#666;">${date}</td>
+                    <td style="font-size:13px;">${items}</td>
+                    <td style="font-size:13px; font-style:italic;">${o.comment || ''}</td>
+                </tr>`;
+            });
             box.innerHTML = html + "</table>";
         }
     }
 
-    function deleteItem(id) { delete currentCatalog[id]; loadTab('catalog', document.querySelector('.tab-btn.active')); }
+    function updateVal(id, field, val) { currentCatalog[id][field] = val; }
+    
+    function addItem() {
+        let id = "item_" + Date.now();
+        currentCatalog[id] = { cat: "Новая", name: "Название", price: 0, link: "", fallback: "" };
+        renderAgain();
+    }
+
+    function deleteItem(id) { 
+        if(confirm("Удалить позицию?")) { delete currentCatalog[id]; renderAgain(); }
+    }
+
+    function renderAgain() {
+        let activeBtn = document.querySelector('.tab-btn.active');
+        loadTab(currentPath.includes('order') ? 'catalog_order' : 'catalog_checklist', activeBtn);
+    }
+
     async function saveCatalog() {
-        await fetch(`${FB_URL}/catalogs/order.json`, { method: 'PUT', body: JSON.stringify(currentCatalog) });
-        alert("Справочник обновлен!");
+        const btn = document.querySelector('.btn-save');
+        btn.innerHTML = "⌛ СОХРАНЕНИЕ...";
+        try {
+            await fetch(`${FB_URL}/${currentPath}.json`, { method: 'PUT', body: JSON.stringify(currentCatalog) });
+            alert("✅ База данных успешно обновлена!");
+        } catch(e) { alert("❌ Ошибка!"); }
+        btn.innerHTML = "💾 СОХРАНИТЬ ИЗМЕНЕНИЯ В БАЗУ";
     }
     
     window.onload = () => loadTab('orders', document.querySelector('.tab-btn'));

@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>CRM - Личный Кабинет</title>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; background: #f0f2f5; margin: 0; padding: 20px; }
+        .nav { background: #1a237e; color: white; padding: 20px; border-radius: 12px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; }
+        .tabs { display: flex; gap: 10px; margin-bottom: 20px; }
+        .tab-btn { padding: 12px 25px; border: none; border-radius: 8px; cursor: pointer; background: #ddd; font-weight: bold; }
+        .tab-btn.active { background: #283593; color: white; }
+        .card { background: white; padding: 25px; border-radius: 16px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 12px; border-bottom: 1px solid #eee; text-align: left; }
+        .btn-del { color: red; cursor: pointer; border: none; background: none; font-weight: bold; }
+        .btn-save { background: #4caf50; color: white; padding: 15px 30px; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; margin-top: 20px; }
+    </style>
+</head>
+<body>
+
+<div class="nav"><h2>💼 Coffee CRM: Личный Кабинет</h2></div>
+
+<div class="tabs">
+    <button class="tab-btn active" onclick="loadTab('orders', this)">Заказы</button>
+    <button class="tab-btn" onclick="loadTab('catalog', this)">📝 Управление товарами</button>
+</div>
+
+<div class="card" id="content">Загрузка...</div>
+
+<script>
+    const FB_URL = "https://project-lenta22-default-rtdb.firebaseio.com";
+    let currentCatalog = {};
+
+    async function loadTab(type, btn) {
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        const box = document.getElementById('content');
+        box.innerHTML = "⌛ Синхронизация...";
+
+        if (type === 'catalog') {
+            let res = await fetch(`${FB_URL}/catalogs/order.json`);
+            currentCatalog = await res.json() || {};
+            let html = "<h3>Редактор справочника</h3><table><tr><th>Категория</th><th>Товар</th><th>Цена</th><th>Действие</th></tr>";
+            for (let k in currentCatalog) {
+                if (currentCatalog[k].name.toLowerCase().includes("товар")) continue;
+                html += `<tr><td>${currentCatalog[k].cat}</td><td><b>${currentCatalog[k].name}</b></td>
+                <td><input type="number" value="${currentCatalog[k].price}" onchange="currentCatalog['${k}'].price=this.value"></td>
+                <td><button class="btn-del" onclick="deleteItem('${k}')">Удалить</button></td></tr>`;
+            }
+            box.innerHTML = html + "</table><button class='btn-save' onclick='saveCatalog()'>💾 СОХРАНИТЬ ИЗМЕНЕНИЯ</button>";
+        } else {
+            let res = await fetch(`${FB_URL}/orders.json`);
+            let orders = await res.json() || {};
+            let html = "<table><tr><th>Точка</th><th>Дата</th><th>Детали</th></tr>";
+            for (let k in orders) {
+                let items = Object.entries(orders[k].items).map(([n,q]) => `${n}(${q})`).join(', ');
+                html += `<tr><td><b>${orders[k].shop}</b></td><td>${orders[k].date}</td><td>${items}</td></tr>`;
+            }
+            box.innerHTML = html + "</table>";
+        }
+    }
+
+    function deleteItem(id) { delete currentCatalog[id]; loadTab('catalog', document.querySelector('.tab-btn.active')); }
+    async function saveCatalog() {
+        await fetch(`${FB_URL}/catalogs/order.json`, { method: 'PUT', body: JSON.stringify(currentCatalog) });
+        alert("Справочник обновлен!");
+    }
+    
+    window.onload = () => loadTab('orders', document.querySelector('.tab-btn'));
+</script>
+</body>
+</html>
+

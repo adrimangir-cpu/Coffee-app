@@ -186,7 +186,7 @@
       <button class="btn-mode btn-repeat-last" style="background: var(--boss-gradient); margin-top: 12px; color: white;" onclick="showLastOrder()">🕒 ПРИЕМКА ТОВАРА (НЕДОВОЗ)</button>
      
       <div class="bottom-fixed-bar">
-        <button class="btn-bottom-exit" onclick="clearShopAndReturn()">⬅️ К списку кофеен</button>
+        <button class="btn-bottom-exit" onclick="clearShopAndReturn()">⬅️ Выбрать другую кофейню</button>
       </div>
     </div>
 
@@ -305,7 +305,7 @@
       window.open('https://adrimangir-cpu.github.io/Coffee-app/dashboard.html', '_blank'); 
     }
 
-    // Универсальная функция для скрытия экранов
+    // Универсальная функция для скрытия всех экранов и показа одного нужного (Лечит наложение слоев)
     function showScreen(screenId) {
       const allScreens = ['step-1', 'step-2', 'step-stoplist', 'step-3', 'step-panel', 'step-admin-purchase'];
       allScreens.forEach(id => {
@@ -313,12 +313,15 @@
           if (el) el.style.display = 'none';
       });
       document.getElementById('nav-buttons').style.display = 'none';
-      document.getElementById(screenId).style.display = 'block';
+      let target = document.getElementById(screenId);
+      if (target) target.style.display = 'block';
       scrollToTop();
     }
 
-    // Хеширование для уникальных ID
+    // Защищенное хеширование для уникальных ID элементов
     function getSafeId(str) {
+        if (!str) return "id_empty_" + Math.floor(Math.random()*1000);
+        str = String(str);
         let hash = 0;
         for (let i = 0; i < str.length; i++) hash = (hash << 5) - hash + str.charCodeAt(i);
         return "id_" + Math.abs(hash) + "_" + str.length;
@@ -375,27 +378,25 @@
           if (mode === 'order') {
               let today = new Date(); today.setHours(0,0,0,0);
               
-              // Вытягиваем историю по точке (чтобы не просить индекс, тянем последние 500 заказов)
-              const ordersSnap = await database.ref("orders").limitToLast(500).once("value");
+              // Вытягиваем историю по точке
+              const ordersSnap = await database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(500).once("value");
               let shopOrders = [];
-              ordersSnap.forEach(c => {
-                  let val = c.val();
-                  if(val.shop === state.currentShop) shopOrders.push(val);
-              });
+              ordersSnap.forEach(c => shopOrders.push(c.val()));
               shopOrders.sort((a,b) => (b.timestamp || 0) - (a.timestamp || 0));
               
               // 1. Ищем прошлые заказы для подсветки повторов (СТРОГО ДО СЕГОДНЯ)
               let pastOrders = shopOrders.filter(o => o.mode === 'order' && (o.timestamp || 0) < today.getTime());
               if (pastOrders.length > 0 && pastOrders[0].items) {
-                  pastOrders[0].items.forEach(i => state.lastOrderItems.add(i.name));
+                  let itemsArr = Array.isArray(pastOrders[0].items) ? pastOrders[0].items : Object.values(pastOrders[0].items);
+                  itemsArr.forEach(i => { if(i && i.name) state.lastOrderItems.add(i.name); });
               }
 
               // 2. Авто-возврат отмененных недовозов в корзину
-              const missSnap = await database.ref("missing_items").once("value");
+              const missSnap = await database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value");
               let hasCanceledMissings = false;
               missSnap.forEach(c => {
                   let m = c.val();
-                  if (m.shop === state.currentShop && m.status === 'canceled') {
+                  if (m && m.status === 'canceled') {
                       state.userBasket[m.name] = m.qty;
                       if(!state.userBasket["_catinfo"]) state.userBasket["_catinfo"] = {};
                       state.userBasket["_catinfo"][m.name] = state.productCatalog[m.name] ? state.productCatalog[m.name].cat : "Прочее";
@@ -410,7 +411,8 @@
           restoreFromDraft();
           renderProductList();
       } catch (err) {
-          document.getElementById('dynamic-list-container').innerHTML = `<div class="report-card"><div style="text-align:center; padding:20px; color:red; font-weight:bold;">Ошибка связи с базой данных</div></div>`;
+          console.error(err);
+          document.getElementById('dynamic-list-container').innerHTML = `<div class="report-card"><div style="text-align:center; padding:20px; color:red; font-weight:bold;">Ошибка приложения: ${err.message}</div></div>`;
       }
     }
 
@@ -419,7 +421,7 @@
     // ==========================================
     function renderProductList() {
       var html = "";
-      var categories = [...new Set(Object.values(state.productCatalog).map(i => i.cat))].sort();
+      var categories = [...new Set(Object.values(state.productCatalog).map(i => (i && i.cat) ? String(i.cat).trim() : "Прочее"))].sort();
 
       categories.forEach(cat => {
         let safeCatId = getSafeId(cat);
@@ -432,26 +434,30 @@
         
         for (let k in state.productCatalog) {
           let item = state.productCatalog[k];
-          if (item.cat === cat) {
-            let safeId = getSafeId(item.name);
-            let isRepeat = state.lastOrderItems.has(item.name);
-            let isOzon = item.vendor && item.vendor.toLowerCase() === 'озон';
+          if (!item) continue;
+          let itemCat = item.cat ? String(item.cat).trim() : "Прочее";
+          let itemName = item.name ? String(item.name).trim() : "Без названия";
+
+          if (itemCat === cat) {
+            let safeId = getSafeId(itemName);
+            let isRepeat = state.lastOrderItems.has(itemName);
+            let isOzon = item.vendor && String(item.vendor).toLowerCase() === 'озон';
             let repeatClass = (isRepeat && !isOzon) ? "repeat-item" : "";
 
-            html += `<div class="item ${repeatClass}"><span>${item.name}</span><div class="controls" id="controls-${safeId}">`;
+            html += `<div class="item ${repeatClass}"><span>${itemName}</span><div class="controls" id="controls-${safeId}">`;
             
             if (state.currentMode === 'stoplist_fill') {
-                let isStopped = state.userBasket[item.name] === 'Закончилось';
-                html += `<button style="border:none; padding:10px; border-radius:12px; font-weight:bold; background:${isStopped?'#FF5252':'#E8F5E9'}; color:${isStopped?'#fff':'#4CAF50'};" onclick="toggleStopItem('${item.name}', '${cat}', this)">${isStopped?'ЗАКОНЧИЛОСЬ':'В НАЛИЧИИ'}</button>`;
+                let isStopped = state.userBasket[itemName] === 'Закончилось';
+                html += `<button style="border:none; padding:10px; border-radius:12px; font-weight:bold; background:${isStopped?'#FF5252':'#E8F5E9'}; color:${isStopped?'#fff':'#4CAF50'};" onclick="toggleStopItem('${itemName}', '${cat}', this)">${isStopped?'ЗАКОНЧИЛОСЬ':'В НАЛИЧИИ'}</button>`;
             } 
-            else if (state.currentMode === 'checklist' && (item.unit && item.unit.toLowerCase().includes("объем"))) {
-                let sVal = state.userBasket[item.name] || "-";
+            else if (state.currentMode === 'checklist' && (item.unit && String(item.unit).toLowerCase().includes("объем"))) {
+                let sVal = state.userBasket[itemName] || "-";
                 // Ручной ввод
                 if(sVal !== "-" && sVal !== "Полная" && sVal !== "Половина" && sVal !== "Меньше половины" && sVal !== "0" && sVal !== "CUSTOM") {
-                    html += `<input type="text" class="qty-input" style="width:110px; border-bottom:2px solid #7E57C2;" value="${sVal}" onchange="registerInputChange('${item.name}', this.value, '${cat}')" onfocus="handleInputFocus(this)">
-                             <button class="reset-btn" onclick="registerInputChange('${item.name}', '-', '${cat}'); renderProductList();">✕</button>`;
+                    html += `<input type="text" class="qty-input" style="width:110px; border-bottom:2px solid #7E57C2;" value="${sVal}" onchange="registerInputChange('${itemName}', this.value, '${cat}')" onfocus="handleInputFocus(this)">
+                             <button class="reset-btn" onclick="registerInputChange('${itemName}', '-', '${cat}'); renderProductList();">✕</button>`;
                 } else {
-                    html += `<select class="vol-select" onchange="handleVolumeSelection(this, '${item.name}', '${cat}', '${safeId}')">
+                    html += `<select class="vol-select" onchange="handleVolumeSelection(this, '${itemName}', '${cat}', '${safeId}')">
                                 <option value="-" ${sVal==='-'?'selected':''}>--</option>
                                 <option value="Полная" ${sVal==='Полная'?'selected':''}>Полная</option>
                                 <option value="Половина" ${sVal==='Половина'?'selected':''}>Половина</option>
@@ -462,10 +468,10 @@
                 }
             } 
             else {
-                let val = state.userBasket[item.name] || (state.currentMode === 'checklist' ? "-" : "0");
-                html += `<button class="qty-btn" onclick="adjustQuantity('${item.name}', -1, '${cat}', '${safeId}')">−</button>
-                         <input type="text" class="qty-input" id="input-${safeId}" value="${val}" onchange="registerInputChange('${item.name}', this.value, '${cat}')" onfocus="handleInputFocus(this)">
-                         <button class="qty-btn" onclick="adjustQuantity('${item.name}', 1, '${cat}', '${safeId}')">+</button>`;
+                let val = state.userBasket[itemName] || (state.currentMode === 'checklist' ? "-" : "0");
+                html += `<button class="qty-btn" onclick="adjustQuantity('${itemName}', -1, '${cat}', '${safeId}')">−</button>
+                         <input type="text" class="qty-input" id="input-${safeId}" value="${val}" onchange="registerInputChange('${itemName}', this.value, '${cat}')" onfocus="handleInputFocus(this)">
+                         <button class="qty-btn" onclick="adjustQuantity('${itemName}', 1, '${cat}', '${safeId}')">+</button>`;
             }
             html += `</div></div>`;
           }
@@ -473,7 +479,7 @@
         html += `</div></div>`;
       });
       
-      document.getElementById('dynamic-list-container').innerHTML = html || "<div class='report-card'><div style='text-align:center; padding:20px;'>Товары не найдены</div></div>";
+      document.getElementById('dynamic-list-container').innerHTML = html || "<p style='text-align:center; padding:40px;'>Товары не найдены</p>";
       categories.forEach(c => updateCategoryHighlight(c));
       updateBadgeUI();
     }
@@ -563,7 +569,7 @@
         if(!state.userBasket["_catinfo"]) state.userBasket["_catinfo"] = {};
         state.userBasket["_catinfo"][name] = cat;
         
-        // Моментальное обновление поля
+        // Моментальное обновление поля без полного рендера страницы
         let input = document.getElementById('input-' + safeId);
         if (input) input.value = (newVal === 0 && state.currentMode === 'checklist') ? "-" : newVal;
         
@@ -652,7 +658,7 @@
         
         for (let key in state.productCatalog) {
           let item = state.productCatalog[key];
-          if (item.cat && item.name !== "Товар" && item.name !== "Дата заполнения") {
+          if (item && item.cat && item.name !== "Товар" && item.name !== "Дата заполнения") {
              let val = state.userBasket[item.name];
              if (val === undefined || val === null || val === "" || val === "-" || val === "--") { 
                  missingCategories.add(item.cat); 
@@ -689,7 +695,7 @@
           svod: false // Маркер для админа, что заказ еще не был в Своде
       });
 
-      // Автосохранение стоп-листа (чтобы он лег в корзину закупки)
+      // Автосохранение стоп-листа для возврата в корзину закупки
       if (state.currentMode === 'stoplist_fill') {
           let draft = JSON.parse(localStorage.getItem("draft_" + state.currentShop + "_order")) || {basket:{}, time: Date.now()};
           if(!draft.basket["_catinfo"]) draft.basket["_catinfo"] = {};
@@ -714,7 +720,7 @@
           if(mainBtn) mainBtn.innerText = "ОТПРАВИТЬ";
           
           updateBadgeUI();
-          showScreen('step-2'); // Возврат на меню кофейни без перезагрузки
+          showScreen('step-2'); // Плавный возврат на меню кофейни
       }, 2000);
     }
 
@@ -790,69 +796,78 @@
         document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div class="loading-pulse">${msg}</div></div>`; 
     }
     
-    function hideReportOverlay() { document.getElementById('report-overlay').style.display = 'none'; }
+    function hideReportOverlay() { 
+        document.getElementById('report-overlay').style.display = 'none'; 
+    }
 
     async function fetchBossReport(category) {
       showReportOverlay("Формирование отчета: " + category + "...");
       let today = new Date().setHours(0,0,0,0);
       
-      const ordersSnap = await database.ref("orders").orderByChild("timestamp").startAt(today).once("value");
-      
-      let reportByShop = {}; 
-      let foundAny = false;
-      let reqLow = category.toLowerCase().trim();
-      let isSyrupEmpty = reqLow.includes("исходе");
-      let isSyrupHalf = reqLow.includes("половина");
-      let isSyrupReq = isSyrupEmpty || isSyrupHalf;
+      try {
+          const ordersSnap = await database.ref("orders").limitToLast(1000).once("value");
+          
+          let reportByShop = {}; 
+          let foundAny = false;
+          let reqLow = category.toLowerCase().trim();
+          let isSyrupEmpty = reqLow.includes("исходе");
+          let isSyrupHalf = reqLow.includes("половина");
+          let isSyrupReq = isSyrupEmpty || isSyrupHalf;
 
-      ordersSnap.forEach(child => {
-        let order = child.val();
-        if (order.mode === 'checklist' && order.items) {
-          order.items.forEach(item => {
-            let cat = (item.cat || "").toLowerCase(); 
-            let name = (item.name || "").toLowerCase(); 
-            let val = String(item.qty).trim();
-            let isMatch = false;
-
-            if (isSyrupReq) {
-              if (cat.includes("сироп") || name.includes("сироп")) {
-                if (isSyrupHalf && (val.toLowerCase().includes("половина") || val === "0.5")) isMatch = true;
-                if (isSyrupEmpty && (val === "0" || val.toLowerCase().includes("меньше половины") || val === "Закончилось")) isMatch = true;
-              }
-            } else { 
-                if (cat === reqLow) isMatch = true; 
-            }
-
-            if (isMatch && val !== "" && val !== "-") {
-              foundAny = true;
-              if (!reportByShop[order.shop]) reportByShop[order.shop] = [];
+          ordersSnap.forEach(child => {
+            let order = child.val();
+            if (order.mode === 'checklist' && order.items && (order.timestamp || 0) >= today) {
               
-              if (isSyrupReq) {
-                  // Вывод для сиропов
-                  reportByShop[order.shop].push(item.name);
-              }
-              else {
-                  reportByShop[order.shop].push(`▪️ ${item.name} — <b>${val}</b>`);
-              }
+              let itemsArr = Array.isArray(order.items) ? order.items : Object.values(order.items);
+              itemsArr.forEach(item => {
+                if(!item) return;
+                let cat = (item.cat || "").toLowerCase(); 
+                let name = (item.name || "").toLowerCase(); 
+                let val = String(item.qty).trim();
+                let isMatch = false;
+
+                if (isSyrupReq) {
+                  if (cat.includes("сироп") || name.includes("сироп")) {
+                    if (isSyrupHalf && (val.toLowerCase().includes("половина") || val === "0.5")) isMatch = true;
+                    if (isSyrupEmpty && (val === "0" || val.toLowerCase().includes("меньше половины") || val === "Закончилось")) isMatch = true;
+                  }
+                } else { 
+                    if (cat === reqLow) isMatch = true; 
+                }
+
+                if (isMatch && val !== "" && val !== "-") {
+                  foundAny = true;
+                  if (!reportByShop[order.shop]) reportByShop[order.shop] = [];
+                  
+                  if (isSyrupReq) {
+                      reportByShop[order.shop].push(item.name); // Только имена для сиропов
+                  }
+                  else {
+                      reportByShop[order.shop].push(`▪️ ${item.name} — <b>${val}</b>`);
+                  }
+                }
+              });
             }
           });
-        }
-      });
 
-      if (!foundAny) { 
-          document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; padding:10px;">По категории "${category}" данных за сегодня нет.</div></div>`; 
-          return; 
-      }
+          if (!foundAny) { 
+              document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; padding:10px;">По категории "${category}" данных за сегодня нет.</div></div>`; 
+              return; 
+          }
 
-      let html = `<div class="report-card"><div class="report-card-title">${category.toUpperCase()}</div>`;
-      for (let s in reportByShop) {
-        if(isSyrupReq) {
-            html += `<div style="margin-bottom:12px; font-size:16px;"><b>${s}</b>: ${reportByShop[s].join(", ")}</div>`;
-        } else {
-            html += `<div style="margin-bottom:15px; font-size:16px;"><b style="color:#311B92;">${s}</b>:<br>${reportByShop[s].join("<br>")}</div>`;
-        }
+          let html = `<div class="report-card"><div class="report-card-title">${category.toUpperCase()}</div>`;
+          for (let s in reportByShop) {
+            if(isSyrupReq) {
+                html += `<div style="margin-bottom:12px; font-size:16px;"><b>${s}</b>: ${reportByShop[s].join(", ")}</div>`;
+            } else {
+                html += `<div style="margin-bottom:15px; font-size:16px;"><b style="color:#311B92;">${s}</b>:<br>${reportByShop[s].join("<br>")}</div>`;
+            }
+          }
+          document.getElementById('report-content-area').innerHTML = html + `</div>`;
+      } catch (err) {
+          console.error(err);
+          document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; color:red;">Ошибка загрузки отчета</div></div>`;
       }
-      document.getElementById('report-content-area').innerHTML = html + `</div>`;
     }
 
     async function executeAdminAction(cmd) {
@@ -860,29 +875,34 @@
         if (cmd === 'status_checklist') {
             showReportOverlay("Сбор данных...");
             let today = new Date().setHours(0,0,0,0);
-            let snap = await database.ref("orders").orderByChild("timestamp").startAt(today).once("value");
             
-            let filledShops = new Set();
-            snap.forEach(c => { 
-                let val = c.val(); 
-                if(val.mode === 'checklist') filledShops.add(val.shop); 
-            });
-            
-            let allShops = ["Бояринова", "Гагарина", "Вертолетчиков", "Липчанского", "Новокосино", "Новокосино 2", "Старое Павлино", "Красноказарменная", "Ухтомского ополчения"];
-            let html = `<div class="report-card"><div class="report-card-title">Кто заполнил чек-лист?</div>`;
-            allShops.forEach(s => { html += `<div class="report-card-item"><span>${s}</span> <span style="font-size:18px; font-weight:bold;">${filledShops.has(s) ? '✅' : '❌'}</span></div>`; });
-            document.getElementById('report-content-area').innerHTML = html + "</div>";
+            try {
+                let snap = await database.ref("orders").limitToLast(500).once("value");
+                let filledShops = new Set();
+                
+                snap.forEach(c => { 
+                    let val = c.val(); 
+                    if(val.mode === 'checklist' && (val.timestamp || 0) >= today) filledShops.add(val.shop); 
+                });
+                
+                let allShops = ["Бояринова", "Гагарина", "Вертолетчиков", "Липчанского", "Новокосино", "Новокосино 2", "Старое Павлино", "Красноказарменная", "Ухтомского ополчения"];
+                let html = `<div class="report-card"><div class="report-card-title">Кто заполнил чек-лист?</div>`;
+                allShops.forEach(s => { html += `<div class="report-card-item"><span>${s}</span> <span style="font-size:18px; font-weight:bold;">${filledShops.has(s) ? '✅' : '❌'}</span></div>`; });
+                document.getElementById('report-content-area').innerHTML = html + "</div>";
+            } catch (err) {
+                document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; color:red;">Ошибка загрузки статусов</div></div>`;
+            }
         }
     }
 
     // УМНЫЙ СВОД АДМИНА
     async function buildSvodReport() {
-      showReportOverlay("Собираю заказы...");
+      showReportOverlay("Сборка закупки (Выполняю команду)...");
       let today = new Date(); 
       today.setHours(0,0,0,0);
       
       try {
-          const ordersSnap = await database.ref("orders").orderByChild("timestamp").startAt(today.getTime()).once("value");
+          const ordersSnap = await database.ref("orders").limitToLast(1000).once("value");
           let updates = {};
           let totalSvod = 0;
           let shopSums = {};
@@ -891,17 +911,17 @@
           ordersSnap.forEach(c => {
               let o = c.val();
               if (o.mode === 'order' && !o.svod) {
-                  updates[c.key + "/svod"] = true; // Отмечаем, что заказ обработан
+                  updates[c.key + "/svod"] = true; // Отмечаем, что заказ обработан и отправлен в приемку
                   if(!shopSums[o.shop]) shopSums[o.shop] = 0;
                   
-                  // Заглушка, точный расчет идет в CRM
-                  o.items.forEach(i => {
-                      shopSums[o.shop] += 1; 
+                  let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
+                  itemsArr.forEach(i => {
+                      if(i) shopSums[o.shop] += 1; 
                   });
               }
           });
 
-          // Сохраняем маркеры "svod: true" в базу, открывая доступ к Приемке
+          // Сохраняем маркеры "svod: true" в базу (Дает сигнал сотрудникам, что заказ в приемке)
           if (Object.keys(updates).length > 0) {
               await database.ref("orders").update(updates);
           }
@@ -911,13 +931,13 @@
           if (Object.keys(updates).length === 0) {
               html += `<div style="padding:10px 0; text-align:center;">Нет новых необработанных заказов за сегодня.</div>`;
           } else {
-              html += `<div style="padding:10px 0; font-size:15px; color:#555; margin-bottom:10px;">✅ Заказы переданы в <b>Приемку</b> сотрудникам. Подробный Свод с суммами отправлен вам в сообщения.</div>`;
+              html += `<div style="padding:10px 0; font-size:15px; color:#555; margin-bottom:10px;">✅ Команда выполнена. Заказы переведены в статус <b>"Приемка"</b> для сотрудников. Подробный Свод отправлен вам в сообщения.</div>`;
               for(let s in shopSums) {
                   if(shopSums[s] > 0) {
-                      html += `<div class="report-card-item" style="color:#7E57C2;"><span>${s}</span><b>Заказ готов</b></div>`;
+                      html += `<div class="report-card-item" style="color:#7E57C2;"><span>${s}</span><b>Заказ сформирован</b></div>`;
                   }
               }
-              // Отправляем сигнал боту
+              // Отправляем сигнал боту на сборку точного свода
               database.ref("bot_control/notifications").push({ type: "svod_ready", timestamp: Date.now() });
           }
           html += `</div>`;
@@ -933,124 +953,137 @@
     async function viewStopList() {
       showReportOverlay("Загрузка актуального стоп-листа...");
       
-      const [ordersSnap, catalogSnap] = await Promise.all([
-          database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(50).once("value"),
-          database.ref("catalogs/order").once("value")
-      ]);
-      
-      let shopOrders = []; 
-      ordersSnap.forEach(c => shopOrders.push(c.val()));
-      shopOrders.sort((a,b) => (b.timestamp||0) - (a.timestamp||0));
-      
-      let catalog = catalogSnap.val() || {};
-      let latest = shopOrders.find(o => o.mode === 'stoplist_fill');
-      
-      if(!latest || !latest.items) { 
-          document.getElementById('report-content-area').innerHTML = `<div class="report-card">Сегодня стоп-лист не заполнялся.</div>`; 
-          return; 
-      }
-      
-      let html = `<div class="report-card">
-                  <div style='font-size: 19px; color: #D50000; font-weight: 900; margin-bottom: 8px; text-align:center;'>🛑 АКТУАЛЬНЫЙ СТОП-ЛИСТ</div>
-                  <div style='font-size: 14px; color: #888; text-align:center; margin-bottom:15px;'>(от ${new Date(latest.timestamp).toLocaleString()})</div>`;
-      
-      let allSyrups = [];
-      
-      latest.items.forEach(i => {
-          let info = Object.values(catalog).find(c => c.name === i.name) || {};
-          let isSyrup = (info.cat && info.cat.toLowerCase().includes("сироп")) || i.name.toLowerCase().includes("сироп");
-          let hasDrinks = (info.sez && info.sez !== "") || (info.main && info.main !== "");
-
-          if (isSyrup) {
-              allSyrups.push("▪️ " + i.name);
-              if (hasDrinks) {
-                  html += `<div style="margin-bottom:10px; border-bottom:1px dashed #f0f0f0; padding-bottom:5px;">▪️ <b>${i.name}</b><br>`;
-                  let affected = [];
-                  if (info.sez) affected.push("сезон: " + info.sez);
-                  if (info.main) affected.push("основа: " + info.main);
-                  html += `<span style="font-size:14px; color:#FF5252; font-style:italic;">(Не делаем: ${affected.join(", ")})</span></div>`;
-              }
-          } else {
-              html += `<div style="margin-bottom:10px; border-bottom:1px dashed #f0f0f0; padding-bottom:5px;">▪️ <b>${i.name}</b><br>`;
-              if (info.sez) html += `<span style="font-size:14px; color:#555;">🍁 Сезон: ${info.sez}</span><br>`;
-              if (info.main) html += `<span style="font-size:14px; color:#555;">☕ Основа: ${info.main}</span>`;
-              html += `</div>`;
+      try {
+          const [ordersSnap, catalogSnap] = await Promise.all([
+              database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(50).once("value"),
+              database.ref("catalogs/order").once("value")
+          ]);
+          
+          let shopOrders = []; 
+          ordersSnap.forEach(c => shopOrders.push(c.val()));
+          shopOrders.sort((a,b) => (b.timestamp||0) - (a.timestamp||0));
+          
+          let catalog = catalogSnap.val() || {};
+          let latest = shopOrders.find(o => o.mode === 'stoplist_fill');
+          
+          if(!latest || !latest.items) { 
+              document.getElementById('report-content-area').innerHTML = `<div class="report-card">Сегодня стоп-лист не заполнялся.</div>`; 
+              return; 
           }
-      });
+          
+          let html = `<div class="report-card">
+                      <div style='font-size: 19px; color: #D50000; font-weight: 900; margin-bottom: 8px; text-align:center;'>🛑 АКТУАЛЬНЫЙ СТОП-ЛИСТ</div>
+                      <div style='font-size: 14px; color: #888; text-align:center; margin-bottom:15px;'>(от ${new Date(latest.timestamp).toLocaleString()})</div>`;
+          
+          let allSyrups = [];
+          let itemsArr = Array.isArray(latest.items) ? latest.items : Object.values(latest.items);
+          
+          itemsArr.forEach(i => {
+              if(!i || !i.name) return;
+              let info = Object.values(catalog).find(c => c.name === i.name) || {};
+              let isSyrup = (info.cat && String(info.cat).toLowerCase().includes("сироп")) || String(i.name).toLowerCase().includes("сироп");
+              let hasDrinks = (info.sez && info.sez !== "") || (info.main && info.main !== "");
 
-      if (allSyrups.length > 0) {
-          html += `<div style='margin-top: 20px; padding-top: 15px; border-top: 2px dashed #ddd; color:#7E57C2;'>
-                   🍾 <b>Закончившиеся сиропы:</b><br><div style="color:#333; margin-top:5px; font-weight:bold;">${allSyrups.join("<br>")}</div></div>`;
+              if (isSyrup) {
+                  allSyrups.push("▪️ " + i.name);
+                  if (hasDrinks) {
+                      html += `<div style="margin-bottom:10px; border-bottom:1px dashed #f0f0f0; padding-bottom:5px;">▪️ <b>${i.name}</b><br>`;
+                      let affected = [];
+                      if (info.sez) affected.push("сезон: " + info.sez);
+                      if (info.main) affected.push("основа: " + info.main);
+                      html += `<span style="font-size:14px; color:#FF5252; font-style:italic;">(Не делаем: ${affected.join(", ")})</span></div>`;
+                  }
+              } else {
+                  html += `<div style="margin-bottom:10px; border-bottom:1px dashed #f0f0f0; padding-bottom:5px;">▪️ <b>${i.name}</b><br>`;
+                  if (info.sez) html += `<span style="font-size:14px; color:#555;">🍁 Сезон: ${info.sez}</span><br>`;
+                  if (info.main) html += `<span style="font-size:14px; color:#555;">☕ Основа: ${info.main}</span>`;
+                  html += `</div>`;
+              }
+          });
+
+          if (allSyrups.length > 0) {
+              html += `<div style='margin-top: 20px; padding-top: 15px; border-top: 2px dashed #ddd; color:#7E57C2;'>
+                       🍾 <b>Закончившиеся сиропы:</b><br><div style="color:#333; margin-top:5px; font-weight:bold;">${allSyrups.join("<br>")}</div></div>`;
+          }
+          
+          document.getElementById('report-content-area').innerHTML = html + "</div>";
+      } catch (err) {
+          document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; color:red;">Ошибка загрузки стоп-листа</div></div>`;
       }
-      
-      document.getElementById('report-content-area').innerHTML = html + "</div>";
     }
 
     // ==========================================
     // 8. ПРИЕМКА ТОВАРА И НЕДОВОЗЫ В ПОСЛЕДНЕМ ЗАКАЗЕ
     // ==========================================
     async function showLastOrder() {
-        showReportOverlay("Загружаю заказ для приемки...");
+        showReportOverlay("Ищу заказ для приемки...");
         
-        const [ordersSnap, missSnap] = await Promise.all([
-            database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(50).once("value"),
-            database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value")
-        ]);
+        try {
+            const [ordersSnap, missSnap] = await Promise.all([
+                database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(50).once("value"),
+                database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value")
+            ]);
 
-        let missMap = {};
-        missSnap.forEach(c => { let m = c.val(); missMap[m.name] = m.status; });
+            let missMap = {};
+            missSnap.forEach(c => { let m = c.val(); missMap[m.name] = m.status; });
 
-        let arr = []; ordersSnap.forEach(c => arr.push(c.val()));
-        let last = arr.reverse().find(o => o.mode === 'order');
-        
-        if(!last) { 
-            document.getElementById('report-content-area').innerHTML = `<div class="report-card">Заказов еще не было.</div>`; 
-            return; 
-        }
-
-        // ПРОВЕРКА: Собран ли Свод админом?
-        if(!last.svod) {
-            document.getElementById('report-content-area').innerHTML = `
-                <div class="report-card" style="text-align:center;">
-                    <div class="report-card-title">⏳ Ожидание сборки</div>
-                    Ваш заказ от <b>${new Date(last.timestamp).toLocaleString()}</b> еще находится в обработке у администратора.<br><br>
-                    Приемка откроется сразу после того, как заказ будет отправлен поставщикам.
-                </div>`;
-            return;
-        }
-        
-        let h = `<div class="report-card">
-                 <div class="report-card-title" style="text-align:center;">Приемка товара</div>
-                 <div style="text-align:center; font-size:14px; color:#888; margin-bottom:15px;">Заказ от: ${new Date(last.timestamp).toLocaleString()}</div>`;
-        
-        last.items.forEach(i => {
-            if(i.name === "НЕТ ЗАКАЗА") { h += `<div class="report-card-item"><b>НЕТ ЗАКАЗА</b></div>`; return; }
+            let arr = []; ordersSnap.forEach(c => arr.push(c.val()));
+            let last = arr.reverse().find(o => o.mode === 'order');
             
-            let mStat = missMap[i.name];
-            
-            if (mStat === 'pending') {
-                h += `<div class="report-card-item" style="flex-direction:column; align-items:flex-start;">
-                        <span style="margin-bottom:5px; font-size:16px;"><b>${i.name}</b> (x${i.qty})</span> 
-                        <span style="background:#fff3e0; color:#ef6c00; padding:6px 10px; border-radius:8px; font-size:13px; font-weight:bold;">⏳ Ожидает проверки</span>
-                      </div>`;
-            } else if (mStat === 'transit') {
-                h += `<div class="report-card-item" style="flex-direction:column; align-items:flex-start;">
-                        <span style="margin-bottom:5px; font-size:16px;"><b>${i.name}</b> (x${i.qty})</span> 
-                        <span style="background:#e3f2fd; color:#1565c0; padding:6px 10px; border-radius:8px; font-size:13px; font-weight:bold;">🚚 В пути до точки</span>
-                      </div>`;
-            } else if (mStat === 'oos') {
-                h += `<div class="report-card-item" style="flex-direction:column; align-items:flex-start;">
-                        <span style="margin-bottom:5px; font-size:16px;"><b>${i.name}</b> (x${i.qty})</span> 
-                        <span style="background:#ffebee; color:#c62828; padding:6px 10px; border-radius:8px; font-size:13px; font-weight:bold;">❌ Нет в наличии</span>
-                      </div>`;
-            } else {
-                h += `<div class="report-card-item" style="flex-direction:column; align-items:flex-start; border-bottom:1px solid #eee;">
-                        <span style="margin-bottom:8px; font-size:16px;"><b>${i.name}</b> (x${i.qty})</span> 
-                        <button onclick="reportMissingFromOrder('${i.name}', ${i.qty})" style="border:none; background:#ffebee; color:#d32f2f; padding:8px 15px; border-radius:10px; font-weight:900; font-size:14px; cursor:pointer;">Не довезли ‼️</button>
-                      </div>`;
+            if(!last) { 
+                document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center;">Заказов еще не было.</div></div>`; 
+                return; 
             }
-        });
-        document.getElementById('report-content-area').innerHTML = h + "</div>";
+
+            // Проверка: Собрал ли Админ свод?
+            if(!last.svod) {
+                document.getElementById('report-content-area').innerHTML = `
+                    <div class="report-card" style="text-align:center;">
+                        <div class="report-card-title">⏳ Ожидание сборки</div>
+                        Ваш заказ от <b>${new Date(last.timestamp).toLocaleString()}</b> еще находится в обработке у администратора.<br><br>
+                        Приемка откроется сразу после того, как администратор соберет свод по заказам.
+                    </div>`;
+                return;
+            }
+            
+            let h = `<div class="report-card">
+                     <div class="report-card-title" style="text-align:center;">Приемка товара</div>
+                     <div style="text-align:center; font-size:14px; color:#888; margin-bottom:15px;">Заказ от: ${new Date(last.timestamp).toLocaleString()}</div>`;
+            
+            let itemsArr = Array.isArray(last.items) ? last.items : Object.values(last.items);
+            
+            itemsArr.forEach(i => {
+                if(!i || !i.name) return;
+                if(i.name === "НЕТ ЗАКАЗА") { h += `<div class="report-card-item"><b>НЕТ ЗАКАЗА</b></div>`; return; }
+                
+                let mStat = missMap[i.name];
+                
+                if (mStat === 'pending') {
+                    h += `<div class="report-card-item" style="flex-direction:column; align-items:flex-start;">
+                            <span style="margin-bottom:5px; font-size:16px;"><b>${i.name}</b> (x${i.qty})</span> 
+                            <span style="background:#fff3e0; color:#ef6c00; padding:6px 10px; border-radius:8px; font-size:13px; font-weight:bold;">⏳ Ожидает проверки</span>
+                          </div>`;
+                } else if (mStat === 'transit') {
+                    h += `<div class="report-card-item" style="flex-direction:column; align-items:flex-start;">
+                            <span style="margin-bottom:5px; font-size:16px;"><b>${i.name}</b> (x${i.qty})</span> 
+                            <span style="background:#e3f2fd; color:#1565c0; padding:6px 10px; border-radius:8px; font-size:13px; font-weight:bold;">🚚 В пути до точки</span>
+                          </div>`;
+                } else if (mStat === 'oos') {
+                    h += `<div class="report-card-item" style="flex-direction:column; align-items:flex-start;">
+                            <span style="margin-bottom:5px; font-size:16px;"><b>${i.name}</b> (x${i.qty})</span> 
+                            <span style="background:#ffebee; color:#c62828; padding:6px 10px; border-radius:8px; font-size:13px; font-weight:bold;">❌ Нет в наличии</span>
+                          </div>`;
+                } else {
+                    h += `<div class="report-card-item" style="flex-direction:column; align-items:flex-start; border-bottom:1px solid #eee;">
+                            <span style="margin-bottom:8px; font-size:16px;"><b>${i.name}</b> (x${i.qty})</span> 
+                            <button onclick="reportMissingFromOrder('${i.name}', ${i.qty})" style="border:none; background:#ffebee; color:#d32f2f; padding:8px 15px; border-radius:10px; font-weight:900; font-size:14px; cursor:pointer;">Не довезли ‼️</button>
+                          </div>`;
+                }
+            });
+            document.getElementById('report-content-area').innerHTML = h + "</div>";
+        } catch (err) {
+            document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; color:red;">Ошибка загрузки приемки.</div></div>`; 
+        }
     }
 
     async function reportMissingFromOrder(name, qty) {
@@ -1068,25 +1101,29 @@
 
     async function openMissingAdmin() {
         showReportOverlay("Проверка недовозов...");
-        const snap = await database.ref("missing_items").once("value");
-        let html = `<div class="report-card"><div class="report-card-title" style="color:#EC407A;">‼️ Актуальные Недовозы</div>`;
-        let hasData = false;
-        snap.forEach(c => {
-            hasData = true;
-            let m = c.val();
-            html += `<div style="padding:15px 0; border-bottom:1px solid #eee;">
-                <b style="font-size:18px;">${m.shop}</b><br>
-                <span style="font-size:16px;">${m.name} (${m.qty} шт)</span><br>
-                <select onchange="updateMissingStatus('${c.key}', this.value)" style="margin-top:10px; padding:10px; border-radius:8px; width:100%; border:2px solid #ddd; background:#fafafa; font-weight:bold; font-size:15px;">
-                    <option value="pending" ${m.status==='pending'?'selected':''}>Ожидает проверки</option>
-                    <option value="transit" ${m.status==='transit'?'selected':''}>В пути</option>
-                    <option value="canceled" ${m.status==='canceled'?'selected':''}>ОТМЕНЕН (Вернуть в корзину)</option>
-                    <option value="oos" ${m.status==='oos'?'selected':''}>Нет в наличии</option>
-                </select>
-            </div>`;
-        });
-        if(!hasData) html += "<div style='text-align:center; padding:20px; font-weight:bold;'>Нет активных недовозов.</div>";
-        document.getElementById('report-content-area').innerHTML = html + "</div>";
+        try {
+            const snap = await database.ref("missing_items").once("value");
+            let html = `<div class="report-card"><div class="report-card-title" style="color:#EC407A;">‼️ Актуальные Недовозы</div>`;
+            let hasData = false;
+            snap.forEach(c => {
+                hasData = true;
+                let m = c.val();
+                html += `<div style="padding:15px 0; border-bottom:1px solid #eee;">
+                    <b style="font-size:18px;">${m.shop}</b><br>
+                    <span style="font-size:16px;">${m.name} (${m.qty} шт)</span><br>
+                    <select onchange="updateMissingStatus('${c.key}', this.value)" style="margin-top:10px; padding:10px; border-radius:8px; width:100%; border:2px solid #ddd; background:#fafafa; font-weight:bold; font-size:15px;">
+                        <option value="pending" ${m.status==='pending'?'selected':''}>Ожидает проверки</option>
+                        <option value="transit" ${m.status==='transit'?'selected':''}>В пути</option>
+                        <option value="canceled" ${m.status==='canceled'?'selected':''}>ОТМЕНЕН (Вернуть в корзину)</option>
+                        <option value="oos" ${m.status==='oos'?'selected':''}>Нет в наличии</option>
+                    </select>
+                </div>`;
+            });
+            if(!hasData) html += "<div style='text-align:center; padding:20px; font-weight:bold;'>Нет активных недовозов.</div>";
+            document.getElementById('report-content-area').innerHTML = html + "</div>";
+        } catch (err) {
+            document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; color:red;">Ошибка загрузки.</div></div>`; 
+        }
     }
 
     async function updateMissingStatus(key, val) {

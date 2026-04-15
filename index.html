@@ -125,7 +125,7 @@
     #cart-modal { position: fixed; inset: 0; background-color: rgba(0,0,0,0.65); display: none; z-index: 3000; align-items: flex-end; backdrop-filter: blur(8px); }
     .modal-content { background-color: #ffffff; width: 100%; border-radius: 40px 40px 0 0; padding: 30px 25px calc(35px + var(--safe-area-bottom)) 25px; max-height: 90vh; overflow-y: auto; position: relative; }
     .cart-close-btn { position: absolute; top: 25px; right: 25px; font-size: 28px; color: #bbbbbb; cursor: pointer; font-weight: 300; }
-    .loading-pulse { animation: pulseLoading 1.5s infinite ease-in-out; text-align: center; color: #7E57C2; font-weight: 800; padding: 80px 20px; font-size: 18px; }
+    .loading-pulse { animation: pulseLoading 1.5s infinite ease-in-out; text-align: center; color: #7E57C2; font-weight: 800; padding: 40px 20px; font-size: 18px; }
     
     textarea#comment { width: 100%; border: 2px solid #f8f8f8; border-radius: 22px; padding: 20px; margin: 20px 0; font-family: inherit; font-size: 16px; resize: none; background-color: #fafafa; }
     .btn-remove-item { background: #ffebee; color: #e53935; border: none; border-radius: 10px; font-size: 16px; font-weight: bold; width: 35px; height: 35px; display: flex; align-items: center; justify-content: center; margin-left: 10px; cursor: pointer; }
@@ -186,7 +186,7 @@
       <button class="btn-mode btn-repeat-last" style="background: var(--boss-gradient); margin-top: 12px; color: white;" onclick="showLastOrder()">🕒 ПРИЕМКА ТОВАРА (НЕДОВОЗ)</button>
      
       <div class="bottom-fixed-bar">
-        <button class="btn-bottom-exit" onclick="clearShopAndReturn()">⬅️ Выбрать другую кофейню</button>
+        <button class="btn-bottom-exit" onclick="clearShopAndReturn()">⬅️ К списку кофеен</button>
       </div>
     </div>
 
@@ -308,7 +308,7 @@
       window.open('https://adrimangir-cpu.github.io/Coffee-app/dashboard.html', '_blank'); 
     }
 
-    // Универсальная функция для переключения экранов (убирает наложения)
+    // Универсальная функция переключения экранов без наложений
     function showScreen(screenId) {
       const allScreens = ['step-1', 'step-2', 'step-stoplist', 'step-3', 'step-panel', 'step-admin-purchase'];
       allScreens.forEach(id => {
@@ -322,7 +322,6 @@
       scrollToTop();
     }
 
-    // Хеширование для уникальных ID элементов
     function getSafeId(str) {
         if (!str) return "id_empty_" + Math.floor(Math.random()*1000);
         str = String(str);
@@ -347,19 +346,9 @@
         showScreen('step-1');
     }
 
-    function backToAdminPanel() { 
-      showScreen('step-panel'); 
-    }
-
-    function hideStopListSubmenu() { 
-      triggerHaptic(); 
-      showScreen('step-2'); 
-    }
-
-    function navigateToStep2() { 
-      document.body.classList.remove('workflow-active'); 
-      showScreen('step-2'); 
-    }
+    function backToAdminPanel() { showScreen('step-panel'); }
+    function hideStopListSubmenu() { triggerHaptic(); showScreen('step-2'); }
+    function navigateToStep2() { document.body.classList.remove('workflow-active'); showScreen('step-2'); }
 
     // ==========================================
     // 3. ОСНОВНАЯ ЗАГРУЗКА ДАННЫХ И АВТОМАТИКА
@@ -388,7 +377,7 @@
       document.getElementById('dynamic-list-container').innerHTML = `<div class="report-card"><div class="loading-pulse">⏳ Подключение к базе данных...</div></div>`;
      
       try {
-          // Выбор правильного каталога в зависимости от режима
+          // Выбор правильного каталога
           let path = "";
           if (mode === 'checklist') path = "catalogs/checklist";
           else if (mode === 'stoplist_fill') path = "catalogs/stoplist";
@@ -399,10 +388,10 @@
 
           // АВТОМАТИКА ДЛЯ ЗАКУПКИ
           if (mode === 'order') {
-              // Берем последние 16 часов для фильтрации "сегодня"
-              let cutoffTime = Date.now() - (16 * 60 * 60 * 1000); 
+              // Берем заказы за последние ~20 часов, чтобы покрыть часовые пояса
+              let cutoffTime = Date.now() - (20 * 60 * 60 * 1000); 
               
-              const ordersSnap = await database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(100).once("value");
+              const ordersSnap = await database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(300).once("value");
               let shopOrders = [];
               ordersSnap.forEach(c => {
                   let val = c.val();
@@ -410,13 +399,11 @@
               });
               shopOrders.sort((a,b) => (b.timestamp || 0) - (a.timestamp || 0));
               
-              // 1. Ищем прошлые заказы для подсветки повторов (строго ДО сегодня)
+              // 1. Ищем прошлые заказы для подсветки повторов
               let pastOrders = shopOrders.filter(o => o.mode === 'order' && (o.timestamp || 0) < cutoffTime);
               if (pastOrders.length > 0 && pastOrders[0].items) {
                   let itemsArr = Array.isArray(pastOrders[0].items) ? pastOrders[0].items : Object.values(pastOrders[0].items);
-                  itemsArr.forEach(i => { 
-                      if (i && i.name) state.lastOrderItems.add(i.name); 
-                  });
+                  itemsArr.forEach(i => { if (i && i.name) state.lastOrderItems.add(i.name); });
               }
 
               // 2. Авто-возврат отмененных недовозов в корзину
@@ -428,12 +415,33 @@
                       state.userBasket[m.name] = m.qty;
                       if(!state.userBasket["_catinfo"]) state.userBasket["_catinfo"] = {};
                       state.userBasket["_catinfo"][m.name] = state.productCatalog[m.name] ? state.productCatalog[m.name].cat : "Прочее";
-                      database.ref("missing_items/" + c.key).remove(); // Удаляем из недовозов
+                      database.ref("missing_items/" + c.key).remove(); 
                       hasCanceledMissings = true;
                   }
               });
 
-              if (hasCanceledMissings) alert("⚠️ Отмененные администратором недовозы автоматически возвращены в вашу корзину.");
+              // 3. Авто-добавление стоп-листа из базы заказов
+              let catalogValues = Object.values(state.productCatalog);
+              let lastStop = shopOrders.find(o => o.mode === 'stoplist_fill');
+              let stopAdded = false;
+              if (lastStop && lastStop.items) {
+                  let itemsArr = Array.isArray(lastStop.items) ? lastStop.items : Object.values(lastStop.items);
+                  itemsArr.forEach(i => {
+                      if (i && i.name) {
+                          // Ищем товар в каталоге закупки по имени, а не по ключу!
+                          let catItem = catalogValues.find(c => c && String(c.name).trim() === String(i.name).trim());
+                          if (catItem && !state.userBasket[i.name]) {
+                              state.userBasket[i.name] = 1; 
+                              if(!state.userBasket["_catinfo"]) state.userBasket["_catinfo"] = {};
+                              state.userBasket["_catinfo"][i.name] = catItem.cat || "Прочее";
+                              stopAdded = true;
+                          }
+                      }
+                  });
+              }
+
+              if (hasCanceledMissings) alert("⚠️ Отмененные администратором недовозы автоматически возвращены в корзину.");
+              else if (stopAdded) alert("⚠️ Товары из последнего стоп-листа добавлены в корзину для проверки.");
           }
           
           restoreFromDraft();
@@ -449,7 +457,6 @@
     // ==========================================
     function renderProductList() {
       var html = "";
-      
       var categories = [...new Set(Object.values(state.productCatalog).map(i => (i && i.cat) ? String(i.cat).trim() : "Прочее"))].sort();
 
       categories.forEach(cat => {
@@ -482,7 +489,6 @@
             } 
             else if (state.currentMode === 'checklist' && (item.unit && String(item.unit).toLowerCase().includes("объем"))) {
                 let sVal = state.userBasket[itemName] || "-";
-                
                 if(sVal !== "-" && sVal !== "Полная" && sVal !== "Половина" && sVal !== "Меньше половины" && sVal !== "0" && sVal !== "CUSTOM") {
                     html += `<input type="text" class="qty-input" style="width:110px; border-bottom:2px solid #7E57C2;" value="${sVal}" onchange="registerInputChange('${itemName}', this.value, '${cat}')" onfocus="handleInputFocus(this)">
                              <button class="reset-btn" onclick="registerInputChange('${itemName}', '-', '${cat}'); renderProductList();">✕</button>`;
@@ -514,11 +520,11 @@
       updateBadgeUI();
     }
 
-    // Умный скроллинг при фокусе
+    // Защищенный скроллинг: поднимает элемент почти к верхней границе (чтобы клава не закрыла)
     function handleInputFocus(input) {
         input.select();
         setTimeout(() => {
-            const y = input.getBoundingClientRect().top + window.scrollY - (window.innerHeight / 2) + 60;
+            const y = input.getBoundingClientRect().top + window.scrollY - 120;
             window.scrollTo({ top: y, behavior: 'smooth' });
         }, 300);
     }
@@ -552,14 +558,16 @@
       }
     }
 
-    // СТРОГАЯ зеленая подсветка категорий чек-листа
+    // СТРОГАЯ зеленая подсветка категорий чек-листа (только если нет пустоты и нет "-")
     function updateCategoryHighlight(categoryName) {
       if (state.currentMode !== 'checklist' || !categoryName) return;
+      
       var itemsInThisCat = Object.keys(state.productCatalog).filter(k => state.productCatalog[k] && state.productCatalog[k].cat === categoryName);
       
-      var isComplete = itemsInThisCat.length > 0 && itemsInThisCat.every(name => {
-          let val = state.userBasket[state.productCatalog[name].name];
-          return val !== undefined && val !== null && val !== "" && val !== "-";
+      var isComplete = itemsInThisCat.length > 0 && itemsInThisCat.every(key => {
+          let itemName = state.productCatalog[key].name;
+          let val = state.userBasket[itemName];
+          return val !== undefined && val !== null && val !== "" && val !== "-" && val !== "--";
       });
 
       var block = document.getElementById('block-' + getSafeId(categoryName));
@@ -683,7 +691,7 @@
       if (!isFromModal && state.currentMode === 'order') { toggleCartModal(true); return; }
       if (state.isProcessing) return;
 
-      // Строгая проверка Чек-листа
+      // Строгая проверка Чек-листа (дефис = ошибка)
       if (state.currentMode === 'checklist') {
         let missingCategories = new Set(); 
         let totalMissing = 0;
@@ -717,7 +725,6 @@
       let btn = document.getElementById('modal-submit-button'); if(btn) btn.innerText = "ОТПРАВЛЯЮ...";
       let mainBtn = document.getElementById('main-action-button'); if(mainBtn) mainBtn.innerText = "ОТПРАВЛЯЮ...";
 
-      // Отправка в Firebase
       await database.ref("orders").push({
           shop: state.currentShop,
           mode: state.currentMode,
@@ -725,28 +732,14 @@
           comment: document.getElementById('comment') ? document.getElementById('comment').value : "",
           timestamp: firebase.database.ServerValue.TIMESTAMP,
           userId: globalTgUserId,
-          svod: false // Маркер: "еще не обработано админом"
+          svod: false // Маркер для Приемки
       });
-
-      // Если это стоп-лист, кладем его копию в черновик ЗАКАЗА
-      if (state.currentMode === 'stoplist_fill') {
-          let draft = JSON.parse(localStorage.getItem("draft_" + state.currentShop + "_order")) || {basket:{}, time: Date.now()};
-          if(!draft.basket["_catinfo"]) draft.basket["_catinfo"] = {};
-          flatData.forEach(item => {
-              if (item.qty === 'Закончилось') { 
-                  draft.basket[item.name] = 1; 
-                  draft.basket["_catinfo"][item.name] = item.cat; 
-              }
-          });
-          localStorage.setItem("draft_" + state.currentShop + "_order", JSON.stringify(draft));
-      }
 
       localStorage.removeItem("draft_" + state.currentShop + "_" + state.currentMode);
       
       toggleCartModal(false);
       document.getElementById('success-screen').style.display = 'flex';
       
-      // Возвращаем в меню кофейни без перезагрузки
       setTimeout(() => {
           document.getElementById('success-screen').style.display = 'none';
           if(document.getElementById('comment')) document.getElementById('comment').value = "";
@@ -757,7 +750,7 @@
           if(mainBtn) mainBtn.innerText = "ОТПРАВИТЬ";
           
           updateBadgeUI();
-          showScreen('step-2'); 
+          showScreen('step-2'); // Плавный возврат на меню
       }, 2000);
     }
 
@@ -802,7 +795,6 @@
           document.getElementById('title').innerText = "Кабинет Босса";
           grid.innerHTML = `
             <div class="card btn-boss-table wide" onclick="executeAdminAction('status_checklist')"><span style="font-size: 26px; margin-bottom: 6px;">👥</span><span>КТО ЗАПОЛНИЛ СЕГОДНЯ?</span></div>
-            
             <div class="card wide" style="background: linear-gradient(135deg, #8E24AA 0%, #512DA8 100%); color: white; margin-bottom: 10px;" onclick="openExternalDashboard()"><span>🌐</span><span>ОТКРЫТЬ ТАБЛИЦУ ЧЕК-ЛИСТОВ</span></div>
             
             <div class="card btn-boss-yellow" onclick="fetchBossReport('Сиропы половина')"><span>Сиропы половина</span></div>
@@ -877,6 +869,7 @@
                   if (!reportByShop[order.shop]) reportByShop[order.shop] = [];
                   
                   if (isSyrupReq) {
+                      // ЧИСТЫЙ ВЫВОД ДЛЯ СИРОПОВ (БЕЗ СЕЗОНОВ)
                       reportByShop[order.shop].push(item.name);
                   } else {
                       reportByShop[order.shop].push(`▪️ ${item.name} — <b>${val}</b>`);
@@ -933,7 +926,7 @@
     // УМНЫЙ СВОД АДМИНА
     async function buildSvodReport() {
       showReportOverlay("Сборка закупки (Выполняю команду)...");
-      let cutoffTime = Date.now() - (16 * 60 * 60 * 1000); // 16 часов назад считаем "сегодня"
+      let cutoffTime = Date.now() - (20 * 60 * 60 * 1000); // 20 часов для гарантии захвата всех "сегодняшних" заказов
       
       try {
           const ordersSnap = await database.ref("orders").limitToLast(1000).once("value");
@@ -943,19 +936,16 @@
 
           ordersSnap.forEach(c => {
               let o = c.val();
-              // Только заказы, не бывшие в своде
+              // Только те заказы, что еще не в своде
               if (o && o.mode === 'order' && o.svod === false) {
-                  updates[c.key + "/svod"] = true; // Отмечаем, что заказ обработан и отправлен в приемку
+                  updates[c.key + "/svod"] = true; 
                   if(!shopSums[o.shop]) shopSums[o.shop] = 0;
                   
                   let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
-                  itemsArr.forEach(i => {
-                      if(i) shopSums[o.shop] += 1; // Заглушка, точный счетчик в CRM
-                  });
+                  itemsArr.forEach(i => { if(i) shopSums[o.shop] += 1; });
               }
           });
 
-          // Сохраняем маркеры "svod: true" (Открывает доступ к Приемке бариста)
           if (Object.keys(updates).length > 0) {
               await database.ref("orders").update(updates);
           }
@@ -971,7 +961,6 @@
                       html += `<div class="report-card-item" style="color:#7E57C2;"><span>${s}</span><b>Заказ сформирован</b></div>`;
                   }
               }
-              // Отправляем сигнал боту
               database.ref("bot_control/notifications").push({ type: "svod_ready", timestamp: Date.now() });
           }
           html += `</div>`;
@@ -989,12 +978,12 @@
       
       try {
           const [ordersSnap, catalogSnap] = await Promise.all([
-              database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(50).once("value"),
+              database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(300).once("value"), // Увеличил лимит!
               database.ref("catalogs/stoplist").once("value")
           ]);
           
           let shopOrders = []; 
-          ordersSnap.forEach(c => shopOrders.push(c.val()));
+          ordersSnap.forEach(c => { let val = c.val(); if(val && typeof val === 'object') shopOrders.push(val); });
           shopOrders.sort((a,b) => (b.timestamp||0) - (a.timestamp||0));
           
           let catalog = catalogSnap.val() || {};
@@ -1014,7 +1003,8 @@
           
           itemsArr.forEach(i => {
               if(!i || !i.name) return;
-              let info = Object.values(catalog).find(c => c && c.name === i.name) || {};
+              // Ищем зависимости
+              let info = Object.values(catalog).find(c => c && String(c.name).trim() === String(i.name).trim()) || {};
               let isSyrup = (info.cat && String(info.cat).toLowerCase().includes("сироп")) || String(i.name).toLowerCase().includes("сироп");
               let hasDrinks = (info.sez && info.sez !== "") || (info.main && info.main !== "");
 
@@ -1047,21 +1037,23 @@
     }
 
     // ==========================================
-    // 8. ПРИЕМКА ТОВАРА И НЕДОВОЗЫ
+    // 8. ПРИЕМКА ТОВАРА И НЕДОВОЗЫ В ПОСЛЕДНЕМ ЗАКАЗЕ
     // ==========================================
     async function showLastOrder() {
         showReportOverlay("Загружаю заказ для приемки...");
         
         try {
             const [ordersSnap, missSnap] = await Promise.all([
-                database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(50).once("value"),
+                database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(100).once("value"),
                 database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value")
             ]);
 
             let missMap = {};
             missSnap.forEach(c => { let m = c.val(); if(m) missMap[m.name] = m.status; });
 
-            let arr = []; ordersSnap.forEach(c => arr.push(c.val()));
+            let arr = []; ordersSnap.forEach(c => { let val = c.val(); if(val && typeof val === 'object') arr.push(val); });
+            arr.sort((a,b) => (a.timestamp||0) - (b.timestamp||0)); 
+            
             let last = arr.reverse().find(o => o && o.mode === 'order');
             
             if(!last) { 
@@ -1070,7 +1062,7 @@
             }
 
             // Проверка: Собрал ли Админ свод?
-            if(last.svod === false) {
+            if(!last.svod) {
                 document.getElementById('report-content-area').innerHTML = `
                     <div class="report-card" style="text-align:center;">
                         <div class="report-card-title">⏳ Ожидание сборки</div>

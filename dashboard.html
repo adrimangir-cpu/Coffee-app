@@ -24,9 +24,9 @@
         .order-row:hover { background-color: #f9f9f9; }
         
         /* Стили таблицы чек-листов */
-        .cat-group-header { background: #e8eaf6; font-weight: 800; cursor: pointer; color: #1a237e; }
+        .cat-group-header { background: #e8eaf6; font-weight: 800; cursor: pointer; color: #1a237e; transition: 0.2s; }
         .cat-group-header:hover { background: #c5cae9; }
-        .chk-row:hover { background-color: #e8f5e9; }
+        .chk-row:hover { background-color: #e8f5e9 !important; transition: 0.2s; }
         .ch-val { text-align: center; font-weight: bold; }
         .ch-full { color: #388e3c; }
         .ch-empty { color: #d32f2f; }
@@ -93,7 +93,7 @@
             let html = `<div style="display:flex; justify-content:space-between; margin-bottom:15px; align-items:center;">
                 <h3 style="margin:0;">Редактор товаров: ЧЕК-ЛИСТ</h3><button class="btn-add" onclick="addItemChecklist()">➕ Добавить позицию</button>
             </div>
-            <table><tr><th>Категория</th><th>Наименование</th><th style="width:150px;">Формат ввода</th><th style="width:50px;">Удалить</th></tr>`;
+            <table><tr><th>Категория</th><th>Наименование</th><th style="width:250px;">Формат ввода</th><th style="width:50px;">Удалить</th></tr>`;
             
             let sortedKeys = Object.keys(currentCatalog).sort((a,b) => (currentCatalog[a].cat||'').localeCompare(currentCatalog[b].cat||''));
             sortedKeys.forEach(k => {
@@ -103,8 +103,8 @@
                     <td><input type="text" value="${item.cat || ''}" onchange="updateVal('${k}','cat',this.value)"></td>
                     <td><input type="text" style="font-weight:bold;" value="${item.name || ''}" onchange="updateVal('${k}','name',this.value)"></td>
                     <td><select onchange="updateVal('${k}','unit',this.value)">
-                            <option value="текст" ${!isVol?'selected':''}>Текст (Шт/Уп)</option>
-                            <option value="объем" ${isVol?'selected':''}>Объем (Полная/Половина)</option>
+                            <option value="текст" ${!isVol?'selected':''}>Текст (Шт / Уп)</option>
+                            <option value="объем" ${isVol?'selected':''}>Объем (Полная / Половина)</option>
                         </select></td>
                     <td style="text-align:center;"><button class="btn-del" onclick="deleteItem('${k}')">×</button></td>
                 </tr>`;
@@ -120,7 +120,7 @@
                 html += `<tr>
                     <td><b>${m.shop}</b></td><td>${m.name}</td><td>${m.qty}</td>
                     <td>
-                        <select onchange="updateMissingStatus('${k}', this.value)" style="padding:5px; border-radius:5px;">
+                        <select onchange="updateMissingStatus('${k}', this.value)" style="padding:8px; border-radius:5px;">
                             <option value="pending" ${m.status==='pending'?'selected':''}>Ожидает проверки</option>
                             <option value="transit" ${m.status==='transit'?'selected':''}>В пути</option>
                             <option value="canceled" ${m.status==='canceled'?'selected':''}>ОТМЕНЕН (В корзину сотруднику)</option>
@@ -137,12 +137,12 @@
             let resOrders = await fetch(`${FB_URL}/orders.json`);
             let orders = await resOrders.json() || {};
 
-            let today = new Date().setHours(0,0,0,0);
+            let today = new Date(); today.setHours(0,0,0,0);
             let shops = ["Бояринова", "Гагарина", "Вертолетчиков", "Липчанского", "Новокосино", "Новокосино 2", "Старое Павлино", "Красноказарменная", "Ухтомского ополчения"];
             
             let todaysChecklists = {};
             Object.values(orders).forEach(o => {
-                if (o.mode === 'checklist' && (o.timestamp || 0) >= today) {
+                if (o.mode === 'checklist' && (o.timestamp || 0) >= today.getTime()) {
                     if(!todaysChecklists[o.shop] || o.timestamp > todaysChecklists[o.shop].timestamp) todaysChecklists[o.shop] = o;
                 }
             });
@@ -153,16 +153,16 @@
                 groupedCat[i.cat].push(i.name);
             });
 
-            let html = `<h3>✅ Сводная Таблица Чек-листов (Сегодня)</h3><table style="min-width:1200px;"><tr><th style="width:250px;">Товар</th>`;
+            let html = `<h3 style="color:#1a237e;">✅ Сводная Таблица Чек-листов (Сегодня)</h3><p style="font-size:12px; color:#888;">Нажмите на категорию, чтобы развернуть список</p><table style="min-width:1200px;"><tr><th style="width:250px;">Товар</th>`;
             shops.forEach(s => html += `<th style="text-align:center; font-size:12px;">${s}</th>`);
             html += `</tr>`;
 
             Object.keys(groupedCat).sort().forEach(cat => {
-                let safeCat = cat.replace(/\s/g, '');
+                let safeCat = cat.replace(/[^a-zA-Z0-9а-яА-Я]/g, '');
                 html += `<tr class="cat-group-header" onclick="toggleCatGroup('${safeCat}')"><td colspan="${shops.length+1}">📂 ${cat} ▼</td></tr>`;
                 
                 groupedCat[cat].sort().forEach(itemName => {
-                    html += `<tr class="chk-row group-${safeCat}" style="display:none;"><td><b>${itemName}</b></td>`;
+                    html += `<tr class="chk-row group-${safeCat}" style="display:none; background-color:#fff;"><td><b>${itemName}</b></td>`;
                     shops.forEach(s => {
                         let val = "-";
                         if(todaysChecklists[s] && todaysChecklists[s].items) {
@@ -202,14 +202,15 @@
 
             let svodData = {};
             todaysOrders.forEach(o => {
-                if(!svodData[o.shop]) svodData[o.shop] = { items: {}, lentaSum: 0 };
+                if(!svodData[o.shop]) svodData[o.shop] = { items: {}, lentaSum: 0, comments: [] };
+                if(o.comment) svodData[o.shop].comments.push(o.comment);
                 (o.items || []).forEach(i => {
                     if(!svodData[o.shop].items[i.name]) svodData[o.shop].items[i.name] = 0;
                     svodData[o.shop].items[i.name] += parseFloat(i.qty) || 0;
                 });
             });
 
-            let html = `<h3 style='color:#311B92;'>📊 Свод за сегодня (Авто-расчет Лента/Купер/Озон)</h3>
+            let html = `<h3 style='color:#311B92;'>📊 Свод за сегодня (Лента / Купер / Озон)</h3>
                         <table style='margin-bottom:40px;'>
                         <tr><th>Кофейня</th><th>Товар</th><th>Кол-во</th><th>Поставщик</th><th>Сумма</th></tr>`;
             let totalSvod = 0;
@@ -245,26 +246,31 @@
                         <td><b>${shop}</b></td><td>${name} ${repeatBadge}</td><td>${qty}</td><td>${vendor}</td><td>${costStr}</td>
                     </tr>`;
                 }
+                if(svodData[shop].comments.length > 0) {
+                    html += `<tr><td colspan="5" style="padding:10px; font-style:italic; font-size:13px; color:#555; background:#fff9c4;">💬 Комментарий бариста: ${svodData[shop].comments.join(' | ')}</td></tr>`;
+                }
             }
-            html += `<tr><td colspan="4" style="text-align:right;"><b>ИТОГО СУММА ЗАКАЗОВ ЗА СЕГОДНЯ:</b></td><td style="font-size:18px; color:#388e3c;"><b>${totalSvod} ₽</b></td></tr></table>`;
+            html += `<tr><td colspan="4" style="text-align:right;"><b>ИТОГО СУММА ЗАКАЗОВ:</b></td><td style="font-size:18px; color:#388e3c;"><b>${totalSvod} ₽</b></td></tr></table>`;
 
             html += "<h3>🕒 Вся история операций</h3><table><tr><th>Кофейня</th><th>Тип</th><th>Дата</th><th>Детали</th><th>Комментарий</th></tr>";
             allOrders.forEach(o => {
                 let items = (o.items || []).map(i => `${i.name} <b>(${i.qty})</b>`).join(', ');
                 let date = o.timestamp ? new Date(o.timestamp).toLocaleString('ru-RU') : '---';
                 let modeLabel = o.mode === 'order' ? '📦 Закупка' : (o.mode === 'stoplist_fill' ? '🛑 Стоп' : '📋 Чек');
-                html += `<tr class="order-row"><td><b>${o.shop}</b></td><td>${modeLabel}</td><td style="color:#666;">${date}</td><td>${items}</td><td style="font-style:italic; font-size:12px;">${o.comment || ''}</td></tr>`;
+                html += `<tr class="order-row"><td><b>${o.shop}</b></td><td>${modeLabel}</td><td style="color:#666; font-size:12px;">${date}</td><td>${items}</td><td style="font-style:italic; font-size:12px;">${o.comment || ''}</td></tr>`;
             });
             box.innerHTML = html + "</table>";
         }
     }
 
-    function toggleCatGroup(cls) { document.querySelectorAll('.group-' + cls).forEach(el => el.style.display = el.style.display === 'none' ? 'table-row' : 'none'); }
+    function toggleCatGroup(cls) { 
+        document.querySelectorAll('.group-' + cls).forEach(el => el.style.display = el.style.display === 'none' ? 'table-row' : 'none'); 
+    }
     function updateVal(id, field, val) { currentCatalog[id][field] = val; }
     
     function addItemOrder() { let id = "item_" + Date.now(); currentCatalog[id] = { cat: "Новая", name: "Название", vendor: "Лента", price: 0, link: "", fallback: "" }; loadTab('catalog_order', document.querySelector('.tab-btn.active')); }
     function addItemChecklist() { let id = "item_" + Date.now(); currentCatalog[id] = { cat: "Новая", name: "Название", unit: "текст" }; loadTab('catalog_checklist', document.querySelector('.tab-btn.active')); }
-    function deleteItem(id) { if(confirm("Удалить?")) { delete currentCatalog[id]; loadTab(currentPath.includes('order')?'catalog_order':'catalog_checklist', document.querySelector('.tab-btn.active')); } }
+    function deleteItem(id) { if(confirm("Удалить позицию?")) { delete currentCatalog[id]; loadTab(currentPath.includes('order')?'catalog_order':'catalog_checklist', document.querySelector('.tab-btn.active')); } }
 
     async function saveCatalog() {
         const btn = document.querySelector('.btn-save'); btn.innerHTML = "⌛ СОХРАНЕНИЕ...";
@@ -274,7 +280,7 @@
 
     async function updateMissingStatus(key, val) {
         await fetch(`${FB_URL}/missing_items/${key}/status.json`, { method: 'PUT', body: JSON.stringify(val) });
-        alert("Статус обновлен!");
+        alert("Статус сохранен!");
     }
     
     window.onload = () => loadTab('orders', document.querySelector('.tab-btn'));

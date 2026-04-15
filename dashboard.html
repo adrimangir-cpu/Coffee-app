@@ -9,7 +9,7 @@
         .tabs { display: flex; gap: 10px; margin-bottom: 20px; overflow-x: auto; padding-bottom: 10px; }
         .tab-btn { padding: 12px 25px; border: none; border-radius: 8px; cursor: pointer; background: #cfd8dc; font-weight: 800; font-size: 14px; transition: 0.3s; white-space: nowrap; }
         .tab-btn.active { background: #283593; color: white; }
-        .card { background: white; padding: 25px; border-radius: 16px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); overflow-x: auto;}
+        .card { background: white; padding: 25px; border-radius: 16px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); overflow-x: auto; }
         
         table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 14px; min-width: 900px; }
         th { background: #f8f9fa; padding: 12px; text-align: left; border-bottom: 2px solid #eee; color: #555; text-transform: uppercase; letter-spacing: 0.5px; }
@@ -22,6 +22,9 @@
         
         .repeat-row { background-color: #ffebee !important; }
         .order-row:hover { background-color: #f9f9f9; }
+        .ch-val { text-align: center; font-weight: bold; }
+        .ch-full { color: #388e3c; }
+        .ch-empty { color: #d32f2f; }
     </style>
 </head>
 <body>
@@ -33,6 +36,7 @@
 
 <div class="tabs">
     <button class="tab-btn active" onclick="loadTab('orders', this)">📋 Свод и Заказы</button>
+    <button class="tab-btn" onclick="loadTab('checks_table', this)">✅ Таблица Чек-листов</button>
     <button class="tab-btn" onclick="loadTab('missing', this)">‼️ Недовозы</button>
     <button class="tab-btn" onclick="loadTab('catalog_order', this)">🛒 Справочник Закупки</button>
     <button class="tab-btn" onclick="loadTab('catalog_checklist', this)">📝 Справочник Чек-листа</button>
@@ -105,8 +109,56 @@
             }
             box.innerHTML = html + "</table><p style='margin-top:15px; color:#666;'>Если выбрать статус 'ОТМЕНЕН', товар автоматически появится в корзине сотрудника при открытии закупки.</p>";
 
+        } else if (type === 'checks_table') {
+            // --- ТАБЛИЦА ЧЕК-ЛИСТОВ (КАК В GOOGLE SHEETS) ---
+            let resCheck = await fetch(`${FB_URL}/catalogs/checklist.json`);
+            let catalog = await resCheck.json() || {};
+            let resOrders = await fetch(`${FB_URL}/orders.json`);
+            let orders = await resOrders.json() || {};
+
+            let today = new Date().setHours(0,0,0,0);
+            let shops = ["Бояринова", "Гагарина", "Вертолетчиков", "Липчанского", "Новокосино", "Новокосино 2", "Старое Павлино", "Красноказарменная", "Ухтомского ополчения"];
+            
+            // Ищем последний чек-лист за СЕГОДНЯ для каждой кофейни
+            let todaysChecklists = {};
+            Object.values(orders).forEach(o => {
+                if (o.mode === 'checklist' && (o.timestamp || 0) >= today) {
+                    if(!todaysChecklists[o.shop] || o.timestamp > todaysChecklists[o.shop].timestamp) {
+                        todaysChecklists[o.shop] = o;
+                    }
+                }
+            });
+
+            let html = `<h3>✅ Сводная Таблица Чек-листов (Сегодня)</h3>
+            <table style="min-width:1200px;"><tr>
+                <th style="width:150px;">Категория</th>
+                <th style="width:200px;">Товар</th>`;
+            shops.forEach(s => html += `<th style="text-align:center; font-size:12px;">${s}</th>`);
+            html += `</tr>`;
+
+            let sortedKeys = Object.keys(catalog).sort((a,b) => (catalog[a].cat||'').localeCompare(catalog[b].cat||''));
+            sortedKeys.forEach(k => {
+                let item = catalog[k];
+                html += `<tr><td>${item.cat}</td><td><b>${item.name}</b></td>`;
+                
+                shops.forEach(s => {
+                    let val = "-";
+                    if(todaysChecklists[s] && todaysChecklists[s].items) {
+                        let found = todaysChecklists[s].items.find(i => i.name === item.name);
+                        if(found) val = found.qty;
+                    }
+                    
+                    let cl = "ch-val ";
+                    if(val === "Полная" || val === "В наличии") cl += "ch-full";
+                    else if(val === "0" || val === "Меньше половины" || val === "Закончилось") cl += "ch-empty";
+                    
+                    html += `<td class="${cl}">${val}</td>`;
+                });
+                html += `</tr>`;
+            });
+            box.innerHTML = html + "</table>";
+
         } else {
-            // Вкладка "Заказы" с умным сводом
             let res = await fetch(`${FB_URL}/orders.json`);
             let orders = await res.json() || {};
             let catRes = await fetch(`${FB_URL}/catalogs/order.json`);
@@ -128,7 +180,6 @@
                 }
             });
 
-            // Формируем Свод
             let svodData = {};
             todaysOrders.forEach(o => {
                 if(!svodData[o.shop]) svodData[o.shop] = { items: {}, lentaSum: 0 };
@@ -138,13 +189,12 @@
                 });
             });
 
-            let html = `<h3 style='color:#311B92;'>📊 Свод за сегодня (Авто-расчет Лента/Купер/Озон)</h3>
+            let html = `<h3 style='color:#311B92;'>📊 Свод за сегодня (Авто-расчет)</h3>
                         <table style='margin-bottom:40px;'>
                         <tr><th>Кофейня</th><th>Товар</th><th>Кол-во</th><th>Поставщик</th><th>Сумма</th></tr>`;
             let totalSvod = 0;
 
             for(let shop in svodData) {
-                // Шаг 1: Считаем сумму Ленты
                 for(let name in svodData[shop].items) {
                     let catItem = Object.values(catalog).find(c => c.name === name) || {};
                     let vendor = catItem.vendor || 'Лента';
@@ -154,7 +204,6 @@
 
                 let isKuper = svodData[shop].lentaSum > 0 && svodData[shop].lentaSum < 2000;
 
-                // Шаг 2: Вывод строк
                 for(let name in svodData[shop].items) {
                     let catItem = Object.values(catalog).find(c => c.name === name) || {};
                     let vendor = catItem.vendor || 'Лента';
@@ -183,15 +232,14 @@
                     </tr>`;
                 }
             }
-            html += `<tr><td colspan="4" style="text-align:right;"><b>ИТОГО СУММА ЗАКАЗОВ ЗА СЕГОДНЯ:</b></td><td style="font-size:18px; color:#388e3c;"><b>${totalSvod} ₽</b></td></tr></table>`;
+            html += `<tr><td colspan="4" style="text-align:right;"><b>ИТОГО:</b></td><td style="font-size:18px; color:#388e3c;"><b>${totalSvod} ₽</b></td></tr></table>`;
 
-            // Вывод Истории
             html += "<h3>🕒 Вся история операций</h3><table><tr><th>Кофейня</th><th>Тип</th><th>Дата</th><th>Детали</th><th>Комментарий</th></tr>";
             allOrders.forEach(o => {
                 let items = (o.items || []).map(i => `${i.name} <b>(${i.qty})</b>`).join(', ');
                 let date = o.timestamp ? new Date(o.timestamp).toLocaleString('ru-RU') : '---';
                 let modeLabel = o.mode === 'order' ? '📦 Закупка' : (o.mode === 'stoplist_fill' ? '🛑 Стоп' : '📋 Чек');
-                html += `<tr class="order-row"><td><b>${o.shop}</b></td><td>${modeLabel}</td><td style="color:#666;">${date}</td><td>${items}</td><td style="font-style:italic; font-size:12px;">${o.comment || ''}</td></tr>`;
+                html += `<tr class="order-row"><td><b>${o.shop}</b></td><td>${modeLabel}</td><td style="color:#666; font-size:12px;">${date}</td><td>${items}</td><td style="font-style:italic; font-size:12px;">${o.comment || ''}</td></tr>`;
             });
             box.innerHTML = html + "</table>";
         }
@@ -218,7 +266,7 @@
         const btn = document.querySelector('.btn-save'); btn.innerHTML = "⌛ СОХРАНЕНИЕ...";
         try {
             await fetch(`${FB_URL}/${currentPath}.json`, { method: 'PUT', body: JSON.stringify(currentCatalog) });
-            alert("✅ База данных успешно обновлена!");
+            alert("✅ Справочник обновлен!");
         } catch(e) { alert("❌ Ошибка!"); }
         btn.innerHTML = "💾 СОХРАНИТЬ В БАЗУ ДАННЫХ";
     }

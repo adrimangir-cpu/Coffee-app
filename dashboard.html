@@ -397,10 +397,10 @@
 
         }
         // ==========================================
-        // 4. ВКЛАДКА СТОП-ЛИСТЫ (ПЛИТКА)
+        // 4. ВКЛАДКА СТОП-ЛИСТЫ (ПЛИТКА С ССЫЛКАМИ)
         // ==========================================
         else if (type === 'stoplists') {
-            let resOrders = await fetch(`${FB_URL}/orders.json?orderBy="mode"&equalTo="stoplist_fill"`);
+            let resOrders = await fetch(`${FB_URL}/orders.json`);
             let orders = await resOrders.json() || {};
             
             let catRes = await fetch(`${FB_URL}/catalogs/order.json`);
@@ -410,8 +410,10 @@
             
             let latestStops = {};
             Object.values(orders).forEach(o => {
-                if (!latestStops[o.shop] || o.timestamp > latestStops[o.shop].timestamp) {
-                    latestStops[o.shop] = o;
+                if (o && o.mode === 'stoplist_fill') {
+                    if (!latestStops[o.shop] || o.timestamp > latestStops[o.shop].timestamp) {
+                        latestStops[o.shop] = o;
+                    }
                 }
             });
 
@@ -451,7 +453,7 @@
             box.innerHTML = html;
         }
         // ==========================================
-        // 5. ТАБЛИЦА ЧЕК-ЛИСТОВ
+        // 5. ТАБЛИЦА ЧЕК-ЛИСТОВ (ГРУППИРОВКА)
         // ==========================================
         else if (type === 'checks_table') {
             let resCheck = await fetch(`${FB_URL}/catalogs/checklist.json`);
@@ -465,7 +467,7 @@
             
             let todaysChecklists = {};
             Object.values(orders).forEach(o => {
-                if (o.mode === 'checklist' && (o.timestamp || 0) >= today) {
+                if (o && o.mode === 'checklist' && (o.timestamp || 0) >= today) {
                     if(!todaysChecklists[o.shop] || o.timestamp > todaysChecklists[o.shop].timestamp) {
                         todaysChecklists[o.shop] = o;
                     }
@@ -521,22 +523,20 @@
         // ==========================================
         else {
             const [ordersRes, catRes] = await Promise.all([
-                fetch(`${FB_URL}/orders.json?orderBy="timestamp"&limitToLast=1000`),
+                fetch(`${FB_URL}/orders.json`),
                 fetch(`${FB_URL}/catalogs/order.json`)
             ]);
             let orders = await ordersRes.json() || {};
             let catalog = await catRes.json() || {};
 
-            let cutoffTime = Date.now() - (24 * 60 * 60 * 1000); 
-            
             let historyKeys = new Set();
             let todaysOrders = [];
             
             let allOrders = Object.values(orders).sort((a,b) => (b.timestamp || 0) - (a.timestamp || 0));
 
             allOrders.forEach(o => {
-                if(o.mode === 'order' || o.mode === 'new_shop') {
-                    if((o.timestamp || 0) < cutoffTime) {
+                if(o && (o.mode === 'order' || o.mode === 'new_shop')) {
+                    if(o.svod === true) {
                         let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
                         itemsArr.forEach(i => { if(i) historyKeys.add(o.shop + "|" + i.name); });
                     } else {
@@ -559,7 +559,7 @@
                 });
             });
 
-            let html = `<h3 style='color:#311B92; font-size:22px;'>📊 Свод за сегодня</h3>
+            let html = `<h3 style='color:#311B92; font-size:22px;'>📊 Свод по кофейням (Не обработано)</h3>
                         <table style='margin-bottom:50px;'>
                         <tr>
                             <th>Кофейня / Товар</th>
@@ -571,7 +571,7 @@
             let totalLenta = 0; let totalOzon = 0; let totalKuper = 0;
 
             for(let shop in svodData) {
-                // Вычисляем Ленту для правила Купера
+                // Сначала вычисляем Ленту для правила Купера
                 for(let name in svodData[shop].items) {
                     let catItem = Object.values(catalog).find(c => c && c.name === name) || {};
                     let vendor = catItem.vendor || 'Лента';
@@ -628,10 +628,12 @@
             html += "<h3 style='font-size:22px; color:#311B92; margin-top:40px;'>🕒 Вся история операций</h3><table><tr><th>Кофейня</th><th>Тип</th><th>Дата</th><th>Детали</th><th>Комментарий</th></tr>";
             
             allOrders.forEach(o => {
+                if(!o) return;
                 let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
                 let itemsStr = itemsArr.map(i => i ? `${i.name} <b>(${i.qty})</b>` : '').join(', ');
                 let date = o.timestamp ? new Date(o.timestamp).toLocaleString('ru-RU') : '---';
                 let modeLabel = o.mode === 'order' ? '📦 Закупка' : (o.mode === 'stoplist_fill' ? '🛑 Стоп' : '📋 Чек');
+                if(o.mode === 'new_shop') modeLabel = '🏗 Новая кофейня';
                 
                 html += `<tr class="order-row">
                     <td><b style="color:#4A148C;">${o.shop}</b></td>

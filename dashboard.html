@@ -159,6 +159,7 @@
         .ch-full { color: #2e7d32; }
         .ch-empty { color: #c62828; }
         
+        /* Стили для настроек */
         .settings-panel { 
             background: #f8f9fa; 
             padding: 20px; 
@@ -172,7 +173,7 @@
             align-items: center; 
             cursor: pointer; 
             margin-bottom: 10px; 
-            font-weight: bold; 
+            font-weight: 900; 
             color: #4A148C; 
             font-size: 16px;
         }
@@ -369,7 +370,7 @@
             for(let k in missing) {
                 let m = missing[k];
                 html += `<tr>
-                    <td><b style="font-size:17px; color:#311b92;">${m.shop}</b></td>
+                    <td><b style="font-size:17px; color:#311B92;">${m.shop}</b></td>
                     <td style="font-size:16px;">${m.name}</td>
                     <td style="font-size:16px; font-weight:bold;">${m.qty}</td>
                     <td>
@@ -383,11 +384,11 @@
                 </tr>`;
             }
             
-            box.innerHTML = html + "</table><p style='margin-top:20px; font-size:16px; color:#777; background:#fff9c4; padding:15px; border-radius:10px;'>💡 <b>Подсказка:</b> Если выбрать статус 'ОТМЕНЕН', этот товар автоматически появится в корзине сотрудника при следующем открытии закупки.</p>";
+            box.innerHTML = html + "</table><p style='margin-top:20px; font-size:15px; color:#777; background:#fff9c4; padding:15px; border-radius:10px;'>💡 <b>Подсказка:</b> Если выбрать статус 'ОТМЕНЕН', этот товар автоматически появится в корзине сотрудника при следующем открытии закупки.</p>";
 
         }
         // ==========================================
-        // 4. ВКЛАДКА СТОП-ЛИСТЫ (ПЛИТКА)
+        // 4. ВКЛАДКА СТОП-ЛИСТЫ (ПЛИТКА С ССЫЛКАМИ)
         // ==========================================
         else if (type === 'stoplists') {
             let resOrders = await fetch(`${FB_URL}/orders.json`);
@@ -416,7 +417,7 @@
                             <h4 style="margin-top:0; color:#311b92; font-size:19px; border-bottom:2px solid #eee; padding-bottom:10px; font-weight:900;">${s}</h4>`;
                 
                 if (stop && stop.items) {
-                    html += `<div style="font-size:13px; color:#888; margin-bottom:15px;">Обновлено: ${new Date(stop.timestamp).toLocaleString()}</div>`;
+                    html += `<div style="font-size:13px; color:#888; margin-bottom:15px; font-weight:bold;">Обновлено: ${new Date(stop.timestamp).toLocaleString()}</div>`;
                     let itemsArr = Array.isArray(stop.items) ? stop.items : Object.values(stop.items);
                     let foundItems = false;
                     
@@ -433,7 +434,7 @@
                     
                     if(!foundItems) html += `<div style="color:#4caf50; font-weight:bold; font-size:16px; padding:10px 0;">Стоп-лист пуст (всё в наличии)</div>`;
                 } else {
-                    html += `<div style="color:#888; font-size:16px; padding:10px 0;">Нет данных о стоп-листе</div>`;
+                    html += `<div style="color:#888; font-size:16px; padding:10px 0; font-weight:bold;">Нет данных о стоп-листе</div>`;
                 }
                 
                 html += `</div>`;
@@ -443,7 +444,7 @@
             box.innerHTML = html;
         }
         // ==========================================
-        // 5. ТАБЛИЦА ЧЕК-ЛИСТОВ (0 ОТОБРАЖАЕТСЯ КОРРЕКТНО)
+        // 5. ТАБЛИЦА ЧЕК-ЛИСТОВ (ГРУППИРОВКА)
         // ==========================================
         else if (type === 'checks_table') {
             let resCheck = await fetch(`${FB_URL}/catalogs/checklist.json`);
@@ -492,13 +493,13 @@
                         if(todaysChecklists[s] && todaysChecklists[s].items) {
                             let itemsArr = Array.isArray(todaysChecklists[s].items) ? todaysChecklists[s].items : Object.values(todaysChecklists[s].items);
                             let found = itemsArr.find(i => i && i.name === itemName);
-                            // Если есть значение (даже 0), мы его выводим!
-                            if(found && found.qty !== undefined && found.qty !== null) val = found.qty;
+                            // Если есть значение (даже 0), мы его выводим как строку!
+                            if(found && found.qty !== undefined && found.qty !== null && found.qty !== "") val = String(found.qty);
                         }
                         
                         let cl = "ch-val ";
                         if(val === "Полная" || val === "В наличии" || val === "1") cl += "ch-full";
-                        else if(val === "0" || val === 0 || val === "Меньше половины" || val === "Закончилось") cl += "ch-empty";
+                        else if(val === "0" || val === "Меньше половины" || val === "Закончилось") cl += "ch-empty";
                         
                         html += `<td class="${cl}" style="font-size:15px;">${val}</td>`;
                     });
@@ -520,7 +521,6 @@
             let orders = await ordersRes.json() || {};
             let catalog = await catRes.json() || {};
 
-            // История хранится 30 дней
             let cutoffMonth = Date.now() - (30 * 24 * 60 * 60 * 1000); 
             
             let historyKeys = new Set();
@@ -531,13 +531,11 @@
 
             allOrders.forEach(o => {
                 if(o && (o.mode === 'order' || o.mode === 'new_shop')) {
-                    if((o.timestamp || 0) < cutoffMonth) return; // Удаляем из вывода всё, что старше месяца
+                    if((o.timestamp || 0) < cutoffMonth) return; // Удаляем всё что старше месяца
                     
-                    // СВОД: берет ВСЕ заказы, которые еще не обработаны (svod: false)
                     if(o.svod === false) {
                         todaysOrders.push(o);
                     } else {
-                        // ИСТОРИЯ: все уже обработанные заказы
                         historyOrdersList.push(o);
                         let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
                         itemsArr.forEach(i => { if(i) historyKeys.add(o.shop + "|" + i.name); });
@@ -574,7 +572,6 @@
                 html += `<tr><td colspan="4" style="text-align:center; padding:20px; font-weight:bold; font-size:16px; color:#888;">Нет заказов, ожидающих сборки</td></tr>`;
             } else {
                 for(let shop in svodData) {
-                    // Вычисляем Ленту для правила Купера
                     for(let name in svodData[shop].items) {
                         let catItem = Object.values(catalog).find(c => c && c.name === name) || {};
                         let vendor = catItem.vendor || 'Лента';
@@ -606,7 +603,7 @@
                         let repeatBadge = isRepeat ? `<span style='color:#d32f2f; font-size:12px; margin-left:5px; font-weight:bold;'>(Повтор)</span>` : ``;
 
                         html += `<tr>
-                            <td style="font-size:16px; padding-left:25px;">${name} ${repeatBadge}</td>
+                            <td style="font-size:16px; padding-left:25px; font-weight:bold;">${name} ${repeatBadge}</td>
                             <td style="font-size:17px; font-weight:bold; color:#311b92; text-align:center;">${qty}</td>
                             <td style="font-size:15px;">${vendor}</td>
                             <td>${link}</td>
@@ -631,14 +628,14 @@
             }
 
             // История операций - Сворачивающаяся
-            html += `<div onclick="document.getElementById('history-content').style.display = document.getElementById('history-content').style.display === 'none' ? 'block' : 'none'" style="cursor:pointer; background:#ede7f6; padding:15px; border-radius:10px; font-weight:bold; color:#311B92; margin-top:40px; display:flex; justify-content:space-between; font-size:18px;">
+            html += `<div onclick="document.getElementById('history-content').style.display = document.getElementById('history-content').style.display === 'none' ? 'block' : 'none'" style="cursor:pointer; background:#ede7f6; padding:15px; border-radius:10px; font-weight:900; color:#311B92; margin-top:40px; display:flex; justify-content:space-between; font-size:18px;">
                         <span>🕒 История операций (Закупки за месяц)</span><span>▼</span>
                      </div>
                      <div id="history-content" style="display:none; margin-top:15px;">
                         <table><tr><th>Кофейня</th><th>Тип</th><th>Дата</th><th>Детали</th><th>Комментарий</th></tr>`;
             
             if (historyOrdersList.length === 0) {
-                html += `<tr><td colspan="5" style="text-align:center; color:#888; font-size:16px;">История пуста</td></tr>`;
+                html += `<tr><td colspan="5" style="text-align:center; color:#888; font-size:16px; font-weight:bold;">История пуста</td></tr>`;
             } else {
                 historyOrdersList.forEach(o => {
                     let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
@@ -647,9 +644,9 @@
                     let modeLabel = o.mode === 'new_shop' ? '🏗 Новая кофейня' : '📦 Закупка';
                     
                     html += `<tr class="order-row">
-                        <td><b style="color:#4A148C; font-size:16px;">${o.shop}</b></td>
+                        <td><b style="color:#311B92; font-size:17px;">${o.shop}</b></td>
                         <td><span style="background:#ede7f6; padding:5px 8px; border-radius:5px; font-weight:bold; font-size:14px;">${modeLabel}</span></td>
-                        <td style="color:#666; font-size:14px;">${date}</td>
+                        <td style="color:#666; font-size:14px; font-weight:bold;">${date}</td>
                         <td style="font-size:15px; line-height:1.5;">${itemsStr}</td>
                         <td style="font-style:italic; font-size:14px; color:#888;">${o.comment || ''}</td>
                     </tr>`;

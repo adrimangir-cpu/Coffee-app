@@ -136,13 +136,8 @@
             font-size:15px; 
         }
         
-        .repeat-row { 
-            background-color: #ffebee !important; 
-        }
-        
-        .order-row:hover { 
-            background-color: #f9f9f9; 
-        }
+        .repeat-row { background-color: #ffebee !important; }
+        .order-row:hover { background-color: #f9f9f9; }
         
         .cat-group-header { 
             background: #ede7f6; 
@@ -152,21 +147,14 @@
             transition: 0.2s; 
         }
         
-        .cat-group-header:hover { 
-            background: #d1c4e9; 
-        }
+        .cat-group-header:hover { background: #d1c4e9; }
         
         .chk-row:hover { 
             background-color: #f1f8e9 !important; 
             transition: 0.2s; 
         }
         
-        .ch-val { 
-            text-align: center; 
-            font-weight: bold; 
-            font-size:16px; 
-        }
-        
+        .ch-val { text-align: center; font-weight: bold; font-size:16px; }
         .ch-full { color: #2e7d32; }
         .ch-empty { color: #c62828; }
         
@@ -293,7 +281,7 @@
                 
                 Object.keys(grouped[gc]).sort().forEach(sc => {
                     let safeSc = sc.replace(/[^a-zA-Z0-9а-яА-Я]/g, '');
-                    html += `<tr class="cat-group-header group-g_${safeGc}" onclick="toggleCatGroup('s_${safeSc}')"><td colspan="7" style="padding:10px 15px; padding-left:30px;">📂 ${sc} <span style="float:right;">▼</span></td></tr>`;
+                    html += `<tr class="cat-group-header group-g_${safeGc}" onclick="toggleCatGroup('s_${safeSc}')"><td colspan="7" style="padding:10px 15px; padding-left:30px; font-size:14px;">📂 ${sc} <span style="float:right;">▼</span></td></tr>`;
                     
                     grouped[gc][sc].forEach(data => {
                         let k = data.k; 
@@ -490,12 +478,12 @@
             Object.keys(groupedCat).sort().forEach(cat => {
                 let safeCat = cat.replace(/[^a-zA-Z0-9а-яА-Я]/g, '');
                 html += `<tr class="cat-group-header" onclick="toggleCatGroup('${safeCat}')">
-                            <td colspan="${shops.length+1}" style="padding:15px;">📂 ${cat} <span style="float:right; opacity:0.5;">▼</span></td>
+                            <td colspan="${shops.length+1}" style="padding:15px; font-size:14px;">📂 ${cat} <span style="float:right; opacity:0.5;">▼</span></td>
                          </tr>`;
                 
                 groupedCat[cat].sort().forEach(itemName => {
                     html += `<tr class="chk-row group-${safeCat}" style="display:none; background-color:#fff;">
-                                <td><b>${itemName}</b></td>`;
+                                <td style="font-size:14px;"><b>${itemName}</b></td>`;
                     
                     shops.forEach(s => {
                         let val = "-";
@@ -509,7 +497,7 @@
                         if(val === "Полная" || val === "В наличии" || val === "1") cl += "ch-full";
                         else if(val === "0" || val === "Меньше половины" || val === "Закончилось") cl += "ch-empty";
                         
-                        html += `<td class="${cl}">${val}</td>`;
+                        html += `<td class="${cl}" style="font-size:14px;">${val}</td>`;
                     });
                     
                     html += `</tr>`;
@@ -519,7 +507,7 @@
 
         } 
         // ==========================================
-        // 6. ИСТОРИЯ ЗАКАЗОВ И СВОД
+        // 6. ИСТОРИЯ ЗАКАЗОВ И СВОД (Только Закупки)
         // ==========================================
         else {
             const [ordersRes, catRes] = await Promise.all([
@@ -529,18 +517,24 @@
             let orders = await ordersRes.json() || {};
             let catalog = await catRes.json() || {};
 
+            let cutoffMonth = Date.now() - (30 * 24 * 60 * 60 * 1000); 
+            
             let historyKeys = new Set();
             let todaysOrders = [];
+            let historyOrdersList = [];
             
             let allOrders = Object.values(orders).sort((a,b) => (b.timestamp || 0) - (a.timestamp || 0));
 
             allOrders.forEach(o => {
                 if(o && (o.mode === 'order' || o.mode === 'new_shop')) {
-                    if(o.svod === true) {
+                    if((o.timestamp || 0) < cutoffMonth) return; // Удаляем всё что старше месяца
+                    
+                    if(o.svod === false) {
+                        todaysOrders.push(o);
+                    } else {
+                        historyOrdersList.push(o);
                         let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
                         itemsArr.forEach(i => { if(i) historyKeys.add(o.shop + "|" + i.name); });
-                    } else {
-                        todaysOrders.push(o);
                     }
                 }
             });
@@ -559,8 +553,8 @@
                 });
             });
 
-            let html = `<h3 style='color:#311B92; font-size:22px;'>📊 Свод по кофейням (Не обработано)</h3>
-                        <table style='margin-bottom:50px;'>
+            let html = `<h3 style='color:#311B92; font-size:22px;'>📊 Свод по кофейням (Ожидают сборки)</h3>
+                        <table style='margin-bottom:20px;'>
                         <tr>
                             <th>Кофейня / Товар</th>
                             <th style="text-align:center;">Кол-во</th>
@@ -570,80 +564,96 @@
             
             let totalLenta = 0; let totalOzon = 0; let totalKuper = 0;
 
-            for(let shop in svodData) {
-                // Сначала вычисляем Ленту для правила Купера
-                for(let name in svodData[shop].items) {
-                    let catItem = Object.values(catalog).find(c => c && c.name === name) || {};
-                    let vendor = catItem.vendor || 'Лента';
-                    let price = parseFloat(catItem.price) || 0;
-                    if(vendor.toLowerCase() === 'лента') svodData[shop].lentaSum += (svodData[shop].items[name] * price);
-                }
-
-                let isKuper = svodData[shop].lentaSum > 0 && svodData[shop].lentaSum < 2000;
-
-                html += `<tr><td colspan="4" style="background:#ede7f6; padding:15px; font-size:18px; color:#311B92;"><b>📍 ${shop}</b></td></tr>`;
-
-                for(let name in svodData[shop].items) {
-                    let catItem = Object.values(catalog).find(c => c && c.name === name) || {};
-                    let vendor = catItem.vendor || 'Лента';
-                    let price = parseFloat(catItem.price) || 0;
-                    let qty = svodData[shop].items[name];
-                    let isRepeat = historyKeys.has(shop + "|" + name);
-                    let link = catItem.link ? `<a href="${catItem.link}" target="_blank" style="color:#0288d1; font-weight:bold;">🔗 Заказать</a>` : "";
-
-                    if(vendor.toLowerCase() === 'лента' && isKuper) {
-                        vendor = 'Купер';
+            if (Object.keys(svodData).length === 0) {
+                html += `<tr><td colspan="4" style="text-align:center; padding:20px; font-weight:bold; color:#888;">Нет заказов, ожидающих сборки</td></tr>`;
+            } else {
+                for(let shop in svodData) {
+                    // Вычисляем Ленту для правила Купера
+                    for(let name in svodData[shop].items) {
+                        let catItem = Object.values(catalog).find(c => c && c.name === name) || {};
+                        let vendor = catItem.vendor || 'Лента';
+                        let price = parseFloat(catItem.price) || 0;
+                        if(vendor.toLowerCase() === 'лента') svodData[shop].lentaSum += (svodData[shop].items[name] * price);
                     }
 
-                    let cost = price * qty;
-                    if(vendor.toLowerCase() === 'озон' && isRepeat) cost = 0;
+                    let isKuper = svodData[shop].lentaSum > 0 && svodData[shop].lentaSum < 2000;
+
+                    html += `<tr><td colspan="4" style="background:#ede7f6; padding:15px; font-size:18px; color:#311B92;"><b>📍 ${shop}</b></td></tr>`;
+
+                    for(let name in svodData[shop].items) {
+                        let catItem = Object.values(catalog).find(c => c && c.name === name) || {};
+                        let vendor = catItem.vendor || 'Лента';
+                        let price = parseFloat(catItem.price) || 0;
+                        let qty = svodData[shop].items[name];
+                        let isRepeat = historyKeys.has(shop + "|" + name);
+                        let link = catItem.link ? `<a href="${catItem.link}" target="_blank" style="color:#0288d1; font-weight:bold;">🔗 Заказать</a>` : "";
+
+                        if(vendor.toLowerCase() === 'лента' && isKuper) {
+                            vendor = 'Купер';
+                        }
+
+                        let cost = price * qty;
+                        if(vendor.toLowerCase() === 'озон' && isRepeat) cost = 0;
+                        
+                        if (vendor.toLowerCase() === 'лента') totalLenta += cost;
+                        else if (vendor.toLowerCase() === 'озон') totalOzon += cost;
+                        else if (vendor.toLowerCase() === 'купер') totalKuper += cost;
+
+                        let repeatBadge = isRepeat ? `<span style='color:#d32f2f; font-size:12px; margin-left:5px; font-weight:bold;'>(Повтор)</span>` : ``;
+
+                        html += `<tr>
+                            <td style="font-size:15px; padding-left:25px;">${name} ${repeatBadge}</td>
+                            <td style="font-size:16px; font-weight:bold; color:#311b92; text-align:center;">${qty}</td>
+                            <td style="font-size:14px;">${vendor}</td>
+                            <td>${link}</td>
+                        </tr>`;
+                    }
                     
-                    if (vendor.toLowerCase() === 'лента') totalLenta += cost;
-                    else if (vendor.toLowerCase() === 'озон') totalOzon += cost;
-                    else if (vendor.toLowerCase() === 'купер') totalKuper += cost;
-
-                    let repeatBadge = isRepeat ? `<span style='color:#d32f2f; font-size:12px; margin-left:5px; font-weight:bold;'>(Повтор)</span>` : ``;
-
-                    html += `<tr>
-                        <td style="font-size:15px; padding-left:25px;">${name} ${repeatBadge}</td>
-                        <td style="font-size:16px; font-weight:bold; color:#311b92; text-align:center;">${qty}</td>
-                        <td style="font-size:14px;">${vendor}</td>
-                        <td>${link}</td>
-                    </tr>`;
-                }
-                
-                if(svodData[shop].comments.length > 0) {
-                    html += `<tr><td colspan="4" style="padding:15px; font-style:italic; font-size:15px; color:#ef6c00; background:#fff3e0;">💬 Комментарий: <b>${svodData[shop].comments.join(' | ')}</b></td></tr>`;
+                    if(svodData[shop].comments.length > 0) {
+                        html += `<tr><td colspan="4" style="padding:15px; font-style:italic; font-size:15px; color:#ef6c00; background:#fff3e0;">💬 Комментарий: <b>${svodData[shop].comments.join(' | ')}</b></td></tr>`;
+                    }
                 }
             }
             
-            html += `</table>
-                    <div style="display:flex; justify-content:flex-end; gap:20px; font-size:18px; background:#fff; padding:20px; border-radius:12px; box-shadow:0 4px 15px rgba(0,0,0,0.05);">
-                        <div style="text-align:center;">🛒 Лента<br><b style="font-size:22px; color:#2e7d32;">${totalLenta} ₽</b></div>
-                        <div style="text-align:center;">📦 Озон<br><b style="font-size:22px; color:#0288d1;">${totalOzon} ₽</b></div>
-                        <div style="text-align:center;">🛵 Купер<br><b style="font-size:22px; color:#c2185b;">${totalKuper} ₽</b></div>
-                        <div style="text-align:center; border-left:2px solid #eee; padding-left:20px;">💵 ИТОГО<br><b style="font-size:26px; color:#4A148C;">${totalLenta+totalOzon+totalKuper} ₽</b></div>
-                    </div>`;
+            html += `</table>`;
 
-            html += "<h3 style='font-size:22px; color:#311B92; margin-top:40px;'>🕒 Вся история операций</h3><table><tr><th>Кофейня</th><th>Тип</th><th>Дата</th><th>Детали</th><th>Комментарий</th></tr>";
+            if (Object.keys(svodData).length > 0) {
+                html += `<div style="display:flex; justify-content:flex-end; gap:20px; font-size:18px; background:#fff; padding:20px; border-radius:12px; box-shadow:0 4px 15px rgba(0,0,0,0.05);">
+                            <div style="text-align:center;">🛒 Лента<br><b style="font-size:22px; color:#2e7d32;">${totalLenta} ₽</b></div>
+                            <div style="text-align:center;">📦 Озон<br><b style="font-size:22px; color:#0288d1;">${totalOzon} ₽</b></div>
+                            <div style="text-align:center;">🛵 Купер<br><b style="font-size:22px; color:#c2185b;">${totalKuper} ₽</b></div>
+                            <div style="text-align:center; border-left:2px solid #eee; padding-left:20px;">💵 ИТОГО<br><b style="font-size:26px; color:#4A148C;">${totalLenta+totalOzon+totalKuper} ₽</b></div>
+                        </div>`;
+            }
+
+            // История операций - Сворачивающаяся
+            html += `<div onclick="document.getElementById('history-content').style.display = document.getElementById('history-content').style.display === 'none' ? 'block' : 'none'" style="cursor:pointer; background:#ede7f6; padding:15px; border-radius:10px; font-weight:bold; color:#311B92; margin-top:40px; display:flex; justify-content:space-between; font-size:18px;">
+                        <span>🕒 История операций (Закупки за месяц)</span><span>▼</span>
+                     </div>
+                     <div id="history-content" style="display:none; margin-top:15px;">
+                        <table><tr><th>Кофейня</th><th>Тип</th><th>Дата</th><th>Детали</th><th>Комментарий</th></tr>`;
             
-            allOrders.forEach(o => {
-                if(!o) return;
-                let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
-                let itemsStr = itemsArr.map(i => i ? `${i.name} <b>(${i.qty})</b>` : '').join(', ');
-                let date = o.timestamp ? new Date(o.timestamp).toLocaleString('ru-RU') : '---';
-                let modeLabel = o.mode === 'order' ? '📦 Закупка' : (o.mode === 'stoplist_fill' ? '🛑 Стоп' : '📋 Чек');
-                if(o.mode === 'new_shop') modeLabel = '🏗 Новая кофейня';
-                
-                html += `<tr class="order-row">
-                    <td><b style="color:#4A148C;">${o.shop}</b></td>
-                    <td><span style="background:#ede7f6; padding:5px 8px; border-radius:5px; font-weight:bold; font-size:13px;">${modeLabel}</span></td>
-                    <td style="color:#666; font-size:13px;">${date}</td>
-                    <td style="font-size:14px; line-height:1.5;">${itemsStr}</td>
-                    <td style="font-style:italic; font-size:13px; color:#888;">${o.comment || ''}</td>
-                </tr>`;
-            });
-            box.innerHTML = html + "</table>";
+            if (historyOrdersList.length === 0) {
+                html += `<tr><td colspan="5" style="text-align:center; color:#888;">История пуста</td></tr>`;
+            } else {
+                historyOrdersList.forEach(o => {
+                    let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
+                    let itemsStr = itemsArr.map(i => i ? `${i.name} <b>(${i.qty})</b>` : '').join(', ');
+                    let date = o.timestamp ? new Date(o.timestamp).toLocaleString('ru-RU') : '---';
+                    let modeLabel = o.mode === 'new_shop' ? '🏗 Новая кофейня' : '📦 Закупка';
+                    
+                    html += `<tr class="order-row">
+                        <td><b style="color:#4A148C;">${o.shop}</b></td>
+                        <td><span style="background:#ede7f6; padding:5px 8px; border-radius:5px; font-weight:bold; font-size:13px;">${modeLabel}</span></td>
+                        <td style="color:#666; font-size:13px;">${date}</td>
+                        <td style="font-size:14px; line-height:1.5;">${itemsStr}</td>
+                        <td style="font-style:italic; font-size:13px; color:#888;">${o.comment || ''}</td>
+                    </tr>`;
+                });
+            }
+            html += `</table></div>`;
+            
+            box.innerHTML = html;
         }
     }
 

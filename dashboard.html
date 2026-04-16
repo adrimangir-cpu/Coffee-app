@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <title>Coffee CRM - Управление сетью</title>
+    <title>Coffee TEIKU CRM - Управление сетью</title>
     <style>
         body { 
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; 
@@ -91,7 +91,7 @@
             border-radius: 8px; 
             font-family: inherit; 
             box-sizing: border-box; 
-            font-size:16px; 
+            font-size:15px; 
             font-weight: bold;
         }
         
@@ -120,19 +120,19 @@
             border-radius: 12px; 
             cursor: pointer; 
             font-weight: 900; 
-            font-size: 18px; 
+            font-size: 20px; 
             box-shadow: 0 4px 15px rgba(76,175,80,0.3); 
         }
         
         .btn-add { 
             background: linear-gradient(135deg, #03a9f4 0%, #0277bd 100%); 
             color: white; 
-            padding: 16px 28px; 
+            padding: 14px 28px; 
             border: none; 
             border-radius: 10px; 
             cursor: pointer; 
             font-weight: 900; 
-            font-size: 17px; 
+            font-size:16px; 
         }
         
         .repeat-row { background-color: #ffebee !important; }
@@ -153,10 +153,11 @@
             transition: 0.2s; 
         }
         
-        .ch-val { text-align: center; font-weight: bold; font-size:17px; }
+        .ch-val { text-align: center; font-weight: bold; font-size:16px; }
         .ch-full { color: #2e7d32; }
         .ch-empty { color: #c62828; }
         
+        /* Стили для настроек */
         .settings-panel { 
             background: #f8f9fa; 
             padding: 20px; 
@@ -179,6 +180,17 @@
             width: auto; 
             margin-right: 12px; 
             transform: scale(1.5); 
+        }
+        
+        .edit-chk-input {
+            width: 100%;
+            text-align: center;
+            padding: 8px;
+            font-size: 15px;
+            font-weight: bold;
+            color: #311B92;
+            border: 2px solid #7E57C2;
+            border-radius: 6px;
         }
     </style>
 </head>
@@ -206,6 +218,7 @@
     let currentPath = "";
     let appSettings = { hidden_categories: {}, new_shop_order_active: false };
     let cachedData = {};
+    let isChecklistEditMode = false;
 
     async function loadTab(type, btn) {
         document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
@@ -254,6 +267,7 @@
                 cachedData.catalog = await resCheck.json() || {};
                 cachedData.orders = await resOrders.json() || {};
                 Object.keys(cachedData.orders).forEach(k => { if(cachedData.orders[k]) cachedData.orders[k].key = k; });
+                isChecklistEditMode = false; // Сбрасываем режим редактирования при входе
                 renderChecksTable();
             }
             else if (type === 'orders') {
@@ -279,6 +293,14 @@
         let subCats = [...new Set(Object.values(currentCatalog).map(i => i.cat).filter(c => c))];
 
         let html = `
+        <div style="display:flex; justify-content:space-between; margin-bottom:20px; align-items:center;">
+            <h3 style="margin:0; font-size:24px; color:#4A148C;">Редактор товаров: ЗАКУПКА</h3>
+            <div>
+                <button class="btn-add" onclick="addItemOrder()">➕ Добавить позицию</button>
+                <button class="btn-save" style="margin:0 0 0 10px; width:auto; padding:16px 28px;" onclick="saveCatalog()">💾 СОХРАНИТЬ В БАЗУ</button>
+            </div>
+        </div>
+
         <div class="settings-panel">
             <h4 style="margin-top:0; font-size:19px; color:#d32f2f;">⚙️ Настройки (Скрывать категории)</h4>
             <div style="display:flex; flex-wrap:wrap; gap:20px;">
@@ -297,13 +319,6 @@
         
         html += `</div></div>
         
-        <div style="display:flex; justify-content:space-between; margin-bottom:20px; align-items:center;">
-            <h3 style="margin:0; font-size:24px; color:#4A148C;">Редактор товаров: ЗАКУПКА</h3>
-            <div>
-                <button class="btn-add" onclick="addItemOrder()">➕ Добавить позицию</button>
-                <button class="btn-save" style="margin:0 0 0 10px; width:auto; padding:16px 28px;" onclick="saveCatalog()">💾 СОХРАНИТЬ В БАЗУ</button>
-            </div>
-        </div>
         <table style="min-width:1300px;"><tr>
             <th style="width:160px;">Глоб. Категория</th>
             <th style="width:160px;">Подкатегория</th>
@@ -360,7 +375,9 @@
 
     function renderCatalogChecklist() {
         const box = document.getElementById('content');
-        let uniqueCats = [...new Set(Object.values(currentCatalog).map(i => i.cat).filter(c => c))];
+        
+        let globalCats = [...new Set(Object.values(currentCatalog).map(i => i.globalCat).filter(c => c))];
+        let subCats = [...new Set(Object.values(currentCatalog).map(i => i.cat).filter(c => c))];
         
         let html = `
         <div style="display:flex; justify-content:space-between; margin-bottom:20px; align-items:center;">
@@ -370,39 +387,64 @@
                 <button class="btn-save" style="margin:0 0 0 10px; width:auto; padding:16px 28px;" onclick="saveCatalog()">💾 СОХРАНИТЬ В БАЗУ</button>
             </div>
         </div>
-        <table style="min-width:700px;"><tr>
-            <th>Категория</th>
-            <th>Наименование</th>
-            <th style="width:220px;">Формат ввода</th>
+        <table style="min-width:1000px;"><tr>
+            <th style="width:160px;">Глоб. Категория</th>
+            <th style="width:180px;">Подкатегория</th>
+            <th style="width:250px;">Наименование</th>
+            <th style="width:180px;">Формат ввода</th>
             <th style="width:60px;">Удалить</th>
         </tr>`;
         
-        let sortedKeys = Object.keys(currentCatalog).sort((a,b) => (currentCatalog[a].cat||'').localeCompare(currentCatalog[b].cat||''));
-        
-        sortedKeys.forEach(k => {
+        let grouped = {};
+        Object.keys(currentCatalog).forEach(k => {
             let item = currentCatalog[k];
-            let catOptions = `<option value="${item.cat}">${item.cat}</option>`;
-            uniqueCats.forEach(c => { if(c !== item.cat) catOptions += `<option value="${c}">${c}</option>`; });
-            catOptions += `<option value="НОВАЯ КАТЕГОРИЯ">-- Создать новую --</option>`;
+            let gc = item.globalCat || "Основное меню";
+            let sc = item.cat || "Прочее";
+            if(!grouped[gc]) grouped[gc] = {};
+            if(!grouped[gc][sc]) grouped[gc][sc] = [];
+            grouped[gc][sc].push({k: k, item: item});
+        });
 
-            let isVol = (item.unit && item.unit.toLowerCase().includes("объем"));
+        Object.keys(grouped).sort().forEach(gc => {
+            let safeGc = gc.replace(/[^a-zA-Z0-9а-яА-Я]/g, '');
+            html += `<tr class="cat-group-header" onclick="toggleCatGroup('gc_${safeGc}')"><td colspan="5" style="padding:15px; background:#d1c4e9; font-size:18px;">🌍 <b>${gc}</b> <span style="float:right;">▼</span></td></tr>`;
+            
+            Object.keys(grouped[gc]).sort().forEach(sc => {
+                let safeSc = sc.replace(/[^a-zA-Z0-9а-яА-Я]/g, '');
+                html += `<tr class="cat-group-header group-gc_${safeGc}" onclick="toggleCatGroup('sc_${safeSc}')"><td colspan="5" style="padding:12px 15px; padding-left:30px; font-size:16px;">📂 ${sc} <span style="float:right;">▼</span></td></tr>`;
+                
+                grouped[gc][sc].forEach(data => {
+                    let k = data.k; let item = data.item;
+                    
+                    let gcatOptions = `<option value="${item.globalCat || 'Основное меню'}">${item.globalCat || 'Основное меню'}</option>`;
+                    globalCats.forEach(c => { if(c !== (item.globalCat || 'Основное меню')) gcatOptions += `<option value="${c}">${c}</option>`; });
+                    gcatOptions += `<option value="НОВАЯ ГЛОБАЛЬНАЯ">-- Создать --</option>`;
 
-            html += `<tr>
-                <td><select onchange="updateVal('${k}','cat',this.value)" style="font-weight:bold; color:#7E57C2;">${catOptions}</select></td>
-                <td><input type="text" style="font-weight:bold; font-size:17px; color:#311b92;" value="${item.name || ''}" onchange="updateVal('${k}','name',this.value)"></td>
-                <td><select onchange="updateVal('${k}','unit',this.value)">
-                        <option value="текст" ${!isVol?'selected':''}>Текст (Шт / Уп)</option>
-                        <option value="объем" ${isVol?'selected':''}>Объем (Полная / Половина)</option>
-                    </select></td>
-                <td style="text-align:center;"><button class="btn-del" onclick="deleteItem('${k}')">✕</button></td>
-            </tr>`;
+                    let catOptions = `<option value="${item.cat}">${item.cat}</option>`;
+                    subCats.forEach(c => { if(c !== item.cat) catOptions += `<option value="${c}">${c}</option>`; });
+                    catOptions += `<option value="НОВАЯ КАТЕГОРИЯ">-- Создать --</option>`;
+
+                    let isVol = (item.unit && item.unit.toLowerCase().includes("объем"));
+
+                    html += `<tr class="chk-row group-gc_${safeGc} group-sc_${safeSc}">
+                        <td><select onchange="updateVal('${k}','globalCat',this.value)">${gcatOptions}</select></td>
+                        <td><select onchange="updateVal('${k}','cat',this.value)" style="font-weight:bold; color:#7E57C2;">${catOptions}</select></td>
+                        <td><input type="text" style="font-weight:bold; font-size:17px; color:#311b92;" value="${item.name || ''}" onchange="updateVal('${k}','name',this.value)"></td>
+                        <td><select onchange="updateVal('${k}','unit',this.value)">
+                                <option value="текст" ${!isVol?'selected':''}>Текст (Шт / Уп)</option>
+                                <option value="объем" ${isVol?'selected':''}>Объем (Полная / Половина)</option>
+                            </select></td>
+                        <td style="text-align:center;"><button class="btn-del" onclick="deleteItem('${k}')">✕</button></td>
+                    </tr>`;
+                });
+            });
         });
         box.innerHTML = html + "</table>";
     }
 
     function renderMissing() {
         const box = document.getElementById('content');
-        let html = "<h3 style='color:#E53935; font-size:24px;'>‼️ Актуальные Недовозы</h3><table><tr><th>Точка</th><th>Товар</th><th>Кол-во</th><th>Установить статус</th></tr>";
+        let html = "<h3 style='color:#E53935; font-size:24px;'>‼️ Актуальные Недовозы</h3><table><tr><th>Точка</th><th>Товар</th><th>Кол-во</th><th>Статус</th><th>Удалить</th></tr>";
         
         for(let k in cachedData.missing) {
             let m = cachedData.missing[k];
@@ -418,6 +460,7 @@
                         <option value="oos" ${m.status==='oos'?'selected':''}>Нет в наличии</option>
                     </select>
                 </td>
+                <td style="text-align:center;"><button class="btn-del" onclick="deleteMissing('${k}')">🗑</button></td>
             </tr>`;
         }
         box.innerHTML = html + "</table><p style='margin-top:20px; font-size:16px; color:#777; background:#fff9c4; padding:15px; border-radius:10px;'>💡 <b>Подсказка:</b> Если выбрать статус 'ОТМЕНЕН', этот товар автоматически появится в корзине сотрудника при следующем открытии закупки.</p>";
@@ -483,7 +526,6 @@
             }
         });
 
-        // Сортировка категорий чек-листа в правильном порядке
         const catOrderArr = ["Стаканы и крышки", "Расходники", "Пищевые расходники", "Зерно", "Бабл ти", "Пищевые порошки", "Сиропы"];
         
         let groupedCat = {};
@@ -493,18 +535,27 @@
         });
 
         let sortedCats = Object.keys(groupedCat).sort((a,b) => {
-            let ia = catOrderArr.indexOf(a);
-            let ib = catOrderArr.indexOf(b);
-            if (ia === -1) ia = 999;
-            if (ib === -1) ib = 999;
+            let ia = catOrderArr.indexOf(a); let ib = catOrderArr.indexOf(b);
+            if (ia === -1) ia = 999; if (ib === -1) ib = 999;
             if (ia !== ib) return ia - ib;
             return a.localeCompare(b);
         });
 
-        let html = `<h3 style="color:#1a237e; font-size:24px;">✅ Сводная Таблица Чек-листов (Сегодня)</h3>
-                    <p style="font-size:16px; color:#7E57C2; font-weight:bold;">Нажмите на категорию, чтобы развернуть список товаров. Кликните на цифру, чтобы её изменить.</p>
-                    <table style="min-width:1200px;"><tr><th style="width:250px;">Товар</th>`;
-        
+        let btnEditColor = isChecklistEditMode ? "#f44336" : "#0288d1";
+        let btnEditText = isChecklistEditMode ? "❌ Выйти из редактирования" : "✏️ Режим редактирования";
+
+        let html = `<div style="display:flex; justify-content:space-between; margin-bottom:15px; align-items:center;">
+                        <h3 style="color:#1a237e; font-size:24px; margin:0;">✅ Сводная Таблица Чек-листов (Сегодня)</h3>
+                        <button onclick="toggleChecklistEdit()" class="btn-add" style="background:${btnEditColor};">${btnEditText}</button>
+                    </div>`;
+
+        if(isChecklistEditMode) {
+            html += `<button onclick="saveChecklistEdits()" class="btn-save" style="margin-top:0; margin-bottom:20px;">💾 СОХРАНИТЬ ВСЕ ИЗМЕНЕНИЯ</button>`;
+        } else {
+            html += `<p style="font-size:16px; color:#7E57C2; font-weight:bold;">Нажмите на категорию, чтобы развернуть список товаров.</p>`;
+        }
+
+        html += `<table style="min-width:1200px;"><tr><th style="width:250px;">Товар</th>`;
         shops.forEach(s => html += `<th style="text-align:center; font-size:15px;">${s}</th>`);
         html += `</tr>`;
 
@@ -514,7 +565,8 @@
                         <td colspan="${shops.length+1}" style="padding:15px; font-size:18px;">📂 ${cat} <span style="float:right; opacity:0.5;">▼</span></td>
                      </tr>`;
             
-            groupedCat[cat].sort().forEach(itemName => {
+            // Сортировка по алфавиту внутри категории
+            groupedCat[cat].sort((a,b) => a.localeCompare(b)).forEach(itemName => {
                 html += `<tr class="chk-row group-${safeCat}" style="display:none; background-color:#fff;">
                             <td style="font-size:16px;"><b>${itemName}</b></td>`;
                 
@@ -529,11 +581,18 @@
                         if(found && found.qty !== undefined && found.qty !== null && found.qty !== "") val = String(found.qty);
                     }
                     
-                    let cl = "ch-val ";
-                    if(val === "Полная" || val === "В наличии" || val === "1") cl += "ch-full";
-                    else if(val === "0" || val === 0 || val === "Меньше половины" || val === "Закончилось") cl += "ch-empty";
-                    
-                    html += `<td class="${cl}" style="font-size:16px; cursor:pointer;" onclick="editChecklistCell('${orderKey}', '${itemName}', '${val}')" title="Кликните для изменения">${val}</td>`;
+                    if(isChecklistEditMode) {
+                        if(orderKey) {
+                            html += `<td><input type="text" class="edit-chk-input" data-order="${orderKey}" data-item="${itemName}" value="${val}"></td>`;
+                        } else {
+                            html += `<td style="text-align:center; color:#aaa; font-style:italic;">Нет формы</td>`;
+                        }
+                    } else {
+                        let cl = "ch-val ";
+                        if(val === "Полная" || val === "В наличии" || val === "1") cl += "ch-full";
+                        else if(val === "0" || val === 0 || val === "Меньше половины" || val === "Закончилось") cl += "ch-empty";
+                        html += `<td class="${cl}" style="font-size:16px;">${val}</td>`;
+                    }
                 });
                 
                 html += `</tr>`;
@@ -654,10 +713,10 @@
                     <span>🕒 История операций (Закупки за месяц)</span><span>▼</span>
                  </div>
                  <div id="history-content" style="display:none; margin-top:15px;">
-                    <table><tr><th>Кофейня</th><th>Тип</th><th>Дата</th><th>Детали</th><th>Комментарий</th></tr>`;
+                    <table><tr><th>Кофейня</th><th>Тип</th><th>Дата</th><th>Детали</th><th>Комментарий</th><th>Удалить</th></tr>`;
         
         if (historyOrdersList.length === 0) {
-            html += `<tr><td colspan="5" style="text-align:center; color:#888; font-size:17px; font-weight:bold;">История пуста</td></tr>`;
+            html += `<tr><td colspan="6" style="text-align:center; color:#888; font-size:17px; font-weight:bold;">История пуста</td></tr>`;
         } else {
             historyOrdersList.forEach(o => {
                 let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
@@ -671,6 +730,7 @@
                     <td style="color:#666; font-size:15px; font-weight:bold;">${date}</td>
                     <td style="font-size:16px; line-height:1.5;">${itemsStr}</td>
                     <td style="font-style:italic; font-size:15px; color:#888;">${o.comment || ''}</td>
+                    <td style="text-align:center;"><button class="btn-del" onclick="deleteOrder('${o.key}')">🗑</button></td>
                 </tr>`;
             });
         }
@@ -683,27 +743,46 @@
     // УТИЛИТЫ CRM И ОБРАБОТЧИКИ СОБЫТИЙ
     // ==========================================
 
-    // Редактирование чек-листа
-    async function editChecklistCell(orderKey, itemName, currentVal) {
-        if(!orderKey) return alert("Чек-лист для этой кофейни сегодня еще не отправлялся!");
-        let newVal = prompt(`Изменить значение для "${itemName}":`, currentVal);
-        if(newVal !== null && newVal.trim() !== currentVal) {
-            newVal = newVal.trim();
-            try {
-                let res = await fetch(`${FB_URL}/orders/${orderKey}.json`);
-                let order = await res.json();
+    function toggleChecklistEdit() {
+        isChecklistEditMode = !isChecklistEditMode;
+        renderChecksTable();
+    }
+
+    async function saveChecklistEdits() {
+        let inputs = document.querySelectorAll('.edit-chk-input');
+        let updates = {};
+        
+        inputs.forEach(input => {
+            let oKey = input.getAttribute('data-order');
+            let item = input.getAttribute('data-item');
+            let val = input.value.trim();
+            if(!updates[oKey]) updates[oKey] = {};
+            updates[oKey][item] = val;
+        });
+
+        const btn = document.querySelector('.btn-save');
+        if(btn) btn.innerHTML = "⌛ СОХРАНЕНИЕ...";
+
+        try {
+            for(let oKey in updates) {
+                let order = cachedData.orders[oKey];
+                if(!order) continue;
                 let itemsArr = Array.isArray(order.items) ? order.items : Object.values(order.items||{});
-                let item = itemsArr.find(i => i && i.name === itemName);
-                if(item) {
-                    item.qty = newVal;
-                } else {
-                    itemsArr.push({name: itemName, qty: newVal, cat: "Прочее"}); 
-                }
-                await fetch(`${FB_URL}/orders/${orderKey}/items.json`, {method:'PUT', body: JSON.stringify(itemsArr)});
                 
-                // Перезагружаем вкладку для отображения
-                loadTab('checks_table', document.querySelector('.tab-btn.active'));
-            } catch(e) { alert("Ошибка при сохранении: " + e.message); }
+                for(let item in updates[oKey]) {
+                    let found = itemsArr.find(i => i && i.name === item);
+                    if(found) {
+                        found.qty = updates[oKey][item];
+                    } else {
+                        itemsArr.push({name: item, qty: updates[oKey][item], cat: "Прочее"});
+                    }
+                }
+                await fetch(`${FB_URL}/orders/${oKey}/items.json`, {method:'PUT', body: JSON.stringify(itemsArr)});
+            }
+            alert("✅ Изменения в чек-листе успешно сохранены!");
+            loadTab('checks_table', document.querySelector('.tab-btn.active'));
+        } catch(e) {
+            alert("❌ Ошибка сохранения: " + e.message);
         }
     }
 
@@ -737,7 +816,7 @@
     
     function addItemChecklist() { 
         let id = "item_" + Date.now(); 
-        currentCatalog[id] = { cat: "Прочее", name: "Название", unit: "текст" }; 
+        currentCatalog[id] = { globalCat: "Основное меню", cat: "Прочее", name: "Название", unit: "текст" }; 
         renderCatalogChecklist();
     }
     
@@ -748,6 +827,20 @@
             if(type === 'catalog_order') renderCatalogOrder();
             else renderCatalogChecklist();
         } 
+    }
+
+    async function deleteOrder(key) {
+        if(confirm("Удалить этот заказ навсегда?")) {
+            await fetch(`${FB_URL}/orders/${key}.json`, { method: 'DELETE' });
+            loadTab('orders', document.querySelector('.tab-btn.active'));
+        }
+    }
+
+    async function deleteMissing(key) {
+        if(confirm("Удалить этот недовоз навсегда?")) {
+            await fetch(`${FB_URL}/missing_items/${key}.json`, { method: 'DELETE' });
+            loadTab('missing', document.querySelector('.tab-btn.active'));
+        }
     }
 
     async function toggleSetting(key, val) {

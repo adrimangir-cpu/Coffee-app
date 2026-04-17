@@ -152,9 +152,6 @@
             font-size:16px; 
         }
         
-        /* =========================================
-           ОФОРМЛЕНИЕ СТРОК ТАБЛИЦ
-        ========================================= */
         .repeat-row { background-color: #ffebee !important; }
         .order-row:hover { background-color: #f9f9f9; }
         
@@ -177,9 +174,7 @@
         .ch-full { color: #2e7d32; }
         .ch-empty { color: #c62828; }
         
-        /* =========================================
-           БЛОК НАСТРОЕК (ЗАКРЕПЛЕННЫЙ)
-        ========================================= */
+        /* Стили для настроек */
         .settings-panel { 
             background: #f8f9fa; 
             padding: 20px; 
@@ -223,7 +218,7 @@
 <body>
 
 <div class="nav">
-    <h2 style="margin:0;">💼 Coffee CRM</h2>
+    <h2 style="margin:0;">💼 Coffee TEIKU CRM</h2>
     <div id="db-status">☁️ База активна</div>
 </div>
 
@@ -248,7 +243,6 @@
     let currentCatalog = {};
     let currentPath = "";
     let currentTabType = "";
-    let isNewShopCatalog = false; // Для переключения режимов закупки
     let appSettings = { hidden_categories: {}, new_shop_order_active: false };
     let cachedData = {};
     let isChecklistEditMode = false;
@@ -272,7 +266,6 @@
 
         try {
             if (type === 'catalog_order') {
-                isNewShopCatalog = false;
                 currentPath = "catalogs/order";
                 let [res, setRes] = await Promise.all([
                     fetch(`${FB_URL}/${currentPath}.json`),
@@ -316,7 +309,6 @@
                 ]);
                 cachedData.catalog = await resCheck.json() || {};
                 
-                // Кэшируем заказы вместе с их ключами Firebase
                 let ordersObj = await resOrders.json() || {};
                 Object.keys(ordersObj).forEach(k => { 
                     if (ordersObj[k]) ordersObj[k].key = k; 
@@ -327,11 +319,9 @@
                 renderChecksTable();
             }
             else if (type === 'orders') {
-                // Загружаем оба справочника (обычный и новый), чтобы ссылки подтянулись отовсюду
-                let [ordersRes, catRes, newCatRes] = await Promise.all([
+                let [ordersRes, catRes] = await Promise.all([
                     fetch(`${FB_URL}/orders.json`),
-                    fetch(`${FB_URL}/catalogs/order.json`),
-                    fetch(`${FB_URL}/catalogs/newshop.json`)
+                    fetch(`${FB_URL}/catalogs/order.json`)
                 ]);
                 
                 let ordersObj = await ordersRes.json() || {};
@@ -340,11 +330,7 @@
                 });
                 
                 cachedData.orders = ordersObj;
-                
-                let catOrd = await catRes.json() || {};
-                let catNew = await newCatRes.json() || {};
-                cachedData.catalog = { ...catNew, ...catOrd };
-                
+                cachedData.catalog = await catRes.json() || {};
                 renderOrdersSvod();
             }
             else if (type === 'stats') {
@@ -427,17 +413,6 @@
         box.innerHTML = html;
     }
 
-    // Функция переключения каталога закупки
-    async function switchOrderCatalog(isNew) {
-        isNewShopCatalog = isNew;
-        currentPath = isNew ? "catalogs/newshop" : "catalogs/order";
-        const box = document.getElementById('content');
-        box.innerHTML = "<div style='text-align:center; padding:40px; font-weight:bold; font-size:22px; color:#7E57C2;'>⌛ Загрузка каталога...</div>";
-        let res = await fetch(`${FB_URL}/${currentPath}.json`);
-        currentCatalog = await res.json() || {};
-        renderCatalogOrder();
-    }
-
     // ==========================================
     // 1. РЕНДЕР: СПРАВОЧНИК ЗАКУПКИ
     // ==========================================
@@ -454,7 +429,7 @@
         let subCats = [...new Set(Object.values(currentCatalog).map(i => i.cat).filter(c => c && !c.includes("!!!")))];
 
         let html = `
-        <div style="display:flex; justify-content:space-between; margin-bottom:10px; align-items:center;">
+        <div style="display:flex; justify-content:space-between; margin-bottom:20px; align-items:center;">
             <h3 style="margin:0; font-size:24px; color:#4A148C;">Редактор товаров: ЗАКУПКА</h3>
             <div style="display:flex; gap:15px;">
                 <button class="btn-add" onclick="addItemOrder()">➕ Добавить позицию</button>
@@ -462,14 +437,12 @@
             </div>
         </div>
 
-        <div style="margin-bottom: 20px; display: flex; gap: 10px;">
-            <button class="tab-btn ${!isNewShopCatalog ? 'active' : ''}" style="padding: 10px 20px; font-size: 15px;" onclick="switchOrderCatalog(false)">📦 Обычная закупка</button>
-            <button class="tab-btn ${isNewShopCatalog ? 'active' : ''}" style="padding: 10px 20px; font-size: 15px;" onclick="switchOrderCatalog(true)">🏗 На новую кофейню</button>
-        </div>
-
         <div class="settings-panel">
-            <h4 style="margin-top:0; font-size:19px; color:#d32f2f;">⚙️ Настройки (Скрывать глобальные категории в приложении)</h4>
-            <div style="display:flex; flex-wrap:wrap; gap:20px;">
+            <h4 style="margin-top:0; font-size:19px; color:#d32f2f; cursor:pointer; display:flex; justify-content:space-between; align-items:center;" onclick="toggleElements('settings-content')">
+                <span>⚙️ Настройки (Скрывать глобальные категории в приложении)</span>
+                <span>▼</span>
+            </h4>
+            <div class="settings-content" style="display:none; flex-wrap:wrap; gap:20px; margin-top:15px;">
                 <label class="toggle-label" style="color:#2e7d32;">
                     <input type="checkbox" onchange="toggleSetting('new_shop_order_active', this.checked)" ${appSettings.new_shop_order_active ? 'checked' : ''}> 
                     Показывать кнопку "Закупка на новую кофейню"
@@ -838,7 +811,7 @@
         const box = document.getElementById('content');
         let shops = ["Бояринова", "Гагарина", "Вертолетчиков", "Липчанского", "Новокосино", "Новокосино 2", "Старое Павлино", "Красноказарменная", "Ухтомского ополчения"];
         
-        // Берем самый ПОСЛЕДНИЙ чек-лист по каждой точке (даже если он был отправлен вчера)
+        // Берем самый ПОСЛЕДНИЙ чек-лист по каждой точке
         let latestChecklists = {};
         Object.values(cachedData.orders).forEach(o => {
             if (o && o.mode === 'checklist') {
@@ -912,7 +885,6 @@
                     if (latestChecklists[s] && latestChecklists[s].items) {
                         let itemsArr = Array.isArray(latestChecklists[s].items) ? latestChecklists[s].items : Object.values(latestChecklists[s].items);
                         let found = itemsArr.find(i => i && i.name === itemName);
-                        // ОТОБРАЖАЕМ НОЛЬ как нормальное значение!
                         if (found && found.qty !== undefined && found.qty !== null && String(found.qty).trim() !== "") {
                             val = String(found.qty);
                         }
@@ -1067,6 +1039,7 @@
                     </div>`;
         }
 
+        // История операций (Только закупки, сворачиваемая)
         html += `
             <div onclick="toggleElements('history-content')" style="cursor:pointer; background:#ede7f6; padding:18px; border-radius:12px; font-weight:900; color:#311B92; margin-top:40px; display:flex; justify-content:space-between; font-size:20px;">
                 <span>🕒 История операций (Собранные закупки за месяц)</span><span>▼</span>
@@ -1172,7 +1145,15 @@
             let newCat = prompt("Введите название новой категории:");
             if (newCat) {
                 currentCatalog[id][field] = newCat;
+                // Принудительная перерисовка
+                if (currentPath.includes('order')) renderCatalogOrder();
+                else if (currentPath.includes('stoplist')) renderCatalogStoplist();
+                else renderCatalogChecklist();
             } else {
+                // Если отменили ввод, возвращаем выпадающий список обратно
+                if (currentPath.includes('order')) renderCatalogOrder();
+                else if (currentPath.includes('stoplist')) renderCatalogStoplist();
+                else renderCatalogChecklist();
                 return;
             }
         } else {

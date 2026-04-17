@@ -401,6 +401,7 @@
             html += `<div class="card" style="flex: 1 1 calc(33% - 20px); min-width:320px; padding:25px; background:#fff; border-radius:16px; box-shadow:0 4px 15px rgba(0,0,0,0.05);">
                         <h4 style="margin-top:0; color:#311b92; font-size:20px; border-bottom:2px solid #eee; padding-bottom:10px; font-weight:900;">${s}</h4>`;
             
+            // Топ заканчивающихся
             let empties = Object.entries(stats[s].emptyCount).sort((a,b) => b[1] - a[1]).slice(0, 5);
             html += `<b style="color:#D50000; font-size:16px;">🛑 Часто заканчивается (Чек-лист):</b>
                      <ul style="margin-top:5px; padding-left:20px; font-size:15px; color:#555; font-weight:bold;">`;
@@ -411,6 +412,7 @@
             }
             html += `</ul>`;
 
+            // Средний заказ
             let averages = Object.entries(stats[s].orderSum).map(e => {
                 let avg = (e[1] / stats[s].orderCount[e[0]]).toFixed(1);
                 return [e[0], avg];
@@ -515,6 +517,7 @@
             grouped[gc][sc].push({k: k, item: item});
         });
 
+        // Сортировка: Новые папки !!! всегда наверху
         Object.keys(grouped).sort((a,b) => {
             if(a.includes("!!!")) return -1;
             if(b.includes("!!!")) return 1;
@@ -535,6 +538,7 @@
                 let safeSc = getSafeId(gc + sc); 
                 let displaySc = sc.replace("!!! НОВОЕ", "Заполните данные");
                 
+                // Подкатегория скрыта на входе (кроме новых)
                 let displayStyle = gc.includes("!!!") ? "table-row" : "none";
                 
                 html += `<tr class="cat-group-header sub_${safeGc}" style="display:${displayStyle};" onclick="toggleElements('item_${safeSc}')">
@@ -836,12 +840,13 @@
     }
 
     // ==========================================
-    // 5. РЕНДЕР: ТАБЛИЦА ЧЕК-ЛИСТОВ
+    // 5. РЕНДЕР: ТАБЛИЦА ЧЕК-ЛИСТОВ (С РЕДАКТИРОВАНИЕМ)
     // ==========================================
     function renderChecksTable() {
         const box = document.getElementById('content');
         let shops = ["Бояринова", "Гагарина", "Вертолетчиков", "Липчанского", "Новокосино", "Новокосино 2", "Старое Павлино", "Красноказарменная", "Ухтомского ополчения"];
         
+        // Берем самый ПОСЛЕДНИЙ чек-лист по каждой точке
         let latestChecklists = {};
         Object.values(cachedData.orders).forEach(o => {
             if (o && o.mode === 'checklist') {
@@ -887,6 +892,7 @@
         html += `<table style="min-width:1200px;"><tr><th style="width:250px;">Товар</th>`;
         
         shops.forEach(s => {
+            // ВЫВОД ДАТЫ В ШАПКЕ ТАБЛИЦЫ
             let dateStr = "Нет данных";
             if (latestChecklists[s] && latestChecklists[s].timestamp) {
                 let d = new Date(latestChecklists[s].timestamp);
@@ -914,6 +920,7 @@
                     if (latestChecklists[s] && latestChecklists[s].items) {
                         let itemsArr = Array.isArray(latestChecklists[s].items) ? latestChecklists[s].items : Object.values(latestChecklists[s].items);
                         let found = itemsArr.find(i => i && i.name === itemName);
+                        // ОТОБРАЖАЕМ НОЛЬ как нормальное значение!
                         if (found && found.qty !== undefined && found.qty !== null && String(found.qty).trim() !== "") {
                             val = String(found.qty);
                         }
@@ -934,6 +941,7 @@
                     }
                 });
                 
+                // ДУБЛИРУЕМ ТОВАР СПРАВА
                 html += `<td style="font-size:16px; text-align:right;"><b>${itemName}</b></td></tr>`;
             });
         });
@@ -1033,7 +1041,10 @@
 
                 let isKuper = svodData[shop].lentaSum > 0 && svodData[shop].lentaSum < 2000;
 
-                html += `<tr><td colspan="4" style="background:#ede7f6; padding:15px; font-size:19px; color:#311B92;"><b>📍 ${shop}</b></td></tr>`;
+                let safeShopId = getSafeId(shop);
+                html += `<tr class="cat-group-header" onclick="toggleElements('svod_${safeShopId}')">
+                            <td colspan="4" style="background:#ede7f6; padding:15px; font-size:19px; color:#311B92;"><b>📍 ${shop}</b> <span style="float:right;">▼</span></td>
+                         </tr>`;
 
                 let sortedItemNames = Object.keys(svodData[shop].items).sort((a,b) => {
                     let catItemA = Object.values(cachedData.catalog).find(c => c && c.name === a) || {};
@@ -1072,7 +1083,7 @@
                     let repeatBadge = isRepeat ? `<span style='color:#d32f2f; font-size:13px; margin-left:5px; font-weight:bold;'>(Повтор)</span>` : ``;
 
                     if (isSvodEditMode) {
-                        html += `<tr>
+                        html += `<tr class="svod_${safeShopId}" style="display:none;">
                             <td style="font-size:17px; padding-left:25px; font-weight:bold; color:${isDeleted ? '#aaa' : '#333'}">${name} ${repeatBadge}</td>
                             <td style="font-size:18px; font-weight:bold; color:${isDeleted ? '#aaa' : '#311b92'}; text-align:center;">${qty}</td>
                             <td style="font-size:16px; color:${isDeleted ? '#aaa' : '#333'}">${vendor}</td>
@@ -1081,7 +1092,7 @@
                             </td>
                         </tr>`;
                     } else {
-                        html += `<tr>
+                        html += `<tr class="svod_${safeShopId}" style="display:none;">
                             <td style="font-size:17px; padding-left:25px; font-weight:bold;">${name} ${repeatBadge}</td>
                             <td style="font-size:18px; font-weight:bold; color:#311b92; text-align:center;">${qty}</td>
                             <td style="font-size:16px;">${vendor}</td>
@@ -1091,7 +1102,7 @@
                 });
                 
                 if(svodData[shop].comments.length > 0) {
-                    html += `<tr><td colspan="4" style="padding:15px; font-style:italic; font-size:17px; color:#ef6c00; background:#fff3e0;">💬 Комментарий: <b>${svodData[shop].comments.join(' | ')}</b></td></tr>`;
+                    html += `<tr class="svod_${safeShopId}" style="display:none;"><td colspan="4" style="padding:15px; font-style:italic; font-size:17px; color:#ef6c00; background:#fff3e0;">💬 Комментарий: <b>${svodData[shop].comments.join(' | ')}</b></td></tr>`;
                 }
             }
         }
@@ -1152,18 +1163,6 @@
     // ==========================================
     // УТИЛИТЫ CRM, СОХРАНЕНИЯ И УДАЛЕНИЯ
     // ==========================================
-    function toggleElements(cls) { 
-        let els = document.querySelectorAll('.' + cls);
-        if (els.length === 0) {
-            let single = document.getElementById(cls);
-            if (single) single.style.display = single.style.display === 'none' ? 'block' : 'none';
-            return;
-        }
-        els.forEach(el => {
-            el.style.display = el.style.display === 'none' ? 'table-row' : 'none';
-        }); 
-    }
-
     function toggleSvodEdit() {
         isSvodEditMode = !isSvodEditMode;
         svodDeletions = [];
@@ -1176,7 +1175,7 @@
         tr.style.textDecoration = 'line-through';
         svodDeletions.push({shop: shop, name: name});
         btn.disabled = true;
-        renderOrdersSvod(); // Принудительно пересчитываем итоги с учетом удаления
+        renderOrdersSvod(); 
     }
 
     async function saveSvodEdits() {

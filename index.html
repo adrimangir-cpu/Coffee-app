@@ -4,7 +4,7 @@
   <base target="_top">
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>Coffee Management App</title>
+  <title>Coffee Management App v4.5</title>
   
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-app-compat.js"></script>
@@ -321,7 +321,6 @@
       scrollToTop();
     }
 
-    // НОВЫЙ БЕЗОПАСНЫЙ ID (Предотвращает ошибки если категория начинается с цифры)
     function getSafeId(str) {
         if (!str) return "empty";
         return "id_" + str.replace(/[^a-zA-Z0-9а-яА-Я]/g, '');
@@ -743,6 +742,7 @@
           svod: false 
       });
 
+      // Перенос из Стоп-листа в Корзину с проверкой
       if (state.currentMode === 'stoplist_fill') {
           let orderCatSnap = await database.ref("catalogs/order").once("value");
           let orderCat = orderCatSnap.val() || {};
@@ -754,19 +754,24 @@
               }
           }
 
-          let draft = JSON.parse(localStorage.getItem("draft_" + state.currentShop + "_order")) || {basket:{}, time: Date.now()};
+          let draftKey = "draft_" + state.currentShop + "_order";
+          let draftStr = localStorage.getItem(draftKey);
+          let draft = draftStr ? JSON.parse(draftStr) : {basket:{}, time: Date.now()};
+          if(!draft.basket) draft.basket = {};
           if(!draft.basket["_catinfo"]) draft.basket["_catinfo"] = {};
           
           flatData.forEach(item => {
               if (item.qty === 'Закончилось') { 
                   let safeName = String(item.name).trim().toLowerCase();
                   if (orderItemsMap[safeName]) {
-                      draft.basket[item.name] = 1; 
-                      draft.basket["_catinfo"][item.name] = orderItemsMap[safeName].cat; 
+                      let exactName = orderItemsMap[safeName].name;
+                      draft.basket[exactName] = 1; 
+                      draft.basket["_catinfo"][exactName] = orderItemsMap[safeName].cat; 
                   }
               }
           });
-          localStorage.setItem("draft_" + state.currentShop + "_order", JSON.stringify(draft));
+          draft.time = Date.now();
+          localStorage.setItem(draftKey, JSON.stringify(draft));
       }
 
       localStorage.removeItem("draft_" + state.currentShop + "_" + state.currentMode);
@@ -820,7 +825,7 @@
           document.getElementById('title').innerText = "Админ-панель";
           grid.innerHTML = `
             <div class="card btn-admin-pink" style="grid-column: span 2;" onclick="showScreen('step-admin-purchase')"><span>📦</span><span>Управление закупкой</span></div>
-            <div class="card wide btn-admin-white" onclick="executeAdminAction('status_checklist')"><span>👥</span><span style="margin-top:5px;">КТО ЗАПОЛНИЛ?</span></div>
+            <div class="card wide btn-admin-white" onclick="executeAdminAction('status_checklist', 'admin')"><span>👥</span><span style="margin-top:5px;">КТО ЗАПОЛНИЛ?</span></div>
             <div class="card wide btn-admin-white" onclick="openMissingAdmin()"><span>🚚</span><span style="margin-top:5px;">Недовозы</span></div>
             <div class="card wide btn-admin-white" onclick="openExternalDashboard()"><span>🌐</span><span style="margin-top:5px;">ОТКРЫТЬ CRM</span></div>
             <div class="card wide btn-admin-white" onclick="alert('Управление маркетплейсами в разработке')"><span>🛒</span><span style="margin-top:5px;">Маркетплейсы</span></div>
@@ -829,7 +834,7 @@
       else {
           document.getElementById('title').innerText = "Кабинет Босса";
           grid.innerHTML = `
-            <div class="card btn-boss-table" onclick="executeAdminAction('status_checklist')"><span style="font-size: 26px; margin-bottom: 6px;">👥</span><span>КТО ЗАПОЛНИЛ?</span></div>
+            <div class="card btn-boss-table" onclick="executeAdminAction('status_checklist', 'boss')"><span style="font-size: 26px; margin-bottom: 6px;">👥</span><span>КТО ЗАПОЛНИЛ?</span></div>
             <div class="card btn-boss-table" onclick="openExternalDashboard()"><span style="font-size: 26px; margin-bottom: 6px;">🌐</span><span>ЧЕК-ЛИСТЫ</span></div>
             
             <div class="card btn-boss-yellow wide" onclick="fetchBossReport('Сиропы половина')"><span>Сиропы половина</span></div>
@@ -938,11 +943,12 @@
       }
     }
 
-    async function executeAdminAction(cmd) {
+    async function executeAdminAction(cmd, role) {
         triggerHaptic();
         if (cmd === 'status_checklist') {
             showReportOverlay("Сбор данных...");
             let today = new Date().setHours(0,0,0,0);
+            let isBossOnly = (role === 'boss');
             
             try {
                 let snap = await database.ref("orders").limitToLast(500).once("value");
@@ -964,11 +970,18 @@
                 let html = `<div class="report-card"><div class="report-card-title">Отчет за сегодня</div>`;
                 allShops.forEach(s => { 
                     let chk = filledChecklist.has(s) ? '✅' : '❌';
-                    let ord = filledOrder[s] === 'yes' ? '📦' : (filledOrder[s] === 'none' ? '➖' : '❌');
-                    html += `<div class="report-card-item">
-                                <span style="font-size:17px; color:#311B92; font-weight:900;">${s}</span> 
-                                <span style="font-size:16px; font-weight:900;">Чек: ${chk} | Зак: ${ord}</span>
-                             </div>`; 
+                    if (isBossOnly) {
+                        html += `<div class="report-card-item">
+                                    <span style="font-size:17px; color:#311B92; font-weight:900;">${s}</span> 
+                                    <span style="font-size:16px; font-weight:900;">Чек: ${chk}</span>
+                                 </div>`;
+                    } else {
+                        let ord = filledOrder[s] === 'yes' ? '📦' : (filledOrder[s] === 'none' ? '➖' : '❌');
+                        html += `<div class="report-card-item">
+                                    <span style="font-size:17px; color:#311B92; font-weight:900;">${s}</span> 
+                                    <span style="font-size:16px; font-weight:900;">Чек: ${chk} | Зак: ${ord}</span>
+                                 </div>`;
+                    }
                 });
                 document.getElementById('report-content-area').innerHTML = html + "</div>";
             } catch (err) {

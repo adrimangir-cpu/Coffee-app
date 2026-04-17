@@ -4,7 +4,7 @@
   <base target="_top">
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>Coffee Management App v4.4</title>
+  <title>Coffee Management App</title>
   
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-app-compat.js"></script>
@@ -183,9 +183,7 @@
         <div class="card wide" onclick="handleShopSelection('Красноказарменная')">Красноказарменная</div>
         <div class="card wide" onclick="handleShopSelection('Ухтомского ополчения')">Ухтомского ополчения</div>
       </div>
-      
       <hr style="margin: 25px 0; border: none; height: 1px; background-color: rgba(0,0,0,0.06);">
-      
       <div class="grid-2" id="admin-boss-panels">
         <div class="card btn-boss-table" onclick="openControlPanel('boss')">
           <span style="font-size: 26px; margin-bottom: 6px;">👔</span><span>БОСС</span>
@@ -213,7 +211,7 @@
     <div id="step-stoplist" style="display:none;">
       <h3 style="text-align:center; color:#311B92; margin-bottom: 20px; font-weight:900;">Управление Стоп-листом</h3>
       <button class="btn-mode" style="background: var(--btn-stop-grad);" onclick="initWorkflow('stoplist_fill')">📝 ЗАПОЛНИТЬ</button>
-      <button class="btn-mode" style="background: var(--btn-stop-grad);" onclick="viewStopList()">👁 ПРОСМОТРЕТЬ</button>
+      <button class="btn-mode" style="background: var(--btn-order-grad);" onclick="viewStopList()">👁 ПРОСМОТРЕТЬ</button>
       <div class="bottom-fixed-bar">
         <button class="btn-bottom-exit" onclick="showScreen('step-2')">⬅️ Назад</button>
       </div>
@@ -308,15 +306,9 @@
     // ==========================================
     // 2. БАЗОВЫЕ УТИЛИТЫ И НАВИГАЦИЯ
     // ==========================================
-    function triggerHaptic() { 
-      try { if (window.Telegram && Telegram.WebApp && Telegram.WebApp.HapticFeedback) Telegram.WebApp.HapticFeedback.impactOccurred('medium'); } catch (e) {} 
-    }
-
+    function triggerHaptic() { try { if (window.Telegram && Telegram.WebApp && Telegram.WebApp.HapticFeedback) Telegram.WebApp.HapticFeedback.impactOccurred('medium'); } catch (e) {} }
     function scrollToTop() { window.scrollTo({ top: 0, behavior: 'smooth' }); }
-
-    function openExternalDashboard() { 
-      triggerHaptic(); window.open('https://adrimangir-cpu.github.io/Coffee-app/dashboard.html', '_blank'); 
-    }
+    function openExternalDashboard() { triggerHaptic(); window.open('https://adrimangir-cpu.github.io/Coffee-app/dashboard.html', '_blank'); }
 
     function showScreen(screenId) {
       const allScreens = ['step-1', 'step-2', 'step-stoplist', 'step-3', 'step-panel', 'step-admin-purchase'];
@@ -327,11 +319,10 @@
       scrollToTop();
     }
 
+    // НОВЫЙ БЕЗОПАСНЫЙ ID (Предотвращает ошибки если категория начинается с цифры)
     function getSafeId(str) {
-        if (!str) return "id_empty_" + Math.floor(Math.random()*1000);
-        str = String(str); let hash = 0;
-        for (let i = 0; i < str.length; i++) hash = (hash << 5) - hash + str.charCodeAt(i);
-        return "id_" + Math.abs(hash) + "_" + str.length;
+        if (!str) return "empty";
+        return "id_" + str.replace(/[^a-zA-Z0-9а-яА-Я]/g, '');
     }
 
     function handleShopSelection(name) {
@@ -827,6 +818,7 @@
           document.getElementById('title').innerText = "Админ-панель";
           grid.innerHTML = `
             <div class="card btn-admin-pink" style="grid-column: span 2;" onclick="showScreen('step-admin-purchase')"><span>📦</span><span>Управление закупкой</span></div>
+            <div class="card wide btn-admin-white" onclick="executeAdminAction('status_checklist')"><span>👥</span><span style="margin-top:5px;">КТО ЗАПОЛНИЛ?</span></div>
             <div class="card wide btn-admin-white" onclick="openMissingAdmin()"><span>🚚</span><span style="margin-top:5px;">Недовозы</span></div>
             <div class="card wide btn-admin-white" onclick="openExternalDashboard()"><span>🌐</span><span style="margin-top:5px;">ОТКРЫТЬ CRM</span></div>
             <div class="card wide btn-admin-white" onclick="alert('Управление маркетплейсами в разработке')"><span>🛒</span><span style="margin-top:5px;">Маркетплейсы</span></div>
@@ -872,11 +864,20 @@
 
     async function fetchBossReport(category) {
       showReportOverlay("Формирование отчета: " + category + "...");
-      let today = new Date().setHours(0,0,0,0);
       
       try {
           const ordersSnap = await database.ref("orders").limitToLast(1000).once("value");
           
+          let latestChecklists = {}; 
+          ordersSnap.forEach(child => {
+              let o = child.val();
+              if (o && o.mode === 'checklist' && o.items) {
+                  if (!latestChecklists[o.shop] || o.timestamp > latestChecklists[o.shop].timestamp) {
+                      latestChecklists[o.shop] = o;
+                  }
+              }
+          });
+
           let reportByShop = {}; 
           let foundAny = false;
           let reqLow = category.toLowerCase().trim();
@@ -884,10 +885,7 @@
           let isSyrupHalf = reqLow.includes("половина");
           let isSyrupReq = isSyrupEmpty || isSyrupHalf;
 
-          ordersSnap.forEach(child => {
-            let order = child.val();
-            if (order && order.mode === 'checklist' && order.items && (order.timestamp || 0) >= today) {
-              
+          Object.values(latestChecklists).forEach(order => {
               let itemsArr = Array.isArray(order.items) ? order.items : Object.values(order.items);
               itemsArr.forEach(item => {
                 if(!item) return;
@@ -907,29 +905,29 @@
 
                 if (isMatch && val !== "" && val !== "-") {
                   foundAny = true;
-                  if (!reportByShop[order.shop]) reportByShop[order.shop] = [];
+                  if (!reportByShop[order.shop]) reportByShop[order.shop] = { date: order.timestamp, items: [] };
                   
                   if (isSyrupReq) {
-                      reportByShop[order.shop].push(item.name);
+                      reportByShop[order.shop].items.push(item.name);
                   } else {
-                      reportByShop[order.shop].push(`▪️ ${item.name} — <b>${val}</b>`);
+                      reportByShop[order.shop].items.push(`▪️ ${item.name} — <b>${val}</b>`);
                   }
                 }
               });
-            }
           });
 
           if (!foundAny) { 
-              document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; font-weight:900; padding:10px;">По категории "${category}" данных за сегодня нет.</div></div>`; 
+              document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; font-weight:900; padding:10px;">По категории "${category}" актуальных данных нет.</div></div>`; 
               return; 
           }
 
           let html = `<div class="report-card"><div class="report-card-title">${category.toUpperCase()}</div>`;
           for (let s in reportByShop) {
+            let dateStr = new Date(reportByShop[s].date).toLocaleDateString('ru-RU');
             if(isSyrupReq) {
-                html += `<div style="margin-bottom:12px; font-size:16px;"><b style="font-size:17px; color:#311B92;">${s}</b>: ${reportByShop[s].join(", ")}</div>`;
+                html += `<div style="margin-bottom:12px; font-size:16px;"><b style="font-size:17px; color:#311B92;">${s} <span style="font-size:13px; color:#888;">(${dateStr})</span></b>: ${reportByShop[s].items.join(", ")}</div>`;
             } else {
-                html += `<div style="margin-bottom:15px; font-size:16px;"><b style="font-size:17px; color:#311B92;">${s}</b>:<br>${reportByShop[s].join("<br>")}</div>`;
+                html += `<div style="margin-bottom:15px; font-size:16px;"><b style="font-size:17px; color:#311B92;">${s} <span style="font-size:13px; color:#888;">(${dateStr})</span></b>:<br>${reportByShop[s].items.join("<br>")}</div>`;
             }
           }
           document.getElementById('report-content-area').innerHTML = html + `</div>`;
@@ -946,16 +944,30 @@
             
             try {
                 let snap = await database.ref("orders").limitToLast(500).once("value");
-                let filledShops = new Set();
+                let filledChecklist = new Set();
+                let filledOrder = {}; 
                 
                 snap.forEach(c => { 
                     let val = c.val(); 
-                    if(val && val.mode === 'checklist' && (val.timestamp || 0) >= today) filledShops.add(val.shop); 
+                    if(val && (val.timestamp || 0) >= today) {
+                        if (val.mode === 'checklist') filledChecklist.add(val.shop); 
+                        if (val.mode === 'order') {
+                            let isNone = val.items && val.items.length === 1 && val.items[0].name === "НЕТ ЗАКАЗА";
+                            filledOrder[val.shop] = isNone ? 'none' : 'yes';
+                        }
+                    }
                 });
                 
                 let allShops = ["Бояринова", "Гагарина", "Вертолетчиков", "Липчанского", "Новокосино", "Новокосино 2", "Старое Павлино", "Красноказарменная", "Ухтомского ополчения"];
-                let html = `<div class="report-card"><div class="report-card-title">Кто заполнил чек-лист?</div>`;
-                allShops.forEach(s => { html += `<div class="report-card-item"><span style="font-size:17px; color:#311B92; font-weight:900;">${s}</span> <span style="font-size:18px; font-weight:900;">${filledShops.has(s) ? '✅' : '❌'}</span></div>`; });
+                let html = `<div class="report-card"><div class="report-card-title">Отчет за сегодня</div>`;
+                allShops.forEach(s => { 
+                    let chk = filledChecklist.has(s) ? '✅' : '❌';
+                    let ord = filledOrder[s] === 'yes' ? '📦' : (filledOrder[s] === 'none' ? '➖' : '❌');
+                    html += `<div class="report-card-item">
+                                <span style="font-size:17px; color:#311B92; font-weight:900;">${s}</span> 
+                                <span style="font-size:16px; font-weight:900;">Чек: ${chk} | Зак: ${ord}</span>
+                             </div>`; 
+                });
                 document.getElementById('report-content-area').innerHTML = html + "</div>";
             } catch (err) {
                 document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; color:red; font-weight:900;">Ошибка загрузки статусов</div></div>`;

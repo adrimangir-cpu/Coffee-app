@@ -243,9 +243,14 @@
     let currentCatalog = {};
     let currentPath = "";
     let currentTabType = "";
+    let isNewShopCatalog = false; // Для переключения режимов закупки
     let appSettings = { hidden_categories: {}, new_shop_order_active: false };
     let cachedData = {};
+    
+    // Переменные режимов редактирования
     let isChecklistEditMode = false;
+    let isSvodEditMode = false;
+    let svodDeletions = []; // Хранит {shop, name} удаленных позиций Свода
 
     // Уникальный ID без пробелов и спецсимволов, который всегда начинается с буквы
     function getSafeId(str) {
@@ -266,6 +271,7 @@
 
         try {
             if (type === 'catalog_order') {
+                isNewShopCatalog = false;
                 currentPath = "catalogs/order";
                 let [res, setRes] = await Promise.all([
                     fetch(`${FB_URL}/${currentPath}.json`),
@@ -294,12 +300,16 @@
                 renderMissing();
             }
             else if (type === 'stoplists') {
-                let [resOrders, catRes] = await Promise.all([
+                // В стоп-листах загружаем оба справочника закупки для ссылок
+                let [resOrders, catRes, newCatRes] = await Promise.all([
                     fetch(`${FB_URL}/orders.json`),
-                    fetch(`${FB_URL}/catalogs/order.json`)
+                    fetch(`${FB_URL}/catalogs/order.json`),
+                    fetch(`${FB_URL}/catalogs/newshop.json`)
                 ]);
                 cachedData.orders = await resOrders.json() || {};
-                cachedData.catalogOrder = await catRes.json() || {};
+                let catOrd = await catRes.json() || {};
+                let catNew = await newCatRes.json() || {};
+                cachedData.catalogOrder = { ...catNew, ...catOrd };
                 renderStoplists();
             }
             else if (type === 'checks_table') {
@@ -309,6 +319,7 @@
                 ]);
                 cachedData.catalog = await resCheck.json() || {};
                 
+                // Кэшируем заказы вместе с их ключами Firebase
                 let ordersObj = await resOrders.json() || {};
                 Object.keys(ordersObj).forEach(k => { 
                     if (ordersObj[k]) ordersObj[k].key = k; 
@@ -319,9 +330,11 @@
                 renderChecksTable();
             }
             else if (type === 'orders') {
-                let [ordersRes, catRes] = await Promise.all([
+                // Загружаем оба справочника (обычный и новый), чтобы ссылки подтянулись отовсюду
+                let [ordersRes, catRes, newCatRes] = await Promise.all([
                     fetch(`${FB_URL}/orders.json`),
-                    fetch(`${FB_URL}/catalogs/order.json`)
+                    fetch(`${FB_URL}/catalogs/order.json`),
+                    fetch(`${FB_URL}/catalogs/newshop.json`)
                 ]);
                 
                 let ordersObj = await ordersRes.json() || {};
@@ -330,7 +343,13 @@
                 });
                 
                 cachedData.orders = ordersObj;
-                cachedData.catalog = await catRes.json() || {};
+                
+                let catOrd = await catRes.json() || {};
+                let catNew = await newCatRes.json() || {};
+                cachedData.catalog = { ...catNew, ...catOrd };
+                
+                isSvodEditMode = false;
+                svodDeletions = [];
                 renderOrdersSvod();
             }
             else if (type === 'stats') {
@@ -382,7 +401,6 @@
             html += `<div class="card" style="flex: 1 1 calc(33% - 20px); min-width:320px; padding:25px; background:#fff; border-radius:16px; box-shadow:0 4px 15px rgba(0,0,0,0.05);">
                         <h4 style="margin-top:0; color:#311b92; font-size:20px; border-bottom:2px solid #eee; padding-bottom:10px; font-weight:900;">${s}</h4>`;
             
-            // Топ заканчивающихся
             let empties = Object.entries(stats[s].emptyCount).sort((a,b) => b[1] - a[1]).slice(0, 5);
             html += `<b style="color:#D50000; font-size:16px;">🛑 Часто заканчивается (Чек-лист):</b>
                      <ul style="margin-top:5px; padding-left:20px; font-size:15px; color:#555; font-weight:bold;">`;
@@ -393,7 +411,6 @@
             }
             html += `</ul>`;
 
-            // Средний заказ
             let averages = Object.entries(stats[s].orderSum).map(e => {
                 let avg = (e[1] / stats[s].orderCount[e[0]]).toFixed(1);
                 return [e[0], avg];
@@ -413,6 +430,17 @@
         box.innerHTML = html;
     }
 
+    // Функция переключения каталога закупки
+    async function switchOrderCatalog(isNew) {
+        isNewShopCatalog = isNew;
+        currentPath = isNew ? "catalogs/newshop" : "catalogs/order";
+        const box = document.getElementById('content');
+        box.innerHTML = "<div style='text-align:center; padding:40px; font-weight:bold; font-size:22px; color:#7E57C2;'>⌛ Загрузка каталога...</div>";
+        let res = await fetch(`${FB_URL}/${currentPath}.json`);
+        currentCatalog = await res.json() || {};
+        renderCatalogOrder();
+    }
+
     // ==========================================
     // 1. РЕНДЕР: СПРАВОЧНИК ЗАКУПКИ
     // ==========================================
@@ -429,12 +457,17 @@
         let subCats = [...new Set(Object.values(currentCatalog).map(i => i.cat).filter(c => c && !c.includes("!!!")))];
 
         let html = `
-        <div style="display:flex; justify-content:space-between; margin-bottom:20px; align-items:center;">
+        <div style="display:flex; justify-content:space-between; margin-bottom:10px; align-items:center;">
             <h3 style="margin:0; font-size:24px; color:#4A148C;">Редактор товаров: ЗАКУПКА</h3>
             <div style="display:flex; gap:15px;">
                 <button class="btn-add" onclick="addItemOrder()">➕ Добавить позицию</button>
                 <button class="btn-save" style="margin:0; width:auto; padding:14px 28px;" onclick="saveCatalog()">💾 СОХРАНИТЬ В БАЗУ</button>
             </div>
+        </div>
+
+        <div style="margin-bottom: 20px; display: flex; gap: 10px;">
+            <button class="tab-btn ${!isNewShopCatalog ? 'active' : ''}" style="padding: 10px 20px; font-size: 15px;" onclick="switchOrderCatalog(false)">📦 Обычная закупка</button>
+            <button class="tab-btn ${isNewShopCatalog ? 'active' : ''}" style="padding: 10px 20px; font-size: 15px;" onclick="switchOrderCatalog(true)">🏗 На новую кофейню</button>
         </div>
 
         <div class="settings-panel">
@@ -482,7 +515,6 @@
             grouped[gc][sc].push({k: k, item: item});
         });
 
-        // Сортировка: Новые папки !!! всегда наверху
         Object.keys(grouped).sort((a,b) => {
             if(a.includes("!!!")) return -1;
             if(b.includes("!!!")) return 1;
@@ -503,7 +535,6 @@
                 let safeSc = getSafeId(gc + sc); 
                 let displaySc = sc.replace("!!! НОВОЕ", "Заполните данные");
                 
-                // Подкатегория скрыта на входе (кроме новых)
                 let displayStyle = gc.includes("!!!") ? "table-row" : "none";
                 
                 html += `<tr class="cat-group-header sub_${safeGc}" style="display:${displayStyle};" onclick="toggleElements('item_${safeSc}')">
@@ -811,7 +842,6 @@
         const box = document.getElementById('content');
         let shops = ["Бояринова", "Гагарина", "Вертолетчиков", "Липчанского", "Новокосино", "Новокосино 2", "Старое Павлино", "Красноказарменная", "Ухтомского ополчения"];
         
-        // Берем самый ПОСЛЕДНИЙ чек-лист по каждой точке
         let latestChecklists = {};
         Object.values(cachedData.orders).forEach(o => {
             if (o && o.mode === 'checklist') {
@@ -857,7 +887,6 @@
         html += `<table style="min-width:1200px;"><tr><th style="width:250px;">Товар</th>`;
         
         shops.forEach(s => {
-            // ВЫВОД ДАТЫ В ШАПКЕ ТАБЛИЦЫ
             let dateStr = "Нет данных";
             if (latestChecklists[s] && latestChecklists[s].timestamp) {
                 let d = new Date(latestChecklists[s].timestamp);
@@ -905,7 +934,6 @@
                     }
                 });
                 
-                // ДУБЛИРУЕМ ТОВАР СПРАВА
                 html += `<td style="font-size:16px; text-align:right;"><b>${itemName}</b></td></tr>`;
             });
         });
@@ -919,7 +947,7 @@
         const box = document.getElementById('content');
         
         let cutoffMonth = Date.now() - (30 * 24 * 60 * 60 * 1000); 
-        let cutoff24h = Date.now() - (24 * 60 * 60 * 1000); 
+        let todayStart = new Date().setHours(0,0,0,0);
         
         let historyKeys = new Set();
         let todaysOrders = [];
@@ -931,14 +959,19 @@
             if (o && (o.mode === 'order' || o.mode === 'new_shop')) {
                 if ((o.timestamp || 0) < cutoffMonth) return; 
                 
-                if (o.svod === false || !o.svod || (o.timestamp || 0) >= cutoff24h) {
+                if (o.svod === false || !o.svod || (o.timestamp || 0) >= todayStart) {
                     todaysOrders.push(o);
                 } else {
+                    if (o.svod === true) {
+                        let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
+                        itemsArr.forEach(i => { 
+                            if(i) historyKeys.add(o.shop + "|" + i.name); 
+                        });
+                    }
+                }
+
+                if (o.svod === true) {
                     historyOrdersList.push(o);
-                    let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
-                    itemsArr.forEach(i => { 
-                        if(i) historyKeys.add(o.shop + "|" + i.name); 
-                    });
                 }
             }
         });
@@ -963,22 +996,32 @@
             });
         });
 
-        let html = `<h3 style='color:#311B92; font-size:24px;'>📊 Свод по кофейням (Ожидают сборки)</h3>
-                    <table style='margin-bottom:20px;'>
+        let btnEditColor = isSvodEditMode ? "#f44336" : "#0288d1";
+        let btnEditText = isSvodEditMode ? "❌ Выйти из редактирования" : "✏️ Режим редактирования";
+
+        let html = `<div style="display:flex; justify-content:space-between; margin-bottom:15px; align-items:center;">
+                        <h3 style='color:#311B92; font-size:24px; margin:0;'>📊 Свод по кофейням (Ожидают сборки)</h3>
+                        <button onclick="toggleSvodEdit()" class="btn-add" style="background:${btnEditColor};">${btnEditText}</button>
+                    </div>`;
+
+        if (isSvodEditMode) {
+            html += `<button onclick="saveSvodEdits()" class="btn-save" style="margin-top:0; margin-bottom:20px;">💾 СОХРАНИТЬ И УДАЛИТЬ ПОЗИЦИИ</button>`;
+        }
+
+        html += `<table style='margin-bottom:20px;'>
                     <tr>
                         <th>Кофейня / Товар</th>
                         <th style="text-align:center;">Кол-во</th>
                         <th>Поставщик</th>
-                        <th>Ссылка</th>
+                        <th style="text-align:center;">${isSvodEditMode ? 'Удалить' : 'Ссылка'}</th>
                     </tr>`;
         
         let totalLenta = 0; let totalOzon = 0; let totalKuper = 0;
 
         if (Object.keys(svodData).length === 0) {
-            html += `<tr><td colspan="4" style="text-align:center; padding:20px; font-weight:bold; font-size:18px; color:#888;">Нет заказов, ожидающих сборки</td></tr>`;
+            html += `<tr><td colspan="4" style="text-align:center; padding:20px; font-weight:bold; font-size:18px; color:#888;">Нет заказов за сегодня</td></tr>`;
         } else {
             for(let shop in svodData) {
-                // Сначала вычисляем предварительную сумму Ленты для логики Купера
                 for(let name in svodData[shop].items) {
                     let catItem = Object.values(cachedData.catalog).find(c => c && c.name === name) || {};
                     let vendor = catItem.vendor || 'Лента';
@@ -992,7 +1035,18 @@
 
                 html += `<tr><td colspan="4" style="background:#ede7f6; padding:15px; font-size:19px; color:#311B92;"><b>📍 ${shop}</b></td></tr>`;
 
-                for(let name in svodData[shop].items) {
+                let sortedItemNames = Object.keys(svodData[shop].items).sort((a,b) => {
+                    let catItemA = Object.values(cachedData.catalog).find(c => c && c.name === a) || {};
+                    let catItemB = Object.values(cachedData.catalog).find(c => c && c.name === b) || {};
+                    let vendorA = (catItemA.vendor || 'Лента').toLowerCase();
+                    let vendorB = (catItemB.vendor || 'Лента').toLowerCase();
+                    
+                    if (vendorA < vendorB) return -1;
+                    if (vendorA > vendorB) return 1;
+                    return a.localeCompare(b);
+                });
+
+                sortedItemNames.forEach(name => {
                     let catItem = Object.values(cachedData.catalog).find(c => c && c.name === name) || {};
                     let vendor = catItem.vendor || 'Лента';
                     let price = parseFloat(catItem.price) || 0;
@@ -1005,7 +1059,10 @@
 
                     if(vendor.toLowerCase() === 'лента' && isKuper) vendor = 'Купер';
 
-                    let cost = price * qty;
+                    let isDeleted = svodDeletions.some(d => d.shop === shop && d.name === name);
+                    let displayQty = isDeleted ? 0 : qty;
+
+                    let cost = price * displayQty;
                     if(vendor.toLowerCase() === 'озон' && isRepeat) cost = 0;
                     
                     if (vendor.toLowerCase() === 'лента') totalLenta += cost;
@@ -1014,13 +1071,24 @@
 
                     let repeatBadge = isRepeat ? `<span style='color:#d32f2f; font-size:13px; margin-left:5px; font-weight:bold;'>(Повтор)</span>` : ``;
 
-                    html += `<tr>
-                        <td style="font-size:17px; padding-left:25px; font-weight:bold;">${name} ${repeatBadge}</td>
-                        <td style="font-size:18px; font-weight:bold; color:#311b92; text-align:center;">${qty}</td>
-                        <td style="font-size:16px;">${vendor}</td>
-                        <td>${linksHtml}</td>
-                    </tr>`;
-                }
+                    if (isSvodEditMode) {
+                        html += `<tr>
+                            <td style="font-size:17px; padding-left:25px; font-weight:bold; color:${isDeleted ? '#aaa' : '#333'}">${name} ${repeatBadge}</td>
+                            <td style="font-size:18px; font-weight:bold; color:${isDeleted ? '#aaa' : '#311b92'}; text-align:center;">${qty}</td>
+                            <td style="font-size:16px; color:${isDeleted ? '#aaa' : '#333'}">${vendor}</td>
+                            <td style="text-align:center;">
+                                <button class="btn-del" ${isDeleted ? 'disabled' : ''} onclick="markSvodDelete(this, '${shop}', '${name}')">🗑</button>
+                            </td>
+                        </tr>`;
+                    } else {
+                        html += `<tr>
+                            <td style="font-size:17px; padding-left:25px; font-weight:bold;">${name} ${repeatBadge}</td>
+                            <td style="font-size:18px; font-weight:bold; color:#311b92; text-align:center;">${qty}</td>
+                            <td style="font-size:16px;">${vendor}</td>
+                            <td style="text-align:center;">${linksHtml}</td>
+                        </tr>`;
+                    }
+                });
                 
                 if(svodData[shop].comments.length > 0) {
                     html += `<tr><td colspan="4" style="padding:15px; font-style:italic; font-size:17px; color:#ef6c00; background:#fff3e0;">💬 Комментарий: <b>${svodData[shop].comments.join(' | ')}</b></td></tr>`;
@@ -1039,7 +1107,6 @@
                     </div>`;
         }
 
-        // История операций (Только закупки, сворачиваемая)
         html += `
             <div onclick="toggleElements('history-content')" style="cursor:pointer; background:#ede7f6; padding:18px; border-radius:12px; font-weight:900; color:#311B92; margin-top:40px; display:flex; justify-content:space-between; font-size:20px;">
                 <span>🕒 История операций (Собранные закупки за месяц)</span><span>▼</span>
@@ -1097,6 +1164,66 @@
         }); 
     }
 
+    function toggleSvodEdit() {
+        isSvodEditMode = !isSvodEditMode;
+        svodDeletions = [];
+        renderOrdersSvod();
+    }
+
+    function markSvodDelete(btn, shop, name) {
+        let tr = btn.closest('tr');
+        tr.style.opacity = '0.4';
+        tr.style.textDecoration = 'line-through';
+        svodDeletions.push({shop: shop, name: name});
+        btn.disabled = true;
+        renderOrdersSvod(); // Принудительно пересчитываем итоги с учетом удаления
+    }
+
+    async function saveSvodEdits() {
+        if (svodDeletions.length === 0) {
+            toggleSvodEdit();
+            return;
+        }
+        
+        const btn = document.querySelector('.btn-save');
+        if(btn) btn.innerHTML = "⌛ СОХРАНЕНИЕ...";
+
+        try {
+            let todayStart = new Date().setHours(0,0,0,0);
+            
+            for (let k in cachedData.orders) {
+                let o = cachedData.orders[k];
+                if (o && (o.mode === 'order' || o.mode === 'new_shop') && (o.svod === false || !o.svod || (o.timestamp || 0) >= todayStart)) {
+                    
+                    let needsUpdate = false;
+                    let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
+                    
+                    let newItemsArr = itemsArr.filter(i => {
+                        let match = svodDeletions.find(d => d.shop === o.shop && d.name === i.name);
+                        if (match) {
+                            needsUpdate = true;
+                            return false;
+                        }
+                        return true;
+                    });
+                    
+                    if (needsUpdate) {
+                        if (newItemsArr.length === 0) {
+                            newItemsArr = [{name: "НЕТ ЗАКАЗА", qty: 0}];
+                        }
+                        await fetch(`${FB_URL}/orders/${k}/items.json`, {method:'PUT', body: JSON.stringify(newItemsArr)});
+                    }
+                }
+            }
+            
+            alert("✅ Лишние позиции успешно удалены!");
+            isSvodEditMode = false;
+            loadTab('orders', document.querySelector('.tab-btn.active'));
+        } catch (e) {
+            alert("❌ Ошибка при удалении: " + e.message);
+        }
+    }
+
     function toggleChecklistEdit() {
         isChecklistEditMode = !isChecklistEditMode;
         renderChecksTable();
@@ -1145,12 +1272,10 @@
             let newCat = prompt("Введите название новой категории:");
             if (newCat) {
                 currentCatalog[id][field] = newCat;
-                // Принудительная перерисовка
                 if (currentPath.includes('order')) renderCatalogOrder();
                 else if (currentPath.includes('stoplist')) renderCatalogStoplist();
                 else renderCatalogChecklist();
             } else {
-                // Если отменили ввод, возвращаем выпадающий список обратно
                 if (currentPath.includes('order')) renderCatalogOrder();
                 else if (currentPath.includes('stoplist')) renderCatalogStoplist();
                 else renderCatalogChecklist();

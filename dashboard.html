@@ -248,6 +248,7 @@
     let currentCatalog = {};
     let currentPath = "";
     let currentTabType = "";
+    let isNewShopCatalog = false; // Для переключения режимов закупки
     let appSettings = { hidden_categories: {}, new_shop_order_active: false };
     let cachedData = {};
     let isChecklistEditMode = false;
@@ -271,6 +272,7 @@
 
         try {
             if (type === 'catalog_order') {
+                isNewShopCatalog = false;
                 currentPath = "catalogs/order";
                 let [res, setRes] = await Promise.all([
                     fetch(`${FB_URL}/${currentPath}.json`),
@@ -325,9 +327,11 @@
                 renderChecksTable();
             }
             else if (type === 'orders') {
-                let [ordersRes, catRes] = await Promise.all([
+                // Загружаем оба справочника (обычный и новый), чтобы ссылки подтянулись отовсюду
+                let [ordersRes, catRes, newCatRes] = await Promise.all([
                     fetch(`${FB_URL}/orders.json`),
-                    fetch(`${FB_URL}/catalogs/order.json`)
+                    fetch(`${FB_URL}/catalogs/order.json`),
+                    fetch(`${FB_URL}/catalogs/newshop.json`)
                 ]);
                 
                 let ordersObj = await ordersRes.json() || {};
@@ -336,7 +340,11 @@
                 });
                 
                 cachedData.orders = ordersObj;
-                cachedData.catalog = await catRes.json() || {};
+                
+                let catOrd = await catRes.json() || {};
+                let catNew = await newCatRes.json() || {};
+                cachedData.catalog = { ...catNew, ...catOrd };
+                
                 renderOrdersSvod();
             }
             else if (type === 'stats') {
@@ -419,6 +427,17 @@
         box.innerHTML = html;
     }
 
+    // Функция переключения каталога закупки
+    async function switchOrderCatalog(isNew) {
+        isNewShopCatalog = isNew;
+        currentPath = isNew ? "catalogs/newshop" : "catalogs/order";
+        const box = document.getElementById('content');
+        box.innerHTML = "<div style='text-align:center; padding:40px; font-weight:bold; font-size:22px; color:#7E57C2;'>⌛ Загрузка каталога...</div>";
+        let res = await fetch(`${FB_URL}/${currentPath}.json`);
+        currentCatalog = await res.json() || {};
+        renderCatalogOrder();
+    }
+
     // ==========================================
     // 1. РЕНДЕР: СПРАВОЧНИК ЗАКУПКИ
     // ==========================================
@@ -435,12 +454,17 @@
         let subCats = [...new Set(Object.values(currentCatalog).map(i => i.cat).filter(c => c && !c.includes("!!!")))];
 
         let html = `
-        <div style="display:flex; justify-content:space-between; margin-bottom:20px; align-items:center;">
+        <div style="display:flex; justify-content:space-between; margin-bottom:10px; align-items:center;">
             <h3 style="margin:0; font-size:24px; color:#4A148C;">Редактор товаров: ЗАКУПКА</h3>
             <div style="display:flex; gap:15px;">
                 <button class="btn-add" onclick="addItemOrder()">➕ Добавить позицию</button>
                 <button class="btn-save" style="margin:0; width:auto; padding:14px 28px;" onclick="saveCatalog()">💾 СОХРАНИТЬ В БАЗУ</button>
             </div>
+        </div>
+
+        <div style="margin-bottom: 20px; display: flex; gap: 10px;">
+            <button class="tab-btn ${!isNewShopCatalog ? 'active' : ''}" style="padding: 10px 20px; font-size: 15px;" onclick="switchOrderCatalog(false)">📦 Обычная закупка</button>
+            <button class="tab-btn ${isNewShopCatalog ? 'active' : ''}" style="padding: 10px 20px; font-size: 15px;" onclick="switchOrderCatalog(true)">🏗 На новую кофейню</button>
         </div>
 
         <div class="settings-panel">
@@ -462,15 +486,17 @@
         
         html += `</div></div>
         
-        <table style="min-width:1300px;">
+        <table style="min-width:1400px;">
             <tr>
-                <th style="width:180px;">Глоб. Категория</th>
-                <th style="width:180px;">Подкатегория</th>
-                <th style="width:220px;">Наименование</th>
-                <th style="width:120px;">Поставщик</th>
-                <th style="width:100px;">Цена (₽)</th>
-                <th>Ссылка</th>
-                <th style="width:80px; text-align:center;">Удалить</th>
+                <th style="width:160px;">Глоб. Категория</th>
+                <th style="width:160px;">Подкатегория</th>
+                <th style="width:200px;">Наименование</th>
+                <th style="width:100px;">Поставщик</th>
+                <th style="width:80px;">Цена 1 (₽)</th>
+                <th>Ссылка 1</th>
+                <th style="width:80px;">Цена 2 (₽)</th>
+                <th>Ссылка 2</th>
+                <th style="width:60px; text-align:center;">Удалить</th>
             </tr>`;
 
         let grouped = {};
@@ -493,7 +519,7 @@
             let displayGc = gc.replace("!!! НОВОЕ", "Новая добавленная позиция");
             
             html += `<tr class="cat-group-header" onclick="toggleElements('sub_${safeGc}')">
-                        <td colspan="7" style="padding:18px; background:#d1c4e9; font-size:20px;">🌍 <b>${displayGc}</b> <span style="float:right;">▼</span></td>
+                        <td colspan="9" style="padding:18px; background:#d1c4e9; font-size:20px;">🌍 <b>${displayGc}</b> <span style="float:right;">▼</span></td>
                      </tr>`;
             
             Object.keys(grouped[gc]).sort((a,b) => {
@@ -508,7 +534,7 @@
                 let displayStyle = gc.includes("!!!") ? "table-row" : "none";
                 
                 html += `<tr class="cat-group-header sub_${safeGc}" style="display:${displayStyle};" onclick="toggleElements('item_${safeSc}')">
-                            <td colspan="7" style="padding:15px; padding-left:30px; font-size:18px;">📂 ${displaySc} <span style="float:right;">▼</span></td>
+                            <td colspan="9" style="padding:15px; padding-left:30px; font-size:18px;">📂 ${displaySc} <span style="float:right;">▼</span></td>
                          </tr>`;
                 
                 grouped[gc][sc].sort((a,b) => (a.item.name||'').localeCompare(b.item.name||'')).forEach(data => {
@@ -536,8 +562,13 @@
                         <td><select onchange="updateVal('${k}','cat',this.value)">${catOptions}</select></td>
                         <td><input type="text" style="font-weight:bold; color:#311b92;" value="${item.name || ''}" onchange="updateVal('${k}','name',this.value)"></td>
                         <td><input type="text" placeholder="Лента/Озон" value="${item.vendor || 'Лента'}" onchange="updateVal('${k}','vendor',this.value)"></td>
+                        
                         <td><input type="number" value="${item.price || 0}" onchange="updateVal('${k}','price',this.value)"></td>
-                        <td><input type="text" placeholder="URL" value="${item.link || ''}" onchange="updateVal('${k}','link',this.value)"></td>
+                        <td><input type="text" placeholder="URL 1" value="${item.link || ''}" onchange="updateVal('${k}','link',this.value)"></td>
+                        
+                        <td><input type="number" value="${item.price2 || 0}" onchange="updateVal('${k}','price2',this.value)"></td>
+                        <td><input type="text" placeholder="URL 2" value="${item.link2 || ''}" onchange="updateVal('${k}','link2',this.value)"></td>
+
                         <td style="text-align:center;"><button class="btn-del" onclick="deleteItem('${k}')">🗑</button></td>
                     </tr>`;
                 });
@@ -801,7 +832,7 @@
     }
 
     // ==========================================
-    // 5. РЕНДЕР: ТАБЛИЦА ЧЕК-ЛИСТОВ (БЕЗ ОГРАНИЧЕНИЯ ПО ДАТЕ, С ДУБЛЕМ ТОВАРА СПРАВА)
+    // 5. РЕНДЕР: ТАБЛИЦА ЧЕК-ЛИСТОВ
     // ==========================================
     function renderChecksTable() {
         const box = document.getElementById('content');
@@ -916,6 +947,7 @@
         const box = document.getElementById('content');
         
         let cutoffMonth = Date.now() - (30 * 24 * 60 * 60 * 1000); 
+        let cutoff24h = Date.now() - (24 * 60 * 60 * 1000); 
         
         let historyKeys = new Set();
         let todaysOrders = [];
@@ -927,9 +959,7 @@
             if (o && (o.mode === 'order' || o.mode === 'new_shop')) {
                 if ((o.timestamp || 0) < cutoffMonth) return; 
                 
-                // В свод попадают ТОЛЬКО те, что еще НЕ собирались (svod: false)
-                // Если svod вообще не прописан (ошибка базы), тоже считаем как false
-                if (o.svod === false || !o.svod) {
+                if (o.svod === false || !o.svod || (o.timestamp || 0) >= cutoff24h) {
                     todaysOrders.push(o);
                 } else {
                     historyOrdersList.push(o);
@@ -996,7 +1026,10 @@
                     let price = parseFloat(catItem.price) || 0;
                     let qty = svodData[shop].items[name];
                     let isRepeat = historyKeys.has(shop + "|" + name);
-                    let link = catItem.link ? `<a href="${catItem.link}" target="_blank" style="color:#0288d1; font-weight:bold;">🔗 Заказать</a>` : "";
+                    
+                    let link1 = catItem.link ? `<a href="${catItem.link}" target="_blank" style="color:#0288d1; font-weight:bold;">🔗 Осн</a>` : "";
+                    let link2 = catItem.link2 ? `<a href="${catItem.link2}" target="_blank" style="color:#e53935; font-weight:bold; margin-left:8px;">🔗 Рез</a>` : "";
+                    let linksHtml = [link1, link2].filter(Boolean).join(" ");
 
                     if(vendor.toLowerCase() === 'лента' && isKuper) vendor = 'Купер';
 
@@ -1013,7 +1046,7 @@
                         <td style="font-size:17px; padding-left:25px; font-weight:bold;">${name} ${repeatBadge}</td>
                         <td style="font-size:18px; font-weight:bold; color:#311b92; text-align:center;">${qty}</td>
                         <td style="font-size:16px;">${vendor}</td>
-                        <td>${link}</td>
+                        <td>${linksHtml}</td>
                     </tr>`;
                 }
                 
@@ -1034,13 +1067,12 @@
                     </div>`;
         }
 
-        // История операций (Только закупки, сворачиваемая)
         html += `
             <div onclick="toggleElements('history-content')" style="cursor:pointer; background:#ede7f6; padding:18px; border-radius:12px; font-weight:900; color:#311B92; margin-top:40px; display:flex; justify-content:space-between; font-size:20px;">
                 <span>🕒 История операций (Собранные закупки за месяц)</span><span>▼</span>
             </div>
             
-            <div id="history-content" class="history-content" style="display:none; margin-top:15px;">
+            <div class="history-content" style="display:none; margin-top:15px;">
                 <table>
                     <tr>
                         <th>Кофейня</th>
@@ -1150,7 +1182,7 @@
     
     function addItemOrder() { 
         let id = "item_" + Date.now(); 
-        currentCatalog[id] = { globalCat: "!!! НОВОЕ", cat: "!!! НОВОЕ", name: "Новая позиция", vendor: "Лента", price: 0, link: "", fallback: "" }; 
+        currentCatalog[id] = { globalCat: "!!! НОВОЕ", cat: "!!! НОВОЕ", name: "Новая позиция", vendor: "Лента", price: 0, price2: 0, link: "", link2: "", fallback: "" }; 
         renderCatalogOrder();
     }
     

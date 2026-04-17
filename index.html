@@ -495,7 +495,7 @@
               let sVal = state.userBasket[itemName];
               if (sVal === undefined || sVal === null) sVal = "-";
 
-              if(sVal !== "-" && sVal !== "Полная" && sVal !== "Половина" && sVal !== "Меньше половины" && sVal !== "0" && sVal !== 0 && sVal !== "CUSTOM") {
+              if(sVal !== "-" && sVal !== "Полная" && sVal !== "Половина" && sVal !== "Меньше половины" && String(sVal) !== "0" && sVal !== "CUSTOM") {
                   html += `<input type="text" class="qty-input" style="width:80px; border-bottom:2px solid #7E57C2;" value="${sVal}" onchange="registerInputChange('${itemName}', this.value, '${cat}')" onfocus="handleInputFocus(this)">
                            <button class="reset-btn" onclick="registerInputChange('${itemName}', '-', '${cat}'); renderProductList();">✕</button>`;
               } else {
@@ -504,7 +504,7 @@
                               <option value="Полная" ${sVal==='Полная'?'selected':''}>Полная</option>
                               <option value="Половина" ${sVal==='Половина'?'selected':''}>Половина</option>
                               <option value="Меньше половины" ${sVal==='Меньше половины'?'selected':''}>Меньше половины</option>
-                              <option value="0" ${(sVal==='0' || sVal===0)?'selected':''}>0</option>
+                              <option value="0" ${String(sVal)==='0'?'selected':''}>0</option>
                               <option value="CUSTOM">✍️ Ручной ввод</option>
                            </select>`;
               }
@@ -751,23 +751,19 @@
       if (state.currentMode === 'stoplist_fill') {
           let orderCatSnap = await database.ref("catalogs/order").once("value");
           let orderCat = orderCatSnap.val() || {};
-          let orderItemsMap = {};
           
-          for(let k in orderCat) { 
-              if(orderCat[k] && orderCat[k].name) {
-                  orderItemsMap[String(orderCat[k].name).trim().toLowerCase()] = orderCat[k]; 
-              }
-          }
-
           let draft = JSON.parse(localStorage.getItem("draft_" + state.currentShop + "_order")) || {basket:{}, time: Date.now()};
           if(!draft.basket["_catinfo"]) draft.basket["_catinfo"] = {};
           
           flatData.forEach(item => {
               if (item.qty === 'Закончилось') { 
                   let safeName = String(item.name).trim().toLowerCase();
-                  if (orderItemsMap[safeName]) {
-                      draft.basket[item.name] = 1; 
-                      draft.basket["_catinfo"][item.name] = orderItemsMap[safeName].cat; 
+                  let exactKey = Object.keys(orderCat).find(k => orderCat[k] && orderCat[k].name && String(orderCat[k].name).trim().toLowerCase() === safeName);
+                  if (exactKey) {
+                      let exactName = orderCat[exactKey].name;
+                      let exactCat = orderCat[exactKey].cat || "Прочее";
+                      draft.basket[exactName] = 1; 
+                      draft.basket["_catinfo"][exactName] = exactCat; 
                   }
               }
           });

@@ -218,7 +218,7 @@
 <body>
 
 <div class="nav">
-    <h2 style="margin:0;">💼 Coffee TEIKU CRM</h2>
+    <h2 style="margin:0;">💼 Coffee 23 TEIKU CRM</h2>
     <div id="db-status">☁️ База активна</div>
 </div>
 
@@ -236,20 +236,21 @@
 <div class="card" id="content">Загрузка данных...</div>
 
 <script>
+    // ==========================================
+    // ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ И ПОДКЛЮЧЕНИЕ
+    // ==========================================
     const FB_URL = "https://project-lenta22-default-rtdb.firebaseio.com";
     let currentCatalog = {};
     let currentPath = "";
     let currentTabType = "";
-    let isNewShopCatalog = false;
+    let isNewShopCatalog = false; // Для переключения режимов закупки
     let appSettings = { hidden_categories: {}, new_shop_order_active: false };
     let cachedData = {};
     let isChecklistEditMode = false;
     let isSvodEditMode = false;
     let svodDeletions = []; 
 
-    // ==========================================
     // УНИВЕРСАЛЬНЫЙ БЕЗОПАСНЫЙ ХЭШ-ID (работает со всеми кодировками)
-    // ==========================================
     function getSafeId(str) {
         if (!str) return "id_empty_" + Math.floor(Math.random() * 10000);
         let res = "";
@@ -259,9 +260,7 @@
         return "id_" + res;
     }
 
-    // ==========================================
     // УМНОЕ РАСКРЫТИЕ/ЗАКРЫТИЕ (КАСКАД)
-    // ==========================================
     function toggleClass(cls, displayType) { 
         if (!displayType) displayType = 'table-row';
         let els = document.querySelectorAll('.' + cls);
@@ -309,7 +308,7 @@
                 ]);
                 currentCatalog = await res.json() || {};
                 appSettings = await setRes.json() || { hidden_categories: {}, new_shop_order_active: false };
-                if(!appSettings.hidden_categories) appSettings.hidden_categories = {};
+                if (!appSettings.hidden_categories) appSettings.hidden_categories = {};
                 renderCatalogOrder();
             } 
             else if (type === 'catalog_checklist') {
@@ -347,9 +346,15 @@
                     fetch(`${FB_URL}/orders.json`)
                 ]);
                 cachedData.catalog = await resCheck.json() || {};
-                cachedData.orders = await resOrders.json() || {};
-                Object.keys(cachedData.orders).forEach(k => { if(cachedData.orders[k]) cachedData.orders[k].key = k; });
-                isChecklistEditMode = false;
+                
+                // Кэшируем заказы вместе с их ключами Firebase
+                let ordersObj = await resOrders.json() || {};
+                Object.keys(ordersObj).forEach(k => { 
+                    if (ordersObj[k]) ordersObj[k].key = k; 
+                });
+                cachedData.orders = ordersObj;
+                
+                isChecklistEditMode = false; 
                 renderChecksTable();
             }
             else if (type === 'orders') {
@@ -423,6 +428,7 @@
             html += `<div class="card" style="flex: 1 1 calc(33% - 20px); min-width:320px; padding:25px; background:#fff; border-radius:16px; box-shadow:0 4px 15px rgba(0,0,0,0.05);">
                         <h4 style="margin-top:0; color:#311b92; font-size:20px; border-bottom:2px solid #eee; padding-bottom:10px; font-weight:900;">${s}</h4>`;
             
+            // Топ заканчивающихся
             let empties = Object.entries(stats[s].emptyCount).sort((a,b) => b[1] - a[1]).slice(0, 5);
             html += `<b style="color:#D50000; font-size:16px;">🛑 Часто заканчивается (Чек-лист):</b>
                      <ul style="margin-top:5px; padding-left:20px; font-size:15px; color:#555; font-weight:bold;">`;
@@ -433,6 +439,7 @@
             }
             html += `</ul>`;
 
+            // Средний заказ
             let averages = Object.entries(stats[s].orderSum).map(e => {
                 let avg = (e[1] / stats[s].orderCount[e[0]]).toFixed(1);
                 return [e[0], avg];
@@ -467,6 +474,7 @@
     // ==========================================
     function renderCatalogOrder() {
         const box = document.getElementById('content');
+        
         let globalCats = ["Основное меню"];
         Object.values(currentCatalog).forEach(i => {
             if(i.globalCat && !globalCats.includes(i.globalCat) && !i.globalCat.includes("!!!")) {
@@ -657,7 +665,7 @@
                 if(b.includes("!!!")) return 1;
                 return a.localeCompare(b);
             }).forEach(sc => {
-                let safeSc = getSafeId(gc + sc);
+                let safeSc = getSafeId(gc + "_" + sc);
                 let displaySc = sc.replace("!!! НОВОЕ", "Заполните данные");
 
                 let displayStyle = gc.includes("!!!") ? "table-row" : "none";
@@ -856,13 +864,12 @@
     }
 
     // ==========================================
-    // 5. РЕНДЕР: ТАБЛИЦА ЧЕК-ЛИСТОВ (БЕЗ ОГРАНИЧЕНИЯ ПО ДАТЕ, С ДУБЛЕМ ТОВАРА СПРАВА)
+    // 5. РЕНДЕР: ТАБЛИЦА ЧЕК-ЛИСТОВ
     // ==========================================
     function renderChecksTable() {
         const box = document.getElementById('content');
         let shops = ["Бояринова", "Гагарина", "Вертолетчиков", "Липчанского", "Новокосино", "Новокосино 2", "Старое Павлино", "Красноказарменная", "Ухтомского ополчения"];
         
-        // Берем самый ПОСЛЕДНИЙ чек-лист по каждой точке
         let latestChecklists = {};
         Object.values(cachedData.orders).forEach(o => {
             if (o && o.mode === 'checklist') {

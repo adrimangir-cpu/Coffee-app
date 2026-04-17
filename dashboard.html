@@ -128,6 +128,12 @@
         .btn-del:hover {
             background: #ffcdd2;
         }
+
+        .btn-del:disabled {
+            background: #eee;
+            color: #aaa;
+            cursor: not-allowed;
+        }
         
         .btn-save { 
             background: linear-gradient(135deg, #4caf50 0%, #2e7d32 100%); 
@@ -218,7 +224,7 @@
 <body>
 
 <div class="nav">
-    <h2 style="margin:0;">💼 Coffee 23 TEIKU CRM</h2>
+    <h2 style="margin:0;">💼 Coffee 21 TEIKU CRM</h2>
     <div id="db-status">☁️ База активна</div>
 </div>
 
@@ -246,11 +252,13 @@
     let isNewShopCatalog = false; // Для переключения режимов закупки
     let appSettings = { hidden_categories: {}, new_shop_order_active: false };
     let cachedData = {};
+    
+    // Режимы редактирования
     let isChecklistEditMode = false;
     let isSvodEditMode = false;
     let svodDeletions = []; 
 
-    // УНИВЕРСАЛЬНЫЙ БЕЗОПАСНЫЙ ХЭШ-ID (работает со всеми кодировками)
+    // УНИВЕРСАЛЬНЫЙ БЕЗОПАСНЫЙ ХЭШ-ID
     function getSafeId(str) {
         if (!str) return "id_empty_" + Math.floor(Math.random() * 10000);
         let res = "";
@@ -260,12 +268,15 @@
         return "id_" + res;
     }
 
-    // УМНОЕ РАСКРЫТИЕ/ЗАКРЫТИЕ (КАСКАД)
-    function toggleClass(cls, displayType) { 
-        if (!displayType) displayType = 'table-row';
+    // УМНОЕ РАСКРЫТИЕ/ЗАКРЫТИЕ
+    function toggleElements(cls) { 
         let els = document.querySelectorAll('.' + cls);
         els.forEach(el => {
-            el.style.display = el.style.display === 'none' ? displayType : 'none';
+            if (el.tagName === 'DIV') {
+                el.style.display = el.style.display === 'none' ? 'flex' : 'none';
+            } else {
+                el.style.display = el.style.display === 'none' ? 'table-row' : 'none';
+            }
         }); 
     }
 
@@ -280,7 +291,6 @@
                 isClosing = true;
             }
         });
-        // Если закрываем Глобальную категорию, прячем и все товары внутри неё
         if (isClosing) {
             let items = document.querySelectorAll('.lvl3_of_' + gcId);
             items.forEach(el => el.style.display = 'none');
@@ -329,6 +339,7 @@
                 renderMissing();
             }
             else if (type === 'stoplists') {
+                // В стоп-листах загружаем оба справочника закупки для ссылок
                 let [resOrders, catRes, newCatRes] = await Promise.all([
                     fetch(`${FB_URL}/orders.json`),
                     fetch(`${FB_URL}/catalogs/order.json`),
@@ -347,7 +358,6 @@
                 ]);
                 cachedData.catalog = await resCheck.json() || {};
                 
-                // Кэшируем заказы вместе с их ключами Firebase
                 let ordersObj = await resOrders.json() || {};
                 Object.keys(ordersObj).forEach(k => { 
                     if (ordersObj[k]) ordersObj[k].key = k; 
@@ -358,6 +368,7 @@
                 renderChecksTable();
             }
             else if (type === 'orders') {
+                // Загружаем оба справочника (обычный и новый), чтобы ссылки подтянулись отовсюду
                 let [ordersRes, catRes, newCatRes] = await Promise.all([
                     fetch(`${FB_URL}/orders.json`),
                     fetch(`${FB_URL}/catalogs/order.json`),
@@ -499,7 +510,7 @@
         </div>
 
         <div class="settings-panel">
-            <h4 style="margin-top:0; font-size:19px; color:#d32f2f; cursor:pointer; display:flex; justify-content:space-between; align-items:center;" onclick="toggleClass('settings-content-div', 'flex')">
+            <h4 style="margin-top:0; font-size:19px; color:#d32f2f; cursor:pointer; display:flex; justify-content:space-between; align-items:center;" onclick="toggleElements('settings-content-div')">
                 <span>⚙️ Настройки (Скрывать глобальные категории в приложении)</span>
                 <span>▼</span>
             </h4>
@@ -543,6 +554,7 @@
             grouped[gc][sc].push({k: k, item: item});
         });
 
+        // Сортировка: Новые папки !!! всегда наверху
         Object.keys(grouped).sort((a,b) => {
             if(a.includes("!!!")) return -1;
             if(b.includes("!!!")) return 1;
@@ -565,7 +577,7 @@
                 
                 let displayStyle = gc.includes("!!!") ? "table-row" : "none";
                 
-                html += `<tr class="cat-group-header lvl2_${safeGc}" style="display:${displayStyle};" onclick="toggleClass('lvl3_${safeSc}')">
+                html += `<tr class="cat-group-header lvl2_${safeGc}" style="display:${displayStyle};" onclick="toggleElements('lvl3_${safeSc}')">
                             <td colspan="9" style="padding:15px; padding-left:30px; font-size:18px;">📂 ${displaySc} <span style="float:right;">▼</span></td>
                          </tr>`;
                 
@@ -670,7 +682,7 @@
 
                 let displayStyle = gc.includes("!!!") ? "table-row" : "none";
 
-                html += `<tr class="cat-group-header lvl2_${safeGc}" style="display:${displayStyle};" onclick="toggleClass('lvl3_${safeSc}')">
+                html += `<tr class="cat-group-header lvl2_${safeGc}" style="display:${displayStyle};" onclick="toggleElements('lvl3_${safeSc}')">
                             <td colspan="5" style="padding:15px; padding-left:30px; font-size:18px;">📂 ${displaySc} <span style="float:right;">▼</span></td>
                          </tr>`;
                 
@@ -749,7 +761,7 @@
 
             let displayStyle = sc.includes("!!!") ? "table-row" : "none";
 
-            html += `<tr class="cat-group-header" onclick="toggleClass('stop_${safeSc}')">
+            html += `<tr class="cat-group-header" onclick="toggleElements('stop_${safeSc}')">
                         <td colspan="5" style="padding:15px; background:#d1c4e9; font-size:18px;">📂 <b>${displaySc}</b> <span style="float:right;">▼</span></td>
                      </tr>`;
             
@@ -864,12 +876,13 @@
     }
 
     // ==========================================
-    // 5. РЕНДЕР: ТАБЛИЦА ЧЕК-ЛИСТОВ
+    // 5. РЕНДЕР: ТАБЛИЦА ЧЕК-ЛИСТОВ (БЕЗ ОГРАНИЧЕНИЯ ПО ДАТЕ, С ДУБЛЕМ ТОВАРА СПРАВА)
     // ==========================================
     function renderChecksTable() {
         const box = document.getElementById('content');
         let shops = ["Бояринова", "Гагарина", "Вертолетчиков", "Липчанского", "Новокосино", "Новокосино 2", "Старое Павлино", "Красноказарменная", "Ухтомского ополчения"];
         
+        // Берем самый ПОСЛЕДНИЙ чек-лист по каждой точке (даже если он был отправлен вчера)
         let latestChecklists = {};
         Object.values(cachedData.orders).forEach(o => {
             if (o && o.mode === 'checklist') {
@@ -915,6 +928,7 @@
         html += `<table style="min-width:1200px;"><tr><th style="width:250px;">Товар</th>`;
         
         shops.forEach(s => {
+            // ВЫВОД ДАТЫ В ШАПКЕ ТАБЛИЦЫ
             let dateStr = "Нет данных";
             if (latestChecklists[s] && latestChecklists[s].timestamp) {
                 let d = new Date(latestChecklists[s].timestamp);
@@ -927,7 +941,7 @@
 
         sortedCats.forEach(cat => {
             let safeCat = getSafeId(cat);
-            html += `<tr class="cat-group-header" onclick="toggleClass('chk_${safeCat}')">
+            html += `<tr class="cat-group-header" onclick="toggleElements('chk_${safeCat}')">
                         <td colspan="${shops.length+2}" style="padding:15px; font-size:18px;">📂 ${cat} <span style="float:right; opacity:0.5;">▼</span></td>
                      </tr>`;
             
@@ -942,6 +956,7 @@
                     if (latestChecklists[s] && latestChecklists[s].items) {
                         let itemsArr = Array.isArray(latestChecklists[s].items) ? latestChecklists[s].items : Object.values(latestChecklists[s].items);
                         let found = itemsArr.find(i => i && i.name === itemName);
+                        // ОТОБРАЖАЕМ НОЛЬ как нормальное значение!
                         if (found && found.qty !== undefined && found.qty !== null && String(found.qty).trim() !== "") {
                             val = String(found.qty);
                         }
@@ -962,6 +977,7 @@
                     }
                 });
                 
+                // ДУБЛИРУЕМ ТОВАР СПРАВА
                 html += `<td style="font-size:16px; text-align:right;"><b>${itemName}</b></td></tr>`;
             });
         });
@@ -987,6 +1003,8 @@
             if (o && (o.mode === 'order' || o.mode === 'new_shop')) {
                 if ((o.timestamp || 0) < cutoffMonth) return; 
                 
+                // В свод попадают ТОЛЬКО те, что еще НЕ собирались (svod: false)
+                // Если svod вообще не прописан (ошибка базы), тоже считаем как false
                 if (o.svod === false || !o.svod || (o.timestamp || 0) >= todayStart) {
                     todaysOrders.push(o);
                 } else {
@@ -1047,9 +1065,10 @@
         let totalLenta = 0; let totalOzon = 0; let totalKuper = 0;
 
         if (Object.keys(svodData).length === 0) {
-            html += `<tr><td colspan="4" style="text-align:center; padding:20px; font-weight:bold; font-size:18px; color:#888;">Нет заказов за сегодня</td></tr>`;
+            html += `<tr><td colspan="4" style="text-align:center; padding:20px; font-weight:bold; font-size:18px; color:#888;">Нет заказов, ожидающих сборки</td></tr>`;
         } else {
             for(let shop in svodData) {
+                // Сначала вычисляем предварительную сумму Ленты для логики Купера
                 for(let name in svodData[shop].items) {
                     let catItem = Object.values(cachedData.catalog).find(c => c && c.name === name) || {};
                     let vendor = catItem.vendor || 'Лента';
@@ -1062,7 +1081,7 @@
                 let isKuper = svodData[shop].lentaSum > 0 && svodData[shop].lentaSum < 2000;
 
                 let safeShopId = getSafeId(shop);
-                html += `<tr class="cat-group-header" onclick="toggleClass('svod_${safeShopId}')">
+                html += `<tr class="cat-group-header" onclick="toggleElements('svod_${safeShopId}')">
                             <td colspan="4" style="background:#ede7f6; padding:15px; font-size:19px; color:#311B92;"><b>📍 ${shop}</b> <span style="float:right;">▼</span></td>
                          </tr>`;
 
@@ -1141,11 +1160,11 @@
         }
 
         html += `
-            <div onclick="toggleClass('history-content-div', 'block')" style="cursor:pointer; background:#ede7f6; padding:18px; border-radius:12px; font-weight:900; color:#311B92; margin-top:40px; display:flex; justify-content:space-between; font-size:20px;">
+            <div onclick="toggleElements('history-content')" style="cursor:pointer; background:#ede7f6; padding:18px; border-radius:12px; font-weight:900; color:#311B92; margin-top:40px; display:flex; justify-content:space-between; font-size:20px;">
                 <span>🕒 История операций (Собранные закупки за месяц)</span><span>▼</span>
             </div>
             
-            <div class="history-content-div" style="display:none; margin-top:15px;">
+            <div class="history-content" style="display:none; margin-top:15px;">
                 <table>
                     <tr>
                         <th>Кофейня</th>

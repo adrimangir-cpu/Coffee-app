@@ -322,13 +322,19 @@
     }
 
     function getSafeId(str) {
-        if (!str) return "empty";
-        return "id_" + str.replace(/[^a-zA-Z0-9а-яА-Я]/g, '');
+        if (!str) return "id_empty_" + Math.floor(Math.random()*1000);
+        str = String(str); let hash = 0;
+        for (let i = 0; i < str.length; i++) hash = (hash << 5) - hash + str.charCodeAt(i);
+        return "id_" + Math.abs(hash) + "_" + str.length;
     }
 
-    function handleShopSelection(name) {
-      triggerHaptic(); state.currentShop = name; document.getElementById('title').innerText = name;
-      localStorage.setItem('saved_shop', name); showScreen('step-2');
+    async function handleShopSelection(name) {
+      triggerHaptic(); 
+      state.currentShop = name; 
+      document.getElementById('title').innerText = name;
+      localStorage.setItem('saved_shop', name); 
+      await loadSettings();
+      showScreen('step-2');
     }
 
     function clearShopAndReturn() {
@@ -565,7 +571,7 @@
       var isComplete = itemsInThisCat.length > 0 && itemsInThisCat.every(key => {
           let itemName = state.productCatalog[key].name;
           let val = state.userBasket[itemName];
-          return val !== undefined && val !== null && val !== "" && val !== "-" && val !== "--";
+          return val !== undefined && val !== null && String(val).trim() !== "" && String(val).trim() !== "-" && String(val).trim() !== "--";
       });
 
       var block = document.getElementById('block-' + getSafeId(categoryName));
@@ -631,7 +637,7 @@
     }
 
     function updateBadgeUI() {
-        let items = Object.keys(state.userBasket).filter(k => k !== "_catinfo" && state.userBasket[k] != 0 && state.userBasket[k] !== "-");
+        let items = Object.keys(state.userBasket).filter(k => k !== "_catinfo" && state.userBasket[k] !== 0 && state.userBasket[k] !== "0" && state.userBasket[k] !== "-");
         let count = items.length;
         document.getElementById('cart-count-badge').innerText = count;
         
@@ -658,7 +664,7 @@
             let v = state.userBasket[name];
             let cat = state.userBasket["_catinfo"] ? state.userBasket["_catinfo"][name] : "";
             
-            if(v != 0 && v !== "-") {
+            if(String(v) !== "0" && v !== 0 && String(v) !== "-") {
                 html += `<div class="item">
                             <span>${name}</span>
                             <div style="display:flex; align-items:center;">
@@ -702,7 +708,7 @@
           let item = state.productCatalog[key];
           if (item && item.cat && item.name !== "Товар" && item.name !== "Дата заполнения") {
              let val = state.userBasket[item.name];
-             if (val === undefined || val === null || val === "" || val === "-" || val === "--") { 
+             if (val === undefined || val === null || String(val).trim() === "" || String(val).trim() === "-" || String(val).trim() === "--") { 
                  missingCategories.add(item.cat); 
                  totalMissing++; 
              }
@@ -718,8 +724,8 @@
 
       let flatData = Object.entries(state.userBasket).filter(([n,q]) => {
           if (n === "_catinfo") return false;
-          if (q === "-" || q === "--" || q === "") return false;
-          if (state.currentMode !== 'checklist' && (q == 0 || q == "0")) return false; 
+          if (String(q).trim() === "-" || String(q).trim() === "--" || String(q).trim() === "") return false;
+          if (state.currentMode !== 'checklist' && (q == 0 || String(q) === "0")) return false; 
           return true;
       }).map(([n,q]) => {
             let catName = (state.userBasket["_catinfo"] && state.userBasket["_catinfo"][n]) || (state.productCatalog[n] ? state.productCatalog[n].cat : "Прочее");
@@ -742,7 +748,6 @@
           svod: false 
       });
 
-      // Перенос из Стоп-листа в Корзину с проверкой
       if (state.currentMode === 'stoplist_fill') {
           let orderCatSnap = await database.ref("catalogs/order").once("value");
           let orderCat = orderCatSnap.val() || {};
@@ -754,24 +759,19 @@
               }
           }
 
-          let draftKey = "draft_" + state.currentShop + "_order";
-          let draftStr = localStorage.getItem(draftKey);
-          let draft = draftStr ? JSON.parse(draftStr) : {basket:{}, time: Date.now()};
-          if(!draft.basket) draft.basket = {};
+          let draft = JSON.parse(localStorage.getItem("draft_" + state.currentShop + "_order")) || {basket:{}, time: Date.now()};
           if(!draft.basket["_catinfo"]) draft.basket["_catinfo"] = {};
           
           flatData.forEach(item => {
               if (item.qty === 'Закончилось') { 
                   let safeName = String(item.name).trim().toLowerCase();
                   if (orderItemsMap[safeName]) {
-                      let exactName = orderItemsMap[safeName].name;
-                      draft.basket[exactName] = 1; 
-                      draft.basket["_catinfo"][exactName] = orderItemsMap[safeName].cat; 
+                      draft.basket[item.name] = 1; 
+                      draft.basket["_catinfo"][item.name] = orderItemsMap[safeName].cat; 
                   }
               }
           });
-          draft.time = Date.now();
-          localStorage.setItem(draftKey, JSON.stringify(draft));
+          localStorage.setItem("draft_" + state.currentShop + "_order", JSON.stringify(draft));
       }
 
       localStorage.removeItem("draft_" + state.currentShop + "_" + state.currentMode);
@@ -825,7 +825,7 @@
           document.getElementById('title').innerText = "Админ-панель";
           grid.innerHTML = `
             <div class="card btn-admin-pink" style="grid-column: span 2;" onclick="showScreen('step-admin-purchase')"><span>📦</span><span>Управление закупкой</span></div>
-            <div class="card wide btn-admin-white" onclick="executeAdminAction('status_checklist', 'admin')"><span>👥</span><span style="margin-top:5px;">КТО ЗАПОЛНИЛ?</span></div>
+            <div class="card wide btn-admin-white" onclick="executeAdminAction('status_checklist')"><span>👥</span><span style="margin-top:5px;">КТО ЗАПОЛНИЛ?</span></div>
             <div class="card wide btn-admin-white" onclick="openMissingAdmin()"><span>🚚</span><span style="margin-top:5px;">Недовозы</span></div>
             <div class="card wide btn-admin-white" onclick="openExternalDashboard()"><span>🌐</span><span style="margin-top:5px;">ОТКРЫТЬ CRM</span></div>
             <div class="card wide btn-admin-white" onclick="alert('Управление маркетплейсами в разработке')"><span>🛒</span><span style="margin-top:5px;">Маркетплейсы</span></div>
@@ -834,7 +834,7 @@
       else {
           document.getElementById('title').innerText = "Кабинет Босса";
           grid.innerHTML = `
-            <div class="card btn-boss-table" onclick="executeAdminAction('status_checklist', 'boss')"><span style="font-size: 26px; margin-bottom: 6px;">👥</span><span>КТО ЗАПОЛНИЛ?</span></div>
+            <div class="card btn-boss-table" onclick="executeAdminAction('status_checklist')"><span style="font-size: 26px; margin-bottom: 6px;">👥</span><span>КТО ЗАПОЛНИЛ?</span></div>
             <div class="card btn-boss-table" onclick="openExternalDashboard()"><span style="font-size: 26px; margin-bottom: 6px;">🌐</span><span>ЧЕК-ЛИСТЫ</span></div>
             
             <div class="card btn-boss-yellow wide" onclick="fetchBossReport('Сиропы половина')"><span>Сиропы половина</span></div>
@@ -943,12 +943,11 @@
       }
     }
 
-    async function executeAdminAction(cmd, role) {
+    async function executeAdminAction(cmd) {
         triggerHaptic();
         if (cmd === 'status_checklist') {
             showReportOverlay("Сбор данных...");
             let today = new Date().setHours(0,0,0,0);
-            let isBossOnly = (role === 'boss');
             
             try {
                 let snap = await database.ref("orders").limitToLast(500).once("value");
@@ -970,18 +969,11 @@
                 let html = `<div class="report-card"><div class="report-card-title">Отчет за сегодня</div>`;
                 allShops.forEach(s => { 
                     let chk = filledChecklist.has(s) ? '✅' : '❌';
-                    if (isBossOnly) {
-                        html += `<div class="report-card-item">
-                                    <span style="font-size:17px; color:#311B92; font-weight:900;">${s}</span> 
-                                    <span style="font-size:16px; font-weight:900;">Чек: ${chk}</span>
-                                 </div>`;
-                    } else {
-                        let ord = filledOrder[s] === 'yes' ? '📦' : (filledOrder[s] === 'none' ? '➖' : '❌');
-                        html += `<div class="report-card-item">
-                                    <span style="font-size:17px; color:#311B92; font-weight:900;">${s}</span> 
-                                    <span style="font-size:16px; font-weight:900;">Чек: ${chk} | Зак: ${ord}</span>
-                                 </div>`;
-                    }
+                    let ord = filledOrder[s] === 'yes' ? '📦' : (filledOrder[s] === 'none' ? '➖' : '❌');
+                    html += `<div class="report-card-item">
+                                <span style="font-size:17px; color:#311B92; font-weight:900;">${s}</span> 
+                                <span style="font-size:16px; font-weight:900;">Чек: ${chk} | Зак: ${ord}</span>
+                             </div>`; 
                 });
                 document.getElementById('report-content-area').innerHTML = html + "</div>";
             } catch (err) {
@@ -1246,7 +1238,7 @@
     function persistDraft() { localStorage.setItem("draft_" + state.currentShop + "_" + state.currentMode, JSON.stringify({basket: state.userBasket, time: Date.now()})); }
     function restoreFromDraft() { let d = localStorage.getItem("draft_" + state.currentShop + "_" + state.currentMode); if(d) { let p = JSON.parse(d); if(Date.now() - p.time < 43200000) state.userBasket = p.basket; } }
 
-    window.onload = () => {
+    window.onload = async () => {
       try { 
           Telegram.WebApp.ready(); 
           Telegram.WebApp.expand(); 
@@ -1260,7 +1252,9 @@
       }
       
       let saved = localStorage.getItem('saved_shop');
-      if(saved && saved !== 'undefined') handleShopSelection(saved);
+      if(saved && saved !== 'undefined') {
+          await handleShopSelection(saved);
+      }
     };
   </script>
 </body>

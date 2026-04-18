@@ -4,7 +4,7 @@
   <base target="_top">
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>Coffee Management App v4.5</title>
+  <title>Coffee Management App v4.6</title>
   
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-app-compat.js"></script>
@@ -21,13 +21,11 @@
       --success-green-bg: #e8f5e9; 
       --success-green-border: #4caf50;
       
-      /* ЯРКИЕ ГРАДИЕНТЫ ДЛЯ ГЛАВНОГО МЕНЮ */
       --btn-order-grad: linear-gradient(135deg, #F06292 0%, #C2185B 100%);
       --btn-check-grad: linear-gradient(135deg, #FFB74D 0%, #F57C00 100%);
       --btn-stop-grad: linear-gradient(135deg, #9575CD 0%, #512DA8 100%);
       --newshop-gradient: linear-gradient(135deg, #66BB6A 0%, #2E7D32 100%);
       
-      /* ГРАДИЕНТЫ ДЛЯ КАБИНЕТОВ (ЕДИНЫЙ СТИЛЬ) */
       --boss-gradient: linear-gradient(135deg, #9575CD 0%, #512DA8 100%);
       --admin-gradient: linear-gradient(135deg, #F06292 0%, #C2185B 100%);
       --danger-gradient: linear-gradient(135deg, #FF5252 0%, #C62828 100%);
@@ -67,7 +65,6 @@
     .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }
     .card { background-color: var(--card-bg); padding: 18px 10px; border-radius: 18px; box-shadow: 0 6px 18px rgba(0,0,0,0.05); text-align: center; cursor: pointer; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 85px; border: 1px solid transparent; margin-bottom: 0; }
 
-    /* ПАНЕЛИ АДМИНА И БОССА */
     .btn-boss-table, .btn-admin-pink, .btn-boss-red, .btn-boss-yellow, .btn-boss-pale, .btn-admin-white { 
       font-weight: 900 !important; 
       font-size: 15px !important; 
@@ -96,7 +93,6 @@
     .btn-mode-newshop { background: var(--newshop-gradient) !important; display: none; }
     .btn-mode-none { background-color: #ffffff !important; border: 3px dashed #ff5c5c !important; color: #ff5c5c !important; box-shadow: none; }
    
-    /* ПАНЕЛЬ УПРАВЛЕНИЯ ВНИЗУ */
     .bottom-fixed-bar { position: fixed; bottom: 0; left: 0; width: 100%; padding: 10px 16px calc(12px + var(--safe-area-bottom)) 16px; background-color: #ffffff; z-index: 2000; border-top: 1px solid #eeeeee; box-shadow: 0 -5px 25px rgba(0,0,0,0.06); display: flex; justify-content: center; }
     .btn-bottom-exit { width: 100%; padding: 14px; background: #f1f3f4; color: #4A148C; border-radius: 16px; font-size: 16px; font-weight: 900; border: none; cursor: pointer; margin-top: 0; text-transform: uppercase; }
 
@@ -421,17 +417,18 @@
               let hasCanceledMissings = false;
               missSnap.forEach(c => {
                   let m = c.val();
-                  if (m && m.status === 'canceled') {
-                      state.userBasket[m.name] = m.qty;
+                  if (m && m.status === 'canceled' && !m.added_to_basket) {
+                      let qtyNum = parseFloat(m.qty) || 0;
+                      state.userBasket[m.name] = (state.userBasket[m.name] || 0) + qtyNum;
                       if(!state.userBasket["_catinfo"]) state.userBasket["_catinfo"] = {};
                       state.userBasket["_catinfo"][m.name] = state.productCatalog[m.name] ? state.productCatalog[m.name].cat : "Прочее";
-                      // Мы БОЛЬШЕ НЕ удаляем позицию из БД при открытии закупки,
-                      // чтобы она продолжала висеть в недовозах со статусом "Ожидает закупки", пока бариста не нажмет "Доехал"
+                      
+                      database.ref("missing_items/" + c.key).update({added_to_basket: true}); 
                       hasCanceledMissings = true;
                   }
               });
 
-              if (hasCanceledMissings) alert("⚠️ Отмененные администратором недовозы добавлены в вашу корзину.");
+              if (hasCanceledMissings) alert("⚠️ Отмененные администратором недовозы возвращены в вашу корзину (статус изменен на 'Ожидает закупки').");
           }
           
           restoreFromDraft();
@@ -837,7 +834,7 @@
           document.getElementById('title').innerText = "Админ-панель";
           grid.innerHTML = `
             <div class="card btn-admin-pink" style="grid-column: span 2;" onclick="showScreen('step-admin-purchase')"><span>📦</span><span>Управление закупкой</span></div>
-            <div class="card wide btn-admin-white" onclick="executeAdminAction('status_checklist')"><span>👥</span><span style="margin-top:5px;">КТО ЗАПОЛНИЛ?</span></div>
+            <div class="card wide btn-admin-white" onclick="executeAdminAction('status_checklist_admin')"><span>👥</span><span style="margin-top:5px;">КТО ЗАПОЛНИЛ?</span></div>
             <div class="card wide btn-admin-white" onclick="openMissingAdmin()"><span>🚚</span><span style="margin-top:5px;">Недовозы</span></div>
             <div class="card wide btn-admin-white" onclick="openExternalDashboard()"><span>🌐</span><span style="margin-top:5px;">ОТКРЫТЬ CRM</span></div>
             <div class="card wide btn-admin-white" onclick="alert('Управление маркетплейсами в разработке')"><span>🛒</span><span style="margin-top:5px;">Маркетплейсы</span></div>
@@ -846,7 +843,7 @@
       else {
           document.getElementById('title').innerText = "Кабинет Босса";
           grid.innerHTML = `
-            <div class="card btn-boss-table" onclick="executeAdminAction('status_checklist')"><span style="font-size: 26px; margin-bottom: 6px;">👥</span><span>КТО ЗАПОЛНИЛ?</span></div>
+            <div class="card btn-boss-table" onclick="executeAdminAction('status_checklist_boss')"><span style="font-size: 26px; margin-bottom: 6px;">👥</span><span>КТО ЗАПОЛНИЛ?</span></div>
             <div class="card btn-boss-table" onclick="openExternalDashboard()"><span style="font-size: 26px; margin-bottom: 6px;">🌐</span><span>ЧЕК-ЛИСТЫ</span></div>
             
             <div class="card btn-boss-yellow wide" onclick="fetchBossReport('Сиропы половина')"><span>Сиропы половина</span></div>
@@ -957,7 +954,7 @@
 
     async function executeAdminAction(cmd) {
         triggerHaptic();
-        if (cmd === 'status_checklist') {
+        if (cmd === 'status_checklist_admin' || cmd === 'status_checklist_boss') {
             showReportOverlay("Сбор данных...");
             
             let today = new Date();
@@ -981,7 +978,7 @@
                 periodName = "Пт-Вс (прошлая)";
             }
 
-            let isAdmin = TG_ADMIN_IDS.includes(String(globalTgUserId));
+            let isBossView = (cmd === 'status_checklist_boss');
             
             try {
                 let snap = await database.ref("orders").limitToLast(1000).once("value");
@@ -994,7 +991,7 @@
                         if (val.mode === 'checklist' && (val.timestamp || 0) >= today.getTime()) {
                             filledChecklist.add(val.shop); 
                         }
-                        if ((val.mode === 'order' || val.mode === 'new_shop') && (val.timestamp || 0) >= orderStart.getTime()) {
+                        if (!isBossView && (val.mode === 'order' || val.mode === 'new_shop') && (val.timestamp || 0) >= orderStart.getTime()) {
                             let isNone = val.items && val.items.length === 1 && val.items[0].name === "НЕТ ЗАКАЗА";
                             if (!filledOrder[val.shop] || !isNone) { 
                                 filledOrder[val.shop] = isNone ? 'none' : 'yes';
@@ -1006,7 +1003,7 @@
                 let allShops = ["Бояринова", "Гагарина", "Вертолетчиков", "Липчанского", "Новокосино", "Новокосино 2", "Старое Павлино", "Красноказарменная", "Ухтомского ополчения"];
                 let html = "";
                 
-                if (isAdmin) {
+                if (!isBossView) {
                     html = `<div class="report-card">
                               <div class="report-card-title">Отчет за сегодня</div>
                               <div style="text-align:center; color:#888; margin-bottom:10px; font-weight:bold; font-size:14px;">Закупка проверяется за период: ${periodName}</div>`;
@@ -1036,6 +1033,73 @@
                 document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; color:red; font-weight:900;">Ошибка загрузки статусов</div></div>`;
             }
         }
+    }
+
+    // УМНЫЙ СВОД АДМИНА
+    async function buildSvodReport() {
+      showReportOverlay("Сборка закупки (Выполняю команду)...");
+      
+      try {
+          const [ordersSnap, catalogSnap] = await Promise.all([
+             database.ref("orders").once("value"), 
+             database.ref("catalogs/order").once("value")
+          ]);
+          
+          let catalog = catalogSnap.val() || {};
+          let updates = {};
+          let totalSvod = 0;
+          let shopSums = {};
+
+          ordersSnap.forEach(c => {
+              let o = c.val();
+              if (o && (o.mode === 'order' || o.mode === 'new_shop') && o.svod === false) {
+                  updates[c.key + "/svod"] = true; 
+                  if(!shopSums[o.shop]) shopSums[o.shop] = 0;
+                  
+                  let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
+                  itemsArr.forEach(i => {
+                      if(i && i.name) {
+                          let catItem = Object.values(catalog).find(cat => cat && cat.name === i.name);
+                          let price = catItem ? parseFloat(catItem.price) || 0 : 0;
+                          let vendor = catItem ? String(catItem.vendor).toLowerCase() : 'лента';
+                          
+                          if (vendor !== 'озон') {
+                              let cost = price * parseFloat(i.qty);
+                              totalSvod += cost;
+                              shopSums[o.shop] += cost;
+                          }
+                      }
+                  });
+              }
+          });
+
+          if (Object.keys(updates).length > 0) {
+              await database.ref("orders").update(updates);
+          }
+
+          let html = `<div class="report-card"><div class="report-card-title">Сводная закупка</div>`;
+          
+          if (Object.keys(updates).length === 0) {
+              html += `<div style="padding:10px 0; text-align:center; font-weight:900;">Нет новых необработанных заказов на данный момент.</div>`;
+          } else {
+              html += `<div style="padding:10px 0; font-size:15px; color:#555; margin-bottom:10px; font-weight:700;">✅ Команда выполнена. Заказы переведены в статус <b>"Приемка"</b> для сотрудников. Подробный Свод с ссылками отправлен вам в сообщения бота.</div>`;
+              for(let s in shopSums) {
+                  if(shopSums[s] > 0) {
+                      html += `<div class="report-card-item"><span style="font-size:17px; color:#311B92; font-weight:900;">${s}</span><b style="font-size:17px;">${shopSums[s]} ₽</b></div>`;
+                  }
+              }
+              html += `<div style="text-align:right; font-size:22px; color:#4caf50; margin-top:20px; font-weight:900;">ИТОГО: ${totalSvod} ₽</div>`;
+              
+              database.ref("bot_control/notifications").push({ type: "svod_ready", total: totalSvod, timestamp: Date.now() });
+          }
+          html += `</div>`;
+          
+          document.getElementById('report-content-area').innerHTML = html;
+
+      } catch (e) {
+          console.error(e);
+          document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="color:red; font-weight:900; text-align:center;">Ошибка формирования свода.</div></div>`;
+      }
     }
 
     // СТОП ЛИСТ ИЗ CRM БЕЗ ССЫЛОК ДЛЯ СОТРУДНИКОВ

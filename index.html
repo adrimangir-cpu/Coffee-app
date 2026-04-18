@@ -417,11 +417,13 @@
               let hasCanceledMissings = false;
               missSnap.forEach(c => {
                   let m = c.val();
+                  // Если товар отменен админом, мы переносим его в корзину.
+                  // Из базы он УДАЛЯЕТСЯ, поэтому в "Ожидаемых недовозах" бариста его не увидит.
                   if (m && m.status === 'canceled') {
                       state.userBasket[m.name] = m.qty;
                       if(!state.userBasket["_catinfo"]) state.userBasket["_catinfo"] = {};
                       state.userBasket["_catinfo"][m.name] = state.productCatalog[m.name] ? state.productCatalog[m.name].cat : "Прочее";
-                      database.ref("missing_items/" + c.key).remove(); 
+                      database.ref("missing_items/" + c.key).update({status: 'arrived', timestamp: firebase.database.ServerValue.TIMESTAMP}); 
                       hasCanceledMissings = true;
                   }
               });
@@ -733,8 +735,8 @@
       if (flatData.length === 0 && state.currentMode !== 'checklist') return alert("Заполните данные перед отправкой!");
 
       state.isProcessing = true;
-      let btn = document.getElementById('modal-submit-button'); if(btn) btn.innerText = "ОТПРАВЛЯ...";
-      let mainBtn = document.getElementById('main-action-button'); if(mainBtn) mainBtn.innerText = "ОТПРАВЛЯ...";
+      let btn = document.getElementById('modal-submit-button'); if(btn) btn.innerText = "ОТПРАВЛЯЮ...";
+      let mainBtn = document.getElementById('main-action-button'); if(mainBtn) mainBtn.innerText = "ОТПРАВЛЯЮ...";
 
       await database.ref("orders").push({
           shop: state.currentShop,
@@ -1078,11 +1080,11 @@
                 database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value")
             ]);
 
-            // Ожидаемые недовозы (Скрываем отмененные)
+            // Ожидаемые недовозы (Включаем отмененные - они ждут закупки)
             let activeMissing = [];
             missSnap.forEach(c => { 
                 let m = c.val(); 
-                if(m && m.status !== 'canceled') {
+                if(m && m.status !== 'arrived') {
                     activeMissing.push({key: c.key, ...m}); 
                 }
             });
@@ -1099,9 +1101,17 @@
                             <div class="report-card-title" style="color:#E65100;">🚚 Ожидаемые недовозы</div>`;
                 
                 activeMissing.forEach(m => {
-                    let statText = (m.status === 'transit' || m.status === 'reorder') ? "В пути" : (m.status === 'oos' ? "Нет в наличии" : "Ожидает проверки");
-                    let statColor = (m.status === 'transit' || m.status === 'reorder') ? "#1565c0" : (m.status === 'oos' ? "#c62828" : "#ef6c00");
-                    let bg = (m.status === 'transit' || m.status === 'reorder') ? "#e3f2fd" : (m.status === 'oos' ? "#ffebee" : "#fff3e0");
+                    let statText = "Ожидает проверки";
+                    let statColor = "#ef6c00";
+                    let bg = "#fff3e0";
+                    
+                    if (m.status === 'transit' || m.status === 'reorder') {
+                        statText = "В пути"; statColor = "#1565c0"; bg = "#e3f2fd";
+                    } else if (m.status === 'oos') {
+                        statText = "Нет в наличии"; statColor = "#c62828"; bg = "#ffebee";
+                    } else if (m.status === 'canceled') {
+                        statText = "Ожидает закупки"; statColor = "#e65100"; bg = "#fff8e1";
+                    }
 
                     html += `<div class="report-card-item" style="flex-direction:column; align-items:flex-start; border-bottom:1px solid #eee;">
                                 <span style="margin-bottom:8px; font-size:16px;"><b>${m.name}</b> (x${m.qty})</span> 
@@ -1177,8 +1187,11 @@
 
     async function markMissingArrived(key) {
         triggerHaptic();
-        if(!confirm("Подтверждаете, что товар доехал? Он будет удален из списка ожидания.")) return;
-        await database.ref("missing_items/" + key).remove();
+        if(!confirm("Подтверждаете, что товар доехал?")) return;
+        await database.ref("missing_items/" + key).update({
+            status: 'arrived',
+            timestamp: firebase.database.ServerValue.TIMESTAMP // Обновляем дату для истории
+        });
         alert("✅ Отлично! Товар принят.");
         showLastOrder();
     }
@@ -1202,14 +1215,15 @@
             ]);
             let orderCat = { ...(orderCatSnap.val() || {}), ...(newCatSnap.val() || {}) };
             
-            let html = `<div class="report-card"><div class="report-card-title" style="color:#EC407A;">‼️ Актуальные Недовозы</div>`;
-            let hasData = false;
+            let activeHtml = "";
+            let historyHtml = "";
+            let hasActive = false;
+            let hasHistory = false;
+            let cutoff = Date.now() - (30 * 24 * 60 * 60 * 1000);
             
             snap.forEach(c => {
                 let m = c.val();
-                if (m.status === 'canceled') return; // Скрываем отмененные
-                
-                hasData = true;
+                if (!m || (m.timestamp || 0) < cutoff) return;
                 
                 let iNameLow = String(m.name).trim().toLowerCase();
                 let catInfo = Object.values(orderCat).find(ci => {
@@ -1222,26 +1236,50 @@
                 let link2 = catInfo.link2 ? `<a href="${catInfo.link2}" target="_blank" style="color:#e53935; font-weight:bold; text-decoration:none;">🔗 Рез</a>` : "";
                 let linksHtml = (link1 || link2) ? `<div style="margin-top:5px; font-size:15px; font-weight:bold; background:#f0f0f0; padding:6px; border-radius:8px;">Заказать: ${link1}${link2}</div>` : "";
 
-                html += `<div style="padding:15px 0; border-bottom:1px solid #eee;">
-                    <div style="display:flex; justify-content:space-between; align-items:flex-start;">
-                        <div style="flex:1;">
-                            <b style="font-size:17px; color:#311B92;">${m.shop}</b><br>
-                            <span style="font-size:16px; font-weight:700;">${m.name} (${m.qty} шт)</span>
-                            ${linksHtml}
+                if (m.status === 'canceled' || m.status === 'arrived') {
+                    hasHistory = true;
+                    let statColor = m.status === 'arrived' ? '#4caf50' : '#888';
+                    let statText = m.status === 'arrived' ? '✅ Доехал' : '🔄 Возвращен в корзину';
+                    
+                    historyHtml += `<div style="padding:10px; border-bottom:1px solid #eee; background:#fafafa; border-radius:8px; margin-bottom:8px;">
+                        <b style="font-size:15px; color:#311B92;">${m.shop}</b> — ${m.name} (${m.qty} шт)<br>
+                        <span style="font-size:13px; color:${statColor}; font-weight:bold;">${statText}</span>
+                    </div>`;
+                } else {
+                    hasActive = true;
+                    activeHtml += `<div style="padding:15px 0; border-bottom:1px solid #eee;">
+                        <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+                            <div style="flex:1;">
+                                <b style="font-size:17px; color:#311B92;">${m.shop}</b><br>
+                                <span style="font-size:16px; font-weight:700;">${m.name} (${m.qty} шт)</span>
+                                ${linksHtml}
+                            </div>
+                            <button class="btn-del" onclick="deleteMissingItem('${c.key}')" style="padding:6px 10px; font-size:14px; margin-left:10px;">🗑</button>
                         </div>
-                        <button class="btn-del" onclick="deleteMissingItem('${c.key}')" style="padding:6px 10px; font-size:14px; margin-left:10px;">🗑</button>
-                    </div>
-                    <select onchange="updateMissingStatus('${c.key}', this.value)" style="margin-top:10px; padding:10px; border-radius:8px; width:100%; border:2px solid #ddd; background:#fafafa; font-weight:900; font-size:15px; color:#4A148C;">
-                        <option value="pending" ${m.status==='pending'?'selected':''}>Ожидает проверки</option>
-                        <option value="transit" ${m.status==='transit'?'selected':''}>В пути (от поставщика)</option>
-                        <option value="reorder" ${m.status==='reorder'?'selected':''}>Отменен (Админ закажет сам)</option>
-                        <option value="canceled" ${m.status==='canceled'?'selected':''}>ОТМЕНЕН (Вернуть в корзину)</option>
-                        <option value="oos" ${m.status==='oos'?'selected':''}>Нет в наличии</option>
-                    </select>
-                </div>`;
+                        <select onchange="updateMissingStatus('${c.key}', this.value)" style="margin-top:10px; padding:10px; border-radius:8px; width:100%; border:2px solid #ddd; background:#fafafa; font-weight:900; font-size:15px; color:#4A148C;">
+                            <option value="pending" ${m.status==='pending'?'selected':''}>Ожидает проверки</option>
+                            <option value="transit" ${m.status==='transit'?'selected':''}>В пути (от поставщика)</option>
+                            <option value="reorder" ${m.status==='reorder'?'selected':''}>Отменен (Админ закажет сам)</option>
+                            <option value="canceled" ${m.status==='canceled'?'selected':''}>ОТМЕНЕН (Вернуть в корзину)</option>
+                            <option value="oos" ${m.status==='oos'?'selected':''}>Нет в наличии</option>
+                        </select>
+                    </div>`;
+                }
             });
-            if(!hasData) html += "<div style='text-align:center; padding:20px; font-weight:900;'>Нет активных недовозов.</div>";
-            document.getElementById('report-content-area').innerHTML = html + "</div>";
+            
+            let html = `<div class="report-card">
+                            <div class="report-card-title" style="color:#EC407A;">‼️ Актуальные Недовозы</div>
+                            ${hasActive ? activeHtml : "<div style='text-align:center; padding:10px; font-weight:900;'>Нет активных недовозов.</div>"}
+                        </div>`;
+            
+            if (hasHistory) {
+                html += `<div class="report-card" style="margin-top:15px;">
+                            <div style="font-weight:900; color:#311B92; font-size:16px; text-align:center; padding-bottom:10px; border-bottom:2px solid #eee; margin-bottom:10px;">🕒 История (за 30 дней)</div>
+                            ${historyHtml}
+                         </div>`;
+            }
+            
+            document.getElementById('report-content-area').innerHTML = html;
         } catch (err) {
             document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; color:red; font-weight:900;">Ошибка загрузки.</div></div>`; 
         }

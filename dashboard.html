@@ -217,7 +217,7 @@
 <body>
 
 <div class="nav">
-    <h2 style="margin:0;">💼 Coffee TEIKU 22 CRM</h2>
+    <h20 style="margin:0;">💼 Coffee 21 TEIKU CRM</h20>
     <div id="db-status">☁️ База активна</div>
 </div>
 
@@ -321,6 +321,15 @@
         box.innerHTML = "<div style='text-align:center; padding:40px; font-weight:bold; font-size:22px; color:#7E57C2;'>⌛ Синхронизация данных из Firebase...</div>";
 
         try {
+            // Перед загрузкой любой вкладки, всегда подгружаем справочники закупки для мягкого поиска/ссылок
+            let [resCat, resNewCat] = await Promise.all([
+                fetch(`${FB_URL}/catalogs/order.json`),
+                fetch(`${FB_URL}/catalogs/newshop.json`)
+            ]);
+            let catOrd = await resCat.json() || {};
+            let catNew = await resNewCat.json() || {};
+            cachedData.catalogOrder = { ...catOrd, ...catNew };
+
             if (type === 'catalog_order') {
                 isNewShopCatalog = false;
                 currentPath = "catalogs/order";
@@ -345,23 +354,19 @@
                 currentCatalog = await res.json() || {};
                 renderCatalogStoplist();
             }
-            else if (type === 'missing') {
-                let res = await fetch(`${FB_URL}/missing_items.json`);
-                cachedData.missing = await res.json() || {};
-                renderMissing();
-            }
             else if (type === 'stoplists') {
-                // В стоп-листах загружаем оба справочника закупки для ссылок
-                let [resOrders, catRes, newCatRes] = await Promise.all([
-                    fetch(`${FB_URL}/orders.json`),
-                    fetch(`${FB_URL}/catalogs/order.json`),
-                    fetch(`${FB_URL}/catalogs/newshop.json`)
-                ]);
+                let resOrders = await fetch(`${FB_URL}/orders.json`);
                 cachedData.orders = await resOrders.json() || {};
-                let catOrd = await catRes.json() || {};
-                let catNew = await newCatRes.json() || {};
-                cachedData.catalogOrder = { ...catNew, ...catOrd };
                 renderStoplists();
+            }
+            else if (type === 'orders') {
+                let resOrders = await fetch(`${FB_URL}/orders.json`);
+                let ordersObj = await resOrders.json() || {};
+                Object.keys(ordersObj).forEach(k => { if (ordersObj[k]) ordersObj[k].key = k; });
+                cachedData.orders = ordersObj;
+                cachedData.catalog = cachedData.catalogOrder;
+                isSvodEditMode = false; svodDeletions = [];
+                renderOrdersSvod();
             }
             else if (type === 'checks_table') {
                 let [resCheck, resOrders] = await Promise.all([
@@ -369,43 +374,20 @@
                     fetch(`${FB_URL}/orders.json`)
                 ]);
                 cachedData.catalog = await resCheck.json() || {};
-                
-                let ordersObj = await resOrders.json() || {};
-                Object.keys(ordersObj).forEach(k => { 
-                    if (ordersObj[k]) ordersObj[k].key = k; 
-                });
-                cachedData.orders = ordersObj;
-                
+                cachedData.orders = await resOrders.json() || {};
+                Object.keys(cachedData.orders).forEach(k => { if (cachedData.orders[k]) cachedData.orders[k].key = k; });
                 isChecklistEditMode = false; 
                 renderChecksTable();
-            }
-            else if (type === 'orders') {
-                // Загружаем оба справочника (обычный и новый), чтобы ссылки подтянулись отовсюду
-                let [ordersRes, catRes, newCatRes] = await Promise.all([
-                    fetch(`${FB_URL}/orders.json`),
-                    fetch(`${FB_URL}/catalogs/order.json`),
-                    fetch(`${FB_URL}/catalogs/newshop.json`)
-                ]);
-                
-                let ordersObj = await ordersRes.json() || {};
-                Object.keys(ordersObj).forEach(k => { 
-                    if (ordersObj[k]) ordersObj[k].key = k; 
-                });
-                
-                cachedData.orders = ordersObj;
-                
-                let catOrd = await catRes.json() || {};
-                let catNew = await newCatRes.json() || {};
-                cachedData.catalog = { ...catNew, ...catOrd };
-                
-                isSvodEditMode = false;
-                svodDeletions = [];
-                renderOrdersSvod();
             }
             else if (type === 'stats') {
                 let resOrders = await fetch(`${FB_URL}/orders.json`);
                 cachedData.orders = await resOrders.json() || {};
                 renderStats();
+            }
+            else if (type === 'missing') {
+                let res = await fetch(`${FB_URL}/missing_items.json`);
+                cachedData.missing = await res.json() || {};
+                renderMissing();
             }
         } catch (e) {
             box.innerHTML = `<div style="color:red; font-weight:bold; font-size:18px;">Ошибка загрузки: ${e.message}</div>`;
@@ -730,7 +712,7 @@
     }
 
     // ==========================================
-    // 2.1 РЕНДЕР: СПРАВОЧНИК СТОП-ЛИСТА
+    // 2.1 РЕНДЕР: СПРАВОЧНИК СТОП-ЛИСТА (ВЫПАДАЮЩИЕ СПИСКИ ИЗ ЗАКУПКИ)
     // ==========================================
     function renderCatalogStoplist() {
         const box = document.getElementById('content');
@@ -749,9 +731,9 @@
         <table style="min-width:1000px;">
             <tr>
                 <th style="width:200px;">Категория</th>
-                <th style="width:250px;">Продукт / Ингредиент</th>
-                <th style="width:250px;">Отключает (Сезонное)</th>
-                <th style="width:250px;">Отключает (Основное)</th>
+                <th style="width:300px;">Продукт / Ингредиент (Из Закупки)</th>
+                <th style="width:200px;">Отключает (Сезонное)</th>
+                <th style="width:200px;">Отключает (Основное)</th>
                 <th style="width:80px; text-align:center;">Удалить</th>
             </tr>`;
 
@@ -762,6 +744,14 @@
             if (!grouped[sc]) grouped[sc] = [];
             grouped[sc].push({k: k, item: item});
         });
+
+        // Создаем выпадающий список всех товаров из закупки
+        let allPurchaseItems = [];
+        if (cachedData.catalogOrder) {
+            let names = Object.values(cachedData.catalogOrder).map(i => i.name).filter(Boolean);
+            allPurchaseItems = [...new Set(names)].sort((a,b) => a.localeCompare(b));
+        }
+        let optionsHtml = allPurchaseItems.map(name => `<option value="${name.replace(/"/g, '&quot;')}">${name}</option>`).join("");
 
         Object.keys(grouped).sort((a,b) => {
             if(a.includes("!!!")) return -1;
@@ -789,7 +779,12 @@
 
                 html += `<tr class="chk-row stop_${safeSc}" style="display:${displayStyle};">
                     <td><select onchange="updateVal('${k}','cat',this.value)">${catOptions}</select></td>
-                    <td><input type="text" style="font-weight:bold; color:#311b92;" value="${item.name || ''}" onchange="updateVal('${k}','name',this.value)"></td>
+                    <td>
+                        <select style="font-weight:bold; color:#311b92;" onchange="updateVal('${k}','name',this.value)">
+                            <option value="${item.name || ''}">${item.name || '--- Выберите из закупки ---'}</option>
+                            ${optionsHtml}
+                        </select>
+                    </td>
                     <td><input type="text" placeholder="Укажите напитки..." value="${item.sez || ''}" onchange="updateVal('${k}','sez',this.value)"></td>
                     <td><input type="text" placeholder="Укажите напитки..." value="${item.main || ''}" onchange="updateVal('${k}','main',this.value)"></td>
                     <td style="text-align:center;"><button class="btn-del" onclick="deleteItem('${k}')">🗑</button></td>
@@ -871,9 +866,8 @@
                             return cName === iNameLow || cName.includes(iNameLow) || iNameLow.includes(cName);
                         }) || {};
                         
-                        // Мягкий поиск ссылок из закупки
-                        let link1 = catInfo.link ? `<a href="${catInfo.link}" target="_blank" style="color:#fff; background:#0288d1; padding:6px 12px; border-radius:8px; text-decoration:none; font-size:14px; font-weight:bold;">🔗 Осн</a>` : "";
-                        let link2 = catInfo.link2 ? `<a href="${catInfo.link2}" target="_blank" style="color:#fff; background:#e53935; padding:6px 12px; border-radius:8px; text-decoration:none; font-size:14px; font-weight:bold; margin-left:5px;">🔗 Рез</a>` : "";
+                        let link1 = catInfo.link ? `<a href="${catInfo.link}" target="_blank" style="color:#fff; background:#0288d1; padding:4px 8px; border-radius:6px; text-decoration:none; font-size:12px; font-weight:bold;">🔗 Осн</a>` : "";
+                        let link2 = catInfo.link2 ? `<a href="${catInfo.link2}" target="_blank" style="color:#fff; background:#e53935; padding:4px 8px; border-radius:6px; text-decoration:none; font-size:12px; font-weight:bold; margin-left:4px;">🔗 Рез</a>` : "";
                         let linksHtml = [link1, link2].filter(Boolean).join(" ");
                         let linkBtn = linksHtml ? `<div style="float:right;">${linksHtml}</div>` : "";
                         
@@ -1027,7 +1021,6 @@
                     todaysOrders.push(o);
                 } else {
                     historyOrdersList.push(o);
-                    // Заказы, сделанные сегодня, не считаются повторами
                     if ((o.timestamp || 0) < todayStart) {
                         let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
                         itemsArr.forEach(i => { 
@@ -1089,6 +1082,7 @@
             html += `<tr><td colspan="4" style="text-align:center; padding:20px; font-weight:bold; font-size:18px; color:#888;">Нет заказов, ожидающих сборки</td></tr>`;
         } else {
             for(let shop in svodData) {
+                // Сначала вычисляем предварительную сумму Ленты для логики Купера
                 for(let name in svodData[shop].items) {
                     let catItem = Object.values(cachedData.catalog).find(c => c && c.name === name) || {};
                     let vendor = catItem.vendor || 'Лента';
@@ -1392,7 +1386,7 @@
 
     function addItemStoplist() { 
         let id = "stop_" + Date.now(); 
-        currentCatalog[id] = { cat: "!!! НОВОЕ", name: "Новый продукт", sez: "", main: "" }; 
+        currentCatalog[id] = { cat: "!!! НОВОЕ", name: "", sez: "", main: "" }; 
         renderCatalogStoplist();
     }
     

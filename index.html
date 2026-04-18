@@ -321,11 +321,14 @@
       scrollToTop();
     }
 
+    // НОВЫЙ БЕЗОПАСНЫЙ ХЭШ-ID
     function getSafeId(str) {
-        if (!str) return "id_empty_" + Math.floor(Math.random()*1000);
-        str = String(str); let hash = 0;
-        for (let i = 0; i < str.length; i++) hash = (hash << 5) - hash + str.charCodeAt(i);
-        return "id_" + Math.abs(hash) + "_" + str.length;
+        if (!str) return "id_empty_" + Math.floor(Math.random() * 10000);
+        let res = "";
+        for (let i = 0; i < str.length; i++) {
+            res += str.charCodeAt(i).toString(16);
+        }
+        return "id_" + res;
     }
 
     async function handleShopSelection(name) {
@@ -749,9 +752,20 @@
       });
 
       if (state.currentMode === 'stoplist_fill') {
-          let orderCatSnap = await database.ref("catalogs/order").once("value");
-          let orderCat = orderCatSnap.val() || {};
+          let [orderCatSnap, newCatSnap] = await Promise.all([
+              database.ref("catalogs/order").once("value"),
+              database.ref("catalogs/newshop").once("value")
+          ]);
           
+          let orderCat = { ...(orderCatSnap.val() || {}), ...(newCatSnap.val() || {}) };
+          let orderItemsMap = {};
+          
+          for(let k in orderCat) { 
+              if(orderCat[k] && orderCat[k].name) {
+                  orderItemsMap[String(orderCat[k].name).trim().toLowerCase()] = orderCat[k]; 
+              }
+          }
+
           let draft = JSON.parse(localStorage.getItem("draft_" + state.currentShop + "_order")) || {basket:{}, time: Date.now()};
           if(!draft.basket["_catinfo"]) draft.basket["_catinfo"] = {};
           
@@ -978,88 +992,25 @@
         }
     }
 
-    // УМНЫЙ СВОД АДМИНА
-    async function buildSvodReport() {
-      showReportOverlay("Сборка закупки (Выполняю команду)...");
-      
-      try {
-          const [ordersSnap, catalogSnap] = await Promise.all([
-             database.ref("orders").once("value"), 
-             database.ref("catalogs/order").once("value")
-          ]);
-          
-          let catalog = catalogSnap.val() || {};
-          let updates = {};
-          let totalSvod = 0;
-          let shopSums = {};
-
-          ordersSnap.forEach(c => {
-              let o = c.val();
-              if (o && (o.mode === 'order' || o.mode === 'new_shop') && o.svod === false) {
-                  updates[c.key + "/svod"] = true; 
-                  if(!shopSums[o.shop]) shopSums[o.shop] = 0;
-                  
-                  let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
-                  itemsArr.forEach(i => {
-                      if(i && i.name) {
-                          let catItem = Object.values(catalog).find(cat => cat && cat.name === i.name);
-                          let price = catItem ? parseFloat(catItem.price) || 0 : 0;
-                          let vendor = catItem ? String(catItem.vendor).toLowerCase() : 'лента';
-                          
-                          if (vendor !== 'озон') {
-                              let cost = price * parseFloat(i.qty);
-                              totalSvod += cost;
-                              shopSums[o.shop] += cost;
-                          }
-                      }
-                  });
-              }
-          });
-
-          if (Object.keys(updates).length > 0) {
-              await database.ref("orders").update(updates);
-          }
-
-          let html = `<div class="report-card"><div class="report-card-title">Сводная закупка</div>`;
-          
-          if (Object.keys(updates).length === 0) {
-              html += `<div style="padding:10px 0; text-align:center; font-weight:900;">Нет новых необработанных заказов на данный момент.</div>`;
-          } else {
-              html += `<div style="padding:10px 0; font-size:15px; color:#555; margin-bottom:10px; font-weight:700;">✅ Команда выполнена. Заказы переведены в статус <b>"Приемка"</b> для сотрудников. Подробный Свод с ссылками отправлен вам в сообщения бота.</div>`;
-              for(let s in shopSums) {
-                  if(shopSums[s] > 0) {
-                      html += `<div class="report-card-item"><span style="font-size:17px; color:#311B92; font-weight:900;">${s}</span><b style="font-size:17px;">${shopSums[s]} ₽</b></div>`;
-                  }
-              }
-              html += `<div style="text-align:right; font-size:22px; color:#4caf50; margin-top:20px; font-weight:900;">ИТОГО: ${totalSvod} ₽</div>`;
-              
-              database.ref("bot_control/notifications").push({ type: "svod_ready", total: totalSvod, timestamp: Date.now() });
-          }
-          html += `</div>`;
-          
-          document.getElementById('report-content-area').innerHTML = html;
-
-      } catch (e) {
-          console.error(e);
-          document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="color:red; font-weight:900; text-align:center;">Ошибка формирования свода.</div></div>`;
-      }
-    }
-
-    // СТОП ЛИСТ ИЗ CRM С СЕЗОНАМИ
+    // СТОП ЛИСТ ИЗ CRM С СЕЗОНАМИ И ССЫЛКАМИ
     async function viewStopList() {
       showReportOverlay("Загрузка актуального стоп-листа...");
       
       try {
-          const [ordersSnap, catalogSnap] = await Promise.all([
+          const [ordersSnap, stopCatSnap, orderCatSnap, newCatSnap] = await Promise.all([
               database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(300).once("value"),
-              database.ref("catalogs/stoplist").once("value")
+              database.ref("catalogs/stoplist").once("value"),
+              database.ref("catalogs/order").once("value"),
+              database.ref("catalogs/newshop").once("value")
           ]);
           
           let shopOrders = []; 
           ordersSnap.forEach(c => { let val = c.val(); if(val && typeof val === 'object') shopOrders.push(val); });
           shopOrders.sort((a,b) => (b.timestamp||0) - (a.timestamp||0));
           
-          let catalog = catalogSnap.val() || {};
+          let catalog = stopCatSnap.val() || {};
+          let orderCat = { ...(orderCatSnap.val() || {}), ...(newCatSnap.val() || {}) };
+          
           let latest = shopOrders.find(o => o.mode === 'stoplist_fill');
           
           if(!latest || !latest.items) { 
@@ -1077,20 +1028,35 @@
           itemsArr.forEach(i => {
               if(!i || !i.name) return;
               let info = Object.values(catalog).find(c => c && String(c.name).trim().toLowerCase() === String(i.name).trim().toLowerCase()) || {};
+              let purchaseInfo = Object.values(orderCat).find(c => c && String(c.name).trim().toLowerCase() === String(i.name).trim().toLowerCase()) || {};
+
               let isSyrup = (info.cat && String(info.cat).toLowerCase().includes("сироп")) || String(i.name).toLowerCase().includes("сироп");
               let hasDrinks = (info.sez && info.sez !== "") || (info.main && info.main !== "");
+
+              let link1 = purchaseInfo.link ? `<a href="${purchaseInfo.link}" target="_blank" style="color:#fff; background:#0288d1; padding:6px 12px; border-radius:8px; text-decoration:none; font-size:14px; font-weight:bold;">🔗 Осн</a>` : "";
+              let link2 = purchaseInfo.link2 ? `<a href="${purchaseInfo.link2}" target="_blank" style="color:#fff; background:#e53935; padding:6px 12px; border-radius:8px; text-decoration:none; font-size:14px; font-weight:bold; margin-left:5px;">🔗 Рез</a>` : "";
+              let linksHtml = [link1, link2].filter(Boolean).join(" ");
+              let linkBtn = linksHtml ? `<div style="float:right;">${linksHtml}</div>` : "";
 
               if (isSyrup) {
                   allSyrups.push("▪️ " + i.name);
                   if (hasDrinks) {
-                      html += `<div style="margin-bottom:10px; border-bottom:1px dashed #f0f0f0; padding-bottom:5px;">▪️ <b style="font-size:16px;">${i.name}</b><br>`;
+                      html += `<div style="margin-bottom:10px; border-bottom:1px dashed #f0f0f0; padding-bottom:5px;">
+                                <div style="display:flex; justify-content:space-between; align-items:center;">
+                                    <span>▪️ <b style="font-size:16px;">${i.name}</b></span>
+                                    ${linkBtn}
+                                </div>`;
                       let affected = [];
                       if (info.sez) affected.push("сезон: " + info.sez);
                       if (info.main) affected.push("основа: " + info.main);
                       html += `<span style="font-size:14px; color:#FF5252; font-style:italic; font-weight:700;">(Не делаем: ${affected.join(", ")})</span></div>`;
                   }
               } else {
-                  html += `<div style="margin-bottom:10px; border-bottom:1px dashed #f0f0f0; padding-bottom:5px;">▪️ <b style="font-size:16px;">${i.name}</b><br>`;
+                  html += `<div style="margin-bottom:10px; border-bottom:1px dashed #f0f0f0; padding-bottom:5px;">
+                            <div style="display:flex; justify-content:space-between; align-items:center;">
+                                <span>▪️ <b style="font-size:16px;">${i.name}</b></span>
+                                ${linkBtn}
+                            </div>`;
                   if (info.sez) html += `<span style="font-size:14px; color:#555; font-weight:700;">🍁 Сезон: ${info.sez}</span><br>`;
                   if (info.main) html += `<span style="font-size:14px; color:#555; font-weight:700;">☕ Основа: ${info.main}</span>`;
                   html += `</div>`;

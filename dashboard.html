@@ -217,7 +217,7 @@
 <body>
 
 <div class="nav">
-    <h2 style="margin:0;">💼 Coffee TEIKU CRM</h2>
+    <h2 style="margin:0;">💼 Coffee TEIKU 22 CRM</h2>
     <div id="db-status">☁️ База активна</div>
 </div>
 
@@ -249,9 +249,9 @@
     // Переменные режимов редактирования
     let isChecklistEditMode = false;
     let isSvodEditMode = false;
-    let svodDeletions = []; 
+    let svodDeletions = []; // Хранит {shop, name} удаленных позиций Свода
 
-    // УНИВЕРСАЛЬНЫЙ БЕЗОПАСНЫЙ ХЭШ-ID
+    // БЕЗОПАСНЫЙ ХЭШ-ID (работает со всеми кодировками)
     function getSafeId(str) {
         if (!str) return "id_empty_" + Math.floor(Math.random() * 10000);
         let res = "";
@@ -262,11 +262,19 @@
     }
 
     // УМНОЕ РАСКРЫТИЕ/ЗАКРЫТИЕ (КАСКАД)
-    function toggleClass(cls, displayType) { 
-        if (!displayType) displayType = 'table-row';
+    function toggleElements(cls) { 
         let els = document.querySelectorAll('.' + cls);
+        if (els.length === 0) {
+            let single = document.getElementById(cls);
+            if (single) single.style.display = single.style.display === 'none' ? 'block' : 'none';
+            return;
+        }
         els.forEach(el => {
-            el.style.display = el.style.display === 'none' ? displayType : 'none';
+            if (el.tagName === 'DIV') {
+                el.style.display = el.style.display === 'none' ? 'flex' : 'none';
+            } else {
+                el.style.display = el.style.display === 'none' ? 'table-row' : 'none';
+            }
         }); 
     }
 
@@ -514,7 +522,7 @@
         </div>
 
         <div class="settings-panel">
-            <h4 style="margin-top:0; font-size:19px; color:#d32f2f; cursor:pointer; display:flex; justify-content:space-between; align-items:center;" onclick="toggleClass('settings-content-div', 'flex')">
+            <h4 style="margin-top:0; font-size:19px; color:#d32f2f; cursor:pointer; display:flex; justify-content:space-between; align-items:center;" onclick="toggleElements('settings-content-div')">
                 <span>⚙️ Настройки (Скрывать глобальные категории в приложении)</span>
                 <span>▼</span>
             </h4>
@@ -581,7 +589,7 @@
                 
                 let displayStyle = gc.includes("!!!") ? "table-row" : "none";
                 
-                html += `<tr class="cat-group-header lvl2_${safeGc}" style="display:${displayStyle};" onclick="toggleClass('lvl3_${safeSc}')">
+                html += `<tr class="cat-group-header lvl2_${safeGc}" style="display:${displayStyle};" onclick="toggleElements('lvl3_${safeSc}')">
                             <td colspan="9" style="padding:15px; padding-left:30px; font-size:18px;">📂 ${displaySc} <span style="float:right;">▼</span></td>
                          </tr>`;
                 
@@ -686,7 +694,7 @@
 
                 let displayStyle = gc.includes("!!!") ? "table-row" : "none";
 
-                html += `<tr class="cat-group-header lvl2_chksub_${safeGc}" style="display:${displayStyle};" onclick="toggleClass('chkitem_${safeSc}')">
+                html += `<tr class="cat-group-header lvl2_chksub_${safeGc}" style="display:${displayStyle};" onclick="toggleElements('chkitem_${safeSc}')">
                             <td colspan="5" style="padding:15px; padding-left:30px; font-size:18px;">📂 ${displaySc} <span style="float:right;">▼</span></td>
                          </tr>`;
                 
@@ -765,7 +773,7 @@
 
             let displayStyle = sc.includes("!!!") ? "table-row" : "none";
 
-            html += `<tr class="cat-group-header" onclick="toggleClass('stop_${safeSc}')">
+            html += `<tr class="cat-group-header" onclick="toggleElements('stop_${safeSc}')">
                         <td colspan="5" style="padding:15px; background:#d1c4e9; font-size:18px;">📂 <b>${displaySc}</b> <span style="float:right;">▼</span></td>
                      </tr>`;
             
@@ -856,10 +864,16 @@
                 
                 itemsArr.forEach(i => {
                     if (i && i.name) {
-                        let catInfo = Object.values(cachedData.catalogOrder).find(c => c && String(c.name).trim().toLowerCase() === String(i.name).trim().toLowerCase()) || {};
+                        let iNameLow = String(i.name).trim().toLowerCase();
+                        let catInfo = Object.values(cachedData.catalogOrder).find(c => {
+                            if(!c || !c.name) return false;
+                            let cName = String(c.name).trim().toLowerCase();
+                            return cName === iNameLow || cName.includes(iNameLow) || iNameLow.includes(cName);
+                        }) || {};
                         
-                        let link1 = catInfo.link ? `<a href="${catInfo.link}" target="_blank" style="color:#fff; background:#0288d1; padding:4px 8px; border-radius:6px; text-decoration:none; font-size:12px; font-weight:bold;">🔗 Осн</a>` : "";
-                        let link2 = catInfo.link2 ? `<a href="${catInfo.link2}" target="_blank" style="color:#fff; background:#e53935; padding:4px 8px; border-radius:6px; text-decoration:none; font-size:12px; font-weight:bold; margin-left:4px;">🔗 Рез</a>` : "";
+                        // Мягкий поиск ссылок из закупки
+                        let link1 = catInfo.link ? `<a href="${catInfo.link}" target="_blank" style="color:#fff; background:#0288d1; padding:6px 12px; border-radius:8px; text-decoration:none; font-size:14px; font-weight:bold;">🔗 Осн</a>` : "";
+                        let link2 = catInfo.link2 ? `<a href="${catInfo.link2}" target="_blank" style="color:#fff; background:#e53935; padding:6px 12px; border-radius:8px; text-decoration:none; font-size:14px; font-weight:bold; margin-left:5px;">🔗 Рез</a>` : "";
                         let linksHtml = [link1, link2].filter(Boolean).join(" ");
                         let linkBtn = linksHtml ? `<div style="float:right;">${linksHtml}</div>` : "";
                         
@@ -947,7 +961,7 @@
 
         sortedCats.forEach(cat => {
             let safeCat = getSafeId(cat);
-            html += `<tr class="cat-group-header" onclick="toggleClass('chk_${safeCat}')">
+            html += `<tr class="cat-group-header" onclick="toggleElements('chk_${safeCat}')">
                         <td colspan="${shops.length+2}" style="padding:15px; font-size:18px;">📂 ${cat} <span style="float:right; opacity:0.5;">▼</span></td>
                      </tr>`;
             
@@ -1013,6 +1027,7 @@
                     todaysOrders.push(o);
                 } else {
                     historyOrdersList.push(o);
+                    // Заказы, сделанные сегодня, не считаются повторами
                     if ((o.timestamp || 0) < todayStart) {
                         let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
                         itemsArr.forEach(i => { 
@@ -1074,7 +1089,6 @@
             html += `<tr><td colspan="4" style="text-align:center; padding:20px; font-weight:bold; font-size:18px; color:#888;">Нет заказов, ожидающих сборки</td></tr>`;
         } else {
             for(let shop in svodData) {
-                // Сначала вычисляем предварительную сумму Ленты для логики Купера
                 for(let name in svodData[shop].items) {
                     let catItem = Object.values(cachedData.catalog).find(c => c && c.name === name) || {};
                     let vendor = catItem.vendor || 'Лента';
@@ -1087,7 +1101,7 @@
                 let isKuper = svodData[shop].lentaSum > 0 && svodData[shop].lentaSum < 2000;
 
                 let safeShopId = getSafeId(shop);
-                html += `<tr class="cat-group-header" onclick="toggleClass('svod_${safeShopId}')">
+                html += `<tr class="cat-group-header" onclick="toggleElements('svod_${safeShopId}')">
                             <td colspan="4" style="background:#ede7f6; padding:15px; font-size:19px; color:#311B92;"><b>📍 ${shop}</b> <span style="float:right;">▼</span></td>
                          </tr>`;
 
@@ -1166,7 +1180,7 @@
         }
 
         html += `
-            <div onclick="toggleClass('history-content-div', 'block')" style="cursor:pointer; background:#ede7f6; padding:18px; border-radius:12px; font-weight:900; color:#311B92; margin-top:40px; display:flex; justify-content:space-between; font-size:20px;">
+            <div onclick="toggleElements('history-content-div')" style="cursor:pointer; background:#ede7f6; padding:18px; border-radius:12px; font-weight:900; color:#311B92; margin-top:40px; display:flex; justify-content:space-between; font-size:20px;">
                 <span>🕒 История операций (Собранные закупки за месяц)</span><span>▼</span>
             </div>
             
@@ -1267,6 +1281,8 @@
         if(btn) btn.innerHTML = "⌛ СОХРАНЕНИЕ...";
 
         try {
+            let todayStart = new Date().setHours(0,0,0,0);
+            
             for (let k in cachedData.orders) {
                 let o = cachedData.orders[k];
                 if (o && (o.mode === 'order' || o.mode === 'new_shop') && !o.ordered) {

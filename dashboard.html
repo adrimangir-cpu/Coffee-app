@@ -217,7 +217,7 @@
 <body>
 
 <div class="nav">
-    <h2 style="margin:0;">💼 Coffee 222 TEIKU CRM</h2>
+    <h2 style="margin:0;">💼 Coffee 33 TEIKU CRM</h2>
     <div id="db-status">☁️ База активна</div>
 </div>
 
@@ -321,6 +321,16 @@
         box.innerHTML = "<div style='text-align:center; padding:40px; font-weight:bold; font-size:22px; color:#7E57C2;'>⌛ Синхронизация данных из Firebase...</div>";
 
         try {
+            // Перед загрузкой любой вкладки, всегда подгружаем справочники закупки для мягкого поиска/ссылок
+            let [resCat, resNewCat] = await Promise.all([
+                fetch(`${FB_URL}/catalogs/order.json`),
+                fetch(`${FB_URL}/catalogs/newshop.json`)
+            ]);
+            let catOrd = await resCat.json() || {};
+            let catNew = await resNewCat.json() || {};
+            cachedData.catalogOrder = { ...catOrd, ...catNew };
+            cachedData.catalog = cachedData.catalogOrder; // Устранение ошибки undefined!
+
             if (type === 'catalog_order') {
                 isNewShopCatalog = false;
                 currentPath = "catalogs/order";
@@ -455,8 +465,9 @@
                     <div style="display:flex; flex-wrap:wrap; gap:20px;">`;
         
         shops.forEach(s => {
+            let displayName = s === 'Красноказарменная' ? 'МЭИ' : s;
             html += `<div class="card" style="flex: 1 1 calc(33% - 20px); min-width:320px; padding:25px; background:#fff; border-radius:16px; box-shadow:0 4px 15px rgba(0,0,0,0.05);">
-                        <h4 style="margin-top:0; color:#311b92; font-size:20px; border-bottom:2px solid #eee; padding-bottom:10px; font-weight:900;">${s}</h4>`;
+                        <h4 style="margin-top:0; color:#311b92; font-size:20px; border-bottom:2px solid #eee; padding-bottom:10px; font-weight:900;">${displayName}</h4>`;
             
             // Топ заканчивающихся
             let empties = Object.entries(stats[s].emptyCount).sort((a,b) => b[1] - a[1]).slice(0, 5);
@@ -737,7 +748,7 @@
     }
 
     // ==========================================
-    // 2.1 РЕНДЕР: СПРАВОЧНИК СТОП-ЛИСТА
+    // 2.1 РЕДАКТОР: СПРАВОЧНИК СТОП-ЛИСТА
     // ==========================================
     function renderCatalogStoplist() {
         const box = document.getElementById('content');
@@ -820,7 +831,7 @@
     }
 
     // ==========================================
-    // 3. РЕНДЕР: АКТУАЛЬНЫЕ НЕДОВОЗЫ (С УМНОЙ ИСТОРИЕЙ И ССЫЛКАМИ)
+    // 3. РЕНДЕР: АКТУАЛЬНЫЕ НЕДОВОЗЫ
     // ==========================================
     function renderMissing() {
         const box = document.getElementById('content');
@@ -845,6 +856,8 @@
                 return cName === iNameLow || cName.includes(iNameLow) || iNameLow.includes(cName);
             }) || {};
             
+            let displayName = m.shop === 'Красноказарменная' ? 'МЭИ' : m.shop;
+
             if (m.status === 'canceled' || m.status === 'arrived') {
                 hasHistory = true;
                 let statColor = m.status === 'arrived' ? '#4caf50' : '#888';
@@ -852,7 +865,7 @@
                 let dateStr = m.timestamp ? new Date(m.timestamp).toLocaleDateString('ru-RU') : '';
                 
                 historyHtml += `<tr style="background:#fafafa;">
-                    <td><b style="font-size:16px; color:#311b92;">${m.shop}</b><br><span style="font-size:12px; color:#888;">${dateStr}</span></td>
+                    <td><b style="font-size:16px; color:#311b92;">${displayName}</b><br><span style="font-size:12px; color:#888;">${dateStr}</span></td>
                     <td style="font-size:15px;">${m.name}</td>
                     <td style="font-size:16px; font-weight:bold; text-align:center;">${m.qty}</td>
                     <td style="font-size:14px; color:${statColor}; font-weight:bold;">${statText}</td>
@@ -867,7 +880,7 @@
                 let linksHtml = (link1 || link2) ? `<br><span style="font-size:14px; background:#f0f0f0; padding:4px 8px; border-radius:6px; display:inline-block; margin-top:5px;">Заказать: ${link1}${link2}</span>` : "";
 
                 activeHtml += `<tr>
-                    <td><b style="font-size:18px; color:#311b92;">${m.shop}</b></td>
+                    <td><b style="font-size:18px; color:#311b92;">${displayName}</b></td>
                     <td style="font-size:17px;">${m.name} ${linksHtml}</td>
                     <td style="font-size:18px; font-weight:bold; text-align:center;">${m.qty}</td>
                     <td>
@@ -917,9 +930,9 @@
             body: JSON.stringify({status: val, timestamp: Date.now()}) 
         });
         if (val === 'canceled') {
-            alert("Статус обновлен. Товар возвращен в корзину сотруднику и перемещен в Историю.");
+            alert("Статус обновлен. Товар возвращен в корзину сотруднику и скрыт из списка недовозов.");
         } else if (val === 'arrived') {
-            alert("Статус обновлен. Товар отмечен как доставленный и перемещен в Историю.");
+            alert("Статус обновлен. Товар отмечен как доставленный и скрыт из списка недовозов.");
         } else {
             alert("Статус недовоза успешно обновлен!");
         }
@@ -946,10 +959,13 @@
         let html = `<h3 style="color:#D50000; margin-bottom:20px; font-size:24px;">🛑 Актуальные Стоп-листы на точках</h3>
                     <div style="display:flex; flex-wrap:wrap; gap:20px;">`;
         
+        let catalog = cachedData.catalogOrder || cachedData.catalog || {};
+        
         shops.forEach(s => {
             let stop = latestStops[s];
+            let displayName = s === 'Красноказарменная' ? 'МЭИ' : s;
             html += `<div class="card" style="flex: 1 1 calc(33% - 20px); min-width:320px; padding:25px; background:#fff; border-radius:16px; box-shadow:0 4px 15px rgba(0,0,0,0.05);">
-                        <h4 style="margin-top:0; color:#311b92; font-size:20px; border-bottom:2px solid #eee; padding-bottom:10px; font-weight:900;">${s}</h4>`;
+                        <h4 style="margin-top:0; color:#311b92; font-size:20px; border-bottom:2px solid #eee; padding-bottom:10px; font-weight:900;">${displayName}</h4>`;
             
             if (stop && stop.items) {
                 html += `<div style="font-size:14px; color:#888; margin-bottom:15px; font-weight:bold;">Обновлено: ${new Date(stop.timestamp).toLocaleString()}</div>`;
@@ -960,15 +976,15 @@
                 itemsArr.forEach(i => {
                     if (i && i.name) {
                         let iNameLow = String(i.name).trim().toLowerCase();
-                        let catInfo = Object.values(cachedData.catalogOrder).find(c => {
+                        let catInfo = Object.values(catalog).find(c => {
                             if(!c || !c.name) return false;
                             let cName = String(c.name).trim().toLowerCase();
                             return cName === iNameLow || cName.includes(iNameLow) || iNameLow.includes(cName);
                         }) || {};
                         
-                        let link1 = catInfo.link ? `<a href="${catInfo.link}" target="_blank" style="color:#fff; background:#0288d1; padding:4px 8px; border-radius:6px; text-decoration:none; font-size:12px; font-weight:bold;">🔗 Осн</a>` : "";
-                        let link2 = catInfo.link2 ? `<a href="${catInfo.link2}" target="_blank" style="color:#fff; background:#e53935; padding:4px 8px; border-radius:6px; text-decoration:none; font-size:12px; font-weight:bold; margin-left:4px;">🔗 Рез</a>` : "";
-                        let linksHtml = [link1, link2].filter(Boolean).join(" ");
+                        let l1 = catInfo.link ? `<a href="${catInfo.link}" target="_blank" style="color:#fff; background:#0288d1; padding:4px 8px; border-radius:6px; text-decoration:none; font-size:12px; font-weight:bold;">🔗 Осн</a>` : "";
+                        let l2 = catInfo.link2 ? `<a href="${catInfo.link2}" target="_blank" style="color:#fff; background:#e53935; padding:4px 8px; border-radius:6px; text-decoration:none; font-size:12px; font-weight:bold; margin-left:4px;">🔗 Рез</a>` : "";
+                        let linksHtml = [l1, l2].filter(Boolean).join(" ");
                         let linkBtn = linksHtml ? `<div style="float:right;">${linksHtml}</div>` : "";
                         
                         html += `<div style="padding:10px 0; border-bottom:1px dashed #eee; font-size:17px; display:flex; justify-content:space-between; align-items:center;">
@@ -1048,7 +1064,8 @@
                 let d = new Date(latestChecklists[s].timestamp);
                 dateStr = d.toLocaleDateString('ru-RU') + " " + d.toLocaleTimeString('ru-RU', {hour: '2-digit', minute:'2-digit'});
             }
-            html += `<th style="text-align:center; font-size:15px;">${s}<br><span style="font-size:13px; color:#888; font-weight:normal;">${dateStr}</span></th>`;
+            let displayName = s === 'Красноказарменная' ? 'МЭИ' : s;
+            html += `<th style="text-align:center; font-size:15px;">${displayName}<br><span style="font-size:13px; color:#888; font-weight:normal;">${dateStr}</span></th>`;
         });
         
         html += `<th style="width:250px; text-align:right;">Товар</th></tr>`;
@@ -1101,158 +1118,114 @@
     // ==========================================
     function renderOrdersSvod() {
         const box = document.getElementById('content');
-        
         let cutoffMonth = Date.now() - (30 * 24 * 60 * 60 * 1000); 
         let todayStart = new Date().setHours(0,0,0,0);
-        
-        let historyKeys = new Set();
-        let todaysOrders = [];
-        let historyOrdersList = [];
-        
+        let historyKeys = new Set(); let pendingOrders = []; let historyOrdersList = [];
         let allOrders = Object.values(cachedData.orders).sort((a,b) => (b.timestamp || 0) - (a.timestamp || 0));
 
         allOrders.forEach(o => {
             if (o && (o.mode === 'order' || o.mode === 'new_shop')) {
                 if ((o.timestamp || 0) < cutoffMonth) return; 
-                
                 let isOrdered = o.ordered === true;
-                
-                if (!isOrdered && o.svod === true && (o.timestamp || 0) < (Date.now() - 3*24*60*60*1000)) {
-                    isOrdered = true; 
-                }
-
-                if (!isOrdered) {
-                    todaysOrders.push(o);
-                } else {
+                if (!isOrdered) pendingOrders.push(o);
+                else {
                     historyOrdersList.push(o);
                     if ((o.timestamp || 0) < todayStart) {
                         let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
-                        itemsArr.forEach(i => { 
-                            if(i) historyKeys.add(o.shop + "|" + i.name); 
-                        });
+                        itemsArr.forEach(i => { if(i) historyKeys.add(o.shop + "|" + i.name); });
                     }
                 }
             }
         });
 
         let svodData = {};
-        todaysOrders.forEach(o => {
-            if (!svodData[o.shop]) {
-                svodData[o.shop] = { items: {}, lentaSum: 0, ozonSum: 0, kuperSum: 0, comments: [] };
-            }
-            if (o.comment && o.comment.trim() !== "") {
-                svodData[o.shop].comments.push(o.comment);
-            }
-            
+        pendingOrders.forEach(o => {
+            if (!svodData[o.shop]) svodData[o.shop] = { items: {}, lentaSum: 0, ozonSum: 0, comments: [] };
+            if (o.comment) svodData[o.shop].comments.push(o.comment);
             let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
             itemsArr.forEach(i => {
-                if (i) {
+                if (i) { 
                     if (!svodData[o.shop].items[i.name]) {
-                        svodData[o.shop].items[i.name] = 0;
+                        svodData[o.shop].items[i.name] = { qty: 0, bot_error: false };
                     }
-                    svodData[o.shop].items[i.name] += parseFloat(i.qty) || 0;
+                    svodData[o.shop].items[i.name].qty += parseFloat(i.qty) || 0; 
+                    
+                    if (i.bot_error === true || i.not_found === true || i.error === true || i.status === 'error') {
+                        svodData[o.shop].items[i.name].bot_error = true;
+                    }
                 }
             });
         });
 
         let btnEditColor = isSvodEditMode ? "#f44336" : "#0288d1";
-        let btnEditText = isSvodEditMode ? "❌ Выйти из редактирования" : "✏️ Режим редактирования";
-
         let html = `<div style="display:flex; justify-content:space-between; margin-bottom:15px; align-items:center;">
                         <h3 style='color:#311B92; font-size:24px; margin:0;'>📊 Свод по кофейням (Ожидают сборки)</h3>
                         <div style="display:flex; gap: 10px;">
                             <button onclick="triggerPcBuild('START_OZON')" class="btn-add" style="background: linear-gradient(135deg, #2196F3 0%, #1976D2 100%);">🔵 Авто-Озон</button>
                             <button onclick="triggerPcBuild('START_LENTA')" class="btn-add" style="background: linear-gradient(135deg, #FFC107 0%, #F57C00 100%);">🟡 Авто-Лента</button>
                             <button onclick="markOrdersAsPlaced()" class="btn-add" style="background: linear-gradient(135deg, #4caf50 0%, #2e7d32 100%); margin-left:15px;">✅ Заказы оформлены</button>
-                            <button onclick="toggleSvodEdit()" class="btn-add" style="background:${btnEditColor};">${btnEditText}</button>
+                            <button onclick="toggleSvodEdit()" class="btn-add" style="background:${btnEditColor};">${isSvodEditMode ? '❌ Выйти':'✏️ Режим редактирования'}</button>
                         </div>
                     </div>`;
 
-        if (isSvodEditMode) {
-            html += `<button onclick="saveSvodEdits()" class="btn-save" style="margin-top:0; margin-bottom:20px;">💾 СОХРАНИТЬ И УДАЛИТЬ ПОЗИЦИИ</button>`;
-        }
+        if (isSvodEditMode) html += `<button onclick="saveSvodEdits()" class="btn-save" style="margin-top:0; margin-bottom:20px;">💾 СОХРАНИТЬ И УДАЛИТЬ ПОЗИЦИИ</button>`;
 
-        html += `<table style='margin-bottom:20px;'>
-                    <tr>
-                        <th>Кофейня / Товар</th>
-                        <th style="text-align:center;">Кол-во</th>
-                        <th>Поставщик</th>
-                        <th style="text-align:center;">${isSvodEditMode ? 'Удалить' : 'Ссылка'}</th>
-                    </tr>`;
+        html += `<table><tr><th>Кофейня / Товар</th><th style="text-align:center;">Кол-во</th><th>Поставщик</th><th style="text-align:center;">${isSvodEditMode ? 'Удалить':'Ссылки'}</th></tr>`;
         
-        let totalLenta = 0; let totalOzon = 0; let totalKuper = 0;
-
+        let totalLenta = 0; let totalOzon = 0;
         if (Object.keys(svodData).length === 0) {
-            html += `<tr><td colspan="4" style="text-align:center; padding:20px; font-weight:bold; font-size:18px; color:#888;">Нет заказов, ожидающих сборки</td></tr>`;
+            html += `<tr><td colspan="4" style="text-align:center; padding:20px; font-weight:bold; font-size:18px; color:#888;">Нет новых заказов</td></tr>`;
         } else {
             for(let shop in svodData) {
-                for(let name in svodData[shop].items) {
-                    let catItem = Object.values(cachedData.catalog).find(c => c && c.name === name) || {};
-                    let vendor = catItem.vendor || 'Лента';
-                    let price = parseFloat(catItem.price) || 0;
-                    if(vendor.toLowerCase() === 'лента') {
-                        svodData[shop].lentaSum += (svodData[shop].items[name] * price);
-                    }
-                }
-
-                let isKuper = svodData[shop].lentaSum > 0 && svodData[shop].lentaSum < 2000;
-
                 let safeShopId = getSafeId(shop);
-                html += `<tr class="cat-group-header" onclick="toggleElements('svod_${safeShopId}')">
-                            <td colspan="4" style="background:#ede7f6; padding:15px; font-size:19px; color:#311B92;"><b>📍 ${shop}</b> <span style="float:right;">▼</span></td>
-                         </tr>`;
+                let displayName = shop === 'Красноказарменная' ? 'МЭИ' : shop;
+                html += `<tr class="cat-group-header" onclick="toggleElements('svod_${safeShopId}')"><td colspan="4" style="background:#ede7f6; padding:15px; font-size:19px; color:#311B92;"><b>📍 ${displayName}</b> <span style="float:right;">▼</span></td></tr>`;
 
-                let sortedItemNames = Object.keys(svodData[shop].items).sort((a,b) => {
-                    let catItemA = Object.values(cachedData.catalog).find(c => c && c.name === a) || {};
-                    let catItemB = Object.values(cachedData.catalog).find(c => c && c.name === b) || {};
-                    let vendorA = (catItemA.vendor || 'Лента').toLowerCase();
-                    let vendorB = (catItemB.vendor || 'Лента').toLowerCase();
-                    
-                    if (vendorA < vendorB) return -1;
-                    if (vendorA > vendorB) return 1;
-                    return a.localeCompare(b);
+                let sortedItems = Object.keys(svodData[shop].items).sort((a,b) => {
+                    let vA = (cachedData.catalogOrder[a]?.vendor || 'Лента').toLowerCase();
+                    let vB = (cachedData.catalogOrder[b]?.vendor || 'Лента').toLowerCase();
+                    if (vA < vB) return -1; if (vA > vB) return 1; return a.localeCompare(b);
                 });
 
-                sortedItemNames.forEach(name => {
-                    let catItem = Object.values(cachedData.catalog).find(c => c && c.name === name) || {};
-                    let vendor = catItem.vendor || 'Лента';
-                    let price = parseFloat(catItem.price) || 0;
-                    let qty = svodData[shop].items[name];
+                sortedItems.forEach(name => {
+                    let itemInfo = cachedData.catalogOrder[name] || {};
+                    let vendor = itemInfo.vendor || 'Лента';
+                    let price = parseFloat(itemInfo.price) || 0;
+                    
+                    let qty = svodData[shop].items[name].qty;
+                    let botError = svodData[shop].items[name].bot_error;
+                    
                     let isRepeat = historyKeys.has(shop + "|" + name);
                     
-                    let link1 = catItem.link ? `<a href="${catItem.link}" target="_blank" style="color:#0288d1; font-weight:bold;">🔗 Осн</a>` : "";
-                    let link2 = catItem.link2 ? `<a href="${catItem.link2}" target="_blank" style="color:#e53935; font-weight:bold; margin-left:8px;">🔗 Рез</a>` : "";
-                    let linksHtml = [link1, link2].filter(Boolean).join(" ");
-
-                    if(vendor.toLowerCase() === 'лента' && isKuper) vendor = 'Купер';
-
                     let isDeleted = svodDeletions.some(d => d.shop === shop && d.name === name);
-                    let displayQty = isDeleted ? 0 : qty;
+                    if (!isDeleted) {
+                        if (vendor.toLowerCase() === 'озон') totalOzon += (isRepeat ? 0 : price * qty);
+                        else totalLenta += (price * qty);
+                    }
 
-                    let cost = price * displayQty;
-                    if(vendor.toLowerCase() === 'озон' && isRepeat) cost = 0;
-                    
-                    if (vendor.toLowerCase() === 'лента') totalLenta += cost;
-                    else if (vendor.toLowerCase() === 'озон') totalOzon += cost;
-                    else if (vendor.toLowerCase() === 'купер') totalKuper += cost;
+                    let l1 = itemInfo.link ? `<a href="${itemInfo.link}" target="_blank" style="color:#0288d1; font-weight:bold;">🔗 Осн</a>` : "";
+                    let l2 = itemInfo.link2 ? `<a href="${itemInfo.link2}" target="_blank" style="color:#e53935; font-weight:bold; margin-left:8px;">🔗 Рез</a>` : "";
+                    let linksHtml = [l1, l2].filter(Boolean).join(" ");
 
                     let repeatBadge = isRepeat ? `<span style='color:#d32f2f; font-size:13px; margin-left:5px; font-weight:bold;'>(Повтор)</span>` : ``;
+                    let errorBadge = botError ? `<br><span style='background:#ffebee; color:#c62828; padding:4px 8px; border-radius:6px; font-size:13px; font-weight:900; display:inline-block; margin-top:4px;'>⚠️ Ошибка снайпера (не заказано)</span>` : ``;
+                    let rowBg = botError ? `background-color: #fff8f8;` : ``;
                     
                     let safeNameParam = name.replace(/'/g, "\\'");
 
                     if (isSvodEditMode) {
-                        html += `<tr class="svod_${safeShopId}" style="display:none;">
-                            <td style="font-size:17px; padding-left:25px; font-weight:bold; color:${isDeleted ? '#aaa' : '#333'}">${name} ${repeatBadge}</td>
-                            <td style="font-size:18px; font-weight:bold; color:${isDeleted ? '#aaa' : '#311b92'}; text-align:center;">${qty}</td>
+                        html += `<tr class="svod_${safeShopId}" style="display:none; color:${isDeleted ? '#aaa':'#333'}; ${rowBg}">
+                            <td style="padding-left:25px; font-size:17px; font-weight:bold;">${name} ${repeatBadge} ${errorBadge}</td>
+                            <td style="text-align:center; font-size:18px; font-weight:bold; color:${isDeleted ? '#aaa':'#311b92'};">${qty}</td>
                             <td style="font-size:16px; color:${isDeleted ? '#aaa' : '#333'}">${vendor}</td>
                             <td style="text-align:center;">
                                 <button class="btn-del" ${isDeleted ? 'disabled' : ''} onclick="markSvodDelete(this, '${shop}', '${safeNameParam}')">🗑</button>
                             </td>
                         </tr>`;
                     } else {
-                        html += `<tr class="svod_${safeShopId}" style="display:none;">
-                            <td style="font-size:17px; padding-left:25px; font-weight:bold;">${name} ${repeatBadge}</td>
-                            <td style="font-size:18px; font-weight:bold; color:#311b92; text-align:center;">${qty}</td>
+                        html += `<tr class="svod_${safeShopId}" style="display:none; ${rowBg}">
+                            <td style="padding-left:25px; font-size:17px; font-weight:bold;">${name} ${repeatBadge} ${errorBadge}</td>
+                            <td style="text-align:center; font-size:18px; font-weight:bold; color:#311b92;">${qty}</td>
                             <td style="font-size:16px;">${vendor}</td>
                             <td style="text-align:center;">${linksHtml}</td>
                         </tr>`;
@@ -1268,11 +1241,10 @@
         html += `</table>`;
 
         if (Object.keys(svodData).length > 0) {
-            html += `<div style="display:flex; justify-content:flex-end; gap:30px; font-size:19px; background:#fff; padding:25px; border-radius:12px; box-shadow:0 4px 15px rgba(0,0,0,0.05);">
-                        <div style="text-align:center;">🛒 Лента<br><b style="font-size:24px; color:#2e7d32;">${totalLenta} ₽</b></div>
+            html += `<div style="display:flex; justify-content:flex-end; gap:30px; font-size:19px; background:#fff; padding:25px; border-radius:12px; box-shadow:0 4px 15px rgba(0,0,0,0.05); margin-top:20px;">
+                        <div style="text-align:center;">🛒 Лента / Купер<br><b style="font-size:24px; color:#2e7d32;">${totalLenta} ₽</b></div>
                         <div style="text-align:center;">📦 Озон<br><b style="font-size:24px; color:#0288d1;">${totalOzon} ₽</b></div>
-                        <div style="text-align:center;">🛵 Купер<br><b style="font-size:24px; color:#c2185b;">${totalKuper} ₽</b></div>
-                        <div style="text-align:center; border-left:2px solid #eee; padding-left:25px;">💵 ИТОГО<br><b style="font-size:28px; color:#4A148C;">${totalLenta+totalOzon+totalKuper} ₽</b></div>
+                        <div style="text-align:center; border-left:2px solid #eee; padding-left:25px;">💵 ИТОГО<br><b style="font-size:28px; color:#4A148C;">${totalLenta + totalOzon} ₽</b></div>
                     </div>`;
         }
 
@@ -1297,12 +1269,18 @@
         } else {
             historyOrdersList.forEach(o => {
                 let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
-                let itemsStr = itemsArr.map(i => i ? `${i.name} <b>(${i.qty})</b>` : '').join(', ');
+                let itemsStr = itemsArr.map(i => {
+                    if (!i) return '';
+                    let errMark = (i.bot_error || i.not_found || i.error || i.status === 'error') ? ' <span style="color:#d32f2f;">⚠️</span>' : '';
+                    return `${i.name} <b>(${i.qty})</b>${errMark}`;
+                }).join(', ');
+                
                 let date = o.timestamp ? new Date(o.timestamp).toLocaleString('ru-RU') : '---';
                 let modeLabel = o.mode === 'new_shop' ? '🏗 Новая кофейня' : '📦 Закупка';
+                let displayName = o.shop === 'Красноказарменная' ? 'МЭИ' : o.shop;
                 
                 html += `<tr class="order-row">
-                    <td><b style="color:#311B92; font-size:17px;">${o.shop}</b></td>
+                    <td><b style="color:#311B92; font-size:17px;">${displayName}</b></td>
                     <td><span style="background:#ede7f6; padding:6px 10px; border-radius:6px; font-weight:bold; font-size:14px;">${modeLabel}</span></td>
                     <td style="color:#666; font-size:14px; font-weight:bold;">${date}</td>
                     <td style="font-size:15px; line-height:1.5;">${itemsStr}</td>
@@ -1314,103 +1292,38 @@
             });
         }
         html += `</table></div>`;
-        
         box.innerHTML = html;
     }
 
-    // ==========================================
-    // УТИЛИТЫ CRM, СОХРАНЕНИЯ И УДАЛЕНИЯ
-    // ==========================================
-    
     async function markOrdersAsPlaced() {
-        if(!confirm("Все заказы оформлены? Свод будет очищен, а заказы перенесены в историю (в мини-аппе они останутся в приемке).")) return;
-        
+        if(!confirm("Очистить свод и перенести заказы в историю?")) return;
         let updates = {};
-        
         Object.values(cachedData.orders).forEach(o => {
-            if (o && (o.mode === 'order' || o.mode === 'new_shop')) {
-                let isOrdered = o.ordered === true;
-                if (!isOrdered) {
-                    updates[o.key + "/ordered"] = true;
-                    updates[o.key + "/svod"] = true; 
-                }
+            if (o && !o.ordered && (o.mode === 'order' || o.mode === 'new_shop')) {
+                updates[o.key + "/ordered"] = true; updates[o.key + "/svod"] = true; 
             }
         });
-
         if (Object.keys(updates).length > 0) {
-            try {
-                await fetch(`${FB_URL}/orders.json`, {
-                    method: 'PATCH',
-                    body: JSON.stringify(updates)
-                });
-                alert("✅ Свод успешно очищен и перенесен в историю!");
-                loadTab('orders', document.querySelector('.tab-btn.active'));
-            } catch(e) {
-                alert("❌ Ошибка: " + e.message);
-            }
-        } else {
-            alert("Нет активных заказов для оформления.");
+            await fetch(`${FB_URL}/orders.json`, { method: 'PATCH', body: JSON.stringify(updates) });
+            loadTab('orders', document.querySelector('.tab-btn.active'));
         }
     }
 
-    function toggleSvodEdit() {
-        isSvodEditMode = !isSvodEditMode;
-        svodDeletions = [];
-        renderOrdersSvod();
-    }
-
-    function markSvodDelete(btn, shop, name) {
-        let tr = btn.closest('tr');
-        tr.style.opacity = '0.4';
-        tr.style.textDecoration = 'line-through';
-        svodDeletions.push({shop: shop, name: name});
-        btn.disabled = true;
-        renderOrdersSvod(); 
-    }
+    function toggleSvodEdit() { isSvodEditMode = !isSvodEditMode; svodDeletions = []; renderOrdersSvod(); }
+    function markSvodDelete(btn, shop, name) { svodDeletions.push({shop: shop, name: name}); btn.closest('tr').style.opacity = '0.3'; renderOrdersSvod(); }
 
     async function saveSvodEdits() {
-        if (svodDeletions.length === 0) {
-            toggleSvodEdit();
-            return;
-        }
-        
-        const btn = document.querySelector('.btn-save');
-        if(btn) btn.innerHTML = "⌛ СОХРАНЕНИЕ...";
-
-        try {
-            let todayStart = new Date().setHours(0,0,0,0);
-            
-            for (let k in cachedData.orders) {
-                let o = cachedData.orders[k];
-                if (o && (o.mode === 'order' || o.mode === 'new_shop') && (o.svod === false || !o.svod || (o.timestamp || 0) >= todayStart)) {
-                    
-                    let needsUpdate = false;
-                    let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
-                    
-                    let newItemsArr = itemsArr.filter(i => {
-                        let match = svodDeletions.find(d => d.shop === o.shop && d.name === i.name);
-                        if (match) {
-                            needsUpdate = true;
-                            return false;
-                        }
-                        return true;
-                    });
-                    
-                    if (needsUpdate) {
-                        if (newItemsArr.length === 0) {
-                            newItemsArr = [{name: "НЕТ ЗАКАЗА", qty: 0}];
-                        }
-                        await fetch(`${FB_URL}/orders/${k}/items.json`, {method:'PUT', body: JSON.stringify(newItemsArr)});
-                    }
+        for (let k in cachedData.orders) {
+            let o = cachedData.orders[k];
+            if (o && !o.ordered) {
+                let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
+                let newArr = itemsArr.filter(i => !svodDeletions.some(d => d.shop === o.shop && d.name === i.name));
+                if (newArr.length !== itemsArr.length) {
+                    await fetch(`${FB_URL}/orders/${k}/items.json`, {method:'PUT', body: JSON.stringify(newArr.length ? newArr : [{name:"НЕТ ЗАКАЗА", qty:0}])});
                 }
             }
-            
-            alert("✅ Лишние позиции успешно удалены!");
-            isSvodEditMode = false;
-            loadTab('orders', document.querySelector('.tab-btn.active'));
-        } catch (e) {
-            alert("❌ Ошибка при удалении: " + e.message);
         }
+        isSvodEditMode = false; loadTab('orders', document.querySelector('.tab-btn.active'));
     }
 
     function toggleChecklistEdit() {

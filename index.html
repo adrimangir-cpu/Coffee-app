@@ -322,10 +322,12 @@
     }
 
     function getSafeId(str) {
-        if (!str) return "id_empty_" + Math.floor(Math.random()*1000);
-        str = String(str); let hash = 0;
-        for (let i = 0; i < str.length; i++) hash = (hash << 5) - hash + str.charCodeAt(i);
-        return "id_" + Math.abs(hash) + "_" + str.length;
+        if (!str) return "id_empty_" + Math.floor(Math.random() * 10000);
+        let res = "";
+        for (let i = 0; i < str.length; i++) {
+            res += str.charCodeAt(i).toString(16);
+        }
+        return "id_" + res;
     }
 
     async function handleShopSelection(name) {
@@ -637,7 +639,7 @@
     }
 
     function updateBadgeUI() {
-        let items = Object.keys(state.userBasket).filter(k => k !== "_catinfo" && state.userBasket[k] !== 0 && state.userBasket[k] !== "0" && state.userBasket[k] !== "-");
+        let items = Object.keys(state.userBasket).filter(k => k !== "_catinfo" && state.userBasket[k] !== 0 && String(state.userBasket[k]) !== "0" && state.userBasket[k] !== "-");
         let count = items.length;
         document.getElementById('cart-count-badge').innerText = count;
         
@@ -749,6 +751,7 @@
       });
 
       if (state.currentMode === 'stoplist_fill') {
+          // ИЩЕМ ТОВАР В ОБОИХ СПРАВОЧНИКАХ ЗАКУПКИ
           let [orderCatSnap, newCatSnap] = await Promise.all([
               database.ref("catalogs/order").once("value"),
               database.ref("catalogs/newshop").once("value")
@@ -765,6 +768,7 @@
               if (item.qty === 'Закончилось') { 
                   let safeName = String(item.name).trim().toLowerCase();
                   
+                  // Мягкий поиск по справочникам закупки
                   let foundItem = combinedCatalog.find(c => {
                       if (!c || !c.name) return false;
                       let cName = String(c.name).trim().toLowerCase();
@@ -1082,15 +1086,15 @@
             
             let html = "";
             
-            // 1. Блок недовозов
+            // 1. Блок ожидаемых недовозов
             if (activeMissing.length > 0) {
                 html += `<div class="report-card" style="border: 2px solid #FFCA28;">
                             <div class="report-card-title" style="color:#E65100;">🚚 Ожидаемые недовозы</div>`;
                 
                 activeMissing.forEach(m => {
-                    let statText = m.status === 'transit' ? "В пути" : (m.status === 'oos' ? "Нет в наличии" : "Ожидает проверки");
-                    let statColor = m.status === 'transit' ? "#1565c0" : (m.status === 'oos' ? "#c62828" : "#ef6c00");
-                    let bg = m.status === 'transit' ? "#e3f2fd" : (m.status === 'oos' ? "#ffebee" : "#fff3e0");
+                    let statText = (m.status === 'transit' || m.status === 'reorder') ? "В пути" : (m.status === 'oos' ? "Нет в наличии" : "Ожидает проверки");
+                    let statColor = (m.status === 'transit' || m.status === 'reorder') ? "#1565c0" : (m.status === 'oos' ? "#c62828" : "#ef6c00");
+                    let bg = (m.status === 'transit' || m.status === 'reorder') ? "#e3f2fd" : (m.status === 'oos' ? "#ffebee" : "#fff3e0");
 
                     html += `<div class="report-card-item" style="flex-direction:column; align-items:flex-start; border-bottom:1px solid #eee;">
                                 <span style="margin-bottom:8px; font-size:16px;"><b>${m.name}</b> (x${m.qty})</span> 
@@ -1167,21 +1171,48 @@
         showLastOrder();
     }
 
+    // НЕДОВОЗЫ В ПАНЕЛИ АДМИНА МИНИ-АППА
     async function openMissingAdmin() {
         showReportOverlay("Проверка недовозов...");
         try {
-            const snap = await database.ref("missing_items").once("value");
+            const [snap, orderCatSnap, newCatSnap] = await Promise.all([
+                database.ref("missing_items").once("value"),
+                database.ref("catalogs/order").once("value"),
+                database.ref("catalogs/newshop").once("value")
+            ]);
+            let orderCat = { ...(orderCatSnap.val() || {}), ...(newCatSnap.val() || {}) };
+            
             let html = `<div class="report-card"><div class="report-card-title" style="color:#EC407A;">‼️ Актуальные Недовозы</div>`;
             let hasData = false;
+            
             snap.forEach(c => {
                 hasData = true;
                 let m = c.val();
+                
+                let iNameLow = String(m.name).trim().toLowerCase();
+                let catInfo = Object.values(orderCat).find(ci => {
+                    if(!ci || !ci.name) return false;
+                    let cName = String(ci.name).trim().toLowerCase();
+                    return cName === iNameLow || cName.includes(iNameLow) || iNameLow.includes(cName);
+                }) || {};
+                
+                let link1 = catInfo.link ? `<a href="${catInfo.link}" target="_blank" style="color:#0288d1; font-weight:bold; margin-right:8px; text-decoration:none;">🔗 Осн</a>` : "";
+                let link2 = catInfo.link2 ? `<a href="${catInfo.link2}" target="_blank" style="color:#e53935; font-weight:bold; text-decoration:none;">🔗 Рез</a>` : "";
+                let linksHtml = (link1 || link2) ? `<div style="margin-top:5px; font-size:15px; font-weight:bold; background:#f0f0f0; padding:6px; border-radius:8px;">Заказать: ${link1}${link2}</div>` : "";
+
                 html += `<div style="padding:15px 0; border-bottom:1px solid #eee;">
-                    <b style="font-size:17px; color:#311B92;">${m.shop}</b><br>
-                    <span style="font-size:16px; font-weight:700;">${m.name} (${m.qty} шт)</span><br>
+                    <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+                        <div style="flex:1;">
+                            <b style="font-size:17px; color:#311B92;">${m.shop}</b><br>
+                            <span style="font-size:16px; font-weight:700;">${m.name} (${m.qty} шт)</span>
+                            ${linksHtml}
+                        </div>
+                        <button class="btn-del" onclick="deleteMissing('${c.key}')" style="padding:6px 10px; font-size:14px; margin-left:10px;">🗑</button>
+                    </div>
                     <select onchange="updateMissingStatus('${c.key}', this.value)" style="margin-top:10px; padding:10px; border-radius:8px; width:100%; border:2px solid #ddd; background:#fafafa; font-weight:900; font-size:15px; color:#4A148C;">
                         <option value="pending" ${m.status==='pending'?'selected':''}>Ожидает проверки</option>
-                        <option value="transit" ${m.status==='transit'?'selected':''}>В пути</option>
+                        <option value="transit" ${m.status==='transit'?'selected':''}>В пути (от поставщика)</option>
+                        <option value="reorder" ${m.status==='reorder'?'selected':''}>Отменен (Админ закажет сам)</option>
                         <option value="canceled" ${m.status==='canceled'?'selected':''}>ОТМЕНЕН (Вернуть в корзину)</option>
                         <option value="oos" ${m.status==='oos'?'selected':''}>Нет в наличии</option>
                     </select>
@@ -1196,7 +1227,14 @@
 
     async function updateMissingStatus(key, val) {
         await database.ref("missing_items/" + key).update({status: val});
-        alert("Статус обновлен. Если вы выбрали 'ОТМЕНЕН', товар автоматически вернется бариста.");
+        alert("Статус обновлен. Если вы выбрали 'ОТМЕНЕН (Вернуть в корзину)', товар автоматически вернется бариста.");
+    }
+    
+    async function deleteMissing(key) {
+        if(confirm("Вы уверены, что хотите удалить этот недовоз навсегда?")) {
+            await database.ref("missing_items/" + key).remove();
+            openMissingAdmin();
+        }
     }
 
     // УТИЛИТЫ И ЛОКАЛЬНАЯ ПАМЯТЬ

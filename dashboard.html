@@ -217,7 +217,7 @@
 <body>
 
 <div class="nav">
-    <h2 style="margin:0;">💼 Coffee TEIKU 12 CRM</h2>
+    <h2 style="margin:0;">💼 Coffee TEIKU CRM</h2>
     <div id="db-status">☁️ База активна</div>
 </div>
 
@@ -251,7 +251,7 @@
     let isSvodEditMode = false;
     let svodDeletions = []; // Хранит {shop, name} удаленных позиций Свода
 
-    // УНИВЕРСАЛЬНЫЙ БЕЗОПАСНЫЙ ХЭШ-ID (работает со всеми кодировками)
+    // БЕЗОПАСНЫЙ ХЭШ-ID (работает со всеми кодировками)
     function getSafeId(str) {
         if (!str) return "id_empty_" + Math.floor(Math.random() * 10000);
         let res = "";
@@ -321,6 +321,16 @@
         box.innerHTML = "<div style='text-align:center; padding:40px; font-weight:bold; font-size:22px; color:#7E57C2;'>⌛ Синхронизация данных из Firebase...</div>";
 
         try {
+            // Перед загрузкой любой вкладки, всегда подгружаем справочники закупки для мягкого поиска/ссылок
+            let [resCat, resNewCat] = await Promise.all([
+                fetch(`${FB_URL}/catalogs/order.json`),
+                fetch(`${FB_URL}/catalogs/newshop.json`)
+            ]);
+            let catOrd = await resCat.json() || {};
+            let catNew = await resNewCat.json() || {};
+            cachedData.catalogOrder = { ...catOrd, ...catNew };
+            cachedData.catalog = cachedData.catalogOrder; // Устранение ошибки undefined!
+
             if (type === 'catalog_order') {
                 isNewShopCatalog = false;
                 currentPath = "catalogs/order";
@@ -346,27 +356,13 @@
                 renderCatalogStoplist();
             }
             else if (type === 'missing') {
-                let [resMiss, resOrd, resNew] = await Promise.all([
-                    fetch(`${FB_URL}/missing_items.json`),
-                    fetch(`${FB_URL}/catalogs/order.json`),
-                    fetch(`${FB_URL}/catalogs/newshop.json`)
-                ]);
-                cachedData.missing = await resMiss.json() || {};
-                let catOrd = await resOrd.json() || {};
-                let catNew = await resNew.json() || {};
-                cachedData.catalogOrder = { ...catOrd, ...catNew };
+                let res = await fetch(`${FB_URL}/missing_items.json`);
+                cachedData.missing = await res.json() || {};
                 renderMissing();
             }
             else if (type === 'stoplists') {
-                let [resOrders, resOrd, resNew] = await Promise.all([
-                    fetch(`${FB_URL}/orders.json`),
-                    fetch(`${FB_URL}/catalogs/order.json`),
-                    fetch(`${FB_URL}/catalogs/newshop.json`)
-                ]);
+                let resOrders = await fetch(`${FB_URL}/orders.json`);
                 cachedData.orders = await resOrders.json() || {};
-                let catOrd = await resOrd.json() || {};
-                let catNew = await resNew.json() || {};
-                cachedData.catalogOrder = { ...catOrd, ...catNew };
                 renderStoplists();
             }
             else if (type === 'checks_table') {
@@ -386,22 +382,12 @@
                 renderChecksTable();
             }
             else if (type === 'orders') {
-                let [ordersRes, catRes, newCatRes] = await Promise.all([
-                    fetch(`${FB_URL}/orders.json`),
-                    fetch(`${FB_URL}/catalogs/order.json`),
-                    fetch(`${FB_URL}/catalogs/newshop.json`)
-                ]);
-                
-                let ordersObj = await ordersRes.json() || {};
+                let resOrders = await fetch(`${FB_URL}/orders.json`);
+                let ordersObj = await resOrders.json() || {};
                 Object.keys(ordersObj).forEach(k => { 
                     if (ordersObj[k]) ordersObj[k].key = k; 
                 });
-                
                 cachedData.orders = ordersObj;
-                
-                let catOrd = await catRes.json() || {};
-                let catNew = await newCatRes.json() || {};
-                cachedData.catalog = { ...catNew, ...catOrd };
                 
                 isSvodEditMode = false;
                 svodDeletions = [];
@@ -754,9 +740,9 @@
         <table style="min-width:1000px;">
             <tr>
                 <th style="width:200px;">Категория</th>
-                <th style="width:250px;">Продукт / Ингредиент</th>
-                <th style="width:250px;">Отключает (Сезонное)</th>
-                <th style="width:250px;">Отключает (Основное)</th>
+                <th style="width:300px;">Продукт / Ингредиент (из Закупки)</th>
+                <th style="width:200px;">Отключает (Сезонное)</th>
+                <th style="width:200px;">Отключает (Основное)</th>
                 <th style="width:80px; text-align:center;">Удалить</th>
             </tr>`;
 
@@ -767,6 +753,14 @@
             if (!grouped[sc]) grouped[sc] = [];
             grouped[sc].push({k: k, item: item});
         });
+
+        // Создаем выпадающий список всех товаров из закупки
+        let allPurchaseItems = [];
+        if (cachedData.catalogOrder) {
+            let names = Object.values(cachedData.catalogOrder).map(i => i.name).filter(Boolean);
+            allPurchaseItems = [...new Set(names)].sort((a,b) => a.localeCompare(b));
+        }
+        let optionsHtml = allPurchaseItems.map(name => `<option value="${name.replace(/"/g, '&quot;')}">${name}</option>`).join("");
 
         Object.keys(grouped).sort((a,b) => {
             if(a.includes("!!!")) return -1;
@@ -794,7 +788,12 @@
 
                 html += `<tr class="chk-row stop_${safeSc}" style="display:${displayStyle};">
                     <td><select onchange="updateVal('${k}','cat',this.value)">${catOptions}</select></td>
-                    <td><input type="text" style="font-weight:bold; color:#311b92;" value="${item.name || ''}" onchange="updateVal('${k}','name',this.value)"></td>
+                    <td>
+                        <select style="font-weight:bold; color:#311b92;" onchange="updateVal('${k}','name',this.value)">
+                            <option value="${item.name || ''}">${item.name || '--- Выберите из закупки ---'}</option>
+                            ${optionsHtml}
+                        </select>
+                    </td>
                     <td><input type="text" placeholder="Укажите напитки..." value="${item.sez || ''}" onchange="updateVal('${k}','sez',this.value)"></td>
                     <td><input type="text" placeholder="Укажите напитки..." value="${item.main || ''}" onchange="updateVal('${k}','main',this.value)"></td>
                     <td style="text-align:center;"><button class="btn-del" onclick="deleteItem('${k}')">🗑</button></td>
@@ -805,17 +804,22 @@
     }
 
     // ==========================================
-    // 3. РЕНДЕР: АКТУАЛЬНЫЕ НЕДОВОЗЫ
+    // 3. РЕНДЕР: АКТУАЛЬНЫЕ НЕДОВОЗЫ (С НОВЫМ СТАТУСОМ И ССЫЛКАМИ)
     // ==========================================
     function renderMissing() {
         const box = document.getElementById('content');
         let html = "<h3 style='color:#E53935; font-size:24px;'>‼️ Актуальные Недовозы</h3><table><tr><th>Точка</th><th>Товар / Ссылки</th><th>Кол-во</th><th>Статус</th><th style='text-align:center;'>Удалить навсегда</th></tr>";
         
+        let catalog = cachedData.catalogOrder || cachedData.catalog || {};
+
         for (let k in cachedData.missing) {
             let m = cachedData.missing[k];
+            if (!m) continue;
+            if (m.status === 'canceled') continue; // Скрываем отмененные недовозы
             
+            // Мягкий поиск товара в справочнике закупки для ссылок
             let iNameLow = String(m.name).trim().toLowerCase();
-            let catInfo = Object.values(cachedData.catalogOrder || {}).find(ci => {
+            let catInfo = Object.values(catalog).find(ci => {
                 if(!ci || !ci.name) return false;
                 let cName = String(ci.name).trim().toLowerCase();
                 return cName === iNameLow || cName.includes(iNameLow) || iNameLow.includes(cName);
@@ -832,7 +836,7 @@
                 <td>
                     <select onchange="updateMissingStatus('${k}', this.value)" style="padding:12px; border-radius:8px; border:2px solid #e1bee7; font-weight:bold; font-size:16px;">
                         <option value="pending" ${m.status==='pending'?'selected':''}>Ожидает проверки админом</option>
-                        <option value="transit" ${m.status==='transit'?'selected':''}>В пути</option>
+                        <option value="transit" ${m.status==='transit'?'selected':''}>В пути (от поставщика)</option>
                         <option value="reorder" ${m.status==='reorder'?'selected':''}>Отменен (Админ закажет сам)</option>
                         <option value="canceled" ${m.status==='canceled'?'selected':''}>ОТМЕНЕН (Вернуть в корзину сотруднику)</option>
                         <option value="oos" ${m.status==='oos'?'selected':''}>Нет в наличии</option>
@@ -844,9 +848,19 @@
             </tr>`;
         }
         
-        html += `</table><p style='margin-top:20px; font-size:16px; color:#777; background:#fff9c4; padding:15px; border-radius:10px;'>💡 <b>Подсказка:</b> Статус "Отменен (Админ закажет сам)" отображается у бариста как "В пути". Если выбрать "ОТМЕНЕН (Вернуть в корзину)", товар появится в закупке у сотрудника.</p>`;
+        html += `</table><p style='margin-top:20px; font-size:16px; color:#777; background:#fff9c4; padding:15px; border-radius:10px;'>💡 <b>Подсказка:</b> Статус "Отменен (Админ закажет сам)" будет отображаться у бариста как "В пути". Если выбрать "ОТМЕНЕН (Вернуть в корзину сотруднику)", товар скрывается из этого списка и появляется в закупке у сотрудника.</p>`;
                  
         box.innerHTML = html;
+    }
+
+    async function updateMissingStatus(key, val) {
+        await fetch(`${FB_URL}/missing_items/${key}/status.json`, { method: 'PUT', body: JSON.stringify(val) });
+        if (val === 'canceled') {
+            alert("Статус обновлен. Товар возвращен в корзину сотруднику и скрыт из списка недовозов.");
+            loadTab('missing', document.querySelector('.tab-btn.active')); 
+        } else {
+            alert("Статус недовоза успешно сохранен!");
+        }
     }
 
     // ==========================================
@@ -869,6 +883,8 @@
         let html = `<h3 style="color:#D50000; margin-bottom:20px; font-size:24px;">🛑 Актуальные Стоп-листы на точках</h3>
                     <div style="display:flex; flex-wrap:wrap; gap:20px;">`;
         
+        let catalog = cachedData.catalogOrder || cachedData.catalog || {};
+        
         shops.forEach(s => {
             let stop = latestStops[s];
             html += `<div class="card" style="flex: 1 1 calc(33% - 20px); min-width:320px; padding:25px; background:#fff; border-radius:16px; box-shadow:0 4px 15px rgba(0,0,0,0.05);">
@@ -883,7 +899,8 @@
                 itemsArr.forEach(i => {
                     if (i && i.name) {
                         let iNameLow = String(i.name).trim().toLowerCase();
-                        let catInfo = Object.values(cachedData.catalogOrder || {}).find(c => {
+                        // МЯГКИЙ ПОИСК В ОБЪЕДИНЕННОЙ ЗАКУПКЕ ДЛЯ ССЫЛОК
+                        let catInfo = Object.values(catalog).find(c => {
                             if(!c || !c.name) return false;
                             let cName = String(c.name).trim().toLowerCase();
                             return cName === iNameLow || cName.includes(iNameLow) || iNameLow.includes(cName);
@@ -1112,13 +1129,15 @@
         
         let totalLenta = 0; let totalOzon = 0; let totalKuper = 0;
 
+        let catalog = cachedData.catalogOrder || cachedData.catalog || {};
+
         if (Object.keys(svodData).length === 0) {
             html += `<tr><td colspan="4" style="text-align:center; padding:20px; font-weight:bold; font-size:18px; color:#888;">Нет заказов, ожидающих сборки</td></tr>`;
         } else {
             for(let shop in svodData) {
                 // Сначала вычисляем предварительную сумму Ленты для логики Купера
                 for(let name in svodData[shop].items) {
-                    let catItem = Object.values(cachedData.catalogOrder).find(c => c && c.name === name) || {};
+                    let catItem = Object.values(catalog).find(c => c && c.name === name) || {};
                     let vendor = catItem.vendor || 'Лента';
                     let price = parseFloat(catItem.price) || 0;
                     if(vendor.toLowerCase() === 'лента') {
@@ -1135,8 +1154,8 @@
 
                 // Сортировка по поставщикам по алфавиту, затем по имени товара
                 let sortedItemNames = Object.keys(svodData[shop].items).sort((a,b) => {
-                    let catItemA = Object.values(cachedData.catalogOrder).find(c => c && c.name === a) || {};
-                    let catItemB = Object.values(cachedData.catalogOrder).find(c => c && c.name === b) || {};
+                    let catItemA = Object.values(catalog).find(c => c && c.name === a) || {};
+                    let catItemB = Object.values(catalog).find(c => c && c.name === b) || {};
                     let vendorA = (catItemA.vendor || 'Лента').toLowerCase();
                     let vendorB = (catItemB.vendor || 'Лента').toLowerCase();
                     
@@ -1146,7 +1165,7 @@
                 });
 
                 sortedItemNames.forEach(name => {
-                    let catItem = Object.values(cachedData.catalogOrder).find(c => c && c.name === name) || {};
+                    let catItem = Object.values(catalog).find(c => c && c.name === name) || {};
                     let vendor = catItem.vendor || 'Лента';
                     let price = parseFloat(catItem.price) || 0;
                     let qty = svodData[shop].items[name];
@@ -1255,7 +1274,7 @@
     // ==========================================
     
     async function markOrdersAsPlaced() {
-        if(!confirm("Очистить свод и перенести заказы в историю? (В мини-аппе останутся в приемке)")) return;
+        if(!confirm("Все заказы оформлены? Свод будет очищен, а заказы перенесены в историю (в мини-аппе они останутся в приемке).")) return;
         
         let updates = {};
         
@@ -1474,7 +1493,12 @@
 
     async function updateMissingStatus(key, val) {
         await fetch(`${FB_URL}/missing_items/${key}/status.json`, { method: 'PUT', body: JSON.stringify(val) });
-        alert("Статус недовоза успешно сохранен!");
+        if (val === 'canceled') {
+            alert("Статус обновлен. Товар возвращен в корзину сотруднику и скрыт из списка недовозов.");
+            loadTab('missing', document.querySelector('.tab-btn.active')); 
+        } else {
+            alert("Статус недовоза успешно сохранен!");
+        }
     }
     
     window.onload = () => loadTab('orders', document.querySelector('.tab-btn'));

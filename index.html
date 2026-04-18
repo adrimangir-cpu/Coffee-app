@@ -321,7 +321,6 @@
       scrollToTop();
     }
 
-    // НОВЫЙ БЕЗОПАСНЫЙ ХЭШ-ID
     function getSafeId(str) {
         if (!str) return "id_empty_" + Math.floor(Math.random() * 10000);
         let res = "";
@@ -752,7 +751,6 @@
       });
 
       if (state.currentMode === 'stoplist_fill') {
-          // ИЩЕМ ТОВАР В ОБОИХ СПРАВОЧНИКАХ ЗАКУПКИ
           let [orderCatSnap, newCatSnap] = await Promise.all([
               database.ref("catalogs/order").once("value"),
               database.ref("catalogs/newshop").once("value")
@@ -769,8 +767,12 @@
               if (item.qty === 'Закончилось') { 
                   let safeName = String(item.name).trim().toLowerCase();
                   
-                  // Ищем точное совпадение в каталогах закупки
-                  let foundItem = combinedCatalog.find(c => c && c.name && String(c.name).trim().toLowerCase() === safeName);
+                  // МЯГКИЙ ПОИСК В ОБОИХ СПРАВОЧНИКАХ ЗАКУПКИ
+                  let foundItem = combinedCatalog.find(c => {
+                      if (!c || !c.name) return false;
+                      let cName = String(c.name).trim().toLowerCase();
+                      return cName === safeName || cName.includes(safeName) || safeName.includes(cName);
+                  });
                   
                   if (foundItem) {
                       let exactName = foundItem.name;
@@ -996,16 +998,20 @@
       showReportOverlay("Загрузка актуального стоп-листа...");
       
       try {
-          const [ordersSnap, catalogSnap] = await Promise.all([
+          const [ordersSnap, stopCatSnap, orderCatSnap, newCatSnap] = await Promise.all([
               database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(300).once("value"),
-              database.ref("catalogs/stoplist").once("value")
+              database.ref("catalogs/stoplist").once("value"),
+              database.ref("catalogs/order").once("value"),
+              database.ref("catalogs/newshop").once("value")
           ]);
           
           let shopOrders = []; 
           ordersSnap.forEach(c => { let val = c.val(); if(val && typeof val === 'object') shopOrders.push(val); });
           shopOrders.sort((a,b) => (b.timestamp||0) - (a.timestamp||0));
           
-          let catalog = catalogSnap.val() || {};
+          let stopCatalog = stopCatSnap.val() || {};
+          let orderCat = { ...(orderCatSnap.val() || {}), ...(newCatSnap.val() || {}) };
+          
           let latest = shopOrders.find(o => o.mode === 'stoplist_fill');
           
           if(!latest || !latest.items) { 
@@ -1022,21 +1028,44 @@
           
           itemsArr.forEach(i => {
               if(!i || !i.name) return;
-              let info = Object.values(catalog).find(c => c && String(c.name).trim().toLowerCase() === String(i.name).trim().toLowerCase()) || {};
-              let isSyrup = (info.cat && String(info.cat).toLowerCase().includes("сироп")) || String(i.name).toLowerCase().includes("сироп");
+              let iNameLow = String(i.name).trim().toLowerCase();
+
+              let info = Object.values(stopCatalog).find(c => c && String(c.name).trim().toLowerCase() === iNameLow) || {};
+              
+              // МЯГКИЙ ПОИСК В ЗАКУПКЕ ДЛЯ ССЫЛОК
+              let purchaseInfo = Object.values(orderCat).find(c => {
+                  if(!c || !c.name) return false;
+                  let cName = String(c.name).trim().toLowerCase();
+                  return cName === iNameLow || cName.includes(iNameLow) || iNameLow.includes(cName);
+              }) || {};
+
+              let isSyrup = (info.cat && String(info.cat).toLowerCase().includes("сироп")) || iNameLow.includes("сироп");
               let hasDrinks = (info.sez && info.sez !== "") || (info.main && info.main !== "");
+
+              let link1 = purchaseInfo.link ? `<a href="${purchaseInfo.link}" target="_blank" style="color:#fff; background:#0288d1; padding:6px 12px; border-radius:8px; text-decoration:none; font-size:14px; font-weight:bold;">🔗 Осн</a>` : "";
+              let link2 = purchaseInfo.link2 ? `<a href="${purchaseInfo.link2}" target="_blank" style="color:#fff; background:#e53935; padding:6px 12px; border-radius:8px; text-decoration:none; font-size:14px; font-weight:bold; margin-left:5px;">🔗 Рез</a>` : "";
+              let linksHtml = [link1, link2].filter(Boolean).join(" ");
+              let linkBtn = linksHtml ? `<div style="float:right;">${linksHtml}</div>` : "";
 
               if (isSyrup) {
                   allSyrups.push("▪️ " + i.name);
                   if (hasDrinks) {
-                      html += `<div style="margin-bottom:10px; border-bottom:1px dashed #f0f0f0; padding-bottom:5px;">▪️ <b style="font-size:16px;">${i.name}</b><br>`;
+                      html += `<div style="margin-bottom:10px; border-bottom:1px dashed #f0f0f0; padding-bottom:5px;">
+                                <div style="display:flex; justify-content:space-between; align-items:center;">
+                                    <span>▪️ <b style="font-size:16px;">${i.name}</b></span>
+                                    ${linkBtn}
+                                </div>`;
                       let affected = [];
                       if (info.sez) affected.push("сезон: " + info.sez);
                       if (info.main) affected.push("основа: " + info.main);
                       html += `<span style="font-size:14px; color:#FF5252; font-style:italic; font-weight:700;">(Не делаем: ${affected.join(", ")})</span></div>`;
                   }
               } else {
-                  html += `<div style="margin-bottom:10px; border-bottom:1px dashed #f0f0f0; padding-bottom:5px;">▪️ <b style="font-size:16px;">${i.name}</b><br>`;
+                  html += `<div style="margin-bottom:10px; border-bottom:1px dashed #f0f0f0; padding-bottom:5px;">
+                            <div style="display:flex; justify-content:space-between; align-items:center;">
+                                <span>▪️ <b style="font-size:16px;">${i.name}</b></span>
+                                ${linkBtn}
+                            </div>`;
                   if (info.sez) html += `<span style="font-size:14px; color:#555; font-weight:700;">🍁 Сезон: ${info.sez}</span><br>`;
                   if (info.main) html += `<span style="font-size:14px; color:#555; font-weight:700;">☕ Основа: ${info.main}</span>`;
                   html += `</div>`;

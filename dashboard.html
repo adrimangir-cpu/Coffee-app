@@ -217,7 +217,7 @@
 <body>
 
 <div class="nav">
-    <h2 style="margin:0;">💼 Coffee 33 TEIKU CRM</h2>
+    <h2 style="margin:0;">💼 Coffee TEIKU 44 CRM</h2>
     <div id="db-status">☁️ База активна</div>
 </div>
 
@@ -251,7 +251,7 @@
     let isSvodEditMode = false;
     let svodDeletions = []; 
     let tempSvodQty = {}; 
-    let tempSvodStatus = {}; // Временное хранилище локальных кликов статуса
+    let tempSvodStatus = {}; 
     let openSvodShops = new Set();
 
     // БЕЗОПАСНЫЙ ХЭШ-ID
@@ -834,15 +834,18 @@
     // 7. РЕНДЕР: СВОД ЗАКАЗОВ И ИСТОРИЯ
     // ==========================================
     
-    // Локальное переключение статуса (без мгновенного сохранения в БД)
+    // Локальное переключение статуса (переключает по кругу: pending -> ordered -> error)
     function markSvodStatusChange(shop, name, currentStatus) {
         preserveSvodInputs();
         if (!tempSvodStatus[shop]) tempSvodStatus[shop] = {};
         
-        let newStatus = (currentStatus === 'error') ? 'ordered' : 'error';
-        tempSvodStatus[shop][name] = newStatus;
+        let newStatus = 'ordered'; 
+        if (currentStatus === 'ordered') newStatus = 'error';
+        else if (currentStatus === 'error') newStatus = 'ordered';
+        else if (currentStatus === 'pending') newStatus = 'ordered';
         
-        renderOrdersSvod(); // Перерисовка, чтобы статус обновился визуально
+        tempSvodStatus[shop][name] = newStatus;
+        renderOrdersSvod(); 
     }
 
     function preserveSvodInputs() {
@@ -888,6 +891,7 @@
             
             let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
             
+            // Фильтр против ложного "НЕТ ЗАКАЗА", если есть нормальные товары
             let hasRealItems = itemsArr.some(i => i && i.name && i.name !== "НЕТ ЗАКАЗА" && parseFloat(i.qty) > 0);
 
             itemsArr.forEach(i => {
@@ -904,6 +908,8 @@
                         svodData[o.shop].items[i.name].status = 'error';
                     } else if (i.status === 'ordered') {
                         svodData[o.shop].items[i.name].status = 'ordered';
+                    } else if (i.status === 'pending' || !i.status) {
+                        svodData[o.shop].items[i.name].status = 'pending';
                     }
                 }
             });
@@ -923,8 +929,8 @@
                     </div>`;
 
         if (isSvodEditMode) {
-            html += `<button onclick="saveSvodEdits()" class="btn-save" style="margin-top:0; margin-bottom:20px;">💾 СОХРАНИТЬ ИЗМЕНЕНИЯ (Удаления и кол-во)</button>
-            <div style="margin-bottom:15px; padding:10px; background:#fff3e0; color:#e65100; border-radius:8px; font-weight:bold;">💡 Нажмите на статус ошибки ❌, чтобы переключить его на заказано ✅ перед сохранением.</div>`;
+            html += `<button onclick="saveSvodEdits()" class="btn-save" style="margin-top:0; margin-bottom:20px;">💾 СОХРАНИТЬ ИЗМЕНЕНИЯ</button>
+            <div style="margin-bottom:15px; padding:10px; background:#fff3e0; color:#e65100; border-radius:8px; font-weight:bold;">💡 Нажимайте на статус товара, чтобы переключать его (Ожидает ➡️ Заказано ➡️ Ошибка).</div>`;
         }
 
         html += `<table style='margin-bottom:20px;'>
@@ -984,7 +990,6 @@
                     let originalQty = svodData[shop].items[name].qty;
                     let actualQty = (tempSvodQty[shop] && tempSvodQty[shop][name] !== undefined) ? tempSvodQty[shop][name] : originalQty;
                     
-                    // Умное чтение статуса: сначала проверяем локальные изменения (клики), затем берем статус из БД
                     let baseStatus = svodData[shop].items[name].status;
                     let itemStatus = (tempSvodStatus[shop] && tempSvodStatus[shop][name]) ? tempSvodStatus[shop][name] : baseStatus;
                     
@@ -1010,7 +1015,6 @@
                     let safeShopAttr = shop.replace(/"/g, '&quot;');
 
                     let repeatBadge = isRepeat ? `<span style='color:#d32f2f; font-size:13px; margin-left:5px; font-weight:bold;'>(Повтор)</span>` : ``;
-                    
                     let rowBg = (itemStatus === 'error') ? `background-color: #fff8f8;` : ``;
 
                     let statusText = "Ожидает ⏳";
@@ -1029,9 +1033,9 @@
                     
                     let statusBadge = `<span style="background:${statusBg}; color:${statusColor}; padding:6px 10px; border-radius:8px; font-size:13px; font-weight:900; display:inline-block;">${statusText}</span>`;
 
-                    // В режиме редактирования статус становится кликабельной кнопкой
-                    if (isSvodEditMode && (itemStatus === 'error' || itemStatus === 'ordered')) {
-                        statusBadge = `<button onclick="markSvodStatusChange('${safeShopAttr}', '${safeNameParam}', '${itemStatus}')" style="cursor:pointer; background:${statusBg}; color:${statusColor}; border:2px dashed ${statusColor}; padding:4px 8px; border-radius:8px; font-size:13px; font-weight:900; display:inline-block; box-shadow:0 2px 4px rgba(0,0,0,0.1);">${statusText} 🔄</button>`;
+                    // В режиме редактирования статус становится кликабельной кнопкой-переключателем
+                    if (isSvodEditMode) {
+                        statusBadge = `<button onclick="markSvodStatusChange('${safeShopAttr}', '${safeNameParam}', '${itemStatus}')" style="cursor:pointer; background:${statusBg}; color:${statusColor}; border:2px dashed ${statusColor}; padding:4px 8px; border-radius:8px; font-size:13px; font-weight:900; display:inline-block; box-shadow:0 2px 4px rgba(0,0,0,0.1);">${statusText}</button>`;
                     }
 
                     if (isSvodEditMode) {
@@ -1126,8 +1130,10 @@
     // ==========================================
     
     async function markOrdersAsPlaced() {
-        if(!confirm("Все заказы оформлены? Свод будет очищен, а заказы перенесены в историю (в мини-аппе они останутся в приемке).")) return;
+        if(!confirm("Все заказы оформлены? Успешные перейдут в историю (в приемку), а ненайденные (❌) вернутся бариста в корзину.")) return;
         let updates = {};
+        let missingPromises = [];
+
         Object.values(cachedData.orders).forEach(o => {
             if (o && (o.mode === 'order' || o.mode === 'new_shop')) {
                 let isOrdered = o.ordered === true;
@@ -1138,10 +1144,29 @@
                     if (o.items) {
                         let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items);
                         let changed = false;
+                        
                         itemsArr.forEach(i => {
-                            if (i && i.name !== "НЕТ ЗАКАЗА" && (!i.status || i.status === 'pending')) {
-                                i.status = 'ordered';
-                                changed = true;
+                            if (i && i.name !== "НЕТ ЗАКАЗА") {
+                                if (i.status === 'error' || i.bot_error) {
+                                    // Возвращаем в корзину через Недовозы (со статусом canceled)
+                                    missingPromises.push(
+                                        fetch(`${FB_URL}/missing_items.json`, { 
+                                            method: 'POST', 
+                                            body: JSON.stringify({ 
+                                                shop: o.shop, 
+                                                name: i.name, 
+                                                qty: i.qty, 
+                                                status: 'canceled', 
+                                                timestamp: Date.now(),
+                                                added_to_basket: false
+                                            }) 
+                                        })
+                                    );
+                                } else if (!i.status || i.status === 'pending') {
+                                    // Если статус не был изменен, считаем заказанным
+                                    i.status = 'ordered';
+                                    changed = true;
+                                }
                             }
                         });
                         if (changed) updates[o.key + "/items"] = itemsArr;
@@ -1149,10 +1174,13 @@
                 }
             }
         });
-        if (Object.keys(updates).length > 0) {
+
+        if (Object.keys(updates).length > 0 || missingPromises.length > 0) {
             try {
-                await fetch(`${FB_URL}/orders.json`, { method: 'PATCH', body: JSON.stringify(updates) });
-                alert("✅ Свод успешно очищен и перенесен в историю!");
+                if (missingPromises.length > 0) await Promise.all(missingPromises);
+                if (Object.keys(updates).length > 0) await fetch(`${FB_URL}/orders.json`, { method: 'PATCH', body: JSON.stringify(updates) });
+                
+                alert("✅ Свод перенесен в историю! Недозаказанные товары (❌) возвращены сотрудникам в корзину.");
                 loadTab('orders', document.querySelector('.tab-btn.active'));
             } catch(e) { alert("❌ Ошибка: " + e.message); }
         } else { alert("Нет активных заказов для оформления."); }
@@ -1202,7 +1230,6 @@
                         let updatedQty = (tempSvodQty[o.shop] && tempSvodQty[o.shop][itm.name] !== undefined) ? tempSvodQty[o.shop][itm.name] : undefined;
                         let updatedStatus = (tempSvodStatus[o.shop] && tempSvodStatus[o.shop][itm.name] !== undefined) ? tempSvodStatus[o.shop][itm.name] : undefined;
                         
-                        // Проверяем, изменился ли статус
                         if (updatedStatus !== undefined && itm.status !== updatedStatus) {
                             needsUpdate = true;
                             itm.status = updatedStatus;

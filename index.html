@@ -4,7 +4,7 @@
   <base target="_top">
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>Coffee Management App v4.6</title>
+  <title>Coffee Management App v4.7</title>
   
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-app-compat.js"></script>
@@ -199,7 +199,8 @@
       <button class="btn-mode" style="background: var(--btn-stop-grad);" onclick="showScreen('step-stoplist')">🛑 СТОП-ЛИСТ</button>
       <button class="btn-mode btn-mode-none" onclick="processNoOrder()">➖ ЗАКАЗ НЕ НУЖЕН</button>
       
-      <button class="btn-mode btn-repeat-last" style="background: var(--boss-gradient); margin-top: 12px;" onclick="showLastOrder()">🕒 ПРИЕМКА (НЕДОВОЗ)</button>
+      <button class="btn-mode" style="background: var(--boss-gradient); margin-top: 12px;" onclick="showMyLastOrder()">🕒 МОЙ ПОСЛЕДНИЙ ЗАКАЗ</button>
+      <button class="btn-mode" style="background: var(--warning-gradient); margin-top: 12px;" onclick="showLastOrder()">🚚 ПРИЕМКА ТОВАРА</button>
      
       <div class="bottom-fixed-bar">
         <button class="btn-bottom-exit" onclick="clearShopAndReturn()">⬅️ К списку кофеен</button>
@@ -489,17 +490,17 @@
           
           if (state.currentMode === 'stoplist_fill') {
               let isStopped = state.userBasket[itemName] === 'Закончилось';
-              html += `<button style="border:none; padding:10px; border-radius:12px; font-weight:bold; background:${isStopped?'#FF5252':'#E8F5E9'}; color:${isStopped?'#fff':'#4CAF50'};" onclick="toggleStopItem('${itemName}', '${cat}', this)">${isStopped?'ЗАКОНЧИЛОСЬ':'В НАЛИЧИИ'}</button>`;
+              html += `<button style="border:none; padding:10px; border-radius:12px; font-weight:bold; background:${isStopped?'#FF5252':'#E8F5E9'}; color:${isStopped?'#fff':'#4CAF50'};" onclick="toggleStopItem('${itemName.replace(/'/g, "\\'")}', '${cat}', this)">${isStopped?'ЗАКОНЧИЛОСЬ':'В НАЛИЧИИ'}</button>`;
           } 
           else if (state.currentMode === 'checklist' && (item.unit && String(item.unit).toLowerCase().includes("объем"))) {
               let sVal = state.userBasket[itemName];
               if (sVal === undefined || sVal === null) sVal = "-";
 
               if(sVal !== "-" && sVal !== "Полная" && sVal !== "Половина" && sVal !== "Меньше половины" && String(sVal) !== "0" && sVal !== "CUSTOM") {
-                  html += `<input type="text" class="qty-input" style="width:80px; border-bottom:2px solid #7E57C2;" value="${sVal}" onchange="registerInputChange('${itemName}', this.value, '${cat}')" onfocus="handleInputFocus(this)">
-                           <button class="reset-btn" onclick="registerInputChange('${itemName}', '-', '${cat}'); renderProductList();">✕</button>`;
+                  html += `<input type="text" class="qty-input" style="width:80px; border-bottom:2px solid #7E57C2;" value="${sVal}" onchange="registerInputChange('${itemName.replace(/'/g, "\\'")}', this.value, '${cat}')" onfocus="handleInputFocus(this)">
+                           <button class="reset-btn" onclick="registerInputChange('${itemName.replace(/'/g, "\\'")}', '-', '${cat}'); renderProductList();">✕</button>`;
               } else {
-                  html += `<select class="vol-select" onchange="handleVolumeSelection(this, '${itemName}', '${cat}', '${safeId}')">
+                  html += `<select class="vol-select" onchange="handleVolumeSelection(this, '${itemName.replace(/'/g, "\\'")}', '${cat}', '${safeId}')">
                               <option value="-" ${sVal==='-'?'selected':''}>--</option>
                               <option value="Полная" ${sVal==='Полная'?'selected':''}>Полная</option>
                               <option value="Половина" ${sVal==='Половина'?'selected':''}>Половина</option>
@@ -513,9 +514,9 @@
               let val = state.userBasket[itemName];
               if (val === undefined || val === null || val === "-") val = (state.currentMode === 'checklist' ? "-" : "0");
 
-              html += `<button class="qty-btn" onclick="adjustQuantity('${itemName}', -1, '${cat}', '${safeId}')">−</button>
-                       <input type="text" class="qty-input" id="input-${safeId}" value="${val}" onchange="registerInputChange('${itemName}', this.value, '${cat}')" onfocus="handleInputFocus(this)">
-                       <button class="qty-btn" onclick="adjustQuantity('${itemName}', 1, '${cat}', '${safeId}')">+</button>`;
+              html += `<button class="qty-btn" onclick="adjustQuantity('${itemName.replace(/'/g, "\\'")}', -1, '${cat}', '${safeId}')">−</button>
+                       <input type="text" class="qty-input" id="input-${safeId}" value="${val}" onchange="registerInputChange('${itemName.replace(/'/g, "\\'")}', this.value, '${cat}')" onfocus="handleInputFocus(this)">
+                       <button class="qty-btn" onclick="adjustQuantity('${itemName.replace(/'/g, "\\'")}', 1, '${cat}', '${safeId}')">+</button>`;
           }
           html += `</div></div>`;
         }
@@ -669,7 +670,7 @@
                             <span>${name}</span>
                             <div style="display:flex; align-items:center;">
                                 <b style="color:var(--deep-purple); font-size:18px; margin-right:15px;">${v}</b>
-                                <button class="btn-remove-item" onclick="removeFromCart('${name}', '${cat}')">✕</button>
+                                <button class="btn-remove-item" onclick="removeFromCart('${name.replace(/'/g, "\\'")}', '${cat}')">✕</button>
                             </div>
                          </div>`;
             }
@@ -1175,6 +1176,60 @@
     // ==========================================
     // 8. ПРИЕМКА ТОВАРА И НЕДОВОЗЫ
     // ==========================================
+    
+    // НОВАЯ ФУНКЦИЯ: Мой последний заказ
+    async function showMyLastOrder() {
+        showReportOverlay("Загружаю последний заказ...");
+        try {
+            const ordersSnap = await database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(100).once("value");
+            let arr = []; 
+            ordersSnap.forEach(c => { let val = c.val(); if(val && typeof val === 'object') { val.key = c.key; arr.push(val); } });
+            arr.sort((a,b) => (a.timestamp||0) - (b.timestamp||0)); 
+            let last = arr.reverse().find(o => o && (o.mode === 'order' || o.mode === 'new_shop'));
+            
+            let html = "";
+            if(!last) { 
+                html += `<div class="report-card"><div style="text-align:center; font-weight:900;">Заказов еще не было.</div></div>`; 
+            } else {
+                html += `<div class="report-card">
+                     <div class="report-card-title" style="text-align:center;">Мой последний заказ</div>
+                     <div style="text-align:center; font-size:14px; color:#888; margin-bottom:15px; font-weight:700;">От: ${new Date(last.timestamp).toLocaleString()}</div>`;
+            
+                let itemsArr = Array.isArray(last.items) ? last.items : Object.values(last.items);
+                let hasRealItems = itemsArr.some(i => i && i.name && i.name !== "НЕТ ЗАКАЗА" && parseFloat(i.qty) > 0);
+                
+                itemsArr.forEach(i => {
+                    if(!i || !i.name) return;
+                    if(i.name === "НЕТ ЗАКАЗА" && hasRealItems) return;
+                    if(i.name === "НЕТ ЗАКАЗА" && !hasRealItems) {
+                        html += `<div class="report-card-item" style="justify-content:center;"><b>НЕТ ЗАКАЗА</b></div>`;
+                        return;
+                    }
+                    
+                    let statusHtml = "";
+                    if (!last.svod) {
+                        statusHtml = `<span style="background:#fff3e0; color:#f57c00; padding:4px 8px; border-radius:6px; font-size:12px; font-weight:900;">В ожидании ⏳</span>`;
+                    } else {
+                        if (i.status === 'error' || i.bot_error) {
+                            statusHtml = `<span style="background:#ffebee; color:#c62828; padding:4px 8px; border-radius:6px; font-size:12px; font-weight:900;">Нет в наличии ❌</span>`;
+                        } else {
+                            statusHtml = `<span style="background:#e8f5e9; color:#2e7d32; padding:4px 8px; border-radius:6px; font-size:12px; font-weight:900;">Заказано ✅</span>`;
+                        }
+                    }
+
+                    html += `<div class="report-card-item" style="flex-direction:row; align-items:center; justify-content:space-between; border-bottom:1px solid #eee;">
+                                <span style="font-size:15px; font-weight:700; flex:1; margin-right:10px;"><b>${i.name}</b> (x${i.qty})</span> 
+                                <div>${statusHtml}</div>
+                              </div>`;
+                });
+                html += `</div>`;
+            }
+            document.getElementById('report-content-area').innerHTML = html;
+        } catch (err) {
+            document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; color:red; font-weight:900;">Ошибка загрузки заказа.</div></div>`; 
+        }
+    }
+
     async function showLastOrder() {
         showReportOverlay("Загружаю приемку...");
         
@@ -1184,7 +1239,7 @@
                 database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value")
             ]);
 
-            // Ожидаемые недовозы (Включаем отмененные - они ждут закупки у сотрудника)
+            // Ожидаемые недовозы
             let activeMissing = [];
             missSnap.forEach(c => { 
                 let m = c.val(); 
@@ -1246,10 +1301,15 @@
                      <div style="text-align:center; font-size:14px; color:#888; margin-bottom:15px; font-weight:700;">Заказ от: ${new Date(last.timestamp).toLocaleString()}</div>`;
             
                 let itemsArr = Array.isArray(last.items) ? last.items : Object.values(last.items);
+                let hasRealItems = itemsArr.some(i => i && i.name && i.name !== "НЕТ ЗАКАЗА" && parseFloat(i.qty) > 0);
                 
                 itemsArr.forEach(i => {
                     if(!i || !i.name) return;
-                    if(i.name === "НЕТ ЗАКАЗА") { html += `<div class="report-card-item"><b>НЕТ ЗАКАЗА</b></div>`; return; }
+                    if(i.name === "НЕТ ЗАКАЗА" && hasRealItems) return;
+                    if(i.name === "НЕТ ЗАКАЗА" && !hasRealItems) {
+                        html += `<div class="report-card-item" style="justify-content:center;"><b>НЕТ ЗАКАЗА</b></div>`;
+                        return;
+                    }
                     
                     let isMissingAlready = activeMissing.some(am => am.name === i.name);
                     
@@ -1259,10 +1319,22 @@
                                 <span style="color:#ef6c00; font-size:13px; font-weight:900;">Добавлен в недовозы 👆</span>
                               </div>`;
                     } else {
-                        html += `<div class="report-card-item" style="flex-direction:column; align-items:flex-start; border-bottom:1px solid #eee;">
-                                <span style="margin-bottom:8px; font-size:15px; font-weight:700;"><b>${i.name}</b> (x${i.qty})</span> 
-                                <button onclick="reportMissingFromOrder('${i.name}', ${i.qty})" style="border:none; background:#ffebee; color:#d32f2f; padding:8px 15px; border-radius:10px; font-weight:900; font-size:14px; cursor:pointer;">Не довезли ‼️</button>
-                              </div>`;
+                        let isError = (i.status === 'error' || i.bot_error);
+                        
+                        if (isError) {
+                            html += `<div class="report-card-item" style="flex-direction:row; justify-content:space-between; align-items:center; opacity:0.7; border-bottom:1px solid #eee;">
+                                        <span style="font-size:15px; font-weight:700; flex:1;"><b>${i.name}</b> (x${i.qty})</span> 
+                                        <span style="color:#c62828; background:#ffebee; padding:4px 8px; border-radius:6px; font-size:12px; font-weight:900;">Нет в наличии ❌</span>
+                                      </div>`;
+                        } else {
+                            html += `<div class="report-card-item" style="flex-direction:column; align-items:flex-start; border-bottom:1px solid #eee;">
+                                        <div style="display:flex; justify-content:space-between; width:100%; align-items:center; margin-bottom:8px;">
+                                            <span style="font-size:15px; font-weight:700; flex:1;"><b>${i.name}</b> (x${i.qty})</span>
+                                            <span style="color:#2e7d32; background:#e8f5e9; padding:4px 8px; border-radius:6px; font-size:12px; font-weight:900;">Заказано ✅</span>
+                                        </div>
+                                        <button onclick="reportMissingFromOrder('${i.name.replace(/'/g, "\\'")}', ${i.qty})" style="border:none; background:#ffebee; color:#d32f2f; padding:8px 15px; border-radius:10px; font-weight:900; font-size:14px; cursor:pointer;">Не довезли ‼️</button>
+                                      </div>`;
+                        }
                     }
                 });
                 
@@ -1294,7 +1366,7 @@
         if(!confirm("Подтверждаете, что товар доехал?")) return;
         await database.ref("missing_items/" + key).update({
             status: 'arrived',
-            timestamp: firebase.database.ServerValue.TIMESTAMP // Обновляем дату для истории
+            timestamp: firebase.database.ServerValue.TIMESTAMP 
         });
         alert("✅ Отлично! Товар принят.");
         showLastOrder();
@@ -1404,7 +1476,7 @@
         } else {
             alert("Статус обновлен.");
         }
-        openMissingAdmin(); // Автообновление
+        openMissingAdmin(); 
     }
     
     async function deleteMissingItem(key) {

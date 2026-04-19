@@ -217,7 +217,7 @@
 <body>
 
 <div class="nav">
-    <h2 style="margin:0;">💼 Coffee 23 TEIKU CRM</h2>
+    <h2 style="margin:0;">💼 Coffee 33 TEIKU CRM</h2>
     <div id="db-status">☁️ База активна</div>
 </div>
 
@@ -251,6 +251,7 @@
     let isSvodEditMode = false;
     let svodDeletions = []; 
     let tempSvodQty = {}; 
+    let tempSvodStatus = {}; // Временное хранилище локальных кликов статуса
     let openSvodShops = new Set();
 
     // БЕЗОПАСНЫЙ ХЭШ-ID
@@ -414,6 +415,7 @@
                 isSvodEditMode = false;
                 svodDeletions = [];
                 tempSvodQty = {}; 
+                tempSvodStatus = {};
                 openSvodShops.clear(); 
                 renderOrdersSvod();
             }
@@ -832,41 +834,15 @@
     // 7. РЕНДЕР: СВОД ЗАКАЗОВ И ИСТОРИЯ
     // ==========================================
     
-    // УМНАЯ СМЕНА СТАТУСА ТОВАРА
-    async function toggleItemStatusDirect(shop, name, currentStatus) {
-        if(!isSvodEditMode) return;
+    // Локальное переключение статуса (без мгновенного сохранения в БД)
+    function markSvodStatusChange(shop, name, currentStatus) {
+        preserveSvodInputs();
+        if (!tempSvodStatus[shop]) tempSvodStatus[shop] = {};
+        
         let newStatus = (currentStatus === 'error') ? 'ordered' : 'error';
-        let newBotError = (newStatus === 'error');
-
-        try {
-            let updatesNeeded = false;
-            for (let k in cachedData.orders) {
-                let o = cachedData.orders[k];
-                if (o && o.shop === shop && !o.ordered && (o.mode === 'order' || o.mode === 'new_shop')) {
-                    let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
-                    let changed = false;
-                    itemsArr.forEach(i => {
-                        if (i && i.name === name) {
-                            i.status = newStatus;
-                            i.bot_error = newBotError;
-                            i.not_found = newBotError;
-                            i.error = newBotError;
-                            changed = true;
-                        }
-                    });
-                    if (changed) {
-                        updatesNeeded = true;
-                        await fetch(`${FB_URL}/orders/${k}/items.json`, {method:'PUT', body: JSON.stringify(itemsArr)});
-                    }
-                }
-            }
-            if(updatesNeeded) {
-                let activeBtn = document.querySelector('.tab-btn.active');
-                if(activeBtn) loadTab('orders', activeBtn); // Мгновенная перезагрузка для обновления UI
-            }
-        } catch(e) {
-            alert("Ошибка смены статуса: " + e.message);
-        }
+        tempSvodStatus[shop][name] = newStatus;
+        
+        renderOrdersSvod(); // Перерисовка, чтобы статус обновился визуально
     }
 
     function preserveSvodInputs() {
@@ -912,12 +888,11 @@
             
             let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
             
-            // Фильтр против ложного "НЕТ ЗАКАЗА", если есть нормальные товары
             let hasRealItems = itemsArr.some(i => i && i.name && i.name !== "НЕТ ЗАКАЗА" && parseFloat(i.qty) > 0);
 
             itemsArr.forEach(i => {
                 if (i && i.name) {
-                    if (i.name === "НЕТ ЗАКАЗА" && hasRealItems) return; // Игнорируем пустышку
+                    if (i.name === "НЕТ ЗАКАЗА" && hasRealItems) return; 
 
                     if (!svodData[o.shop].items[i.name]) {
                         svodData[o.shop].items[i.name] = { qty: 0, bot_error: false, status: 'pending' };
@@ -949,7 +924,7 @@
 
         if (isSvodEditMode) {
             html += `<button onclick="saveSvodEdits()" class="btn-save" style="margin-top:0; margin-bottom:20px;">💾 СОХРАНИТЬ ИЗМЕНЕНИЯ (Удаления и кол-во)</button>
-            <div style="margin-bottom:15px; padding:10px; background:#fff3e0; color:#e65100; border-radius:8px; font-weight:bold;">💡 Нажмите на статус товара 🔄, чтобы мгновенно переключить его с ошибки на заказано и обратно.</div>`;
+            <div style="margin-bottom:15px; padding:10px; background:#fff3e0; color:#e65100; border-radius:8px; font-weight:bold;">💡 Нажмите на статус ошибки ❌, чтобы переключить его на заказано ✅ перед сохранением.</div>`;
         }
 
         html += `<table style='margin-bottom:20px;'>
@@ -1008,7 +983,10 @@
                     
                     let originalQty = svodData[shop].items[name].qty;
                     let actualQty = (tempSvodQty[shop] && tempSvodQty[shop][name] !== undefined) ? tempSvodQty[shop][name] : originalQty;
-                    let itemStatus = svodData[shop].items[name].status;
+                    
+                    // Умное чтение статуса: сначала проверяем локальные изменения (клики), затем берем статус из БД
+                    let baseStatus = svodData[shop].items[name].status;
+                    let itemStatus = (tempSvodStatus[shop] && tempSvodStatus[shop][name]) ? tempSvodStatus[shop][name] : baseStatus;
                     
                     let isRepeat = historyKeys.has(shop + "|" + name);
                     let link1 = catItem.link ? `<a href="${catItem.link}" target="_blank" style="color:#0288d1; font-weight:bold;">🔗 Осн</a>` : "";
@@ -1033,7 +1011,8 @@
 
                     let repeatBadge = isRepeat ? `<span style='color:#d32f2f; font-size:13px; margin-left:5px; font-weight:bold;'>(Повтор)</span>` : ``;
                     
-                    // Столбец логики статусов
+                    let rowBg = (itemStatus === 'error') ? `background-color: #fff8f8;` : ``;
+
                     let statusText = "Ожидает ⏳";
                     let statusColor = "#f57c00";
                     let statusBg = "#fff3e0";
@@ -1050,11 +1029,10 @@
                     
                     let statusBadge = `<span style="background:${statusBg}; color:${statusColor}; padding:6px 10px; border-radius:8px; font-size:13px; font-weight:900; display:inline-block;">${statusText}</span>`;
 
+                    // В режиме редактирования статус становится кликабельной кнопкой
                     if (isSvodEditMode && (itemStatus === 'error' || itemStatus === 'ordered')) {
-                        statusBadge = `<span onclick="toggleItemStatusDirect('${safeShopAttr}', '${safeNameParam}', '${itemStatus}')" style="cursor:pointer; background:${statusBg}; color:${statusColor}; padding:6px 10px; border-radius:8px; font-size:13px; font-weight:900; display:inline-block; border: 2px dashed ${statusColor};">${statusText} 🔄</span>`;
+                        statusBadge = `<button onclick="markSvodStatusChange('${safeShopAttr}', '${safeNameParam}', '${itemStatus}')" style="cursor:pointer; background:${statusBg}; color:${statusColor}; border:2px dashed ${statusColor}; padding:4px 8px; border-radius:8px; font-size:13px; font-weight:900; display:inline-block; box-shadow:0 2px 4px rgba(0,0,0,0.1);">${statusText} 🔄</button>`;
                     }
-                    
-                    let rowBg = (itemStatus === 'error') ? `background-color: #fff8f8;` : ``;
 
                     if (isSvodEditMode) {
                         html += `<tr class="svod_${safeShopId}" style="${displayStyle} color:${isDeleted ? '#aaa':'#333'}; ${rowBg}">
@@ -1184,6 +1162,7 @@
         isSvodEditMode = !isSvodEditMode;
         svodDeletions = [];
         tempSvodQty = {}; 
+        tempSvodStatus = {};
         renderOrdersSvod();
     }
 
@@ -1221,7 +1200,17 @@
                         }
                         
                         let updatedQty = (tempSvodQty[o.shop] && tempSvodQty[o.shop][itm.name] !== undefined) ? tempSvodQty[o.shop][itm.name] : undefined;
+                        let updatedStatus = (tempSvodStatus[o.shop] && tempSvodStatus[o.shop][itm.name] !== undefined) ? tempSvodStatus[o.shop][itm.name] : undefined;
                         
+                        // Проверяем, изменился ли статус
+                        if (updatedStatus !== undefined && itm.status !== updatedStatus) {
+                            needsUpdate = true;
+                            itm.status = updatedStatus;
+                            itm.bot_error = (updatedStatus === 'error');
+                            itm.not_found = (updatedStatus === 'error');
+                            itm.error = (updatedStatus === 'error');
+                        }
+
                         if (updatedQty !== undefined) {
                             if (!assignedUpdates[o.shop]) assignedUpdates[o.shop] = {};
                             
@@ -1261,6 +1250,7 @@
             isSvodEditMode = false;
             svodDeletions = [];
             tempSvodQty = {};
+            tempSvodStatus = {};
             loadTab('orders', document.querySelector('.tab-btn.active'));
         } catch (e) {
             alert("❌ Ошибка при удалении/сохранении: " + e.message);

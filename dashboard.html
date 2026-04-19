@@ -217,7 +217,7 @@
 <body>
 
 <div class="nav">
-    <h2 style="margin:0;">💼 Coffee TEIKU CRM</h2>
+    <h2 style="margin:0;">💼 Coffee 23 TEIKU CRM</h2>
     <div id="db-status">☁️ База активна</div>
 </div>
 
@@ -832,9 +832,12 @@
     // 7. РЕНДЕР: СВОД ЗАКАЗОВ И ИСТОРИЯ
     // ==========================================
     
-    // Новые функции для работы со статусом заказа ("Ошибка Снайпера" и ручной дозаказ)
-    async function markItemOrdered(shop, name) {
-        if(!confirm(`Отметить товар "${name}" как заказанный?`)) return;
+    // УМНАЯ СМЕНА СТАТУСА ТОВАРА
+    async function toggleItemStatusDirect(shop, name, currentStatus) {
+        if(!isSvodEditMode) return;
+        let newStatus = (currentStatus === 'error') ? 'ordered' : 'error';
+        let newBotError = (newStatus === 'error');
+
         try {
             let updatesNeeded = false;
             for (let k in cachedData.orders) {
@@ -844,10 +847,10 @@
                     let changed = false;
                     itemsArr.forEach(i => {
                         if (i && i.name === name) {
-                            i.bot_error = false;
-                            i.not_found = false;
-                            i.error = false;
-                            i.status = 'ordered'; // Устанавливаем статус "Заказано"
+                            i.status = newStatus;
+                            i.bot_error = newBotError;
+                            i.not_found = newBotError;
+                            i.error = newBotError;
                             changed = true;
                         }
                     });
@@ -858,36 +861,11 @@
                 }
             }
             if(updatesNeeded) {
-                alert("✅ Статус изменен на 'Заказано'!");
-                loadTab('orders', document.querySelector('.tab-btn.active'));
+                let activeBtn = document.querySelector('.tab-btn.active');
+                if(activeBtn) loadTab('orders', activeBtn); // Мгновенная перезагрузка для обновления UI
             }
         } catch(e) {
-            alert("❌ Ошибка: " + e.message);
-        }
-    }
-
-    async function sendToMissingFromSvod(shop, name, qty) {
-        if(!confirm(`Перенести "${name}" (${qty} шт) в Недовозы (со статусом "Отменен - Админ закажет сам") и убрать из Свода?`)) return;
-        try {
-            await fetch(`${FB_URL}/missing_items.json`, { 
-                method: 'POST', 
-                body: JSON.stringify({ shop: shop, name: name, qty: qty, status: 'reorder', timestamp: Date.now() }) 
-            });
-            
-            for (let k in cachedData.orders) {
-                let o = cachedData.orders[k];
-                if (o && o.shop === shop && !o.ordered && (o.mode === 'order' || o.mode === 'new_shop')) {
-                    let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
-                    let newArr = itemsArr.filter(i => i.name !== name);
-                    if (newArr.length !== itemsArr.length) {
-                        await fetch(`${FB_URL}/orders/${k}/items.json`, {method:'PUT', body: JSON.stringify(newArr.length ? newArr : [{name:"НЕТ ЗАКАЗА", qty:0}])});
-                    }
-                }
-            }
-            alert("✅ Товар перенесен в Недовозы!");
-            loadTab('orders', document.querySelector('.tab-btn.active'));
-        } catch(e) {
-            alert("❌ Ошибка: " + e.message);
+            alert("Ошибка смены статуса: " + e.message);
         }
     }
 
@@ -933,14 +911,19 @@
             if (o.comment && o.comment.trim() !== "") svodData[o.shop].comments.push(o.comment);
             
             let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
+            
+            // Фильтр против ложного "НЕТ ЗАКАЗА", если есть нормальные товары
+            let hasRealItems = itemsArr.some(i => i && i.name && i.name !== "НЕТ ЗАКАЗА" && parseFloat(i.qty) > 0);
+
             itemsArr.forEach(i => {
-                if (i) {
+                if (i && i.name) {
+                    if (i.name === "НЕТ ЗАКАЗА" && hasRealItems) return; // Игнорируем пустышку
+
                     if (!svodData[o.shop].items[i.name]) {
                         svodData[o.shop].items[i.name] = { qty: 0, bot_error: false, status: 'pending' };
                     }
                     svodData[o.shop].items[i.name].qty += parseFloat(i.qty) || 0;
                     
-                    // Обновленная логика сбора статусов
                     if (i.bot_error === true || i.not_found === true || i.error === true || i.status === 'error') {
                         svodData[o.shop].items[i.name].bot_error = true;
                         svodData[o.shop].items[i.name].status = 'error';
@@ -965,7 +948,8 @@
                     </div>`;
 
         if (isSvodEditMode) {
-            html += `<button onclick="saveSvodEdits()" class="btn-save" style="margin-top:0; margin-bottom:20px;">💾 СОХРАНИТЬ ИЗМЕНЕНИЯ (Удаления и кол-во)</button>`;
+            html += `<button onclick="saveSvodEdits()" class="btn-save" style="margin-top:0; margin-bottom:20px;">💾 СОХРАНИТЬ ИЗМЕНЕНИЯ (Удаления и кол-во)</button>
+            <div style="margin-bottom:15px; padding:10px; background:#fff3e0; color:#e65100; border-radius:8px; font-weight:bold;">💡 Нажмите на статус товара 🔄, чтобы мгновенно переключить его с ошибки на заказано и обратно.</div>`;
         }
 
         html += `<table style='margin-bottom:20px;'>
@@ -1024,7 +1008,6 @@
                     
                     let originalQty = svodData[shop].items[name].qty;
                     let actualQty = (tempSvodQty[shop] && tempSvodQty[shop][name] !== undefined) ? tempSvodQty[shop][name] : originalQty;
-                    let botError = svodData[shop].items[name].bot_error;
                     let itemStatus = svodData[shop].items[name].status;
                     
                     let isRepeat = historyKeys.has(shop + "|" + name);
@@ -1050,16 +1033,7 @@
 
                     let repeatBadge = isRepeat ? `<span style='color:#d32f2f; font-size:13px; margin-left:5px; font-weight:bold;'>(Повтор)</span>` : ``;
                     
-                    // Блок для ошибки бота с кнопками
-                    let errorBadge = botError ? `<br><span style='background:#ffebee; color:#c62828; padding:4px 8px; border-radius:6px; font-size:13px; font-weight:900; display:inline-block; margin-top:4px;'>⚠️ Ошибка снайпера (не заказано)</span>
-                    <div style="margin-top: 6px;">
-                        <button onclick="markItemOrdered('${safeShopAttr}', '${safeNameParam}')" style="background:#4caf50; color:white; border:none; padding:5px 10px; border-radius:6px; cursor:pointer; font-size:12px; font-weight:bold; box-shadow:0 2px 4px rgba(0,0,0,0.1);">✅ Заказал вручную</button>
-                        <button onclick="sendToMissingFromSvod('${safeShopAttr}', '${safeNameParam}', ${actualQty})" style="background:#ff9800; color:white; border:none; padding:5px 10px; border-radius:6px; cursor:pointer; font-size:12px; font-weight:bold; margin-left:6px; box-shadow:0 2px 4px rgba(0,0,0,0.1);">➡️ В недовозы</button>
-                    </div>` : ``;
-                    
-                    let rowBg = botError ? `background-color: #fff8f8;` : ``;
-
-                    // Генерация столбца статуса
+                    // Столбец логики статусов
                     let statusText = "Ожидает ⏳";
                     let statusColor = "#f57c00";
                     let statusBg = "#fff3e0";
@@ -1074,11 +1048,17 @@
                         statusBg = "#ffebee";
                     }
                     
-                    let statusBadge = `<span style="background:${statusBg}; color:${statusColor}; padding:6px 10px; border-radius:8px; font-size:13px; font-weight:900;">${statusText}</span>`;
+                    let statusBadge = `<span style="background:${statusBg}; color:${statusColor}; padding:6px 10px; border-radius:8px; font-size:13px; font-weight:900; display:inline-block;">${statusText}</span>`;
+
+                    if (isSvodEditMode && (itemStatus === 'error' || itemStatus === 'ordered')) {
+                        statusBadge = `<span onclick="toggleItemStatusDirect('${safeShopAttr}', '${safeNameParam}', '${itemStatus}')" style="cursor:pointer; background:${statusBg}; color:${statusColor}; padding:6px 10px; border-radius:8px; font-size:13px; font-weight:900; display:inline-block; border: 2px dashed ${statusColor};">${statusText} 🔄</span>`;
+                    }
+                    
+                    let rowBg = (itemStatus === 'error') ? `background-color: #fff8f8;` : ``;
 
                     if (isSvodEditMode) {
                         html += `<tr class="svod_${safeShopId}" style="${displayStyle} color:${isDeleted ? '#aaa':'#333'}; ${rowBg}">
-                            <td style="padding-left:25px; font-size:17px; font-weight:bold;">${name} ${repeatBadge} ${errorBadge}</td>
+                            <td style="padding-left:25px; font-size:17px; font-weight:bold;">${name} ${repeatBadge}</td>
                             <td style="text-align:center;">
                                 <input type="number" class="edit-svod-input" data-shop="${safeShopAttr}" data-item="${safeNameAttr}" value="${actualQty}" ${isDeleted ? 'disabled' : ''} onchange="preserveSvodInputs(); renderOrdersSvod();" style="width: 70px; text-align: center; font-size: 16px; font-weight: bold; color: ${isDeleted ? '#aaa' : '#311b92'}; border: 2px solid ${isDeleted ? '#eee' : '#7E57C2'}; border-radius: 6px; padding: 4px;">
                             </td>
@@ -1090,7 +1070,7 @@
                         </tr>`;
                     } else {
                         html += `<tr class="svod_${safeShopId}" style="${displayStyle} ${rowBg}">
-                            <td style="padding-left:25px; font-size:17px; font-weight:bold;">${name} ${repeatBadge} ${errorBadge}</td>
+                            <td style="padding-left:25px; font-size:17px; font-weight:bold;">${name} ${repeatBadge}</td>
                             <td style="text-align:center; font-size:18px; font-weight:bold; color:#311b92;">${actualQty}</td>
                             <td style="text-align:center;">${statusBadge}</td>
                             <td style="font-size:16px;">${vendor}</td>
@@ -1177,7 +1157,6 @@
                     updates[o.key + "/ordered"] = true;
                     updates[o.key + "/svod"] = true; 
                     
-                    // Все успешные или ожидающие товары автоматически помечаем как "Заказано" для приемки
                     if (o.items) {
                         let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items);
                         let changed = false;

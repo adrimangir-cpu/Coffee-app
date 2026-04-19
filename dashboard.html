@@ -217,7 +217,7 @@
 <body>
 
 <div class="nav">
-    <h2 style="margin:0;">💼 Coffee TEIKU 22 CRM</h2>
+    <h2 style="margin:0;">💼 Coffee TEIKU CRM</h2>
     <div id="db-status">☁️ База активна</div>
 </div>
 
@@ -563,8 +563,7 @@
         });
         box.innerHTML = html + "</table>";
     }
-
-    // ==========================================
+   // ==========================================
     // 2. РЕДАКТОР: СПРАВОЧНИК ЧЕК-ЛИСТА
     // ==========================================
     function renderCatalogChecklist() {
@@ -833,9 +832,9 @@
     // 7. РЕНДЕР: СВОД ЗАКАЗОВ И ИСТОРИЯ
     // ==========================================
     
-    // Новые функции для работы с "Ошибкой Снайпера"
-    async function clearBotError(shop, name) {
-        if(!confirm(`Снять отметку ошибки с товара "${name}"?`)) return;
+    // Новые функции для работы со статусом заказа ("Ошибка Снайпера" и ручной дозаказ)
+    async function markItemOrdered(shop, name) {
+        if(!confirm(`Отметить товар "${name}" как заказанный?`)) return;
         try {
             let updatesNeeded = false;
             for (let k in cachedData.orders) {
@@ -844,11 +843,11 @@
                     let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
                     let changed = false;
                     itemsArr.forEach(i => {
-                        if (i && i.name === name && (i.bot_error || i.not_found || i.error || i.status === 'error')) {
+                        if (i && i.name === name) {
                             i.bot_error = false;
                             i.not_found = false;
                             i.error = false;
-                            i.status = 'ok';
+                            i.status = 'ordered'; // Устанавливаем статус "Заказано"
                             changed = true;
                         }
                     });
@@ -859,7 +858,7 @@
                 }
             }
             if(updatesNeeded) {
-                alert("✅ Отметка ошибки успешно снята!");
+                alert("✅ Статус изменен на 'Заказано'!");
                 loadTab('orders', document.querySelector('.tab-btn.active'));
             }
         } catch(e) {
@@ -937,11 +936,16 @@
             itemsArr.forEach(i => {
                 if (i) {
                     if (!svodData[o.shop].items[i.name]) {
-                        svodData[o.shop].items[i.name] = { qty: 0, bot_error: false };
+                        svodData[o.shop].items[i.name] = { qty: 0, bot_error: false, status: 'pending' };
                     }
                     svodData[o.shop].items[i.name].qty += parseFloat(i.qty) || 0;
+                    
+                    // Обновленная логика сбора статусов
                     if (i.bot_error === true || i.not_found === true || i.error === true || i.status === 'error') {
                         svodData[o.shop].items[i.name].bot_error = true;
+                        svodData[o.shop].items[i.name].status = 'error';
+                    } else if (i.status === 'ordered') {
+                        svodData[o.shop].items[i.name].status = 'ordered';
                     }
                 }
             });
@@ -968,6 +972,7 @@
                     <tr>
                         <th>Кофейня / Товар</th>
                         <th style="text-align:center;">Кол-во</th>
+                        <th style="text-align:center;">Статус</th>
                         <th>Поставщик</th>
                         <th style="text-align:center;">${isSvodEditMode ? 'Удалить' : 'Ссылка'}</th>
                     </tr>`;
@@ -975,7 +980,7 @@
         let totalLenta = 0; let totalOzon = 0; let totalKuper = 0;
 
         if (Object.keys(svodData).length === 0) {
-            html += `<tr><td colspan="4" style="text-align:center; padding:20px; font-weight:bold; font-size:18px; color:#888;">Нет заказов, ожидающих сборки</td></tr>`;
+            html += `<tr><td colspan="5" style="text-align:center; padding:20px; font-weight:bold; font-size:18px; color:#888;">Нет заказов, ожидающих сборки</td></tr>`;
         } else {
             for(let shop in svodData) {
                 for(let name in svodData[shop].items) {
@@ -1001,7 +1006,7 @@
                 let displayStyle = isOpened ? "display:table-row;" : "display:none;";
 
                 html += `<tr class="cat-group-header" onclick="toggleSvodShop('${safeShopId}')">
-                            <td colspan="4" style="background:#ede7f6; padding:15px; font-size:19px; color:#311B92;"><b>📍 ${displayName}</b> <span style="float:right;">▼</span></td>
+                            <td colspan="5" style="background:#ede7f6; padding:15px; font-size:19px; color:#311B92;"><b>📍 ${displayName}</b> <span style="float:right;">▼</span></td>
                          </tr>`;
 
                 let sortedItemNames = Object.keys(svodData[shop].items).sort((a,b) => {
@@ -1020,6 +1025,7 @@
                     let originalQty = svodData[shop].items[name].qty;
                     let actualQty = (tempSvodQty[shop] && tempSvodQty[shop][name] !== undefined) ? tempSvodQty[shop][name] : originalQty;
                     let botError = svodData[shop].items[name].bot_error;
+                    let itemStatus = svodData[shop].items[name].status;
                     
                     let isRepeat = historyKeys.has(shop + "|" + name);
                     let link1 = catItem.link ? `<a href="${catItem.link}" target="_blank" style="color:#0288d1; font-weight:bold;">🔗 Осн</a>` : "";
@@ -1047,11 +1053,28 @@
                     // Блок для ошибки бота с кнопками
                     let errorBadge = botError ? `<br><span style='background:#ffebee; color:#c62828; padding:4px 8px; border-radius:6px; font-size:13px; font-weight:900; display:inline-block; margin-top:4px;'>⚠️ Ошибка снайпера (не заказано)</span>
                     <div style="margin-top: 6px;">
-                        <button onclick="clearBotError('${safeShopAttr}', '${safeNameParam}')" style="background:#4caf50; color:white; border:none; padding:5px 10px; border-radius:6px; cursor:pointer; font-size:12px; font-weight:bold; box-shadow:0 2px 4px rgba(0,0,0,0.1);">✅ Заказал вручную</button>
+                        <button onclick="markItemOrdered('${safeShopAttr}', '${safeNameParam}')" style="background:#4caf50; color:white; border:none; padding:5px 10px; border-radius:6px; cursor:pointer; font-size:12px; font-weight:bold; box-shadow:0 2px 4px rgba(0,0,0,0.1);">✅ Заказал вручную</button>
                         <button onclick="sendToMissingFromSvod('${safeShopAttr}', '${safeNameParam}', ${actualQty})" style="background:#ff9800; color:white; border:none; padding:5px 10px; border-radius:6px; cursor:pointer; font-size:12px; font-weight:bold; margin-left:6px; box-shadow:0 2px 4px rgba(0,0,0,0.1);">➡️ В недовозы</button>
                     </div>` : ``;
                     
                     let rowBg = botError ? `background-color: #fff8f8;` : ``;
+
+                    // Генерация столбца статуса
+                    let statusText = "Ожидает ⏳";
+                    let statusColor = "#f57c00";
+                    let statusBg = "#fff3e0";
+                    
+                    if (itemStatus === 'ordered') {
+                        statusText = "Заказано ✅";
+                        statusColor = "#2e7d32";
+                        statusBg = "#e8f5e9";
+                    } else if (itemStatus === 'error') {
+                        statusText = "Ошибка ❌";
+                        statusColor = "#c62828";
+                        statusBg = "#ffebee";
+                    }
+                    
+                    let statusBadge = `<span style="background:${statusBg}; color:${statusColor}; padding:6px 10px; border-radius:8px; font-size:13px; font-weight:900;">${statusText}</span>`;
 
                     if (isSvodEditMode) {
                         html += `<tr class="svod_${safeShopId}" style="${displayStyle} color:${isDeleted ? '#aaa':'#333'}; ${rowBg}">
@@ -1059,6 +1082,7 @@
                             <td style="text-align:center;">
                                 <input type="number" class="edit-svod-input" data-shop="${safeShopAttr}" data-item="${safeNameAttr}" value="${actualQty}" ${isDeleted ? 'disabled' : ''} onchange="preserveSvodInputs(); renderOrdersSvod();" style="width: 70px; text-align: center; font-size: 16px; font-weight: bold; color: ${isDeleted ? '#aaa' : '#311b92'}; border: 2px solid ${isDeleted ? '#eee' : '#7E57C2'}; border-radius: 6px; padding: 4px;">
                             </td>
+                            <td style="text-align:center;">${statusBadge}</td>
                             <td style="font-size:16px; color:${isDeleted ? '#aaa' : '#333'}">${vendor}</td>
                             <td style="text-align:center;">
                                 <button class="btn-del" ${isDeleted ? 'disabled' : ''} onclick="markSvodDelete(this, '${shop}', '${safeNameParam}')">🗑</button>
@@ -1068,6 +1092,7 @@
                         html += `<tr class="svod_${safeShopId}" style="${displayStyle} ${rowBg}">
                             <td style="padding-left:25px; font-size:17px; font-weight:bold;">${name} ${repeatBadge} ${errorBadge}</td>
                             <td style="text-align:center; font-size:18px; font-weight:bold; color:#311b92;">${actualQty}</td>
+                            <td style="text-align:center;">${statusBadge}</td>
                             <td style="font-size:16px;">${vendor}</td>
                             <td style="text-align:center;">${linksHtml}</td>
                         </tr>`;
@@ -1075,7 +1100,7 @@
                 });
                 
                 if(svodData[shop].comments.length > 0) {
-                    html += `<tr class="svod_${safeShopId}" style="${displayStyle}"><td colspan="4" style="padding:15px; font-style:italic; font-size:17px; color:#ef6c00; background:#fff3e0;">💬 Комментарий: <b>${svodData[shop].comments.join(' | ')}</b></td></tr>`;
+                    html += `<tr class="svod_${safeShopId}" style="${displayStyle}"><td colspan="5" style="padding:15px; font-style:italic; font-size:17px; color:#ef6c00; background:#fff3e0;">💬 Комментарий: <b>${svodData[shop].comments.join(' | ')}</b></td></tr>`;
                 }
             }
         }
@@ -1151,6 +1176,19 @@
                 if (!isOrdered) {
                     updates[o.key + "/ordered"] = true;
                     updates[o.key + "/svod"] = true; 
+                    
+                    // Все успешные или ожидающие товары автоматически помечаем как "Заказано" для приемки
+                    if (o.items) {
+                        let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items);
+                        let changed = false;
+                        itemsArr.forEach(i => {
+                            if (i && i.name !== "НЕТ ЗАКАЗА" && (!i.status || i.status === 'pending')) {
+                                i.status = 'ordered';
+                                changed = true;
+                            }
+                        });
+                        if (changed) updates[o.key + "/items"] = itemsArr;
+                    }
                 }
             }
         });

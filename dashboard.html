@@ -217,7 +217,7 @@
 <body>
 
 <div class="nav">
-    <h2 style="margin:0;">💼 Coffee 3333 TEIKU CRM</h2>
+    <h2 style="margin:0;">💼 Coffee TEIKU CRM</h2>
     <div id="db-status">☁️ База активна</div>
 </div>
 
@@ -242,14 +242,16 @@
     let currentCatalog = {};
     let currentPath = "";
     let currentTabType = "";
-    let isNewShopCatalog = false; // Для переключения режимов закупки
+    let isNewShopCatalog = false; 
     let appSettings = { hidden_categories: {}, new_shop_order_active: false };
     let cachedData = {};
     
     // Переменные режимов редактирования
     let isChecklistEditMode = false;
     let isSvodEditMode = false;
-    let svodDeletions = []; // Хранит {shop, name} удаленных позиций Свода
+    let svodDeletions = []; 
+    let tempSvodQty = {}; 
+    let openSvodShops = new Set(); // Хранит ID открытых папок в своде
 
     // БЕЗОПАСНЫЙ ХЭШ-ID (работает со всеми кодировками)
     function getSafeId(str) {
@@ -289,11 +291,26 @@
                 isClosing = true;
             }
         });
-        // Если закрываем Глобальную категорию, прячем и все товары внутри неё
         if (isClosing) {
             let items = document.querySelectorAll('.lvl3_of_' + gcId);
             items.forEach(el => el.style.display = 'none');
         }
+    }
+
+    // ТУМБЛЕР ДЛЯ СВОДА (С ПАМЯТЬЮ СОСТОЯНИЯ)
+    function toggleSvodShop(safeShopId) {
+        let els = document.querySelectorAll('.svod_' + safeShopId);
+        let isOpening = false;
+        els.forEach(el => {
+            if (el.style.display === 'none' || el.style.display === '') {
+                el.style.display = 'table-row';
+                isOpening = true;
+            } else {
+                el.style.display = 'none';
+            }
+        });
+        if (isOpening) openSvodShops.add(safeShopId);
+        else openSvodShops.delete(safeShopId);
     }
 
     async function triggerPcBuild(cmd) {
@@ -321,7 +338,6 @@
         box.innerHTML = "<div style='text-align:center; padding:40px; font-weight:bold; font-size:22px; color:#7E57C2;'>⌛ Синхронизация данных из Firebase...</div>";
 
         try {
-            // Перед загрузкой любой вкладки, всегда подгружаем справочники закупки для мягкого поиска/ссылок
             let [resCat, resNewCat] = await Promise.all([
                 fetch(`${FB_URL}/catalogs/order.json`),
                 fetch(`${FB_URL}/catalogs/newshop.json`)
@@ -329,7 +345,7 @@
             let catOrd = await resCat.json() || {};
             let catNew = await resNewCat.json() || {};
             cachedData.catalogOrder = { ...catOrd, ...catNew };
-            cachedData.catalog = cachedData.catalogOrder; // Устранение ошибки undefined!
+            cachedData.catalog = cachedData.catalogOrder;
 
             if (type === 'catalog_order') {
                 isNewShopCatalog = false;
@@ -356,29 +372,21 @@
                 renderCatalogStoplist();
             }
             else if (type === 'missing') {
-                // Загружаем недовозы и справочники для ссылок
                 let [resMiss, catRes, newCatRes] = await Promise.all([
                     fetch(`${FB_URL}/missing_items.json`),
                     fetch(`${FB_URL}/catalogs/order.json`),
                     fetch(`${FB_URL}/catalogs/newshop.json`)
                 ]);
                 cachedData.missing = await resMiss.json() || {};
-                let catOrd = await catRes.json() || {};
-                let catNew = await newCatRes.json() || {};
-                cachedData.catalogOrder = { ...catOrd, ...catNew };
                 renderMissing();
             }
             else if (type === 'stoplists') {
-                // В стоп-листах загружаем оба справочника закупки для ссылок
                 let [resOrders, catRes, newCatRes] = await Promise.all([
                     fetch(`${FB_URL}/orders.json`),
                     fetch(`${FB_URL}/catalogs/order.json`),
                     fetch(`${FB_URL}/catalogs/newshop.json`)
                 ]);
                 cachedData.orders = await resOrders.json() || {};
-                let catOrd = await catRes.json() || {};
-                let catNew = await newCatRes.json() || {};
-                cachedData.catalogOrder = { ...catNew, ...catOrd };
                 renderStoplists();
             }
             else if (type === 'checks_table') {
@@ -387,13 +395,9 @@
                     fetch(`${FB_URL}/orders.json`)
                 ]);
                 cachedData.catalog = await resCheck.json() || {};
-                
                 let ordersObj = await resOrders.json() || {};
-                Object.keys(ordersObj).forEach(k => { 
-                    if (ordersObj[k]) ordersObj[k].key = k; 
-                });
+                Object.keys(ordersObj).forEach(k => { if (ordersObj[k]) ordersObj[k].key = k; });
                 cachedData.orders = ordersObj;
-                
                 isChecklistEditMode = false; 
                 renderChecksTable();
             }
@@ -403,20 +407,14 @@
                     fetch(`${FB_URL}/catalogs/order.json`),
                     fetch(`${FB_URL}/catalogs/newshop.json`)
                 ]);
-                
                 let ordersObj = await ordersRes.json() || {};
-                Object.keys(ordersObj).forEach(k => { 
-                    if (ordersObj[k]) ordersObj[k].key = k; 
-                });
-                
+                Object.keys(ordersObj).forEach(k => { if (ordersObj[k]) ordersObj[k].key = k; });
                 cachedData.orders = ordersObj;
-                
-                let catOrd = await catRes.json() || {};
-                let catNew = await newCatRes.json() || {};
-                cachedData.catalog = { ...catNew, ...catOrd };
                 
                 isSvodEditMode = false;
                 svodDeletions = [];
+                tempSvodQty = {}; 
+                openSvodShops.clear(); 
                 renderOrdersSvod();
             }
             else if (type === 'stats') {
@@ -435,16 +433,12 @@
     function renderStats() {
         const box = document.getElementById('content');
         let shops = ["Бояринова", "Гагарина", "Вертолетчиков", "Липчанского", "Новокосино", "Новокосино 2", "Старое Павлино", "Красноказарменная", "Ухтомского ополчения"];
-        
         let stats = {};
-        shops.forEach(s => {
-            stats[s] = { emptyCount: {}, orderSum: {}, orderCount: {} };
-        });
+        shops.forEach(s => { stats[s] = { emptyCount: {}, orderSum: {}, orderCount: {} }; });
 
         Object.values(cachedData.orders).forEach(o => {
             if (!o || !stats[o.shop] || !o.items) return;
             let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items);
-            
             if (o.mode === 'checklist') {
                 itemsArr.forEach(i => {
                     let val = String(i.qty).trim();
@@ -461,41 +455,29 @@
             }
         });
 
-        let html = `<h3 style="color:#1a237e; font-size:24px; margin-bottom:20px;">📈 Статистика (за всё время)</h3>
-                    <div style="display:flex; flex-wrap:wrap; gap:20px;">`;
-        
+        let html = `<h3 style="color:#1a237e; font-size:24px; margin-bottom:20px;">📈 Статистика (за всё время)</h3><div style="display:flex; flex-wrap:wrap; gap:20px;">`;
         shops.forEach(s => {
             let displayName = s === 'Красноказарменная' ? 'МЭИ' : s;
             html += `<div class="card" style="flex: 1 1 calc(33% - 20px); min-width:320px; padding:25px; background:#fff; border-radius:16px; box-shadow:0 4px 15px rgba(0,0,0,0.05);">
                         <h4 style="margin-top:0; color:#311b92; font-size:20px; border-bottom:2px solid #eee; padding-bottom:10px; font-weight:900;">${displayName}</h4>`;
             
-            // Топ заканчивающихся
             let empties = Object.entries(stats[s].emptyCount).sort((a,b) => b[1] - a[1]).slice(0, 5);
-            html += `<b style="color:#D50000; font-size:16px;">🛑 Часто заканчивается (Чек-лист):</b>
-                     <ul style="margin-top:5px; padding-left:20px; font-size:15px; color:#555; font-weight:bold;">`;
+            html += `<b style="color:#D50000; font-size:16px;">🛑 Часто заканчивается (Чек-лист):</b><ul style="margin-top:5px; padding-left:20px; font-size:15px; color:#555; font-weight:bold;">`;
             if (empties.length > 0) {
                 empties.forEach(e => html += `<li>${e[0]} <span style="color:#D50000;">(${e[1]} раз)</span></li>`);
-            } else {
-                html += `<li>Нет данных</li>`;
-            }
+            } else { html += `<li>Нет данных</li>`; }
             html += `</ul>`;
 
-            // Средний заказ
             let averages = Object.entries(stats[s].orderSum).map(e => {
                 let avg = (e[1] / stats[s].orderCount[e[0]]).toFixed(1);
                 return [e[0], avg];
             }).sort((a,b) => b[1] - a[1]).slice(0, 5);
-
-            html += `<b style="color:#2e7d32; font-size:16px; margin-top:15px; display:inline-block;">📦 Средний заказ (Топ-5 закупка):</b>
-                     <ul style="margin-top:5px; padding-left:20px; font-size:15px; color:#555; font-weight:bold;">`;
+            html += `<b style="color:#2e7d32; font-size:16px; margin-top:15px; display:inline-block;">📦 Средний заказ (Топ-5 закупка):</b><ul style="margin-top:5px; padding-left:20px; font-size:15px; color:#555; font-weight:bold;">`;
             if (averages.length > 0) {
                 averages.forEach(a => html += `<li>${a[0]}: <span style="color:#2e7d32;">~${a[1]} шт</span></li>`);
-            } else {
-                html += `<li>Нет данных</li>`;
-            }
+            } else { html += `<li>Нет данных</li>`; }
             html += `</ul></div>`;
         });
-        
         html += `</div>`;
         box.innerHTML = html;
     }
@@ -515,14 +497,10 @@
     // ==========================================
     function renderCatalogOrder() {
         const box = document.getElementById('content');
-        
         let globalCats = ["Основное меню"];
         Object.values(currentCatalog).forEach(i => {
-            if(i.globalCat && !globalCats.includes(i.globalCat) && !i.globalCat.includes("!!!")) {
-                globalCats.push(i.globalCat);
-            }
+            if(i.globalCat && !globalCats.includes(i.globalCat) && !i.globalCat.includes("!!!")) globalCats.push(i.globalCat);
         });
-
         let subCats = [...new Set(Object.values(currentCatalog).map(i => i.cat).filter(c => c && !c.includes("!!!")))];
 
         let html = `
@@ -533,116 +511,51 @@
                 <button class="btn-save" style="margin:0; width:auto; padding:14px 28px;" onclick="saveCatalog()">💾 СОХРАНИТЬ В БАЗУ</button>
             </div>
         </div>
-
         <div style="margin-bottom: 20px; display: flex; gap: 10px;">
             <button class="tab-btn ${!isNewShopCatalog ? 'active' : ''}" style="padding: 10px 20px; font-size: 15px;" onclick="switchOrderCatalog(false)">📦 Обычная закупка</button>
             <button class="tab-btn ${isNewShopCatalog ? 'active' : ''}" style="padding: 10px 20px; font-size: 15px;" onclick="switchOrderCatalog(true)">🏗 На новую кофейню</button>
         </div>
-
         <div class="settings-panel">
             <h4 style="margin-top:0; font-size:19px; color:#d32f2f; cursor:pointer; display:flex; justify-content:space-between; align-items:center;" onclick="toggleElements('settings-content-div')">
-                <span>⚙️ Настройки (Скрывать глобальные категории в приложении)</span>
-                <span>▼</span>
+                <span>⚙️ Настройки (Скрывать глобальные категории в приложении)</span><span>▼</span>
             </h4>
             <div class="settings-content-div" style="display:none; flex-wrap:wrap; gap:20px; margin-top:15px;">
-                <label class="toggle-label" style="color:#2e7d32;">
-                    <input type="checkbox" onchange="toggleSetting('new_shop_order_active', this.checked)" ${appSettings.new_shop_order_active ? 'checked' : ''}> 
-                    Показывать кнопку "Закупка на новую кофейню"
-                </label>`;
-        
+                <label class="toggle-label" style="color:#2e7d32;"><input type="checkbox" onchange="toggleSetting('new_shop_order_active', this.checked)" ${appSettings.new_shop_order_active ? 'checked' : ''}> Показывать кнопку "Закупка на новую кофейню"</label>`;
         globalCats.forEach(gc => {
             if(gc.includes("!!!")) return; 
-            let isHidden = appSettings.hidden_categories[gc];
-            html += `<label class="toggle-label">
-                        <input type="checkbox" onchange="toggleHiddenCategory('${gc}', this.checked)" ${isHidden ? 'checked' : ''}> 
-                        Скрыть "${gc}"
-                     </label>`;
+            html += `<label class="toggle-label"><input type="checkbox" onchange="toggleHiddenCategory('${gc}', this.checked)" ${appSettings.hidden_categories[gc] ? 'checked' : ''}> Скрыть "${gc}"</label>`;
         });
-        
-        html += `</div></div>
-        
-        <table style="min-width:1400px;">
-            <tr>
-                <th style="width:160px;">Глоб. Категория</th>
-                <th style="width:160px;">Подкатегория</th>
-                <th style="width:200px;">Наименование</th>
-                <th style="width:100px;">Поставщик</th>
-                <th style="width:80px;">Цена 1 (₽)</th>
-                <th>Ссылка 1</th>
-                <th style="width:80px;">Цена 2 (₽)</th>
-                <th>Ссылка 2</th>
-                <th style="width:60px; text-align:center;">Удалить</th>
-            </tr>`;
+        html += `</div></div><table style="min-width:1400px;"><tr><th style="width:160px;">Глоб. Категория</th><th style="width:160px;">Подкатегория</th><th style="width:200px;">Наименование</th><th style="width:100px;">Поставщик</th><th style="width:80px;">Цена 1 (₽)</th><th>Ссылка 1</th><th style="width:80px;">Цена 2 (₽)</th><th>Ссылка 2</th><th style="width:60px; text-align:center;">Удалить</th></tr>`;
 
         let grouped = {};
         Object.keys(currentCatalog).forEach(k => {
-            let item = currentCatalog[k];
-            let gc = item.globalCat || "Основное меню";
-            let sc = item.cat || "Прочее";
-            if (!grouped[gc]) grouped[gc] = {};
-            if (!grouped[gc][sc]) grouped[gc][sc] = [];
+            let item = currentCatalog[k]; let gc = item.globalCat || "Основное меню"; let sc = item.cat || "Прочее";
+            if (!grouped[gc]) grouped[gc] = {}; if (!grouped[gc][sc]) grouped[gc][sc] = [];
             grouped[gc][sc].push({k: k, item: item});
         });
-
-        // Сортировка: Новые папки !!! всегда наверху
-        Object.keys(grouped).sort((a,b) => {
-            if(a.includes("!!!")) return -1;
-            if(b.includes("!!!")) return 1;
-            return a.localeCompare(b);
-        }).forEach(gc => {
-            let safeGc = getSafeId(gc);
-            let displayGc = gc.replace("!!! НОВОЕ", "Новая добавленная позиция");
-            
-            html += `<tr class="cat-group-header" onclick="toggleLvl1('${safeGc}')">
-                        <td colspan="9" style="padding:18px; background:#d1c4e9; font-size:20px;">🌍 <b>${displayGc}</b> <span style="float:right;">▼</span></td>
-                     </tr>`;
-            
-            Object.keys(grouped[gc]).sort((a,b) => {
-                if(a.includes("!!!")) return -1;
-                if(b.includes("!!!")) return 1;
-                return a.localeCompare(b);
-            }).forEach(sc => {
-                let safeSc = getSafeId(gc + "_" + sc); 
-                let displaySc = sc.replace("!!! НОВОЕ", "Заполните данные");
-                
-                let displayStyle = gc.includes("!!!") ? "table-row" : "none";
-                
-                html += `<tr class="cat-group-header lvl2_${safeGc}" style="display:${displayStyle};" onclick="toggleElements('lvl3_${safeSc}')">
-                            <td colspan="9" style="padding:15px; padding-left:30px; font-size:18px;">📂 ${displaySc} <span style="float:right;">▼</span></td>
-                         </tr>`;
-                
+        Object.keys(grouped).sort((a,b) => { if(a.includes("!!!")) return -1; if(b.includes("!!!")) return 1; return a.localeCompare(b); }).forEach(gc => {
+            let safeGc = getSafeId(gc); let displayGc = gc.replace("!!! НОВОЕ", "Новая добавленная позиция");
+            html += `<tr class="cat-group-header" onclick="toggleLvl1('${safeGc}')"><td colspan="9" style="padding:18px; background:#d1c4e9; font-size:20px;">🌍 <b>${displayGc}</b> <span style="float:right;">▼</span></td></tr>`;
+            Object.keys(grouped[gc]).sort((a,b) => { if(a.includes("!!!")) return -1; if(b.includes("!!!")) return 1; return a.localeCompare(b); }).forEach(sc => {
+                let safeSc = getSafeId(gc + "_" + sc); let displaySc = sc.replace("!!! НОВОЕ", "Заполните данные"); let displayStyle = gc.includes("!!!") ? "table-row" : "none";
+                html += `<tr class="cat-group-header lvl2_${safeGc}" style="display:${displayStyle};" onclick="toggleElements('lvl3_${safeSc}')"><td colspan="9" style="padding:15px; padding-left:30px; font-size:18px;">📂 ${displaySc} <span style="float:right;">▼</span></td></tr>`;
                 grouped[gc][sc].sort((a,b) => (a.item.name||'').localeCompare(b.item.name||'')).forEach(data => {
-                    let k = data.k; 
-                    let item = data.item;
-                    
+                    let k = data.k; let item = data.item;
                     let gcatOptions = `<option value="${item.globalCat || 'Основное меню'}">${(item.globalCat || 'Основное меню').replace("!!! НОВОЕ", "Выберите...")}</option>`;
-                    globalCats.forEach(c => { 
-                        if(c !== (item.globalCat || 'Основное меню')) {
-                            gcatOptions += `<option value="${c}">${c}</option>`; 
-                        }
-                    });
+                    globalCats.forEach(c => { if(c !== (item.globalCat || 'Основное меню')) gcatOptions += `<option value="${c}">${c}</option>`; });
                     gcatOptions += `<option value="НОВАЯ ГЛОБАЛЬНАЯ">-- Создать --</option>`;
-
                     let catOptions = `<option value="${item.cat}">${(item.cat || "Прочее").replace("!!! НОВОЕ", "Выберите...")}</option>`;
-                    subCats.forEach(c => { 
-                        if(c !== item.cat) {
-                            catOptions += `<option value="${c}">${c}</option>`; 
-                        }
-                    });
+                    subCats.forEach(c => { if(c !== item.cat) catOptions += `<option value="${c}">${c}</option>`; });
                     catOptions += `<option value="НОВАЯ КАТЕГОРИЯ">-- Создать --</option>`;
-
                     html += `<tr class="chk-row lvl3_${safeSc} lvl3_of_${safeGc}" style="display:${displayStyle};">
                         <td><select onchange="updateVal('${k}','globalCat',this.value)">${gcatOptions}</select></td>
                         <td><select onchange="updateVal('${k}','cat',this.value)">${catOptions}</select></td>
                         <td><input type="text" style="font-weight:bold; color:#311b92;" value="${item.name || ''}" onchange="updateVal('${k}','name',this.value)"></td>
                         <td><input type="text" placeholder="Лента/Озон" value="${item.vendor || 'Лента'}" onchange="updateVal('${k}','vendor',this.value)"></td>
-                        
                         <td><input type="number" value="${item.price || 0}" onchange="updateVal('${k}','price',this.value)"></td>
                         <td><input type="text" placeholder="URL 1" value="${item.link || ''}" onchange="updateVal('${k}','link',this.value)"></td>
-                        
                         <td><input type="number" value="${item.price2 || 0}" onchange="updateVal('${k}','price2',this.value)"></td>
                         <td><input type="text" placeholder="URL 2" value="${item.link2 || ''}" onchange="updateVal('${k}','link2',this.value)"></td>
-
                         <td style="text-align:center;"><button class="btn-del" onclick="deleteItem('${k}')">🗑</button></td>
                     </tr>`;
                 });
@@ -656,13 +569,9 @@
     // ==========================================
     function renderCatalogChecklist() {
         const box = document.getElementById('content');
-        
         let globalCats = ["Основное меню"];
-        Object.values(currentCatalog).forEach(i => {
-            if(i.globalCat && !globalCats.includes(i.globalCat) && !i.globalCat.includes("!!!")) globalCats.push(i.globalCat);
-        });
+        Object.values(currentCatalog).forEach(i => { if(i.globalCat && !globalCats.includes(i.globalCat) && !i.globalCat.includes("!!!")) globalCats.push(i.globalCat); });
         let subCats = [...new Set(Object.values(currentCatalog).map(i => i.cat).filter(c => c && !c.includes("!!!")))];
-        
         let html = `
         <div style="display:flex; justify-content:space-between; margin-bottom:20px; align-items:center;">
             <h3 style="margin:0; font-size:24px; color:#4A148C;">Редактор товаров: ЧЕК-ЛИСТ</h3>
@@ -671,74 +580,33 @@
                 <button class="btn-save" style="margin:0; width:auto; padding:14px 28px;" onclick="saveCatalog()">💾 СОХРАНИТЬ В БАЗУ</button>
             </div>
         </div>
-        <table style="min-width:1100px;">
-            <tr>
-                <th style="width:200px;">Глоб. Категория</th>
-                <th style="width:250px;">Подкатегория</th>
-                <th style="width:300px;">Наименование</th>
-                <th style="width:200px;">Формат ввода</th>
-                <th style="width:80px; text-align:center;">Удалить</th>
-            </tr>`;
-        
+        <table style="min-width:1100px;"><tr><th style="width:200px;">Глоб. Категория</th><th style="width:250px;">Подкатегория</th><th style="width:300px;">Наименование</th><th style="width:200px;">Формат ввода</th><th style="width:80px; text-align:center;">Удалить</th></tr>`;
         let grouped = {};
         Object.keys(currentCatalog).forEach(k => {
-            let item = currentCatalog[k];
-            let gc = item.globalCat || "Основное меню";
-            let sc = item.cat || "Прочее";
-            if (!grouped[gc]) grouped[gc] = {};
-            if (!grouped[gc][sc]) grouped[gc][sc] = [];
+            let item = currentCatalog[k]; let gc = item.globalCat || "Основное меню"; let sc = item.cat || "Прочее";
+            if (!grouped[gc]) grouped[gc] = {}; if (!grouped[gc][sc]) grouped[gc][sc] = [];
             grouped[gc][sc].push({k: k, item: item});
         });
-
-        Object.keys(grouped).sort((a,b) => {
-            if(a.includes("!!!")) return -1;
-            if(b.includes("!!!")) return 1;
-            return a.localeCompare(b);
-        }).forEach(gc => {
-            let safeGc = getSafeId(gc);
-            let displayGc = gc.replace("!!! НОВОЕ", "Новая добавленная позиция");
-
-            html += `<tr class="cat-group-header" onclick="toggleLvl1('chksub_${safeGc}')">
-                        <td colspan="5" style="padding:18px; background:#d1c4e9; font-size:20px;">🌍 <b>${displayGc}</b> <span style="float:right;">▼</span></td>
-                     </tr>`;
-            
-            Object.keys(grouped[gc]).sort((a,b) => {
-                if(a.includes("!!!")) return -1;
-                if(b.includes("!!!")) return 1;
-                return a.localeCompare(b);
-            }).forEach(sc => {
-                let safeSc = getSafeId(gc + "_" + sc);
-                let displaySc = sc.replace("!!! НОВОЕ", "Заполните данные");
-
-                let displayStyle = gc.includes("!!!") ? "table-row" : "none";
-
-                html += `<tr class="cat-group-header lvl2_chksub_${safeGc}" style="display:${displayStyle};" onclick="toggleElements('chkitem_${safeSc}')">
-                            <td colspan="5" style="padding:15px; padding-left:30px; font-size:18px;">📂 ${displaySc} <span style="float:right;">▼</span></td>
-                         </tr>`;
-                
+        Object.keys(grouped).sort((a,b) => { if(a.includes("!!!")) return -1; if(b.includes("!!!")) return 1; return a.localeCompare(b); }).forEach(gc => {
+            let safeGc = getSafeId(gc); let displayGc = gc.replace("!!! НОВОЕ", "Новая добавленная позиция");
+            html += `<tr class="cat-group-header" onclick="toggleLvl1('chksub_${safeGc}')"><td colspan="5" style="padding:18px; background:#d1c4e9; font-size:20px;">🌍 <b>${displayGc}</b> <span style="float:right;">▼</span></td></tr>`;
+            Object.keys(grouped[gc]).sort((a,b) => { if(a.includes("!!!")) return -1; if(b.includes("!!!")) return 1; return a.localeCompare(b); }).forEach(sc => {
+                let safeSc = getSafeId(gc + "_" + sc); let displaySc = sc.replace("!!! НОВОЕ", "Заполните данные"); let displayStyle = gc.includes("!!!") ? "table-row" : "none";
+                html += `<tr class="cat-group-header lvl2_chksub_${safeGc}" style="display:${displayStyle};" onclick="toggleElements('chkitem_${safeSc}')"><td colspan="5" style="padding:15px; padding-left:30px; font-size:18px;">📂 ${displaySc} <span style="float:right;">▼</span></td></tr>`;
                 grouped[gc][sc].sort((a,b) => (a.item.name||'').localeCompare(b.item.name||'')).forEach(data => {
                     let k = data.k; let item = data.item;
-                    
                     let gcatOptions = `<option value="${item.globalCat || 'Основное меню'}">${(item.globalCat || 'Основное меню').replace("!!! НОВОЕ", "Выберите...")}</option>`;
                     globalCats.forEach(c => { if(c !== (item.globalCat || 'Основное меню')) gcatOptions += `<option value="${c}">${c}</option>`; });
                     gcatOptions += `<option value="НОВАЯ ГЛОБАЛЬНАЯ">-- Создать --</option>`;
-
                     let catOptions = `<option value="${item.cat}">${(item.cat || "Прочее").replace("!!! НОВОЕ", "Выберите...")}</option>`;
                     subCats.forEach(c => { if(c !== item.cat) catOptions += `<option value="${c}">${c}</option>`; });
                     catOptions += `<option value="НОВАЯ КАТЕГОРИЯ">-- Создать --</option>`;
-
                     let isVol = (item.unit && item.unit.toLowerCase().includes("объем"));
-
                     html += `<tr class="chk-row chkitem_${safeSc} lvl3_of_chksub_${safeGc}" style="display:${displayStyle};">
                         <td><select onchange="updateVal('${k}','globalCat',this.value)">${gcatOptions}</select></td>
                         <td><select onchange="updateVal('${k}','cat',this.value)" style="font-weight:bold; color:#7E57C2;">${catOptions}</select></td>
                         <td><input type="text" style="font-weight:bold; font-size:17px; color:#311b92;" value="${item.name || ''}" onchange="updateVal('${k}','name',this.value)"></td>
-                        <td>
-                            <select onchange="updateVal('${k}','unit',this.value)">
-                                <option value="текст" ${!isVol?'selected':''}>Текст (Шт / Уп)</option>
-                                <option value="объем" ${isVol?'selected':''}>Объем (Полная / Половина)</option>
-                            </select>
-                        </td>
+                        <td><select onchange="updateVal('${k}','unit',this.value)"><option value="текст" ${!isVol?'selected':''}>Текст (Шт / Уп)</option><option value="объем" ${isVol?'selected':''}>Объем (Полная / Половина)</option></select></td>
                         <td style="text-align:center;"><button class="btn-del" onclick="deleteItem('${k}')">🗑</button></td>
                     </tr>`;
                 });
@@ -752,9 +620,7 @@
     // ==========================================
     function renderCatalogStoplist() {
         const box = document.getElementById('content');
-        
         let subCats = [...new Set(Object.values(currentCatalog).map(i => i.cat).filter(c => c && !c.includes("!!!")))];
-
         let html = `
         <div style="display:flex; justify-content:space-between; margin-bottom:20px; align-items:center;">
             <h3 style="margin:0; font-size:24px; color:#D50000;">Редактор товаров: СТОП-ЛИСТ</h3>
@@ -763,64 +629,29 @@
                 <button class="btn-save" style="margin:0; width:auto; padding:14px 28px;" onclick="saveCatalog()">💾 СОХРАНИТЬ В БАЗУ</button>
             </div>
         </div>
-        
-        <table style="min-width:1000px;">
-            <tr>
-                <th style="width:200px;">Категория</th>
-                <th style="width:300px;">Продукт / Ингредиент (Из Закупки)</th>
-                <th style="width:200px;">Отключает (Сезонное)</th>
-                <th style="width:200px;">Отключает (Основное)</th>
-                <th style="width:80px; text-align:center;">Удалить</th>
-            </tr>`;
-
+        <table style="min-width:1000px;"><tr><th style="width:200px;">Категория</th><th style="width:300px;">Продукт / Ингредиент (Из Закупки)</th><th style="width:200px;">Отключает (Сезонное)</th><th style="width:200px;">Отключает (Основное)</th><th style="width:80px; text-align:center;">Удалить</th></tr>`;
         let grouped = {};
         Object.keys(currentCatalog).forEach(k => {
-            let item = currentCatalog[k];
-            let sc = item.cat || "Прочее";
-            if (!grouped[sc]) grouped[sc] = [];
-            grouped[sc].push({k: k, item: item});
+            let item = currentCatalog[k]; let sc = item.cat || "Прочее";
+            if (!grouped[sc]) grouped[sc] = []; grouped[sc].push({k: k, item: item});
         });
-
-        // Создаем выпадающий список всех товаров из закупки
         let allPurchaseItems = [];
         if (cachedData.catalogOrder) {
             let names = Object.values(cachedData.catalogOrder).map(i => i.name).filter(Boolean);
             allPurchaseItems = [...new Set(names)].sort((a,b) => a.localeCompare(b));
         }
         let optionsHtml = allPurchaseItems.map(name => `<option value="${name.replace(/"/g, '&quot;')}">${name}</option>`).join("");
-
-        Object.keys(grouped).sort((a,b) => {
-            if(a.includes("!!!")) return -1;
-            if(b.includes("!!!")) return 1;
-            return a.localeCompare(b);
-        }).forEach(sc => {
-            let safeSc = getSafeId(sc);
-            let displaySc = sc.replace("!!! НОВОЕ", "Новая добавленная позиция");
-
-            let displayStyle = sc.includes("!!!") ? "table-row" : "none";
-
-            html += `<tr class="cat-group-header" onclick="toggleElements('stop_${safeSc}')">
-                        <td colspan="5" style="padding:15px; background:#d1c4e9; font-size:18px;">📂 <b>${displaySc}</b> <span style="float:right;">▼</span></td>
-                     </tr>`;
-            
+        Object.keys(grouped).sort((a,b) => { if(a.includes("!!!")) return -1; if(b.includes("!!!")) return 1; return a.localeCompare(b); }).forEach(sc => {
+            let safeSc = getSafeId(sc); let displaySc = sc.replace("!!! НОВОЕ", "Новая добавленная позиция"); let displayStyle = sc.includes("!!!") ? "table-row" : "none";
+            html += `<tr class="cat-group-header" onclick="toggleElements('stop_${safeSc}')"><td colspan="5" style="padding:15px; background:#d1c4e9; font-size:18px;">📂 <b>${displaySc}</b> <span style="float:right;">▼</span></td></tr>`;
             grouped[sc].sort((a,b) => (a.item.name||'').localeCompare(b.item.name||'')).forEach(data => {
-                let k = data.k; 
-                let item = data.item;
-                
+                let k = data.k; let item = data.item;
                 let catOptions = `<option value="${item.cat}">${(item.cat || "Прочее").replace("!!! НОВОЕ", "Выберите...")}</option>`;
-                subCats.forEach(c => { 
-                    if(c !== item.cat) catOptions += `<option value="${c}">${c}</option>`; 
-                });
+                subCats.forEach(c => { if(c !== item.cat) catOptions += `<option value="${c}">${c}</option>`; });
                 catOptions += `<option value="НОВАЯ КАТЕГОРИЯ">-- Создать --</option>`;
-
                 html += `<tr class="chk-row stop_${safeSc}" style="display:${displayStyle};">
                     <td><select onchange="updateVal('${k}','cat',this.value)">${catOptions}</select></td>
-                    <td>
-                        <select style="font-weight:bold; color:#311b92;" onchange="updateVal('${k}','name',this.value)">
-                            <option value="${item.name || ''}">${item.name || '--- Выберите из закупки ---'}</option>
-                            ${optionsHtml}
-                        </select>
-                    </td>
+                    <td><select style="font-weight:bold; color:#311b92;" onchange="updateVal('${k}','name',this.value)"><option value="${item.name || ''}">${item.name || '--- Выберите из закупки ---'}</option>${optionsHtml}</select></td>
                     <td><input type="text" placeholder="Укажите напитки..." value="${item.sez || ''}" onchange="updateVal('${k}','sez',this.value)"></td>
                     <td><input type="text" placeholder="Укажите напитки..." value="${item.main || ''}" onchange="updateVal('${k}','main',this.value)"></td>
                     <td style="text-align:center;"><button class="btn-del" onclick="deleteItem('${k}')">🗑</button></td>
@@ -831,111 +662,51 @@
     }
 
     // ==========================================
-    // 3. РЕНДЕР: АКТУАЛЬНЫЕ НЕДОВОЗЫ (С УМНОЙ ИСТОРИЕЙ И ССЫЛКАМИ)
+    // 3. РЕНДЕР: АКТУАЛЬНЫЕ НЕДОВОЗЫ
     // ==========================================
     function renderMissing() {
         const box = document.getElementById('content');
-        
         let activeHtml = "<h3 style='color:#E53935; font-size:24px; margin-bottom:15px;'>‼️ Актуальные Недовозы</h3><table style='margin-bottom:20px;'><tr><th>Точка</th><th>Товар / Ссылки</th><th style='text-align:center;'>Кол-во</th><th>Статус</th><th style='text-align:center;'>Удалить</th></tr>";
         let historyHtml = "<table style='margin-top:15px;'><tr><th>Точка</th><th>Товар</th><th style='text-align:center;'>Кол-во</th><th>Статус</th><th style='text-align:center;'>Удалить</th></tr>";
-        
-        let hasActive = false;
-        let hasHistory = false;
-        let cutoff = Date.now() - (30 * 24 * 60 * 60 * 1000);
-
+        let hasActive = false; let hasHistory = false; let cutoff = Date.now() - (30 * 24 * 60 * 60 * 1000);
         let missingArr = Object.keys(cachedData.missing).map(k => ({key: k, ...cachedData.missing[k]}));
         missingArr.sort((a,b) => (b.timestamp || 0) - (a.timestamp || 0));
 
         missingArr.forEach(m => {
             if ((m.timestamp || 0) < cutoff && m.status !== 'pending' && m.status !== 'transit' && m.status !== 'oos' && m.status !== 'reorder') return; 
-            
             let iNameLow = String(m.name).trim().toLowerCase();
             let catInfo = Object.values(cachedData.catalogOrder || {}).find(ci => {
-                if(!ci || !ci.name) return false;
-                let cName = String(ci.name).trim().toLowerCase();
+                if(!ci || !ci.name) return false; let cName = String(ci.name).trim().toLowerCase();
                 return cName === iNameLow || cName.includes(iNameLow) || iNameLow.includes(cName);
             }) || {};
-            
             let displayName = m.shop === 'Красноказарменная' ? 'МЭИ' : m.shop;
-
             if (m.status === 'canceled' || m.status === 'arrived') {
                 hasHistory = true;
-                let statColor = m.status === 'arrived' ? '#4caf50' : '#888';
-                let statText = m.status === 'arrived' ? '✅ Доехал' : '🔄 Возвращен в корзину';
+                let statColor = m.status === 'arrived' ? '#4caf50' : '#888'; let statText = m.status === 'arrived' ? '✅ Доехал' : '🔄 Возвращен в корзину';
                 let dateStr = m.timestamp ? new Date(m.timestamp).toLocaleDateString('ru-RU') : '';
-                
-                historyHtml += `<tr style="background:#fafafa;">
-                    <td><b style="font-size:16px; color:#311b92;">${displayName}</b><br><span style="font-size:12px; color:#888;">${dateStr}</span></td>
-                    <td style="font-size:15px;">${m.name}</td>
-                    <td style="font-size:16px; font-weight:bold; text-align:center;">${m.qty}</td>
-                    <td style="font-size:14px; color:${statColor}; font-weight:bold;">${statText}</td>
-                    <td style="text-align:center;">
-                        <button class="btn-del" style="padding:4px 8px; font-size:14px;" onclick="deleteMissing('${m.key}')">🗑</button>
-                    </td>
-                </tr>`;
+                historyHtml += `<tr style="background:#fafafa;"><td><b style="font-size:16px; color:#311b92;">${displayName}</b><br><span style="font-size:12px; color:#888;">${dateStr}</span></td><td style="font-size:15px;">${m.name}</td><td style="font-size:16px; font-weight:bold; text-align:center;">${m.qty}</td><td style="font-size:14px; color:${statColor}; font-weight:bold;">${statText}</td><td style="text-align:center;"><button class="btn-del" style="padding:4px 8px; font-size:14px;" onclick="deleteMissing('${m.key}')">🗑</button></td></tr>`;
             } else {
                 hasActive = true;
                 let link1 = catInfo.link ? `<a href="${catInfo.link}" target="_blank" style="color:#0288d1; font-weight:bold; margin-right:8px; text-decoration:none;">🔗 Осн</a>` : "";
                 let link2 = catInfo.link2 ? `<a href="${catInfo.link2}" target="_blank" style="color:#e53935; font-weight:bold; text-decoration:none;">🔗 Рез</a>` : "";
                 let linksHtml = (link1 || link2) ? `<br><span style="font-size:14px; background:#f0f0f0; padding:4px 8px; border-radius:6px; display:inline-block; margin-top:5px;">Заказать: ${link1}${link2}</span>` : "";
-
-                activeHtml += `<tr>
-                    <td><b style="font-size:18px; color:#311b92;">${displayName}</b></td>
-                    <td style="font-size:17px;">${m.name} ${linksHtml}</td>
-                    <td style="font-size:18px; font-weight:bold; text-align:center;">${m.qty}</td>
-                    <td>
-                        <select onchange="updateMissingStatus('${m.key}', this.value)" style="padding:10px; border-radius:8px; border:2px solid #e1bee7; font-weight:bold; font-size:15px; width:100%;">
-                            <option value="pending" ${m.status==='pending'?'selected':''}>Ожидает проверки админом</option>
-                            <option value="transit" ${m.status==='transit'?'selected':''}>В пути (от поставщика)</option>
-                            <option value="reorder" ${m.status==='reorder'?'selected':''}>Отменен (Админ закажет сам)</option>
-                            <option value="canceled" ${m.status==='canceled'?'selected':''}>ОТМЕНЕН (Вернуть в корзину)</option>
-                            <option value="oos" ${m.status==='oos'?'selected':''}>Нет в наличии</option>
-                        </select>
-                    </td>
-                    <td style="text-align:center;">
-                        <button class="btn-del" onclick="deleteMissing('${m.key}')">🗑</button>
-                    </td>
-                </tr>`;
+                activeHtml += `<tr><td><b style="font-size:18px; color:#311b92;">${displayName}</b></td><td style="font-size:17px;">${m.name} ${linksHtml}</td><td style="font-size:18px; font-weight:bold; text-align:center;">${m.qty}</td><td><select onchange="updateMissingStatus('${m.key}', this.value)" style="padding:10px; border-radius:8px; border:2px solid #e1bee7; font-weight:bold; font-size:15px; width:100%;"><option value="pending" ${m.status==='pending'?'selected':''}>Ожидает проверки админом</option><option value="transit" ${m.status==='transit'?'selected':''}>В пути (от поставщика)</option><option value="reorder" ${m.status==='reorder'?'selected':''}>Отменен (Админ закажет сам)</option><option value="canceled" ${m.status==='canceled'?'selected':''}>ОТМЕНЕН (Вернуть в корзину)</option><option value="oos" ${m.status==='oos'?'selected':''}>Нет в наличии</option></select></td><td style="text-align:center;"><button class="btn-del" onclick="deleteMissing('${m.key}')">🗑</button></td></tr>`;
             }
         });
-        
-        activeHtml += "</table>";
-        historyHtml += "</table>";
-
-        if (!hasActive) {
-            activeHtml = `<h3 style='color:#E53935; font-size:24px; margin-bottom:15px;'>‼️ Актуальные Недовозы</h3><div class='card' style='text-align:center; font-weight:900; color:#888; margin-bottom:20px;'>Нет активных недовозов.</div>`;
-        }
-
-        let html = activeHtml;
-
-        html += `<p style='margin-top:0px; margin-bottom:30px; font-size:16px; color:#777; background:#fff9c4; padding:15px; border-radius:10px;'>
-                    💡 <b>Подсказка:</b> Статус "Отменен (Админ закажет сам)" будет отображаться у бариста как "В пути". Если выбрать "ОТМЕНЕН (Вернуть в корзину)", товар снова появится в закупке у сотрудника.
-                 </p>`;
-
+        activeHtml += "</table>"; historyHtml += "</table>";
+        if (!hasActive) activeHtml = `<h3 style='color:#E53935; font-size:24px; margin-bottom:15px;'>‼️ Актуальные Недовозы</h3><div class='card' style='text-align:center; font-weight:900; color:#888; margin-bottom:20px;'>Нет активных недовозов.</div>`;
+        let html = activeHtml + `<p style='margin-top:0px; margin-bottom:30px; font-size:16px; color:#777; background:#fff9c4; padding:15px; border-radius:10px;'>💡 <b>Подсказка:</b> Статус "Отменен (Админ закажет сам)" будет отображаться у бариста как "В пути". Если выбрать "ОТМЕНЕН (Вернуть в корзину)", товар снова появится в закупке у сотрудника.</p>`;
         if (hasHistory) {
-            html += `<div onclick="toggleElements('missing-history-content')" style="cursor:pointer; background:#ede7f6; padding:18px; border-radius:12px; font-weight:900; color:#311B92; margin-top:20px; display:flex; justify-content:space-between; font-size:20px;">
-                        <span>🕒 История недовозов (за 30 дней)</span><span>▼</span>
-                     </div>
-                     <div class="missing-history-content" style="display:none;">
-                        ${historyHtml}
-                     </div>`;
+            html += `<div onclick="toggleElements('missing-history-content')" style="cursor:pointer; background:#ede7f6; padding:18px; border-radius:12px; font-weight:900; color:#311B92; margin-top:20px; display:flex; justify-content:space-between; font-size:20px;"><span>🕒 История недовозов (за 30 дней)</span><span>▼</span></div><div class="missing-history-content" style="display:none;">${historyHtml}</div>`;
         }
-
         box.innerHTML = html;
     }
 
     async function updateMissingStatus(key, val) {
-        await fetch(`${FB_URL}/missing_items/${key}.json`, { 
-            method: 'PATCH', 
-            body: JSON.stringify({status: val, timestamp: Date.now()}) 
-        });
-        if (val === 'canceled') {
-            alert("Статус обновлен. Товар возвращен в корзину сотруднику и скрыт из списка недовозов.");
-        } else if (val === 'arrived') {
-            alert("Статус обновлен. Товар отмечен как доставленный и скрыт из списка недовозов.");
-        } else {
-            alert("Статус недовоза успешно обновлен!");
-        }
+        await fetch(`${FB_URL}/missing_items/${key}.json`, { method: 'PATCH', body: JSON.stringify({status: val, timestamp: Date.now()}) });
+        if (val === 'canceled') alert("Статус обновлен. Товар возвращен в корзину сотруднику и скрыт из списка недовозов.");
+        else if (val === 'arrived') alert("Статус обновлен. Товар отмечен как доставленный и скрыт из списка недовозов.");
+        else alert("Статус недовоза успешно обновлен!");
         loadTab('missing', document.querySelector('.tab-btn.active')); 
     }
 
@@ -945,64 +716,39 @@
     function renderStoplists() {
         const box = document.getElementById('content');
         let shops = ["Бояринова", "Гагарина", "Вертолетчиков", "Липчанского", "Новокосино", "Новокосино 2", "Старое Павлино", "Красноказарменная", "Ухтомского ополчения"];
-        
         let latestStops = {};
-        
         Object.values(cachedData.orders).forEach(o => {
             if (o && o.mode === 'stoplist_fill') {
-                if (!latestStops[o.shop] || o.timestamp > latestStops[o.shop].timestamp) {
-                    latestStops[o.shop] = o;
-                }
+                if (!latestStops[o.shop] || o.timestamp > latestStops[o.shop].timestamp) { latestStops[o.shop] = o; }
             }
         });
-
-        let html = `<h3 style="color:#D50000; margin-bottom:20px; font-size:24px;">🛑 Актуальные Стоп-листы на точках</h3>
-                    <div style="display:flex; flex-wrap:wrap; gap:20px;">`;
-        
+        let html = `<h3 style="color:#D50000; margin-bottom:20px; font-size:24px;">🛑 Актуальные Стоп-листы на точках</h3><div style="display:flex; flex-wrap:wrap; gap:20px;">`;
         let catalog = cachedData.catalogOrder || cachedData.catalog || {};
-        
         shops.forEach(s => {
-            let stop = latestStops[s];
-            let displayName = s === 'Красноказарменная' ? 'МЭИ' : s;
-            html += `<div class="card" style="flex: 1 1 calc(33% - 20px); min-width:320px; padding:25px; background:#fff; border-radius:16px; box-shadow:0 4px 15px rgba(0,0,0,0.05);">
-                        <h4 style="margin-top:0; color:#311b92; font-size:20px; border-bottom:2px solid #eee; padding-bottom:10px; font-weight:900;">${displayName}</h4>`;
-            
+            let stop = latestStops[s]; let displayName = s === 'Красноказарменная' ? 'МЭИ' : s;
+            html += `<div class="card" style="flex: 1 1 calc(33% - 20px); min-width:320px; padding:25px; background:#fff; border-radius:16px; box-shadow:0 4px 15px rgba(0,0,0,0.05);"><h4 style="margin-top:0; color:#311b92; font-size:20px; border-bottom:2px solid #eee; padding-bottom:10px; font-weight:900;">${displayName}</h4>`;
             if (stop && stop.items) {
                 html += `<div style="font-size:14px; color:#888; margin-bottom:15px; font-weight:bold;">Обновлено: ${new Date(stop.timestamp).toLocaleString()}</div>`;
-                
                 let itemsArr = Array.isArray(stop.items) ? stop.items : Object.values(stop.items);
                 let foundItems = false;
-                
                 itemsArr.forEach(i => {
                     if (i && i.name) {
                         let iNameLow = String(i.name).trim().toLowerCase();
                         let catInfo = Object.values(catalog).find(c => {
-                            if(!c || !c.name) return false;
-                            let cName = String(c.name).trim().toLowerCase();
+                            if(!c || !c.name) return false; let cName = String(c.name).trim().toLowerCase();
                             return cName === iNameLow || cName.includes(iNameLow) || iNameLow.includes(cName);
                         }) || {};
-                        
-                        let link1 = catInfo.link ? `<a href="${catInfo.link}" target="_blank" style="color:#fff; background:#0288d1; padding:4px 8px; border-radius:6px; text-decoration:none; font-size:12px; font-weight:bold;">🔗 Осн</a>` : "";
-                        let link2 = catInfo.link2 ? `<a href="${catInfo.link2}" target="_blank" style="color:#fff; background:#e53935; padding:4px 8px; border-radius:6px; text-decoration:none; font-size:12px; font-weight:bold; margin-left:4px;">🔗 Рез</a>` : "";
-                        let linksHtml = [link1, link2].filter(Boolean).join(" ");
-                        let linkBtn = linksHtml ? `<div style="float:right;">${linksHtml}</div>` : "";
-                        
-                        html += `<div style="padding:10px 0; border-bottom:1px dashed #eee; font-size:17px; display:flex; justify-content:space-between; align-items:center;">
-                                    <b style="color:#333;">${i.name}</b> ${linkBtn}
-                                 </div>`;
+                        let l1 = catInfo.link ? `<a href="${catInfo.link}" target="_blank" style="color:#fff; background:#0288d1; padding:4px 8px; border-radius:6px; text-decoration:none; font-size:12px; font-weight:bold;">🔗 Осн</a>` : "";
+                        let l2 = catInfo.link2 ? `<a href="${catInfo.link2}" target="_blank" style="color:#fff; background:#e53935; padding:4px 8px; border-radius:6px; text-decoration:none; font-size:12px; font-weight:bold; margin-left:4px;">🔗 Рез</a>` : "";
+                        let linksHtml = [l1, l2].filter(Boolean).join(" "); let linkBtn = linksHtml ? `<div style="float:right;">${linksHtml}</div>` : "";
+                        html += `<div style="padding:10px 0; border-bottom:1px dashed #eee; font-size:17px; display:flex; justify-content:space-between; align-items:center;"><b style="color:#333;">${i.name}</b> ${linkBtn}</div>`;
                         foundItems = true;
                     }
                 });
-                
-                if (!foundItems) {
-                    html += `<div style="color:#4caf50; font-weight:bold; font-size:17px; padding:10px 0;">Стоп-лист пуст (всё в наличии)</div>`;
-                }
-            } else {
-                html += `<div style="color:#888; font-size:17px; padding:10px 0; font-weight:bold;">Нет данных о стоп-листе</div>`;
-            }
+                if (!foundItems) html += `<div style="color:#4caf50; font-weight:bold; font-size:17px; padding:10px 0;">Стоп-лист пуст (всё в наличии)</div>`;
+            } else { html += `<div style="color:#888; font-size:17px; padding:10px 0; font-weight:bold;">Нет данных о стоп-листе</div>`; }
             html += `</div>`;
         });
-        
         html += `</div>`;
         box.innerHTML = html;
     }
@@ -1013,100 +759,59 @@
     function renderChecksTable() {
         const box = document.getElementById('content');
         let shops = ["Бояринова", "Гагарина", "Вертолетчиков", "Липчанского", "Новокосино", "Новокосино 2", "Старое Павлино", "Красноказарменная", "Ухтомского ополчения"];
-        
         let latestChecklists = {};
         Object.values(cachedData.orders).forEach(o => {
             if (o && o.mode === 'checklist') {
-                if (!latestChecklists[o.shop] || o.timestamp > latestChecklists[o.shop].timestamp) {
-                    latestChecklists[o.shop] = o;
-                }
+                if (!latestChecklists[o.shop] || o.timestamp > latestChecklists[o.shop].timestamp) { latestChecklists[o.shop] = o; }
             }
         });
-
         const catOrderArr = ["Стаканы и крышки", "Расходники", "Пищевые расходники", "Зерно", "Бабл ти", "Пищевые порошки", "Сиропы"];
-        
         let groupedCat = {};
         Object.values(cachedData.catalog).forEach(i => {
-            if (!groupedCat[i.cat]) groupedCat[i.cat] = [];
-            groupedCat[i.cat].push(i.name);
+            if (!groupedCat[i.cat]) groupedCat[i.cat] = []; groupedCat[i.cat].push(i.name);
         });
-
         let sortedCats = Object.keys(groupedCat).sort((a,b) => {
-            let ia = catOrderArr.indexOf(a);
-            let ib = catOrderArr.indexOf(b);
-            if (ia === -1) ia = 999;
-            if (ib === -1) ib = 999;
-            if (ia !== ib) return ia - ib;
-            return a.localeCompare(b);
+            let ia = catOrderArr.indexOf(a); let ib = catOrderArr.indexOf(b);
+            if (ia === -1) ia = 999; if (ib === -1) ib = 999;
+            if (ia !== ib) return ia - ib; return a.localeCompare(b);
         });
-
         let btnEditColor = isChecklistEditMode ? "#f44336" : "#0288d1";
         let btnEditText = isChecklistEditMode ? "❌ Выйти из редактирования" : "✏️ Режим редактирования";
-
-        let html = `
-            <div style="display:flex; justify-content:space-between; margin-bottom:15px; align-items:center;">
-                <h3 style="color:#1a237e; font-size:24px; margin:0;">✅ Сводная Таблица Чек-листов (Актуальные данные)</h3>
-                <button onclick="toggleChecklistEdit()" class="btn-add" style="background:${btnEditColor};">${btnEditText}</button>
-            </div>
-        `;
-
-        if (isChecklistEditMode) {
-            html += `<button onclick="saveChecklistEdits()" class="btn-save" style="margin-top:0; margin-bottom:20px;">💾 СОХРАНИТЬ ВСЕ ИЗМЕНЕНИЯ В БАЗУ</button>`;
-        } else {
-            html += `<p style="font-size:16px; color:#7E57C2; font-weight:bold;">Нажмите на категорию, чтобы развернуть список товаров.</p>`;
-        }
-
+        let html = `<div style="display:flex; justify-content:space-between; margin-bottom:15px; align-items:center;"><h3 style="color:#1a237e; font-size:24px; margin:0;">✅ Сводная Таблица Чек-листов (Актуальные данные)</h3><button onclick="toggleChecklistEdit()" class="btn-add" style="background:${btnEditColor};">${btnEditText}</button></div>`;
+        if (isChecklistEditMode) html += `<button onclick="saveChecklistEdits()" class="btn-save" style="margin-top:0; margin-bottom:20px;">💾 СОХРАНИТЬ ВСЕ ИЗМЕНЕНИЯ В БАЗУ</button>`;
+        else html += `<p style="font-size:16px; color:#7E57C2; font-weight:bold;">Нажмите на категорию, чтобы развернуть список товаров.</p>`;
         html += `<table style="min-width:1200px;"><tr><th style="width:250px;">Товар</th>`;
-        
         shops.forEach(s => {
             let dateStr = "Нет данных";
             if (latestChecklists[s] && latestChecklists[s].timestamp) {
-                let d = new Date(latestChecklists[s].timestamp);
-                dateStr = d.toLocaleDateString('ru-RU') + " " + d.toLocaleTimeString('ru-RU', {hour: '2-digit', minute:'2-digit'});
+                let d = new Date(latestChecklists[s].timestamp); dateStr = d.toLocaleDateString('ru-RU') + " " + d.toLocaleTimeString('ru-RU', {hour: '2-digit', minute:'2-digit'});
             }
             let displayName = s === 'Красноказарменная' ? 'МЭИ' : s;
             html += `<th style="text-align:center; font-size:15px;">${displayName}<br><span style="font-size:13px; color:#888; font-weight:normal;">${dateStr}</span></th>`;
         });
-        
         html += `<th style="width:250px; text-align:right;">Товар</th></tr>`;
-
         sortedCats.forEach(cat => {
             let safeCat = getSafeId(cat);
-            html += `<tr class="cat-group-header" onclick="toggleElements('chk_${safeCat}')">
-                        <td colspan="${shops.length+2}" style="padding:15px; font-size:18px;">📂 ${cat} <span style="float:right; opacity:0.5;">▼</span></td>
-                     </tr>`;
-            
+            html += `<tr class="cat-group-header" onclick="toggleElements('chk_${safeCat}')"><td colspan="${shops.length+2}" style="padding:15px; font-size:18px;">📂 ${cat} <span style="float:right; opacity:0.5;">▼</span></td></tr>`;
             groupedCat[cat].sort((a,b) => a.localeCompare(b)).forEach(itemName => {
-                html += `<tr class="chk-row chk_${safeCat}" style="display:none; background-color:#fff;">
-                            <td style="font-size:16px;"><b>${itemName}</b></td>`;
-                
+                html += `<tr class="chk-row chk_${safeCat}" style="display:none; background-color:#fff;"><td style="font-size:16px;"><b>${itemName}</b></td>`;
                 shops.forEach(s => {
-                    let val = "-";
-                    let orderKey = latestChecklists[s] ? latestChecklists[s].key : "";
-                    
+                    let val = "-"; let orderKey = latestChecklists[s] ? latestChecklists[s].key : "";
                     if (latestChecklists[s] && latestChecklists[s].items) {
                         let itemsArr = Array.isArray(latestChecklists[s].items) ? latestChecklists[s].items : Object.values(latestChecklists[s].items);
                         let found = itemsArr.find(i => i && i.name === itemName);
-                        if (found && found.qty !== undefined && found.qty !== null && String(found.qty).trim() !== "") {
-                            val = String(found.qty);
-                        }
+                        if (found && found.qty !== undefined && found.qty !== null && String(found.qty).trim() !== "") { val = String(found.qty); }
                     }
-                    
                     if (isChecklistEditMode) {
-                        if (orderKey) {
-                            html += `<td><input type="text" class="edit-chk-input" data-order="${orderKey}" data-item="${itemName}" value="${val}"></td>`;
-                        } else {
-                            html += `<td style="text-align:center; color:#aaa; font-style:italic; font-size:14px;">Нет формы</td>`;
-                        }
+                        if (orderKey) html += `<td><input type="text" class="edit-chk-input" data-order="${orderKey}" data-item="${itemName.replace(/"/g, '&quot;')}" value="${val}"></td>`;
+                        else html += `<td style="text-align:center; color:#aaa; font-style:italic; font-size:14px;">Нет формы</td>`;
                     } else {
                         let cl = "ch-val ";
                         if (val === "Полная" || val === "В наличии" || val === "1") cl += "ch-full";
                         else if (val === "0" || val === 0 || val === "Меньше половины" || val === "Закончилось") cl += "ch-empty";
-                        
                         html += `<td class="${cl}" style="font-size:16px;">${val}</td>`;
                     }
                 });
-                
                 html += `<td style="font-size:16px; text-align:right;"><b>${itemName}</b></td></tr>`;
             });
         });
@@ -1114,39 +819,40 @@
     }
 
     // ==========================================
-    // 7. РЕНДЕР: СВОД ЗАКАЗОВ И ИСТОРИЯ (С БОТОМ-СНАЙПЕРОМ И КУПЕРОМ)
+    // 7. РЕНДЕР: СВОД ЗАКАЗОВ И ИСТОРИЯ
     // ==========================================
+    
+    function preserveSvodInputs() {
+        let inputs = document.querySelectorAll('.edit-svod-input');
+        inputs.forEach(inp => {
+            let s = inp.getAttribute('data-shop');
+            let n = inp.getAttribute('data-item');
+            if (!tempSvodQty[s]) tempSvodQty[s] = {};
+            tempSvodQty[s][n] = parseFloat(inp.value) || 0;
+        });
+    }
+
     function renderOrdersSvod() {
         const box = document.getElementById('content');
-        
         let cutoffMonth = Date.now() - (30 * 24 * 60 * 60 * 1000); 
         let todayStart = new Date().setHours(0,0,0,0);
-        
-        let historyKeys = new Set();
-        let todaysOrders = [];
-        let historyOrdersList = [];
-        
+        let historyKeys = new Set(); let todaysOrders = []; let historyOrdersList = [];
         let allOrders = Object.values(cachedData.orders).sort((a,b) => (b.timestamp || 0) - (a.timestamp || 0));
 
         allOrders.forEach(o => {
             if (o && (o.mode === 'order' || o.mode === 'new_shop')) {
                 if ((o.timestamp || 0) < cutoffMonth) return; 
-                
                 let isOrdered = o.ordered === true;
-                
                 if (!isOrdered && o.svod === true && (o.timestamp || 0) < (Date.now() - 3*24*60*60*1000)) {
                     isOrdered = true; 
                 }
-
                 if (!isOrdered) {
                     todaysOrders.push(o);
                 } else {
                     historyOrdersList.push(o);
                     if ((o.timestamp || 0) < todayStart) {
                         let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
-                        itemsArr.forEach(i => { 
-                            if(i) historyKeys.add(o.shop + "|" + i.name); 
-                        });
+                        itemsArr.forEach(i => { if(i) historyKeys.add(o.shop + "|" + i.name); });
                     }
                 }
             }
@@ -1154,12 +860,8 @@
 
         let svodData = {};
         todaysOrders.forEach(o => {
-            if (!svodData[o.shop]) {
-                svodData[o.shop] = { items: {}, lentaSum: 0, ozonSum: 0, kuperSum: 0, comments: [] };
-            }
-            if (o.comment && o.comment.trim() !== "") {
-                svodData[o.shop].comments.push(o.comment);
-            }
+            if (!svodData[o.shop]) svodData[o.shop] = { items: {}, lentaSum: 0, ozonSum: 0, kuperSum: 0, comments: [] };
+            if (o.comment && o.comment.trim() !== "") svodData[o.shop].comments.push(o.comment);
             
             let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
             itemsArr.forEach(i => {
@@ -1168,7 +870,6 @@
                         svodData[o.shop].items[i.name] = { qty: 0, bot_error: false };
                     }
                     svodData[o.shop].items[i.name].qty += parseFloat(i.qty) || 0;
-                    
                     if (i.bot_error === true || i.not_found === true || i.error === true || i.status === 'error') {
                         svodData[o.shop].items[i.name].bot_error = true;
                     }
@@ -1190,7 +891,7 @@
                     </div>`;
 
         if (isSvodEditMode) {
-            html += `<button onclick="saveSvodEdits()" class="btn-save" style="margin-top:0; margin-bottom:20px;">💾 СОХРАНИТЬ И УДАЛИТЬ ПОЗИЦИИ</button>`;
+            html += `<button onclick="saveSvodEdits()" class="btn-save" style="margin-top:0; margin-bottom:20px;">💾 СОХРАНИТЬ ИЗМЕНЕНИЯ (Удаления и кол-во)</button>`;
         }
 
         html += `<table style='margin-bottom:20px;'>
@@ -1207,14 +908,16 @@
             html += `<tr><td colspan="4" style="text-align:center; padding:20px; font-weight:bold; font-size:18px; color:#888;">Нет заказов, ожидающих сборки</td></tr>`;
         } else {
             for(let shop in svodData) {
-                // Сначала вычисляем предварительную сумму Ленты для логики Купера
+                // Вычисляем предварительную сумму Ленты для логики Купера с учетом правок кол-ва
                 for(let name in svodData[shop].items) {
                     let catItem = Object.values(cachedData.catalogOrder).find(c => c && c.name === name) || {};
                     let vendor = catItem.vendor || 'Лента';
                     let price = parseFloat(catItem.price) || 0;
-                    let qty = svodData[shop].items[name].qty;
+                    
+                    let originalQty = svodData[shop].items[name].qty;
+                    let actualQty = (tempSvodQty[shop] && tempSvodQty[shop][name] !== undefined) ? tempSvodQty[shop][name] : originalQty;
                     let isDeleted = svodDeletions.some(d => d.shop === shop && d.name === name);
-                    let displayQty = isDeleted ? 0 : qty;
+                    let displayQty = isDeleted ? 0 : actualQty;
 
                     if(vendor.toLowerCase() === 'лента') {
                         svodData[shop].lentaSum += (displayQty * price);
@@ -1225,20 +928,21 @@
 
                 let safeShopId = getSafeId(shop);
                 let displayName = shop === 'Красноказарменная' ? 'МЭИ' : shop;
-                html += `<tr class="cat-group-header" onclick="toggleElements('svod_${safeShopId}')">
+                
+                // Проверка: была ли эта папка развернута (чтобы не схлопывалась при перерисовке)
+                let isOpened = openSvodShops.has(safeShopId);
+                let displayStyle = isOpened ? "display:table-row;" : "display:none;";
+
+                html += `<tr class="cat-group-header" onclick="toggleSvodShop('${safeShopId}')">
                             <td colspan="4" style="background:#ede7f6; padding:15px; font-size:19px; color:#311B92;"><b>📍 ${displayName}</b> <span style="float:right;">▼</span></td>
                          </tr>`;
 
-                // Сортировка по поставщикам по алфавиту, затем по имени товара
                 let sortedItemNames = Object.keys(svodData[shop].items).sort((a,b) => {
                     let catItemA = Object.values(cachedData.catalogOrder).find(c => c && c.name === a) || {};
                     let catItemB = Object.values(cachedData.catalogOrder).find(c => c && c.name === b) || {};
                     let vendorA = (catItemA.vendor || 'Лента').toLowerCase();
                     let vendorB = (catItemB.vendor || 'Лента').toLowerCase();
-                    
-                    if (vendorA < vendorB) return -1;
-                    if (vendorA > vendorB) return 1;
-                    return a.localeCompare(b);
+                    if (vendorA < vendorB) return -1; if (vendorA > vendorB) return 1; return a.localeCompare(b);
                 });
 
                 sortedItemNames.forEach(name => {
@@ -1246,11 +950,11 @@
                     let vendor = catItem.vendor || 'Лента';
                     let price = parseFloat(catItem.price) || 0;
                     
-                    let qty = svodData[shop].items[name].qty;
+                    let originalQty = svodData[shop].items[name].qty;
+                    let actualQty = (tempSvodQty[shop] && tempSvodQty[shop][name] !== undefined) ? tempSvodQty[shop][name] : originalQty;
                     let botError = svodData[shop].items[name].bot_error;
                     
                     let isRepeat = historyKeys.has(shop + "|" + name);
-                    
                     let link1 = catItem.link ? `<a href="${catItem.link}" target="_blank" style="color:#0288d1; font-weight:bold;">🔗 Осн</a>` : "";
                     let link2 = catItem.link2 ? `<a href="${catItem.link2}" target="_blank" style="color:#e53935; font-weight:bold; margin-left:8px;">🔗 Рез</a>` : "";
                     let linksHtml = [link1, link2].filter(Boolean).join(" ");
@@ -1258,7 +962,7 @@
                     if(vendor.toLowerCase() === 'лента' && isKuper) vendor = 'Купер';
 
                     let isDeleted = svodDeletions.some(d => d.shop === shop && d.name === name);
-                    let displayQty = isDeleted ? 0 : qty;
+                    let displayQty = isDeleted ? 0 : actualQty;
 
                     let cost = price * displayQty;
                     if(vendor.toLowerCase() === 'озон' && isRepeat) cost = 0;
@@ -1272,20 +976,24 @@
                     let rowBg = botError ? `background-color: #fff8f8;` : ``;
                     
                     let safeNameParam = name.replace(/'/g, "\\'");
+                    let safeNameAttr = name.replace(/"/g, '&quot;');
+                    let safeShopAttr = shop.replace(/"/g, '&quot;');
 
                     if (isSvodEditMode) {
-                        html += `<tr class="svod_${safeShopId}" style="display:none; color:${isDeleted ? '#aaa':'#333'}; ${rowBg}">
+                        html += `<tr class="svod_${safeShopId}" style="${displayStyle} color:${isDeleted ? '#aaa':'#333'}; ${rowBg}">
                             <td style="padding-left:25px; font-size:17px; font-weight:bold;">${name} ${repeatBadge} ${errorBadge}</td>
-                            <td style="text-align:center; font-size:18px; font-weight:bold; color:${isDeleted ? '#aaa':'#311b92'};">${qty}</td>
+                            <td style="text-align:center;">
+                                <input type="number" class="edit-svod-input" data-shop="${safeShopAttr}" data-item="${safeNameAttr}" value="${actualQty}" ${isDeleted ? 'disabled' : ''} onchange="preserveSvodInputs(); renderOrdersSvod();" style="width: 70px; text-align: center; font-size: 16px; font-weight: bold; color: ${isDeleted ? '#aaa' : '#311b92'}; border: 2px solid ${isDeleted ? '#eee' : '#7E57C2'}; border-radius: 6px; padding: 4px;">
+                            </td>
                             <td style="font-size:16px; color:${isDeleted ? '#aaa' : '#333'}">${vendor}</td>
                             <td style="text-align:center;">
                                 <button class="btn-del" ${isDeleted ? 'disabled' : ''} onclick="markSvodDelete(this, '${shop}', '${safeNameParam}')">🗑</button>
                             </td>
                         </tr>`;
                     } else {
-                        html += `<tr class="svod_${safeShopId}" style="display:none; ${rowBg}">
+                        html += `<tr class="svod_${safeShopId}" style="${displayStyle} ${rowBg}">
                             <td style="padding-left:25px; font-size:17px; font-weight:bold;">${name} ${repeatBadge} ${errorBadge}</td>
-                            <td style="text-align:center; font-size:18px; font-weight:bold; color:#311b92;">${qty}</td>
+                            <td style="text-align:center; font-size:18px; font-weight:bold; color:#311b92;">${actualQty}</td>
                             <td style="font-size:16px;">${vendor}</td>
                             <td style="text-align:center;">${linksHtml}</td>
                         </tr>`;
@@ -1293,7 +1001,7 @@
                 });
                 
                 if(svodData[shop].comments.length > 0) {
-                    html += `<tr class="svod_${safeShopId}" style="display:none;"><td colspan="4" style="padding:15px; font-style:italic; font-size:17px; color:#ef6c00; background:#fff3e0;">💬 Комментарий: <b>${svodData[shop].comments.join(' | ')}</b></td></tr>`;
+                    html += `<tr class="svod_${safeShopId}" style="${displayStyle}"><td colspan="4" style="padding:15px; font-style:italic; font-size:17px; color:#ef6c00; background:#fff3e0;">💬 Комментарий: <b>${svodData[shop].comments.join(' | ')}</b></td></tr>`;
                 }
             }
         }
@@ -1362,9 +1070,7 @@
     
     async function markOrdersAsPlaced() {
         if(!confirm("Все заказы оформлены? Свод будет очищен, а заказы перенесены в историю (в мини-аппе они останутся в приемке).")) return;
-        
         let updates = {};
-        
         Object.values(cachedData.orders).forEach(o => {
             if (o && (o.mode === 'order' || o.mode === 'new_shop')) {
                 let isOrdered = o.ordered === true;
@@ -1374,49 +1080,37 @@
                 }
             }
         });
-
         if (Object.keys(updates).length > 0) {
             try {
-                await fetch(`${FB_URL}/orders.json`, {
-                    method: 'PATCH',
-                    body: JSON.stringify(updates)
-                });
+                await fetch(`${FB_URL}/orders.json`, { method: 'PATCH', body: JSON.stringify(updates) });
                 alert("✅ Свод успешно очищен и перенесен в историю!");
                 loadTab('orders', document.querySelector('.tab-btn.active'));
-            } catch(e) {
-                alert("❌ Ошибка: " + e.message);
-            }
-        } else {
-            alert("Нет активных заказов для оформления.");
-        }
+            } catch(e) { alert("❌ Ошибка: " + e.message); }
+        } else { alert("Нет активных заказов для оформления."); }
     }
 
     function toggleSvodEdit() {
         isSvodEditMode = !isSvodEditMode;
         svodDeletions = [];
+        tempSvodQty = {}; 
         renderOrdersSvod();
     }
 
     function markSvodDelete(btn, shop, name) {
-        let tr = btn.closest('tr');
-        tr.style.opacity = '0.4';
-        tr.style.textDecoration = 'line-through';
+        preserveSvodInputs(); 
         svodDeletions.push({shop: shop, name: name});
-        btn.disabled = true;
         renderOrdersSvod(); 
     }
 
     async function saveSvodEdits() {
-        if (svodDeletions.length === 0) {
-            toggleSvodEdit();
-            return;
-        }
-        
         const btn = document.querySelector('.btn-save');
         if(btn) btn.innerHTML = "⌛ СОХРАНЕНИЕ...";
 
+        preserveSvodInputs(); 
+        
         try {
-            let todayStart = new Date().setHours(0,0,0,0);
+            let hasChanges = false;
+            let assignedUpdates = {}; 
             
             for (let k in cachedData.orders) {
                 let o = cachedData.orders[k];
@@ -1424,17 +1118,40 @@
                     
                     let needsUpdate = false;
                     let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
+                    let newItemsArr = [];
                     
-                    let newItemsArr = itemsArr.filter(i => {
-                        let match = svodDeletions.find(d => d.shop === o.shop && d.name === i.name);
-                        if (match) {
+                    for (let i = 0; i < itemsArr.length; i++) {
+                        let itm = itemsArr[i];
+                        if (!itm || !itm.name) continue;
+                        
+                        let isDeleted = svodDeletions.some(d => d.shop === o.shop && d.name === itm.name);
+                        if (isDeleted) {
                             needsUpdate = true;
-                            return false;
+                            continue; 
                         }
-                        return true;
-                    });
+                        
+                        let updatedQty = (tempSvodQty[o.shop] && tempSvodQty[o.shop][itm.name] !== undefined) ? tempSvodQty[o.shop][itm.name] : undefined;
+                        
+                        if (updatedQty !== undefined) {
+                            if (!assignedUpdates[o.shop]) assignedUpdates[o.shop] = {};
+                            
+                            if (!assignedUpdates[o.shop][itm.name]) {
+                                if (String(updatedQty) !== String(itm.qty)) {
+                                    needsUpdate = true;
+                                    itm.qty = updatedQty;
+                                }
+                                assignedUpdates[o.shop][itm.name] = true;
+                                newItemsArr.push(itm);
+                            } else {
+                                needsUpdate = true; 
+                            }
+                        } else {
+                            newItemsArr.push(itm);
+                        }
+                    }
                     
                     if (needsUpdate) {
+                        hasChanges = true;
                         if (newItemsArr.length === 0) {
                             newItemsArr = [{name: "НЕТ ЗАКАЗА", qty: 0}];
                         }
@@ -1443,55 +1160,47 @@
                 }
             }
             
-            alert("✅ Лишние позиции успешно удалены!");
+            if (hasChanges) {
+                alert("✅ Изменения успешно сохранены!");
+            } else if (svodDeletions.length > 0) {
+                alert("✅ Позиции успешно удалены!");
+            } else {
+                alert("Изменений не найдено, выходим из режима редактирования.");
+            }
+            
             isSvodEditMode = false;
+            svodDeletions = [];
+            tempSvodQty = {};
             loadTab('orders', document.querySelector('.tab-btn.active'));
         } catch (e) {
-            alert("❌ Ошибка при удалении: " + e.message);
+            alert("❌ Ошибка при удалении/сохранении: " + e.message);
+            if(btn) btn.innerHTML = "💾 СОХРАНИТЬ ИЗМЕНЕНИЯ";
         }
     }
 
-    function toggleChecklistEdit() {
-        isChecklistEditMode = !isChecklistEditMode;
-        renderChecksTable();
-    }
+    function toggleChecklistEdit() { isChecklistEditMode = !isChecklistEditMode; renderChecksTable(); }
 
     async function saveChecklistEdits() {
         let inputs = document.querySelectorAll('.edit-chk-input');
         let updates = {};
-        
         inputs.forEach(input => {
-            let oKey = input.getAttribute('data-order');
-            let item = input.getAttribute('data-item');
-            let val = input.value.trim();
-            if(!updates[oKey]) updates[oKey] = {};
-            updates[oKey][item] = val;
+            let oKey = input.getAttribute('data-order'); let item = input.getAttribute('data-item'); let val = input.value.trim();
+            if(!updates[oKey]) updates[oKey] = {}; updates[oKey][item] = val;
         });
-
-        const btn = document.querySelector('.btn-save');
-        if(btn) btn.innerHTML = "⌛ СОХРАНЕНИЕ...";
-
+        const btn = document.querySelector('.btn-save'); if(btn) btn.innerHTML = "⌛ СОХРАНЕНИЕ...";
         try {
             for(let oKey in updates) {
-                let order = cachedData.orders[oKey];
-                if(!order) continue;
+                let order = cachedData.orders[oKey]; if(!order) continue;
                 let itemsArr = Array.isArray(order.items) ? order.items : Object.values(order.items||{});
-                
                 for(let item in updates[oKey]) {
                     let found = itemsArr.find(i => i && i.name === item);
-                    if(found) {
-                        found.qty = updates[oKey][item];
-                    } else {
-                        itemsArr.push({name: item, qty: updates[oKey][item], cat: "Прочее"});
-                    }
+                    if(found) { found.qty = updates[oKey][item]; } else { itemsArr.push({name: item, qty: updates[oKey][item], cat: "Прочее"}); }
                 }
                 await fetch(`${FB_URL}/orders/${oKey}/items.json`, {method:'PUT', body: JSON.stringify(itemsArr)});
             }
             alert("✅ Изменения в чек-листе успешно сохранены в базе!");
             loadTab('checks_table', document.querySelector('.tab-btn.active'));
-        } catch(e) {
-            alert("❌ Ошибка сохранения: " + e.message);
-        }
+        } catch(e) { alert("❌ Ошибка сохранения: " + e.message); }
     }
 
     function updateVal(id, field, val) { 
@@ -1535,7 +1244,6 @@
         if(confirm("Вы уверены, что хотите УДАЛИТЬ эту позицию НАВСЕГДА?")) { 
             await fetch(`${FB_URL}/${currentPath}/${id}.json`, { method: 'DELETE' });
             delete currentCatalog[id]; 
-            
             loadTab(currentTabType, document.querySelector('.tab-btn.active'));
         } 
     }
@@ -1583,9 +1291,9 @@
             body: JSON.stringify({status: val, timestamp: Date.now()}) 
         });
         if (val === 'canceled') {
-            alert("Статус обновлен. Товар возвращен в корзину сотруднику и перемещен в Историю.");
+            alert("Статус обновлен. Товар возвращен в корзину сотруднику и скрыт из списка недовозов.");
         } else if (val === 'arrived') {
-            alert("Статус обновлен. Товар отмечен как доставленный и перемещен в Историю.");
+            alert("Статус обновлен. Товар отмечен как доставленный и скрыт из списка недовозов.");
         } else {
             alert("Статус недовоза успешно обновлен!");
         }

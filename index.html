@@ -439,8 +439,7 @@
           document.getElementById('dynamic-list-container').innerHTML = `<div class="report-card"><div style="text-align:center; padding:20px; color:red; font-weight:bold;">Ошибка базы данных: ${err.message}</div></div>`;
       }
     }
-
-    // ==========================================
+   // ==========================================
     // 4. ОТРИСОВКА И ЛОГИКА ТОВАРОВ
     // ==========================================
     function renderProductList() {
@@ -527,7 +526,8 @@
       categories.forEach(c => updateCategoryHighlight(c));
       updateBadgeUI();
     }
-   function handleInputFocus(input) {
+
+    function handleInputFocus(input) {
         input.select();
         setTimeout(() => {
             const y = input.getBoundingClientRect().top + window.scrollY - 150; 
@@ -1177,7 +1177,7 @@
     // ==========================================
     
     // НОВАЯ ФУНКЦИЯ: Мой последний заказ
-     async function showMyLastOrder() {
+    async function showMyLastOrder() {
         showReportOverlay("Загружаю последний заказ...");
         try {
             const ordersSnap = await database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(100).once("value");
@@ -1191,7 +1191,7 @@
             });
             
             arr.sort((a,b) => (a.timestamp||0) - (b.timestamp||0)); 
-            let last = arr.reverse()[0]; // Берем самый последний заказ закупки
+            let last = arr.reverse()[0]; 
             
             let html = "";
             if(!last) { 
@@ -1203,30 +1203,25 @@
             
                 let itemsArr = Array.isArray(last.items) ? last.items : Object.values(last.items);
                 
-                // Фильтр для корректного отображения "НЕТ ЗАКАЗА"
                 let hasRealItems = itemsArr.some(i => i && i.name && i.name !== "НЕТ ЗАКАЗА" && parseFloat(i.qty) > 0);
                 
                 itemsArr.forEach(i => {
                     if(!i || !i.name) return;
-                    if(i.name === "НЕТ ЗАКАЗА" && hasRealItems) return; // Пропускаем пустышку если есть реальные товары
+                    if(i.name === "НЕТ ЗАКАЗА" && hasRealItems) return; 
                     if(i.name === "НЕТ ЗАКАЗА" && !hasRealItems) {
                         html += `<div class="report-card-item" style="justify-content:center;"><b>ЗАКАЗ БЫЛ ПУСТЫМ</b></div>`;
                         return;
                     }
                     
                     let statusHtml = "";
-                    // ЛОГИКА СТАТУСОВ:
                     if (!last.svod) {
-                        // Если админ еще не нажал "Собрать свод"
                         statusHtml = `<span style="background:#fff3e0; color:#f57c00; padding:4px 8px; border-radius:6px; font-size:12px; font-weight:900;">В ожидании ⏳</span>`;
                     } else {
-                        // Если свод уже был, смотрим конкретно на этот товар
                         if (i.status === 'error' || i.bot_error === true) {
                             statusHtml = `<span style="background:#ffebee; color:#c62828; padding:4px 8px; border-radius:6px; font-size:12px; font-weight:900;">Нет в наличии ❌</span>`;
                         } else if (i.status === 'ordered') {
                             statusHtml = `<span style="background:#e8f5e9; color:#2e7d32; padding:4px 8px; border-radius:6px; font-size:12px; font-weight:900;">Заказано ✅</span>`;
                         } else {
-                            // Резервный случай (если свод нажат, но статус не проставился)
                             statusHtml = `<span style="background:#e8f5e9; color:#2e7d32; padding:4px 8px; border-radius:6px; font-size:12px; font-weight:900;">Заказано ✅</span>`;
                         }
                     }
@@ -1242,6 +1237,124 @@
         } catch (err) {
             console.error(err);
             document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; color:red; font-weight:900;">Ошибка загрузки списка.</div></div>`; 
+        }
+    }
+
+    async function showLastOrder() {
+        showReportOverlay("Загружаю приемку...");
+        
+        try {
+            const [ordersSnap, missSnap] = await Promise.all([
+                database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(100).once("value"),
+                database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value")
+            ]);
+
+            // Ожидаемые недовозы
+            let activeMissing = [];
+            missSnap.forEach(c => { 
+                let m = c.val(); 
+                if(m && m.status !== 'arrived') {
+                    activeMissing.push({key: c.key, ...m}); 
+                }
+            });
+
+            // Текущий заказ
+            let arr = []; ordersSnap.forEach(c => { let val = c.val(); if(val && typeof val === 'object') { val.key = c.key; arr.push(val); } });
+            arr.sort((a,b) => (a.timestamp||0) - (b.timestamp||0)); 
+            let last = arr.reverse().find(o => o && (o.mode === 'order' || o.mode === 'new_shop'));
+            
+            let html = "";
+            
+            if (activeMissing.length > 0) {
+                html += `<div class="report-card" style="border: 2px solid #FFCA28;">
+                            <div class="report-card-title" style="color:#E65100;">🚚 Ожидаемые недовозы</div>`;
+                
+                activeMissing.forEach(m => {
+                    let statText = "Ожидает проверки";
+                    let statColor = "#ef6c00";
+                    let bg = "#fff3e0";
+                    
+                    if (m.status === 'transit' || m.status === 'reorder') {
+                        statText = "В пути"; statColor = "#1565c0"; bg = "#e3f2fd";
+                    } else if (m.status === 'oos') {
+                        statText = "Нет в наличии"; statColor = "#c62828"; bg = "#ffebee";
+                    } else if (m.status === 'canceled') {
+                        statText = "Ожидает закупки"; statColor = "#e65100"; bg = "#fff8e1";
+                    }
+
+                    html += `<div class="report-card-item" style="flex-direction:column; align-items:flex-start; border-bottom:1px solid #eee;">
+                                <span style="margin-bottom:8px; font-size:16px;"><b>${m.name}</b> (x${m.qty})</span> 
+                                <div style="display:flex; justify-content:space-between; width:100%; align-items:center;">
+                                    <span style="background:${bg}; color:${statColor}; padding:6px 10px; border-radius:8px; font-size:13px; font-weight:900;">${statText}</span>
+                                    <button onclick="markMissingArrived('${m.key}')" style="border:none; background:#4caf50; color:#fff; padding:8px 15px; border-radius:10px; font-weight:900; font-size:14px; cursor:pointer;">Доехал ✅</button>
+                                </div>
+                             </div>`;
+                });
+                html += `</div>`;
+            }
+
+            if(!last) { 
+                html += `<div class="report-card"><div style="text-align:center; font-weight:900;">Заказов еще не было.</div></div>`; 
+            } else if(!last.svod) {
+                html += `<div class="report-card" style="text-align:center;">
+                        <div class="report-card-title">⏳ Ожидание сборки</div>
+                        <div style="font-weight:700;">Ваш заказ от <b>${new Date(last.timestamp).toLocaleString()}</b> еще находится в обработке у администратора.<br><br>
+                        Приемка откроется сразу после того, как администратор соберет свод по заказам.</div>
+                    </div>`;
+            } else if(last.received) {
+                if (activeMissing.length === 0) {
+                    html += `<div class="report-card"><div style="text-align:center; font-weight:900; color:#4caf50;">✅ Все товары приняты!</div></div>`; 
+                }
+            } else {
+                html += `<div class="report-card">
+                     <div class="report-card-title" style="text-align:center;">Текущая приемка</div>
+                     <div style="text-align:center; font-size:14px; color:#888; margin-bottom:15px; font-weight:700;">Заказ от: ${new Date(last.timestamp).toLocaleString()}</div>`;
+            
+                let itemsArr = Array.isArray(last.items) ? last.items : Object.values(last.items);
+                let hasRealItems = itemsArr.some(i => i && i.name && i.name !== "НЕТ ЗАКАЗА" && parseFloat(i.qty) > 0);
+                
+                itemsArr.forEach(i => {
+                    if(!i || !i.name) return;
+                    if(i.name === "НЕТ ЗАКАЗА" && hasRealItems) return;
+                    if(i.name === "НЕТ ЗАКАЗА" && !hasRealItems) {
+                        html += `<div class="report-card-item" style="justify-content:center;"><b>ЗАКАЗ БЫЛ ПУСТЫМ</b></div>`;
+                        return;
+                    }
+                    
+                    let isMissingAlready = activeMissing.some(am => am.name === i.name);
+                    
+                    if (isMissingAlready) {
+                        html += `<div class="report-card-item" style="flex-direction:column; align-items:flex-start; opacity:0.6;">
+                                <span style="margin-bottom:5px; font-size:16px;"><b>${i.name}</b> (x${i.qty})</span> 
+                                <span style="color:#ef6c00; font-size:13px; font-weight:900;">Добавлен в недовозы 👆</span>
+                              </div>`;
+                    } else {
+                        let isError = (i.status === 'error' || i.bot_error === true);
+                        
+                        if (isError) {
+                            html += `<div class="report-card-item" style="flex-direction:row; justify-content:space-between; align-items:center; opacity:0.7; border-bottom:1px solid #eee;">
+                                        <span style="font-size:15px; font-weight:700; flex:1;"><b>${i.name}</b> (x${i.qty})</span> 
+                                        <span style="color:#c62828; background:#ffebee; padding:4px 8px; border-radius:6px; font-size:12px; font-weight:900;">Нет в наличии ❌</span>
+                                      </div>`;
+                        } else {
+                            html += `<div class="report-card-item" style="flex-direction:column; align-items:flex-start; border-bottom:1px solid #eee;">
+                                        <div style="display:flex; justify-content:space-between; width:100%; align-items:center; margin-bottom:8px;">
+                                            <span style="font-size:15px; font-weight:700; flex:1;"><b>${i.name}</b> (x${i.qty})</span>
+                                            <span style="color:#2e7d32; background:#e8f5e9; padding:4px 8px; border-radius:6px; font-size:12px; font-weight:900;">Заказано ✅</span>
+                                        </div>
+                                        <button onclick="reportMissingFromOrder('${i.name.replace(/'/g, "\\'")}', ${i.qty})" style="border:none; background:#ffebee; color:#d32f2f; padding:8px 15px; border-radius:10px; font-weight:900; font-size:14px; cursor:pointer;">Не довезли ‼️</button>
+                                      </div>`;
+                        }
+                    }
+                });
+                
+                html += `<button onclick="markOrderReceived('${last.key}')" class="btn-mode" style="background: #4caf50 !important; margin-top:20px; margin-bottom:0;">✅ ОСТАЛЬНОЕ ПРИЕХАЛО</button>`;
+                html += `</div>`;
+            }
+            
+            document.getElementById('report-content-area').innerHTML = html || "<div class='report-card'>Пусто</div>";
+        } catch (err) {
+            document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; color:red; font-weight:900;">Ошибка загрузки приемки.</div></div>`; 
         }
     }
 

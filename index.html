@@ -4,7 +4,7 @@
   <base target="_top">
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>Coffee Management App v4.9</title>
+  <title>Coffee Management App v5.0</title>
   
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-app-compat.js"></script>
@@ -200,7 +200,7 @@
       <button class="btn-mode btn-mode-none" onclick="processNoOrder()">➖ ЗАКАЗ НЕ НУЖЕН</button>
       
       <button class="btn-mode" style="background: var(--boss-gradient); margin-top: 12px;" onclick="showMyLastOrder()">🕒 МОЙ ПОСЛЕДНИЙ ЗАКАЗ</button>
-      <button class="btn-mode" style="background: var(--warning-gradient); margin-top: 12px;" onclick="showLastOrder()">🚚 пупка ТОВАРА</button>
+      <button class="btn-mode" style="background: var(--warning-gradient); margin-top: 12px;" onclick="showLastOrder()">🚚 ПРИЕМКА ТОВАРА</button>
      
       <div class="bottom-fixed-bar">
         <button class="btn-bottom-exit" onclick="clearShopAndReturn()">⬅️ К списку кофеен</button>
@@ -769,7 +769,7 @@
                   let foundItem = combinedCatalog.find(c => {
                       if (!c || !c.name) return false;
                       let cName = String(c.name).trim().toLowerCase();
-                      return cName === safeName || cName.includes(safeName) || safeName.includes(cName);
+                      return cName === safeName; // Строгая фильтрация
                   });
                   
                   if (foundItem) {
@@ -1108,128 +1108,123 @@
 
     // СТОП ЛИСТ ИЗ CRM БЕЗ ССЫЛОК ДЛЯ СОТРУДНИКОВ
     async function viewStopList() {
-      showReportOverlay("Загрузка актуального стоп-листа...");
-      
-      try {
-          const [ordersSnap, stopCatSnap] = await Promise.all([
-              database.ref("orders").orderByChild("shop").equalTo(state.currentShop).once("value"),
-              database.ref("catalogs/stoplist").once("value")
-          ]);
-          
-          let shopOrders = []; 
-          let activeOrdersMap = {}; // Карта для статусов
+        showReportOverlay("Загрузка актуального стоп-листа...");
+        try {
+            const [ordersSnap, stopCatSnap, orderCatSnap] = await Promise.all([
+                database.ref("orders").orderByChild("shop").equalTo(state.currentShop).once("value"),
+                database.ref("catalogs/stoplist").once("value"),
+                database.ref("catalogs/order").once("value")
+            ]);
+            
+            let shopOrders = []; 
+            let activeOrdersMap = {}; 
 
-          ordersSnap.forEach(c => { 
-              let val = c.val(); 
-              if(val && typeof val === 'object') {
-                  shopOrders.push(val); 
-                  // Вытаскиваем актуальные статусы из неоформленных заказов
-                  if ((val.mode === 'order' || val.mode === 'new_shop') && val.ordered !== true) {
-                      let itemsArr = Array.isArray(val.items) ? val.items : Object.values(val.items || {});
-                      itemsArr.forEach(i => {
-                          if (i && i.name) {
-                              let stat = 'pending';
-                              if (val.svod) {
-                                  if (i.status === 'error' || i.bot_error) stat = 'error';
-                                  else if (i.status === 'ordered') stat = 'ordered';
-                              }
-                              // Приоритет ошибки/заказа перед pending
-                              if (activeOrdersMap[i.name] !== 'error' && activeOrdersMap[i.name] !== 'ordered') {
-                                  activeOrdersMap[i.name] = stat;
-                              }
-                          }
-                      });
-                  }
-              }
-          });
-          shopOrders.sort((a,b) => (b.timestamp||0) - (a.timestamp||0));
-          
-          let catalog = stopCatSnap.val() || {};
-          let latest = shopOrders.find(o => o.mode === 'stoplist_fill');
-          
-          if(!latest || !latest.items) { 
-              document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; font-weight:900;">Сегодня стоп-лист не заполнялся.</div></div>`; 
-              return; 
-          }
-          
-          let html = `<div class="report-card">
-                      <div style='font-size: 19px; color: #D50000; font-weight: 900; margin-bottom: 8px; text-align:center;'>🛑 АКТУАЛЬНЫЙ СТОП-ЛИСТ</div>
-                      <div style='font-size: 14px; color: #888; text-align:center; margin-bottom:15px; font-weight:700;'>(от ${new Date(latest.timestamp).toLocaleString()})</div>`;
-          
-          let allSyrups = [];
-          let itemsArr = Array.isArray(latest.items) ? latest.items : Object.values(latest.items);
-          
-          itemsArr.forEach(i => {
-              if(!i || !i.name) return;
-              let iNameLow = String(i.name).trim().toLowerCase();
-              
-              let info = Object.values(catalog).find(c => {
-                  if (!c || !c.name) return false;
-                  let cName = String(c.name).trim().toLowerCase();
-                  return cName === iNameLow || cName.includes(iNameLow) || iNameLow.includes(cName);
-              }) || {};
-              
-              let isSyrup = (info.cat && String(info.cat).toLowerCase().includes("сироп")) || iNameLow.includes("сироп");
-              let hasDrinks = (info.sez && info.sez !== "") || (info.main && info.main !== "");
+            ordersSnap.forEach(c => { 
+                let val = c.val(); 
+                if(val && typeof val === 'object') {
+                    shopOrders.push(val); 
+                    if ((val.mode === 'order' || val.mode === 'new_shop') && val.ordered !== true) {
+                        let itemsArr = Array.isArray(val.items) ? val.items : Object.values(val.items || {});
+                        itemsArr.forEach(i => {
+                            if (i && i.name) {
+                                let stat = 'pending';
+                                if (val.svod) {
+                                    if (i.status === 'error' || i.bot_error) stat = 'error';
+                                    else if (i.status === 'ordered') stat = 'ordered';
+                                }
+                                if (activeOrdersMap[i.name] !== 'error' && activeOrdersMap[i.name] !== 'ordered') {
+                                    activeOrdersMap[i.name] = stat;
+                                }
+                            }
+                        });
+                    }
+                }
+            });
+            shopOrders.sort((a,b) => (b.timestamp||0) - (a.timestamp||0));
+            
+            let stopCatalog = stopCatSnap.val() || {};
+            let orderCatalog = orderCatSnap.val() || {};
+            
+            let latest = shopOrders.find(o => o.mode === 'stoplist_fill');
+            
+            if(!latest || !latest.items) { 
+                document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; font-weight:900;">Сегодня стоп-лист не заполнялся.</div></div>`; 
+                return; 
+            }
+            
+            let html = `<div class="report-card">
+                        <div style='font-size: 19px; color: #D50000; font-weight: 900; margin-bottom: 8px; text-align:center;'>🛑 АКТУАЛЬНЫЙ СТОП-ЛИСТ</div>
+                        <div style='font-size: 14px; color: #888; text-align:center; margin-bottom:15px; font-weight:700;'>(от ${new Date(latest.timestamp).toLocaleString()})</div>`;
+            
+            let allSyrups = [];
+            let otherItems = [];
 
-              let statHtml = "";
-              if (info.name) {
-                  let itemStatus = activeOrdersMap[i.name] || null;
-                  if (itemStatus === 'ordered') {
-                      statHtml = `<span style="background:#e8f5e9; color:#2e7d32; padding:2px 5px; border-radius:4px; font-size:11px; font-weight:900; margin-left:5px;">Заказано ✅</span>`;
-                  } else if (itemStatus === 'error') {
-                      statHtml = `<span style="background:#ffebee; color:#c62828; padding:2px 5px; border-radius:4px; font-size:11px; font-weight:900; margin-left:5px;">Ошибка ❌</span>`;
-                  } else if (itemStatus === 'pending') {
-                      statHtml = `<span style="background:#fff3e0; color:#f57c00; padding:2px 5px; border-radius:4px; font-size:11px; font-weight:900; margin-left:5px;">Ожидает ⏳</span>`;
-                  } else {
-                      statHtml = `<span style="background:#f5f5f5; color:#888; padding:2px 5px; border-radius:4px; font-size:11px; font-weight:900; margin-left:5px;">Не заказано ➖</span>`;
-                  }
-              }
+            let itemsArr = Array.isArray(latest.items) ? latest.items : Object.values(latest.items);
+            
+            itemsArr.forEach(i => {
+                if(!i || !i.name) return;
+                let iNameLow = String(i.name).trim().toLowerCase();
+                
+                let info = Object.values(stopCatalog).find(c => c && c.name && String(c.name).trim().toLowerCase() === iNameLow) || {};
+                let inOrderCat = Object.values(orderCatalog).find(c => c && c.name && String(c.name).trim().toLowerCase() === iNameLow);
+                
+                let isSyrup = (info.cat && String(info.cat).toLowerCase().includes("сироп")) || (inOrderCat && inOrderCat.cat && String(inOrderCat.cat).toLowerCase().includes("сироп")) || iNameLow.includes("сироп");
+                
+                let statHtml = "";
+                if (inOrderCat) {
+                    let itemStatus = activeOrdersMap[i.name] || null;
+                    if (itemStatus === 'ordered') {
+                        statHtml = `<span style="background:#e8f5e9; color:#2e7d32; padding:2px 5px; border-radius:4px; font-size:11px; font-weight:900; margin-left:5px;">Заказано ✅</span>`;
+                    } else if (itemStatus === 'error') {
+                        statHtml = `<span style="background:#ffebee; color:#c62828; padding:2px 5px; border-radius:4px; font-size:11px; font-weight:900; margin-left:5px;">Ошибка ❌</span>`;
+                    } else if (itemStatus === 'pending') {
+                        statHtml = `<span style="background:#fff3e0; color:#f57c00; padding:2px 5px; border-radius:4px; font-size:11px; font-weight:900; margin-left:5px;">Ожидает ⏳</span>`;
+                    } else {
+                        statHtml = `<span style="background:#f5f5f5; color:#888; padding:2px 5px; border-radius:4px; font-size:11px; font-weight:900; margin-left:5px;">Не заказано ➖</span>`;
+                    }
+                }
 
-              if (isSyrup) {
-                  allSyrups.push(`▪️ ${i.name} ${statHtml}`);
-                  if (hasDrinks) {
-                      html += `<div style="margin-bottom:10px; border-bottom:1px dashed #f0f0f0; padding-bottom:5px;">
-                                <span>▪️ <b style="font-size:16px;">${i.name}</b> ${statHtml}</span><br>`;
-                      let affected = [];
-                      if (info.sez) affected.push("Сезон: " + info.sez);
-                      if (info.main) affected.push("Основа: " + info.main);
-                      html += `<span style="font-size:14px; color:#FF5252; font-style:italic; font-weight:700;">(${affected.join(", ")})</span></div>`;
-                  }
-              } else {
-                  html += `<div style="margin-bottom:10px; border-bottom:1px dashed #f0f0f0; padding-bottom:5px;">
-                            <span>▪️ <b style="font-size:16px;">${i.name}</b> ${statHtml}</span><br>`;
-                  if (info.sez) html += `<span style="font-size:14px; color:#555; font-weight:700;">🍁 Сезон: ${info.sez}</span><br>`;
-                  if (info.main) html += `<span style="font-size:14px; color:#555; font-weight:700;">☕ Основа: ${info.main}</span>`;
-                  html += `</div>`;
-              }
-          });
+                if (isSyrup) {
+                    allSyrups.push(`▪️ ${i.name} ${statHtml}`);
+                } else {
+                    let affected = [];
+                    if (info.sez) affected.push("Сезон: " + info.sez);
+                    if (info.main) affected.push("Основа: " + info.main);
+                    let subText = affected.length > 0 ? `<div style="font-size:13px; color:#d32f2f; margin-top:4px; font-style:italic; font-weight:600;">(${affected.join(" | ")})</div>` : "";
+                    
+                    otherItems.push(`<div style="margin-bottom:10px; border-bottom:1px dashed #f0f0f0; padding-bottom:5px;">
+                                <span>▪️ <b style="font-size:16px;">${i.name}</b> ${statHtml}</span>
+                                ${subText}
+                              </div>`);
+                }
+            });
 
-          if (allSyrups.length > 0) {
-              html += `<div style='margin-top: 20px; padding-top: 15px; border-top: 2px dashed #ddd; color:#7E57C2;'>
-                       🍾 <b style="font-size:17px;">Закончившиеся сиропы:</b><br><div style="color:#333; margin-top:5px; font-weight:900; font-size:16px;">${allSyrups.join("<br>")}</div></div>`;
-          }
-          
-          document.getElementById('report-content-area').innerHTML = html + "</div>";
-      } catch (err) {
-          document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; color:red; font-weight:900;">Ошибка загрузки стоп-листа</div></div>`;
-      }
+            html += otherItems.join("");
+
+            if (allSyrups.length > 0) {
+                html += `<div style='margin-top: 20px; padding-top: 15px; border-top: 2px dashed #ddd; color:#7E57C2;'>
+                         🍾 <b style="font-size:17px;">Закончившиеся сиропы:</b><br><div style="color:#333; margin-top:5px; font-weight:900; font-size:16px; line-height: 1.6;">${allSyrups.join("<br>")}</div></div>`;
+            }
+            
+            document.getElementById('report-content-area').innerHTML = html + "</div>";
+        } catch (err) {
+            document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; color:red; font-weight:900;">Ошибка загрузки стоп-листа</div></div>`;
+        }
     }
 
     // ==========================================
     // 8. ПРИЕМКА ТОВАРА И НЕДОВОЗЫ
     // ==========================================
-    
-    // Агрегация всех заказов до свода
     async function showMyLastOrder() {
         showReportOverlay("Загружаю сводный заказ...");
         try {
-            const [ordersSnap, missSnap] = await Promise.all([
+            const [ordersSnap, missSnap, catSnap] = await Promise.all([
                 database.ref("orders").orderByChild("shop").equalTo(state.currentShop).once("value"),
-                database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value")
+                database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value"),
+                database.ref("catalogs/order").once("value")
             ]);
 
-            // 1. Собираем активные недовозы (удаленные из свода товары)
+            let orderCatalog = catSnap.val() || {};
             let activeMissing = {};
             missSnap.forEach(c => {
                 let m = c.val();
@@ -1252,7 +1247,6 @@
                 return;
             }
 
-            // 2. АГРЕГАЦИЯ: Берем ВСЕ заказы, которые админ еще не оформил
             let pendingOrders = ordersArr.filter(o => !o.ordered);
             let targetOrders = [];
             let isSvodDone = false;
@@ -1313,7 +1307,15 @@
                     }
                 });
 
-                Object.keys(aggregatedItems).sort((a,b) => a.localeCompare(b)).forEach(name => {
+                Object.keys(aggregatedItems).sort((a,b) => {
+                    let catA = Object.values(orderCatalog).find(c => c && c.name === a) || {};
+                    let catB = Object.values(orderCatalog).find(c => c && c.name === b) || {};
+                    let vendorA = (catA.vendor || 'Лента').toLowerCase();
+                    let vendorB = (catB.vendor || 'Лента').toLowerCase();
+                    if (vendorA < vendorB) return -1;
+                    if (vendorA > vendorB) return 1;
+                    return a.localeCompare(b);
+                }).forEach(name => {
                     let item = aggregatedItems[name];
                     let statusHtml = "";
                     let isError = (item.status === 'error' || item.bot_error === true || activeMissing[name]);
@@ -1349,14 +1351,14 @@
 
     async function showLastOrder() {
         showReportOverlay("Загружаю приемку...");
-        
         try {
-            const [ordersSnap, missSnap] = await Promise.all([
+            const [ordersSnap, missSnap, catSnap] = await Promise.all([
                 database.ref("orders").orderByChild("shop").equalTo(state.currentShop).once("value"),
-                database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value")
+                database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value"),
+                database.ref("catalogs/order").once("value")
             ]);
 
-            // Ожидаемые недовозы
+            let orderCatalog = catSnap.val() || {};
             let activeMissing = [];
             missSnap.forEach(c => { 
                 let m = c.val(); 
@@ -1365,7 +1367,6 @@
                 }
             });
 
-            // Агрегация текущего заказа
             let ordersArr = [];
             ordersSnap.forEach(c => { 
                 let val = c.val(); 
@@ -1462,7 +1463,15 @@
                 if (!hasRealItems) {
                     html += `<div class="report-card-item" style="justify-content:center;"><b>ЗАКАЗ БЫЛ ПУСТЫМ</b></div>`;
                 } else {
-                    Object.keys(aggregatedItems).sort((a,b) => a.localeCompare(b)).forEach(name => {
+                    Object.keys(aggregatedItems).sort((a,b) => {
+                        let catA = Object.values(orderCatalog).find(c => c && c.name === a) || {};
+                        let catB = Object.values(orderCatalog).find(c => c && c.name === b) || {};
+                        let vendorA = (catA.vendor || 'Лента').toLowerCase();
+                        let vendorB = (catB.vendor || 'Лента').toLowerCase();
+                        if (vendorA < vendorB) return -1;
+                        if (vendorA > vendorB) return 1;
+                        return a.localeCompare(b);
+                    }).forEach(name => {
                         let item = aggregatedItems[name];
                         let isMissingAlready = activeMissing.some(am => am.name === name);
                         
@@ -1479,7 +1488,7 @@
                                             <span style="font-size:15px; font-weight:700; flex:1;"><b>${name}</b> (x${item.qty})</span> 
                                             <span style="color:#c62828; background:#ffebee; padding:4px 8px; border-radius:6px; font-size:12px; font-weight:900;">Нет в наличии ❌</span>
                                           </div>`;
-                            } else {
+                            } else if (item.status === 'ordered') {
                                 html += `<div class="report-card-item" style="flex-direction:column; align-items:flex-start; border-bottom:1px solid #eee;">
                                             <div style="display:flex; justify-content:space-between; width:100%; align-items:center; margin-bottom:8px;">
                                                 <span style="font-size:15px; font-weight:700; flex:1;"><b>${name}</b> (x${item.qty})</span>
@@ -1487,12 +1496,16 @@
                                             </div>
                                             <button onclick="reportMissingFromOrder('${name.replace(/'/g, "\\'")}', ${item.qty})" style="border:none; background:#ffebee; color:#d32f2f; padding:8px 15px; border-radius:10px; font-weight:900; font-size:14px; cursor:pointer;">Не довезли ‼️</button>
                                           </div>`;
+                            } else {
+                                html += `<div class="report-card-item" style="flex-direction:row; justify-content:space-between; align-items:center; border-bottom:1px solid #eee;">
+                                            <span style="font-size:15px; font-weight:700; flex:1;"><b>${name}</b> (x${item.qty})</span> 
+                                            <span style="color:#f57c00; background:#fff3e0; padding:4px 8px; border-radius:6px; font-size:12px; font-weight:900;">Ожидает ⏳</span>
+                                          </div>`;
                             }
                         }
                     });
                 }
                 
-                // Передаем все ключи целевых ордеров для пометки "получено"
                 let orderKeysToMark = targetOrders.map(o => o.key).join(',');
                 html += `<button onclick="markOrderReceived('${orderKeysToMark}')" class="btn-mode" style="background: #4caf50 !important; margin-top:20px; margin-bottom:0;">✅ ОСТАЛЬНОЕ ПРИЕХАЛО</button>`;
                 html += `</div>`;

@@ -4,7 +4,7 @@
   <base target="_top">
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>Coffee Management App v4.8</title>
+  <title>Coffee Management App v4.9</title>
   
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-app-compat.js"></script>
@@ -439,8 +439,6 @@
           document.getElementById('dynamic-list-container').innerHTML = `<div class="report-card"><div style="text-align:center; padding:20px; color:red; font-weight:bold;">Ошибка базы данных: ${err.message}</div></div>`;
       }
     }
-
-
    // ==========================================
     // 4. ОТРИСОВКА И ЛОГИКА ТОВАРОВ
     // ==========================================
@@ -1139,7 +1137,12 @@
           itemsArr.forEach(i => {
               if(!i || !i.name) return;
               let iNameLow = String(i.name).trim().toLowerCase();
-              let info = Object.values(catalog).find(c => c && String(c.name).trim().toLowerCase() === iNameLow) || {};
+              
+              let info = Object.values(catalog).find(c => {
+                  if (!c || !c.name) return false;
+                  let cName = String(c.name).trim().toLowerCase();
+                  return cName === iNameLow || cName.includes(iNameLow) || iNameLow.includes(cName);
+              }) || {};
               
               let isSyrup = (info.cat && String(info.cat).toLowerCase().includes("сироп")) || iNameLow.includes("сироп");
               let hasDrinks = (info.sez && info.sez !== "") || (info.main && info.main !== "");
@@ -1182,7 +1185,19 @@
     async function showMyLastOrder() {
         showReportOverlay("Загружаю последний заказ...");
         try {
-            const ordersSnap = await database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(100).once("value");
+            const [ordersSnap, missSnap] = await Promise.all([
+                database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(100).once("value"),
+                database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value")
+            ]);
+
+            let activeMissing = [];
+            missSnap.forEach(c => {
+                let m = c.val();
+                if (m && m.status !== 'arrived' && m.status !== 'canceled') { 
+                    activeMissing.push(m.name);
+                }
+            });
+
             let arr = []; 
             ordersSnap.forEach(c => { 
                 let val = c.val(); 
@@ -1204,7 +1219,6 @@
                      <div style="text-align:center; font-size:14px; color:#888; margin-bottom:15px; font-weight:700;">От: ${new Date(last.timestamp).toLocaleString()}</div>`;
             
                 let itemsArr = Array.isArray(last.items) ? last.items : Object.values(last.items);
-                
                 let hasRealItems = itemsArr.some(i => i && i.name && i.name !== "НЕТ ЗАКАЗА" && parseFloat(i.qty) > 0);
                 
                 itemsArr.forEach(i => {
@@ -1216,13 +1230,17 @@
                     }
                     
                     let statusHtml = "";
+                    let isMissing = activeMissing.includes(i.name);
+
                     if (!last.svod) {
-                        statusHtml = `<span style="background:#fff3e0; color:#f57c00; padding:4px 8px; border-radius:6px; font-size:12px; font-weight:900;">В ожидании ⏳</span>`;
-                    } else {
-                        if (i.status === 'error' || i.bot_error === true) {
+                        if (isMissing || i.status === 'error' || i.bot_error === true) {
                             statusHtml = `<span style="background:#ffebee; color:#c62828; padding:4px 8px; border-radius:6px; font-size:12px; font-weight:900;">Нет в наличии ❌</span>`;
-                        } else if (i.status === 'ordered') {
-                            statusHtml = `<span style="background:#e8f5e9; color:#2e7d32; padding:4px 8px; border-radius:6px; font-size:12px; font-weight:900;">Заказано ✅</span>`;
+                        } else {
+                            statusHtml = `<span style="background:#fff3e0; color:#f57c00; padding:4px 8px; border-radius:6px; font-size:12px; font-weight:900;">В ожидании ⏳</span>`;
+                        }
+                    } else {
+                        if (isMissing || i.status === 'error' || i.bot_error === true) {
+                            statusHtml = `<span style="background:#ffebee; color:#c62828; padding:4px 8px; border-radius:6px; font-size:12px; font-weight:900;">Нет в наличии ❌</span>`;
                         } else {
                             statusHtml = `<span style="background:#e8f5e9; color:#2e7d32; padding:4px 8px; border-radius:6px; font-size:12px; font-weight:900;">Заказано ✅</span>`;
                         }

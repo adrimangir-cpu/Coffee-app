@@ -217,7 +217,7 @@
 <body>
 
 <div class="nav">
-    <h2 style="margin:0;">💼 Coffee 234 TEIKU CRM</h2>
+    <h2 style="margin:0;">💼 Coffee TEIKU CRM</h2>
     <div id="db-status">☁️ База активна</div>
 </div>
 
@@ -721,14 +721,13 @@
         const box = document.getElementById('content');
         let shops = ["Бояринова", "Гагарина", "Вертолетчиков", "Липчанского", "Новокосино", "Новокосино 2", "Старое Павлино", "Красноказарменная", "Ухтомского ополчения"];
         let latestStops = {};
-        let activeOrdersMap = {}; // Карта для хранения статусов текущих заказов
+        let activeOrdersMap = {}; 
 
         Object.values(cachedData.orders).forEach(o => {
             if (!o) return;
             if (o.mode === 'stoplist_fill') {
                 if (!latestStops[o.shop] || o.timestamp > latestStops[o.shop].timestamp) { latestStops[o.shop] = o; }
             }
-            // Формируем карту активного свода для подтягивания статусов
             if ((o.mode === 'order' || o.mode === 'new_shop') && o.ordered !== true) {
                 if (!activeOrdersMap[o.shop]) activeOrdersMap[o.shop] = {};
                 let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
@@ -769,7 +768,6 @@
                         let l2 = catInfo.link2 ? `<a href="${catInfo.link2}" target="_blank" style="color:#fff; background:#e53935; padding:4px 8px; border-radius:6px; text-decoration:none; font-size:12px; font-weight:bold; margin-left:4px;">🔗 Рез</a>` : "";
                         let linksHtml = [l1, l2].filter(Boolean).join(" ");
                         
-                        // Логика подтягивания статуса из активного Свода
                         let statHtml = "";
                         if (isFromCatalog) {
                             let itemStatus = activeOrdersMap[s] ? activeOrdersMap[s][i.name] : null;
@@ -785,7 +783,12 @@
                         }
 
                         let linkBtn = `<div style="float:right; display:flex; align-items:center;">${statHtml} ${linksHtml}</div>`;
-                        html += `<div style="padding:10px 0; border-bottom:1px dashed #eee; font-size:17px; display:flex; justify-content:space-between; align-items:center;"><b style="color:#333;">${i.name}</b> ${linkBtn}</div>`;
+                        let affected = [];
+                        if (catInfo.sez) affected.push("Сезон: " + catInfo.sez);
+                        if (catInfo.main) affected.push("Основа: " + catInfo.main);
+                        let subText = affected.length > 0 ? `<div style="font-size:13px; color:#d32f2f; margin-top:4px; font-style:italic; font-weight:600;">(${affected.join(", ")})</div>` : "";
+
+                        html += `<div style="padding:10px 0; border-bottom:1px dashed #eee; font-size:17px; display:flex; flex-direction:column; justify-content:center;"><div style="display:flex; justify-content:space-between; align-items:center; width:100%;"><b style="color:#333;">${i.name}</b> ${linkBtn}</div>${subText}</div>`;
                         foundItems = true;
                     }
                 });
@@ -875,7 +878,13 @@
     function markSvodStatusChange(shop, name, currentStatus) {
         preserveSvodInputs();
         if (!tempSvodStatus[shop]) tempSvodStatus[shop] = {};
-        let newStatus = (currentStatus === 'error') ? 'ordered' : 'error';
+        
+        // Карусель: pending -> ordered -> error -> pending
+        let newStatus = 'ordered'; 
+        if (currentStatus === 'pending') newStatus = 'ordered';
+        else if (currentStatus === 'ordered') newStatus = 'error';
+        else if (currentStatus === 'error') newStatus = 'pending';
+
         tempSvodStatus[shop][name] = newStatus;
         renderOrdersSvod(); 
     }
@@ -902,7 +911,6 @@
                 let isOrdered = o.ordered === true;
                 
                 if (!isOrdered) {
-                    // Заказы висят здесь пока не нажмут "Оформлено"
                     todaysOrders.push(o);
                 } else {
                     if ((o.timestamp || 0) >= cutoffMonth) {
@@ -962,7 +970,7 @@
 
         if (isSvodEditMode) {
             html += `<button onclick="saveSvodEdits()" class="btn-save" style="margin-top:0; margin-bottom:20px;">💾 СОХРАНИТЬ ИЗМЕНЕНИЯ (Удаления и кол-во)</button>
-            <div style="margin-bottom:15px; padding:10px; background:#fff3e0; color:#e65100; border-radius:8px; font-weight:bold;">💡 Нажмите на статус товара 🔄, чтобы мгновенно переключить его с ошибки на заказано и обратно.</div>`;
+            <div style="margin-bottom:15px; padding:10px; background:#fff3e0; color:#e65100; border-radius:8px; font-weight:bold;">💡 Нажмите на статус товара 🔄, чтобы мгновенно переключить его: Ожидает ➡️ Заказано ➡️ Ошибка ➡️ Ожидает.</div>`;
         }
 
         html += `<table style='margin-bottom:20px;'>
@@ -1066,7 +1074,7 @@
                     
                     let statusBadge = `<span style="background:${statusBg}; color:${statusColor}; padding:6px 10px; border-radius:8px; font-size:13px; font-weight:900; display:inline-block;">${statusText}</span>`;
 
-                    if (isSvodEditMode && (itemStatus === 'error' || itemStatus === 'ordered')) {
+                    if (isSvodEditMode) {
                         statusBadge = `<button onclick="markSvodStatusChange('${safeShopAttr}', '${safeNameParam}', '${itemStatus}')" style="cursor:pointer; background:${statusBg}; color:${statusColor}; border:2px dashed ${statusColor}; padding:4px 8px; border-radius:8px; font-size:13px; font-weight:900; display:inline-block; box-shadow:0 2px 4px rgba(0,0,0,0.1);">${statusText} 🔄</button>`;
                     }
 

@@ -217,7 +217,7 @@
 <body>
 
 <div class="nav">
-    <h2 style="margin:0;">💼 Coffee TEIKU CRM</h2>
+    <h1 style="margin:0;">💼 Coffee TEIKU 234 CRM</h1>
     <div id="db-status">☁️ База активна</div>
 </div>
 
@@ -678,7 +678,7 @@
             let iNameLow = String(m.name).trim().toLowerCase();
             let catInfo = Object.values(cachedData.catalogOrder || {}).find(ci => {
                 if(!ci || !ci.name) return false; let cName = String(ci.name).trim().toLowerCase();
-                return cName === iNameLow || cName.includes(iNameLow) || iNameLow.includes(cName);
+                return cName === iNameLow;
             }) || {};
             let displayName = m.shop === 'Красноказарменная' ? 'МЭИ' : m.shop;
             
@@ -717,18 +717,24 @@
     // ==========================================
     // 4. РЕНДЕР: СТОП-ЛИСТЫ НА ТОЧКАХ
     // ==========================================
-    function renderStoplists() {
+    async function renderStoplists() {
         const box = document.getElementById('content');
         let shops = ["Бояринова", "Гагарина", "Вертолетчиков", "Липчанского", "Новокосино", "Новокосино 2", "Старое Павлино", "Красноказарменная", "Ухтомского ополчения"];
         let latestStops = {};
         let activeOrdersMap = {}; 
+
+        // Подгружаем справочник стоп-листа, чтобы знать сезонные/основные напитки
+        let stopCatalog = {};
+        try {
+            let res = await fetch(`${FB_URL}/catalogs/stoplist.json`);
+            stopCatalog = await res.json() || {};
+        } catch(e) {}
 
         Object.values(cachedData.orders).forEach(o => {
             if (!o) return;
             if (o.mode === 'stoplist_fill') {
                 if (!latestStops[o.shop] || o.timestamp > latestStops[o.shop].timestamp) { latestStops[o.shop] = o; }
             }
-            // Формируем карту активного свода (только неоформленные заказы)
             if ((o.mode === 'order' || o.mode === 'new_shop') && o.ordered !== true) {
                 if (!activeOrdersMap[o.shop]) activeOrdersMap[o.shop] = {};
                 let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
@@ -740,7 +746,6 @@
                             else if (i.status === 'ordered') stat = 'ordered';
                             else stat = 'pending';
                         }
-                        // Если уже была ошибка или заказ у товара из другого дня - сохраняем
                         if (activeOrdersMap[o.shop][i.name] !== 'error' && activeOrdersMap[o.shop][i.name] !== 'ordered') {
                             activeOrdersMap[o.shop][i.name] = stat;
                         }
@@ -750,54 +755,63 @@
         });
         
         let html = `<h3 style="color:#D50000; margin-bottom:20px; font-size:24px;">🛑 Актуальные Стоп-листы на точках</h3><div style="display:flex; flex-wrap:wrap; gap:20px;">`;
-        let catalog = cachedData.catalogOrder || cachedData.catalog || {};
+        let orderCatalog = cachedData.catalogOrder || cachedData.catalog || {};
         
         shops.forEach(s => {
             let stop = latestStops[s]; let displayName = s === 'Красноказарменная' ? 'МЭИ' : s;
             html += `<div class="card" style="flex: 1 1 calc(33% - 20px); min-width:320px; padding:25px; background:#fff; border-radius:16px; box-shadow:0 4px 15px rgba(0,0,0,0.05);"><h4 style="margin-top:0; color:#311b92; font-size:20px; border-bottom:2px solid #eee; padding-bottom:10px; font-weight:900;">${displayName}</h4>`;
             if (stop && stop.items) {
                 html += `<div style="font-size:14px; color:#888; margin-bottom:15px; font-weight:bold;">Обновлено: ${new Date(stop.timestamp).toLocaleString()}</div>`;
+                
+                let allSyrups = [];
+                let otherItems = [];
                 let itemsArr = Array.isArray(stop.items) ? stop.items : Object.values(stop.items);
                 let foundItems = false;
+                
                 itemsArr.forEach(i => {
-                    if (i && i.name) {
-                        let iNameLow = String(i.name).trim().toLowerCase();
-                        let catInfo = Object.values(catalog).find(c => {
-                            if(!c || !c.name) return false; let cName = String(c.name).trim().toLowerCase();
-                            return cName === iNameLow || cName.includes(iNameLow) || iNameLow.includes(cName);
-                        }) || {};
-                        
-                        let isFromCatalog = (catInfo && catInfo.name) ? true : false;
-                        let l1 = catInfo.link ? `<a href="${catInfo.link}" target="_blank" style="color:#fff; background:#0288d1; padding:4px 8px; border-radius:6px; text-decoration:none; font-size:12px; font-weight:bold;">🔗 Осн</a>` : "";
-                        let l2 = catInfo.link2 ? `<a href="${catInfo.link2}" target="_blank" style="color:#fff; background:#e53935; padding:4px 8px; border-radius:6px; text-decoration:none; font-size:12px; font-weight:bold; margin-left:4px;">🔗 Рез</a>` : "";
-                        let linksHtml = [l1, l2].filter(Boolean).join(" ");
-                        
-                        let statHtml = "";
-                        if (isFromCatalog) {
-                            let itemStatus = activeOrdersMap[s] ? activeOrdersMap[s][i.name] : null;
-                            if (itemStatus === 'ordered') {
-                                statHtml = `<span style="background:#e8f5e9; color:#2e7d32; padding:3px 6px; border-radius:6px; font-size:12px; font-weight:900; margin-right:8px;">Заказано ✅</span>`;
-                            } else if (itemStatus === 'error') {
-                                statHtml = `<span style="background:#ffebee; color:#c62828; padding:3px 6px; border-radius:6px; font-size:12px; font-weight:900; margin-right:8px;">Ошибка ❌</span>`;
-                            } else if (itemStatus === 'pending') {
-                                statHtml = `<span style="background:#fff3e0; color:#f57c00; padding:3px 6px; border-radius:6px; font-size:12px; font-weight:900; margin-right:8px;">Ожидает ⏳</span>`;
-                            } else {
-                                statHtml = `<span style="background:#f5f5f5; color:#888; padding:3px 6px; border-radius:6px; font-size:12px; font-weight:900; margin-right:8px;">Не заказано ➖</span>`;
-                            }
-                        }
+                    if (!i || !i.name) return;
+                    foundItems = true;
+                    let iNameLow = String(i.name).trim().toLowerCase();
+                    
+                    let info = Object.values(stopCatalog).find(c => c && c.name && String(c.name).trim().toLowerCase() === iNameLow) || {};
+                    let inOrderCat = Object.values(orderCatalog).find(c => c && c.name && String(c.name).trim().toLowerCase() === iNameLow);
+                    
+                    let isSyrup = (info.cat && String(info.cat).toLowerCase().includes("сироп")) || (inOrderCat && inOrderCat.cat && String(inOrderCat.cat).toLowerCase().includes("сироп")) || iNameLow.includes("сироп");
+                    
+                    let l1 = inOrderCat && inOrderCat.link ? `<a href="${inOrderCat.link}" target="_blank" style="color:#fff; background:#0288d1; padding:4px 8px; border-radius:6px; text-decoration:none; font-size:12px; font-weight:bold;">🔗 Осн</a>` : "";
+                    let l2 = inOrderCat && inOrderCat.link2 ? `<a href="${inOrderCat.link2}" target="_blank" style="color:#fff; background:#e53935; padding:4px 8px; border-radius:6px; text-decoration:none; font-size:12px; font-weight:bold; margin-left:4px;">🔗 Рез</a>` : "";
+                    let linksHtml = [l1, l2].filter(Boolean).join(" ");
+                    
+                    let statHtml = "";
+                    if (inOrderCat) {
+                        let itemStatus = activeOrdersMap[s] ? activeOrdersMap[s][i.name] : null;
+                        if (itemStatus === 'ordered') statHtml = `<span style="background:#e8f5e9; color:#2e7d32; padding:3px 6px; border-radius:6px; font-size:12px; font-weight:900; margin-right:8px;">Заказано ✅</span>`;
+                        else if (itemStatus === 'error') statHtml = `<span style="background:#ffebee; color:#c62828; padding:3px 6px; border-radius:6px; font-size:12px; font-weight:900; margin-right:8px;">Ошибка ❌</span>`;
+                        else if (itemStatus === 'pending') statHtml = `<span style="background:#fff3e0; color:#f57c00; padding:3px 6px; border-radius:6px; font-size:12px; font-weight:900; margin-right:8px;">Ожидает ⏳</span>`;
+                        else statHtml = `<span style="background:#f5f5f5; color:#888; padding:3px 6px; border-radius:6px; font-size:12px; font-weight:900; margin-right:8px;">Не заказано ➖</span>`;
+                    }
 
-                        let linkBtn = `<div style="float:right; display:flex; align-items:center;">${statHtml} ${linksHtml}</div>`;
-                        
-                        // Добавляем напитки
+                    let linkBtn = `<div style="float:right; display:flex; align-items:center;">${statHtml} ${linksHtml}</div>`;
+                    
+                    if (isSyrup) {
+                        allSyrups.push(`▪️ ${i.name} ${statHtml}`);
+                    } else {
                         let affected = [];
-                        if (catInfo.sez) affected.push("Сезон: " + catInfo.sez);
-                        if (catInfo.main) affected.push("Основа: " + catInfo.main);
-                        let subText = affected.length > 0 ? `<div style="font-size:13px; color:#d32f2f; margin-top:4px; font-style:italic; font-weight:600;">(${affected.join(", ")})</div>` : "";
+                        if (info.sez) affected.push("Сезон: " + info.sez);
+                        if (info.main) affected.push("Основа: " + info.main);
+                        let subText = affected.length > 0 ? `<div style="font-size:13px; color:#d32f2f; margin-top:4px; font-style:italic; font-weight:600;">(${affected.join(" | ")})</div>` : "";
 
-                        html += `<div style="padding:10px 0; border-bottom:1px dashed #eee; font-size:17px; display:flex; flex-direction:column; justify-content:center;"><div style="display:flex; justify-content:space-between; align-items:center; width:100%;"><b style="color:#333;">${i.name}</b> ${linkBtn}</div>${subText}</div>`;
-                        foundItems = true;
+                        otherItems.push(`<div style="padding:10px 0; border-bottom:1px dashed #eee; font-size:17px; display:flex; flex-direction:column; justify-content:center;"><div style="display:flex; justify-content:space-between; align-items:center; width:100%;"><b style="color:#333;">${i.name}</b> ${linkBtn}</div>${subText}</div>`);
                     }
                 });
+
+                html += otherItems.join("");
+
+                if (allSyrups.length > 0) {
+                    html += `<div style='margin-top: 20px; padding-top: 15px; border-top: 2px dashed #ddd; color:#7E57C2;'>
+                             🍾 <b style="font-size:17px;">Закончившиеся сиропы:</b><br><div style="color:#333; margin-top:5px; font-weight:900; font-size:16px; line-height: 1.6;">${allSyrups.join("<br>")}</div></div>`;
+                }
+
                 if (!foundItems) html += `<div style="color:#4caf50; font-weight:bold; font-size:17px; padding:10px 0;">Стоп-лист пуст (всё в наличии)</div>`;
             } else { html += `<div style="color:#888; font-size:17px; padding:10px 0; font-weight:bold;">Нет данных о стоп-листе</div>`; }
             html += `</div>`;
@@ -885,7 +899,6 @@
         preserveSvodInputs();
         if (!tempSvodStatus[shop]) tempSvodStatus[shop] = {};
         
-        // Карусель: pending -> ordered -> error -> pending
         let newStatus = 'ordered'; 
         if (currentStatus === 'pending') newStatus = 'ordered';
         else if (currentStatus === 'ordered') newStatus = 'error';

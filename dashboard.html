@@ -217,7 +217,7 @@
 <body>
 
 <div class="nav">
-    <h2 style="margin:0;">💼 Coffee 66 TEIKU CRM</h2>
+    <h2 style="margin:0;">💼 Coffee TEIKU CRM</h2>
     <div id="db-status">☁️ База активна</div>
 </div>
 
@@ -721,9 +721,28 @@
         const box = document.getElementById('content');
         let shops = ["Бояринова", "Гагарина", "Вертолетчиков", "Липчанского", "Новокосино", "Новокосино 2", "Старое Павлино", "Красноказарменная", "Ухтомского ополчения"];
         let latestStops = {};
+        let activeOrdersMap = {}; // Карта для хранения статусов текущих заказов
+
         Object.values(cachedData.orders).forEach(o => {
-            if (o && o.mode === 'stoplist_fill') {
+            if (!o) return;
+            if (o.mode === 'stoplist_fill') {
                 if (!latestStops[o.shop] || o.timestamp > latestStops[o.shop].timestamp) { latestStops[o.shop] = o; }
+            }
+            // Формируем карту активного свода для подтягивания статусов
+            if ((o.mode === 'order' || o.mode === 'new_shop') && o.ordered !== true) {
+                if (!activeOrdersMap[o.shop]) activeOrdersMap[o.shop] = {};
+                let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
+                itemsArr.forEach(i => {
+                    if (i && i.name) {
+                        let stat = 'pending';
+                        if (o.svod) {
+                            if (i.status === 'error' || i.bot_error) stat = 'error';
+                            else if (i.status === 'ordered') stat = 'ordered';
+                            else stat = 'pending';
+                        }
+                        activeOrdersMap[o.shop][i.name] = stat;
+                    }
+                });
             }
         });
         
@@ -744,9 +763,25 @@
                             if(!c || !c.name) return false; let cName = String(c.name).trim().toLowerCase();
                             return cName === iNameLow || cName.includes(iNameLow) || iNameLow.includes(cName);
                         }) || {};
+                        
                         let l1 = catInfo.link ? `<a href="${catInfo.link}" target="_blank" style="color:#fff; background:#0288d1; padding:4px 8px; border-radius:6px; text-decoration:none; font-size:12px; font-weight:bold;">🔗 Осн</a>` : "";
                         let l2 = catInfo.link2 ? `<a href="${catInfo.link2}" target="_blank" style="color:#fff; background:#e53935; padding:4px 8px; border-radius:6px; text-decoration:none; font-size:12px; font-weight:bold; margin-left:4px;">🔗 Рез</a>` : "";
-                        let linksHtml = [l1, l2].filter(Boolean).join(" "); let linkBtn = linksHtml ? `<div style="float:right;">${linksHtml}</div>` : "";
+                        let linksHtml = [l1, l2].filter(Boolean).join(" ");
+                        
+                        // Логика подтягивания статуса из активного Свода
+                        let statHtml = "";
+                        let itemStatus = activeOrdersMap[s] ? activeOrdersMap[s][i.name] : null;
+                        if (itemStatus === 'ordered') {
+                            statHtml = `<span style="background:#e8f5e9; color:#2e7d32; padding:3px 6px; border-radius:6px; font-size:12px; font-weight:900; margin-right:8px;">Заказано ✅</span>`;
+                        } else if (itemStatus === 'error') {
+                            statHtml = `<span style="background:#ffebee; color:#c62828; padding:3px 6px; border-radius:6px; font-size:12px; font-weight:900; margin-right:8px;">Ошибка ❌</span>`;
+                        } else if (itemStatus === 'pending') {
+                            statHtml = `<span style="background:#fff3e0; color:#f57c00; padding:3px 6px; border-radius:6px; font-size:12px; font-weight:900; margin-right:8px;">Ожидает ⏳</span>`;
+                        } else {
+                            statHtml = `<span style="background:#f5f5f5; color:#888; padding:3px 6px; border-radius:6px; font-size:12px; font-weight:900; margin-right:8px;">Не заказано ➖</span>`;
+                        }
+
+                        let linkBtn = `<div style="float:right; display:flex; align-items:center;">${statHtml} ${linksHtml}</div>`;
                         html += `<div style="padding:10px 0; border-bottom:1px dashed #eee; font-size:17px; display:flex; justify-content:space-between; align-items:center;"><b style="color:#333;">${i.name}</b> ${linkBtn}</div>`;
                         foundItems = true;
                     }
@@ -834,15 +869,12 @@
     // 7. РЕНДЕР: СВОД ЗАКАЗОВ И ИСТОРИЯ
     // ==========================================
     
-    // Локальное переключение статуса (без мгновенного сохранения в БД)
     function markSvodStatusChange(shop, name, currentStatus) {
         preserveSvodInputs();
         if (!tempSvodStatus[shop]) tempSvodStatus[shop] = {};
-        
         let newStatus = (currentStatus === 'error') ? 'ordered' : 'error';
         tempSvodStatus[shop][name] = newStatus;
-        
-        renderOrdersSvod(); // Перерисовка, чтобы статус обновился визуально
+        renderOrdersSvod(); 
     }
 
     function preserveSvodInputs() {
@@ -864,15 +896,15 @@
 
         allOrders.forEach(o => {
             if (o && (o.mode === 'order' || o.mode === 'new_shop')) {
-                if ((o.timestamp || 0) < cutoffMonth) return; 
                 let isOrdered = o.ordered === true;
-                if (!isOrdered && o.svod === true && (o.timestamp || 0) < (Date.now() - 3*24*60*60*1000)) {
-                    isOrdered = true; 
-                }
+                
                 if (!isOrdered) {
+                    // Заказы висят здесь пока не нажмут "Оформлено"
                     todaysOrders.push(o);
                 } else {
-                    historyOrdersList.push(o);
+                    if ((o.timestamp || 0) >= cutoffMonth) {
+                        historyOrdersList.push(o);
+                    }
                     if ((o.timestamp || 0) < todayStart) {
                         let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
                         itemsArr.forEach(i => { if(i) historyKeys.add(o.shop + "|" + i.name); });
@@ -886,11 +918,9 @@
             if (!svodData[o.shop]) svodData[o.shop] = { items: {}, lentaSum: 0, ozonSum: 0, kuperSum: 0, comments: [], all_svod: true };
             if (o.comment && o.comment.trim() !== "") svodData[o.shop].comments.push(o.comment);
             
-            if (!o.svod) svodData[o.shop].all_svod = false; // Если хоть один заказ не собран, весь магазин частично в ожидании
+            if (!o.svod) svodData[o.shop].all_svod = false;
 
             let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
-            
-            // Фильтр против ложного "НЕТ ЗАКАЗА", если есть нормальные товары
             let hasRealItems = itemsArr.some(i => i && i.name && i.name !== "НЕТ ЗАКАЗА" && parseFloat(i.qty) > 0);
 
             itemsArr.forEach(i => {
@@ -989,12 +1019,8 @@
                     let originalQty = svodData[shop].items[name].qty;
                     let actualQty = (tempSvodQty[shop] && tempSvodQty[shop][name] !== undefined) ? tempSvodQty[shop][name] : originalQty;
                     
-                    // Умное чтение статуса: если Свод не собран, то принудительно "В ожидании"
                     let baseStatus = svodData[shop].items[name].status;
-                    if (!svodData[shop].all_svod) {
-                        baseStatus = 'pending'; 
-                    }
-                    
+                    if (!svodData[shop].all_svod) { baseStatus = 'pending'; }
                     let itemStatus = (tempSvodStatus[shop] && tempSvodStatus[shop][name]) ? tempSvodStatus[shop][name] : baseStatus;
                     
                     let isRepeat = historyKeys.has(shop + "|" + name);
@@ -1019,10 +1045,8 @@
                     let safeShopAttr = shop.replace(/"/g, '&quot;');
 
                     let repeatBadge = isRepeat ? `<span style='color:#d32f2f; font-size:13px; margin-left:5px; font-weight:bold;'>(Повтор)</span>` : ``;
-                    
                     let rowBg = (itemStatus === 'error') ? `background-color: #fff8f8;` : ``;
 
-                    // Генерация столбца статуса
                     let statusText = "Ожидает ⏳";
                     let statusColor = "#f57c00";
                     let statusBg = "#fff3e0";
@@ -1039,7 +1063,6 @@
                     
                     let statusBadge = `<span style="background:${statusBg}; color:${statusColor}; padding:6px 10px; border-radius:8px; font-size:13px; font-weight:900; display:inline-block;">${statusText}</span>`;
 
-                    // В режиме редактирования статус становится кликабельной кнопкой
                     if (isSvodEditMode && (itemStatus === 'error' || itemStatus === 'ordered')) {
                         statusBadge = `<button onclick="markSvodStatusChange('${safeShopAttr}', '${safeNameParam}', '${itemStatus}')" style="cursor:pointer; background:${statusBg}; color:${statusColor}; border:2px dashed ${statusColor}; padding:4px 8px; border-radius:8px; font-size:13px; font-weight:900; display:inline-block; box-shadow:0 2px 4px rgba(0,0,0,0.1);">${statusText} 🔄</button>`;
                     }
@@ -1145,7 +1168,6 @@
                     updates[o.key + "/ordered"] = true;
                     updates[o.key + "/svod"] = true; 
                     
-                    // Все успешные или ожидающие товары автоматически помечаем как "Заказано" для приемки
                     if (o.items) {
                         let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items);
                         let changed = false;
@@ -1213,7 +1235,6 @@
                         let updatedQty = (tempSvodQty[o.shop] && tempSvodQty[o.shop][itm.name] !== undefined) ? tempSvodQty[o.shop][itm.name] : undefined;
                         let updatedStatus = (tempSvodStatus[o.shop] && tempSvodStatus[o.shop][itm.name] !== undefined) ? tempSvodStatus[o.shop][itm.name] : undefined;
                         
-                        // Проверяем, изменился ли статус
                         if (updatedStatus !== undefined && itm.status !== updatedStatus) {
                             needsUpdate = true;
                             itm.status = updatedStatus;

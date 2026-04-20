@@ -4,7 +4,7 @@
   <base target="_top">
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>Coffee Management App v5.0</title>
+  <title>Coffee Management App v5.1</title>
   
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-app-compat.js"></script>
@@ -200,7 +200,7 @@
       <button class="btn-mode btn-mode-none" onclick="processNoOrder()">➖ ЗАКАЗ НЕ НУЖЕН</button>
       
       <button class="btn-mode" style="background: var(--boss-gradient); margin-top: 12px;" onclick="showMyLastOrder()">🕒 МОЙ ПОСЛЕДНИЙ ЗАКАЗ</button>
-      <button class="btn-mode" style="background: var(--warning-gradient); margin-top: 12px;" onclick="showLastOrder()">🚚 ПРИЕМКА ТОВАРА</button>
+      <button class="btn-mode" style="background: var(--warning-gradient); margin-top: 12px;" onclick="showLastOrder()">🚚 ПРИЕМКА пупуп</button>
      
       <div class="bottom-fixed-bar">
         <button class="btn-bottom-exit" onclick="clearShopAndReturn()">⬅️ К списку кофеен</button>
@@ -750,14 +750,38 @@
       });
 
       if (state.currentMode === 'stoplist_fill') {
-          let [orderCatSnap, newCatSnap] = await Promise.all([
+          let [orderCatSnap, newCatSnap, ordersSnap, missSnap] = await Promise.all([
               database.ref("catalogs/order").once("value"),
-              database.ref("catalogs/newshop").once("value")
+              database.ref("catalogs/newshop").once("value"),
+              database.ref("orders").orderByChild("shop").equalTo(state.currentShop).once("value"),
+              database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value")
           ]);
           
           let orderCat = orderCatSnap.val() || {};
           let newCat = newCatSnap.val() || {};
           let combinedCatalog = Object.values(orderCat).concat(Object.values(newCat));
+
+          // Собираем уже заказанные или ожидающие товары, чтобы не дублировать их в корзину
+          let activeItems = new Set();
+          
+          missSnap.forEach(c => {
+              let m = c.val();
+              if (m && m.status !== 'arrived' && m.status !== 'canceled') {
+                  activeItems.add(String(m.name).trim().toLowerCase());
+              }
+          });
+          
+          ordersSnap.forEach(c => {
+              let o = c.val();
+              if (o && (o.mode === 'order' || o.mode === 'new_shop') && !o.received) {
+                  let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
+                  itemsArr.forEach(i => {
+                      if (i && i.name && i.status !== 'error') {
+                          activeItems.add(String(i.name).trim().toLowerCase());
+                      }
+                  });
+              }
+          });
 
           let draft = JSON.parse(localStorage.getItem("draft_" + state.currentShop + "_order")) || {basket:{}, time: Date.now()};
           if(!draft.basket["_catinfo"]) draft.basket["_catinfo"] = {};
@@ -766,17 +790,20 @@
               if (item.qty === 'Закончилось') { 
                   let safeName = String(item.name).trim().toLowerCase();
                   
-                  let foundItem = combinedCatalog.find(c => {
-                      if (!c || !c.name) return false;
-                      let cName = String(c.name).trim().toLowerCase();
-                      return cName === safeName; // Строгая фильтрация
-                  });
-                  
-                  if (foundItem) {
-                      let exactName = foundItem.name;
-                      let exactCat = foundItem.cat || "Прочее";
-                      draft.basket[exactName] = 1; 
-                      draft.basket["_catinfo"][exactName] = exactCat; 
+                  // Добавляем в черновик только если товара еще нет в активной сборке/недовозах
+                  if (!activeItems.has(safeName)) {
+                      let foundItem = combinedCatalog.find(c => {
+                          if (!c || !c.name) return false;
+                          let cName = String(c.name).trim().toLowerCase();
+                          return cName === safeName; // СТРОГАЯ фильтрация
+                      });
+                      
+                      if (foundItem) {
+                          let exactName = foundItem.name;
+                          let exactCat = foundItem.cat || "Прочее";
+                          draft.basket[exactName] = 1; 
+                          draft.basket["_catinfo"][exactName] = exactCat; 
+                      }
                   }
               }
           });
@@ -1165,6 +1192,7 @@
                 if(!i || !i.name) return;
                 let iNameLow = String(i.name).trim().toLowerCase();
                 
+                // Строгое совпадение
                 let info = Object.values(stopCatalog).find(c => c && c.name && String(c.name).trim().toLowerCase() === iNameLow) || {};
                 let inOrderCat = Object.values(orderCatalog).find(c => c && c.name && String(c.name).trim().toLowerCase() === iNameLow);
                 

@@ -4,7 +4,7 @@
   <base target="_top">
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>Coffee Management App v5.2</title>
+  <title>Coffee Management App v5.3</title>
   
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-app-compat.js"></script>
@@ -210,7 +210,7 @@
       <button class="btn-mode btn-mode-none" onclick="processNoOrder()">➖ ЗАКАЗ НЕ НУЖЕН</button>
       
       <button class="btn-mode" style="background: var(--boss-gradient); margin-top: 12px;" onclick="showMyLastOrder()">🕒 ПОСЛЕДНИЙ ЗАКАЗ</button>
-      <button class="btn-mode" style="background: var(--warning-gradient); margin-top: 12px;" onclick="showLastOrder()">🚚 ПРИЕМКА тттт ЗАКУПКИ</button>
+      <button class="btn-mode" style="background: var(--warning-gradient); margin-top: 12px;" onclick="showLastOrder()">🚚 ПРИЕМКА ЗАКУПКИ</button>
      
       <div class="bottom-fixed-bar">
         <button class="btn-bottom-exit" onclick="clearShopAndReturn()">⬅️ К списку кофеен</button>
@@ -321,7 +321,7 @@
     function openExternalDashboard() { triggerHaptic(); window.open('https://adrimangir-cpu.github.io/Coffee-app/dashboard.html', '_blank'); }
 
     function showScreen(screenId) {
-      const allScreens = ['step-1', 'step-2', 'step-stoplist', 'step-3', 'step-panel', 'step-admin-purchase'];
+      const allScreens = ['step-1', 'step-2', 'step-stoplist', 'step-panel', 'step-admin-purchase', 'step-3', 'step-missing'];
       allScreens.forEach(id => { let el = document.getElementById(id); if (el) el.style.display = 'none'; });
       document.getElementById('nav-buttons').style.display = 'none';
       let target = document.getElementById(screenId);
@@ -758,7 +758,9 @@
           timestamp: firebase.database.ServerValue.TIMESTAMP,
           userId: globalTgUserId,
           svod: false,
-          ordered: false
+          ordered: false,
+          lenta_received: false,
+          ozon_received: false
       });
 
       if (state.currentMode === 'stoplist_fill') {
@@ -1253,7 +1255,7 @@
     // 8. ПРИЕМКА ТОВАРА И НЕДОВОЗЫ
     // ==========================================
     
-    function toggleMissingLocal(btn, name, qty) {
+    function toggleMissingLocal(btn, name, qty, vendor) {
         triggerHaptic();
         let safeName = name.replace(/"/g, '&quot;');
         
@@ -1263,7 +1265,7 @@
             btn.classList.add('inactive');
             btn.innerHTML = 'Не довезли ‼️';
         } else {
-            state.tempMissingItems[name] = { qty: qty };
+            state.tempMissingItems[name] = { qty: qty, vendor: vendor };
             btn.classList.remove('inactive');
             btn.classList.add('active');
             btn.innerHTML = 'В недовозах ❌';
@@ -1496,10 +1498,6 @@
                         <div style="font-weight:700;">Ваш заказ еще находится в обработке у администратора.<br><br>
                         Приемка откроется сразу после того, как администратор соберет свод по заказам.</div>
                     </div>`;
-            } else if(targetOrders.every(o => o.received)) {
-                if (activeMissing.length === 0) {
-                    html += `<div class="report-card"><div style="text-align:center; font-weight:900; color:#4caf50;">✅ Все товары приняты!</div></div>`; 
-                }
             } else {
                 
                 let aggregatedItems = {};
@@ -1509,9 +1507,17 @@
                     let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
                     itemsArr.forEach(i => {
                         if (!i || !i.name || i.name === "НЕТ ЗАКАЗА") return;
+                        
+                        let catItem = Object.values(orderCatalog).find(c => c && c.name === i.name) || {};
+                        let vendor = (catItem.vendor || 'Лента').toLowerCase() === 'озон' ? 'ozon' : 'lenta';
+
+                        // Пропускаем товары, если поставщик уже принят
+                        if (vendor === 'ozon' && o.ozon_received) return;
+                        if (vendor === 'lenta' && o.lenta_received) return;
+
                         hasRealItems = true;
                         if (!aggregatedItems[i.name]) {
-                            aggregatedItems[i.name] = { qty: 0, status: i.status || 'pending', bot_error: i.bot_error || false };
+                            aggregatedItems[i.name] = { qty: 0, status: i.status || 'pending', bot_error: i.bot_error || false, vendor: vendor };
                         }
                         aggregatedItems[i.name].qty += parseFloat(i.qty) || 0;
                         if (i.status === 'error' || i.bot_error) {
@@ -1524,23 +1530,27 @@
                 });
 
                 if (!hasRealItems) {
-                    html += `<div class="report-card"><div class="report-card-title" style="text-align:center;">Текущая приемка</div><div class="report-card-item" style="justify-content:center;"><b>ЗАКАЗ БЫЛ ПУСТЫМ</b></div></div>`;
+                    if (activeMissing.length === 0) {
+                        html += `<div class="report-card"><div style="text-align:center; font-weight:900; color:#4caf50;">✅ Все товары приняты!</div></div>`;
+                    } else {
+                        html += `<div class="report-card"><div style="text-align:center; font-weight:900; color:#4caf50;">✅ Все текущие поставки проверены!</div><div style="font-size:13px; color:#888; text-align:center; margin-top:5px;">Осталось дождаться недовозов</div></div>`;
+                    }
                 } else {
                     
                     let itemsOzon = [];
                     let itemsLenta = [];
                     
                     Object.keys(aggregatedItems).forEach(name => {
-                        let catItem = Object.values(orderCatalog).find(c => c && c.name === name) || {};
-                        let vendor = (catItem.vendor || 'Лента').toLowerCase();
-                        if (vendor === 'озон') itemsOzon.push(name);
+                        if (aggregatedItems[name].vendor === 'ozon') itemsOzon.push(name);
                         else itemsLenta.push(name);
                     });
                     
                     itemsOzon.sort((a,b) => a.localeCompare(b));
                     itemsLenta.sort((a,b) => a.localeCompare(b));
                     
-                    const renderList = (arr, title, badgeClass, badgeText) => {
+                    let orderKeysToMark = targetOrders.map(o => o.key).join(',');
+
+                    const renderList = (arr, vendorKey, title, badgeClass, badgeText, keysStr) => {
                         if (arr.length === 0) return "";
                         let res = `<div class="report-card">
                                      <div class="report-card-title" style="text-align:center; display:flex; align-items:center; justify-content:center; gap:10px;">
@@ -1571,7 +1581,7 @@
                                                     <span style="font-size:15px; font-weight:700; flex:1;"><b>${name}</b> (x${item.qty})</span>
                                                     <span style="color:#2e7d32; background:#e8f5e9; padding:4px 8px; border-radius:6px; font-size:12px; font-weight:900;">Заказано ✅</span>
                                                 </div>
-                                                <button class="btn-missing-toggle inactive" onclick="toggleMissingLocal(this, '${safeNameAttr}', ${item.qty})">Не довезли ‼️</button>
+                                                <button class="btn-missing-toggle inactive" onclick="toggleMissingLocal(this, '${safeNameAttr}', ${item.qty}, '${vendorKey}')">Не довезли ‼️</button>
                                               </div>`;
                                 } else {
                                     res += `<div class="report-card-item" style="flex-direction:row; justify-content:space-between; align-items:center; border-bottom:1px solid #eee;">
@@ -1581,19 +1591,17 @@
                                 }
                             }
                         });
+                        
+                        res += `<button onclick="commitMissingAndFinish('${vendorKey}', '${keysStr}')" class="btn-mode" style="background: #4caf50 !important; margin-top:15px; margin-bottom:0; font-size:15px !important; padding:15px !important;">✅ ПОДТВЕРДИТЬ ${badgeText}</button>`;
                         res += `</div>`;
                         return res;
                     };
                     
-                    html += renderList(itemsLenta, "Приемка", "vendor-lenta", "ЛЕНТА");
-                    html += renderList(itemsOzon, "Приемка", "vendor-ozon", "ОЗОН");
+                    html += renderList(itemsLenta, "lenta", "Приемка", "vendor-lenta", "ЛЕНТА", orderKeysToMark);
+                    html += renderList(itemsOzon, "ozon", "Приемка", "vendor-ozon", "ОЗОН", orderKeysToMark);
+                    
+                    html += `<div style="text-align:center; font-size:13px; color:#888; font-weight:bold; margin-top:5px; margin-bottom:15px;">Убедитесь, что отметили отсутствующие товары перед нажатием зеленой кнопки.</div>`;
                 }
-                
-                let orderKeysToMark = targetOrders.map(o => o.key).join(',');
-                html += `<div style="background:#fff; border-radius:18px; padding:20px; box-shadow:0 4px 20px rgba(0,0,0,0.05); margin-bottom:15px; text-align:center;">
-                            <div style="font-size:14px; color:#555; font-weight:bold; margin-bottom:15px;">Убедитесь, что отметили все отсутствующие товары перед завершением.</div>
-                            <button onclick="commitMissingAndFinish('${orderKeysToMark}')" class="btn-mode" style="background: #4caf50 !important; margin-bottom:0;">✅ ПОДТВЕРДИТЬ, ОСТАЛЬНОЕ ПРИЕХАЛО</button>
-                         </div>`;
             }
             
             document.getElementById('report-content-area').innerHTML = html || "<div class='report-card'>Пусто</div>";
@@ -1602,30 +1610,34 @@
         }
     }
 
-    async function commitMissingAndFinish(keysStr) {
+    async function commitMissingAndFinish(vendorKey, keysStr) {
         triggerHaptic();
-        if(!confirm("Завершить приемку? Отмеченные товары уйдут в недовозы, остальные будут считаться принятыми.")) return;
+        let vendorName = vendorKey === 'ozon' ? 'ОЗОН' : 'ЛЕНТА';
+        if(!confirm(`Завершить приемку ${vendorName}? Отмеченные товары уйдут в недовозы, остальные будут считаться принятыми.`)) return;
         
         showReportOverlay("Сохранение данных...");
         
         let missingKeys = Object.keys(state.tempMissingItems);
         for(let i=0; i<missingKeys.length; i++) {
             let name = missingKeys[i];
-            let qty = state.tempMissingItems[name].qty;
-            await database.ref("missing_items").push({ 
-                shop: state.currentShop, name: name, qty: qty, 
-                status: "pending", timestamp: firebase.database.ServerValue.TIMESTAMP 
-            });
+            if (state.tempMissingItems[name].vendor === vendorKey) {
+                let qty = state.tempMissingItems[name].qty;
+                await database.ref("missing_items").push({ 
+                    shop: state.currentShop, name: name, qty: qty, 
+                    status: "pending", timestamp: firebase.database.ServerValue.TIMESTAMP 
+                });
+                delete state.tempMissingItems[name];
+            }
         }
         
         let keys = keysStr.split(',');
         let updates = {};
-        keys.forEach(k => { updates[`orders/${k}/received`] = true; });
+        keys.forEach(k => { 
+            updates[`orders/${k}/${vendorKey}_received`] = true; 
+        });
         await database.ref().update(updates);
         
-        state.tempMissingItems = {}; 
-        
-        alert("✅ Отлично! Приемка завершена.");
+        alert(`✅ Отлично! Приемка ${vendorName} завершена.`);
         showLastOrder();
     }
 

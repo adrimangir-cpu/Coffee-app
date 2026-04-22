@@ -4,7 +4,7 @@
   <base target="_top">
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>Coffee Management App v5.4</title>
+  <title>Coffee Management App v5.5</title>
   
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-app-compat.js"></script>
@@ -111,6 +111,10 @@
     
     .item { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid rgba(0,0,0,0.03); transition: background-color 0.2s; }
     .item span { flex: 1; padding-right: 15px; font-weight: 700; font-size: 15px; line-height: 1.3; }
+    
+    /* Стили для "Уже в заказе" */
+    .repeat-item { background-color: #fff3e0 !important; border-left: 4px solid #ff9800; }
+    .repeat-item-text { font-size: 11px; color: #f57c00; font-weight: 900; margin-bottom: 2px; display: block; line-height: 1; text-transform: uppercase; }
 
     .controls { display: flex; align-items: center; gap: 6px; background-color: #f8f9fa; padding: 4px; border-radius: 12px; }
     
@@ -307,7 +311,7 @@
     var globalTgUserId = "";
     var state = { 
       currentShop: "", currentMode: "", productCatalog: {}, userBasket: {}, 
-      isProcessing: false, lastOrderItems: new Set(),
+      isProcessing: false, unprocessedItems: new Set(),
       appSettings: { hidden_categories: {}, new_shop_order_active: false },
       tempMissingItems: {} 
     };
@@ -376,7 +380,7 @@
 
     async function initWorkflow(mode) {
       triggerHaptic(); state.currentMode = mode; document.body.classList.add('workflow-active');
-      state.userBasket = {}; state.lastOrderItems.clear();
+      state.userBasket = {}; state.unprocessedItems.clear();
       
       showScreen('step-3');
       document.getElementById('nav-buttons').style.display = 'flex';
@@ -404,7 +408,7 @@
           const catalogSnap = await database.ref(path).once("value");
           state.productCatalog = catalogSnap.val() || {};
 
-          if (mode === 'order') {
+          if (mode === 'order' || mode === 'new_shop') {
               for(let k in state.productCatalog) {
                   let item = state.productCatalog[k];
                   if(item && item.globalCat && state.appSettings.hidden_categories[item.globalCat]) {
@@ -412,18 +416,22 @@
                   }
               }
 
-              let cutoffTime = Date.now() - (24 * 60 * 60 * 1000); 
               const ordersSnap = await database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(100).once("value");
               let shopOrders = [];
               ordersSnap.forEach(c => { let val = c.val(); if(val && typeof val === 'object') shopOrders.push(val); });
-              shopOrders.sort((a,b) => (b.timestamp || 0) - (a.timestamp || 0));
               
-              let pastOrders = shopOrders.filter(o => o.mode === 'order' && (o.timestamp || 0) < cutoffTime);
-              if (pastOrders.length > 0 && pastOrders[0].items) {
-                  let itemsArr = Array.isArray(pastOrders[0].items) ? pastOrders[0].items : Object.values(pastOrders[0].items);
-                  itemsArr.forEach(i => { if (i && i.name) state.lastOrderItems.add(i.name); });
-              }
+              // Находим товары, которые уже заказаны, но еще не сведены админом
+              state.unprocessedItems = new Set();
+              shopOrders.forEach(o => {
+                  if ((o.mode === 'order' || o.mode === 'new_shop') && o.svod !== true && o.ordered !== true) {
+                      let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
+                      itemsArr.forEach(i => {
+                          if (i && i.name) state.unprocessedItems.add(i.name);
+                      });
+                  }
+              });
 
+              // Возвращаем недовозы/отмены от админа в корзину
               const missSnap = await database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value");
               let hasCanceledMissings = false;
               missSnap.forEach(c => {
@@ -493,9 +501,14 @@
           let itemName = item.name ? String(item.name).trim() : "Без названия";
 
           let safeId = getSafeId(itemName);
+          
+          let isRepeat = state.unprocessedItems && state.unprocessedItems.has(itemName);
+          let repeatClass = isRepeat ? "repeat-item" : "";
+          let repeatLabel = isRepeat ? `<span class="repeat-item-text">уже в текущем заказе</span>` : "";
 
-          // Полностью убрана логика repeatClass (красная подсветка)
-          html += `<div class="item"><span>${itemName}</span><div class="controls" id="controls-${safeId}">`;
+          html += `<div class="item ${repeatClass}">
+                    <div>${repeatLabel}<span>${itemName}</span></div>
+                    <div class="controls" id="controls-${safeId}">`;
           
           if (state.currentMode === 'stoplist_fill') {
               let isStopped = state.userBasket[itemName] === 'Закончилось';
@@ -1303,18 +1316,25 @@
             }
 
             let pendingOrders = ordersArr.filter(o => !o.ordered);
+            let unreceivedOrders = ordersArr.filter(o => o.ordered === true && (!o.lenta_received || !o.ozon_received));
+
             let targetOrders = [];
             let isSvodDone = false;
 
             if (pendingOrders.length > 0) {
                 targetOrders = pendingOrders;
                 isSvodDone = pendingOrders.some(o => o.svod === true);
+            } else if (unreceivedOrders.length > 0) {
+                targetOrders = unreceivedOrders;
+                isSvodDone = true;
             } else {
                 ordersArr.sort((a,b) => (b.timestamp||0) - (a.timestamp||0));
                 let lastOrder = ordersArr[0];
-                let lastDate = new Date(lastOrder.timestamp).setHours(0,0,0,0);
-                targetOrders = ordersArr.filter(o => o.ordered && new Date(o.timestamp).setHours(0,0,0,0) === lastDate);
-                isSvodDone = true; 
+                if (lastOrder) {
+                    let lastDate = new Date(lastOrder.timestamp).setHours(0,0,0,0);
+                    targetOrders = ordersArr.filter(o => o.ordered && new Date(o.timestamp).setHours(0,0,0,0) === lastDate);
+                    isSvodDone = true; 
+                }
             }
 
             let aggregatedItems = {};
@@ -1442,10 +1462,15 @@
             });
 
             let pendingOrders = ordersArr.filter(o => !o.ordered);
+            let unreceivedOrders = ordersArr.filter(o => o.ordered === true && (!o.lenta_received || !o.ozon_received));
+
             let targetOrders = [];
             let isSvodDone = false;
 
-            if (pendingOrders.length > 0) {
+            if (unreceivedOrders.length > 0) {
+                targetOrders = unreceivedOrders;
+                isSvodDone = true;
+            } else if (pendingOrders.length > 0) {
                 targetOrders = pendingOrders;
                 isSvodDone = pendingOrders.some(o => o.svod === true);
             } else {

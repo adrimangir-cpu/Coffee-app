@@ -4,7 +4,7 @@
   <base target="_top">
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>Coffee Management App v6.2</title>
+  <title>Coffee Management App v6.3</title>
   
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-app-compat.js"></script>
@@ -111,7 +111,7 @@
     
     .item { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid rgba(0,0,0,0.03); transition: background-color 0.2s; }
     
-    /* Стили для умной подсветки */
+    /* Стили для "Уже в заказе" */
     .repeat-item { background-color: #fff3e0 !important; border-left: 4px solid #ff9800; }
     .repeat-item-text { font-size: 11px; color: #f57c00; font-weight: 900; margin-bottom: 2px; display: block; line-height: 1; text-transform: uppercase; }
 
@@ -210,6 +210,8 @@
       <button class="btn-mode btn-mode-checklist" onclick="initWorkflow('checklist')">📋 ЧЕК-ЛИСТ</button>
       <button class="btn-mode" style="background: var(--btn-stop-grad);" onclick="showScreen('step-stoplist')">🛑 СТОП-ЛИСТ</button>
       <button class="btn-mode btn-mode-none" onclick="processNoOrder()">➖ ЗАКАЗ НЕ НУЖЕН</button>
+      
+      <button class="btn-mode" style="background: var(--boss-gradient); margin-top: 12px;" onclick="showMyLastOrder()">🕒 ПОСЛЕДНИЙ ЗАКАЗ</button>
       
       <button class="btn-mode" style="background: var(--warning-gradient); margin-top: 12px;" onclick="showLastOrder()">🚚 ПРИЕМКА ЗАКУПКИ</button>
      
@@ -1357,6 +1359,148 @@
         }
     }
     
+    async function showMyLastOrder() {
+        showReportOverlay("Загружаю сводный заказ...");
+        try {
+            const [ordersSnap, missSnap, catSnap] = await Promise.all([
+                database.ref("orders").orderByChild("shop").equalTo(state.currentShop).once("value"),
+                database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value"),
+                database.ref("catalogs/order").once("value")
+            ]);
+
+            let orderCatalog = catSnap.val() || {};
+            let activeMissing = {};
+            missSnap.forEach(c => {
+                let m = c.val();
+                if (m && m.status !== 'arrived' && m.status !== 'canceled') {
+                    activeMissing[m.name] = true;
+                }
+            });
+
+            let ordersArr = [];
+            ordersSnap.forEach(c => {
+                let val = c.val();
+                if (val && typeof val === 'object' && (val.mode === 'order' || val.mode === 'new_shop')) {
+                    val.key = c.key;
+                    ordersArr.push(val);
+                }
+            });
+
+            if (ordersArr.length === 0) {
+                document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; font-weight:900;">Заказов еще не было.</div></div>`;
+                return;
+            }
+
+            let pendingOrders = ordersArr.filter(o => !o.ordered);
+            let targetOrders = [];
+            let isSvodDone = false;
+
+            if (pendingOrders.length > 0) {
+                targetOrders = pendingOrders;
+                isSvodDone = pendingOrders.some(o => o.svod === true);
+            } else {
+                ordersArr.sort((a,b) => (b.timestamp||0) - (a.timestamp||0));
+                let lastOrder = ordersArr[0];
+                let lastDate = new Date(lastOrder.timestamp).setHours(0,0,0,0);
+                targetOrders = ordersArr.filter(o => o.ordered && new Date(o.timestamp).setHours(0,0,0,0) === lastDate);
+                isSvodDone = true; 
+            }
+
+            let aggregatedItems = {};
+            let latestTime = 0;
+            let hasRealItems = false;
+
+            targetOrders.forEach(o => {
+                if ((o.timestamp || 0) > latestTime) latestTime = o.timestamp;
+                let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
+                
+                itemsArr.forEach(i => {
+                    if (!i || !i.name || i.name === "НЕТ ЗАКАЗА") return;
+                    hasRealItems = true;
+                    
+                    if (!aggregatedItems[i.name]) {
+                        aggregatedItems[i.name] = { qty: 0, status: 'pending', bot_error: false };
+                    }
+                    aggregatedItems[i.name].qty += parseFloat(i.qty) || 0;
+                    
+                    if (i.status === 'error' || i.bot_error) {
+                        aggregatedItems[i.name].status = 'error';
+                        aggregatedItems[i.name].bot_error = true;
+                    } else if (i.status === 'ordered' && aggregatedItems[i.name].status !== 'error') {
+                        aggregatedItems[i.name].status = 'ordered';
+                    }
+                });
+            });
+
+            let html = `<div class="report-card">
+                 <div class="report-card-title" style="text-align:center;">Мой текущий заказ</div>
+                 <div style="text-align:center; font-size:14px; color:#888; margin-bottom:15px; font-weight:700;">Обновлено: ${new Date(latestTime).toLocaleString()}</div>`;
+
+            if (!hasRealItems && targetOrders.some(o => {
+                let arr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
+                return arr.some(i => i && i.name === "НЕТ ЗАКАЗА");
+            })) {
+                html += `<div class="report-card-item" style="justify-content:center;"><b>ЗАКАЗ БЫЛ ПУСТЫМ</b></div>`;
+            } else {
+                Object.keys(activeMissing).forEach(missingName => {
+                    if (!aggregatedItems[missingName]) {
+                        aggregatedItems[missingName] = { qty: "Недовоз", status: 'error', bot_error: true };
+                    } else {
+                        aggregatedItems[missingName].status = 'error';
+                        aggregatedItems[missingName].bot_error = true;
+                    }
+                });
+
+                Object.keys(aggregatedItems).sort((a,b) => {
+                    let catA = Object.values(orderCatalog).find(c => c && c.name === a) || {};
+                    let catB = Object.values(orderCatalog).find(c => c && c.name === b) || {};
+                    let vendorA = (catA.vendor || 'Лента').toLowerCase();
+                    let vendorB = (catB.vendor || 'Лента').toLowerCase();
+                    if (vendorA < vendorB) return -1;
+                    if (vendorA > vendorB) return 1;
+                    return a.localeCompare(b);
+                }).forEach(name => {
+                    let item = aggregatedItems[name];
+                    let catItem = Object.values(orderCatalog).find(c => c && c.name === name) || {};
+                    let vendor = (catItem.vendor || 'Лента').toLowerCase();
+                    
+                    let vendorBadge = vendor === 'озон' ? `<span class="vendor-badge vendor-ozon">ОЗОН</span>` : `<span class="vendor-badge vendor-lenta">ЛЕНТА</span>`;
+                    
+                    let statusHtml = "";
+                    let isError = (item.status === 'error' || item.bot_error === true || activeMissing[name]);
+
+                    if (!isSvodDone) {
+                        statusHtml = isError ? `<span style="background:#ffebee; color:#c62828; padding:4px 8px; border-radius:6px; font-size:12px; font-weight:900;">Нет в наличии ❌</span>` : `<span style="background:#fff3e0; color:#f57c00; padding:4px 8px; border-radius:6px; font-size:12px; font-weight:900;">В ожидании ⏳</span>`;
+                    } else {
+                        if (isError) {
+                            statusHtml = `<span style="background:#ffebee; color:#c62828; padding:4px 8px; border-radius:6px; font-size:12px; font-weight:900;">Нет в наличии ❌</span>`;
+                        } else if (item.status === 'ordered') {
+                            statusHtml = `<span style="background:#e8f5e9; color:#2e7d32; padding:4px 8px; border-radius:6px; font-size:12px; font-weight:900;">Заказано ✅</span>`;
+                        } else {
+                            statusHtml = `<span style="background:#fff3e0; color:#f57c00; padding:4px 8px; border-radius:6px; font-size:12px; font-weight:900;">Ожидает ⏳</span>`;
+                        }
+                    }
+
+                    let displayQty = (item.qty === "Недовоз") ? "" : `(x${item.qty})`;
+
+                    html += `<div class="report-card-item" style="display:flex; flex-direction:row; align-items:center; justify-content:space-between; border-bottom:1px solid #eee; padding: 12px 0;">
+                                <div style="flex:1; margin-right:10px;">
+                                    ${vendorBadge}<br>
+                                    <span style="font-size:15px; font-weight:700;"><b>${name}</b> ${displayQty}</span> 
+                                </div>
+                                <div style="flex-shrink:0;">${statusHtml}</div>
+                              </div>`;
+                });
+            }
+            
+            html += `</div>`;
+            document.getElementById('report-content-area').innerHTML = html;
+        } catch (err) {
+            console.error(err);
+            document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; color:red; font-weight:900;">Ошибка загрузки списка.</div></div>`; 
+        }
+    }
+
     async function showLastOrder() {
         showReportOverlay("Загружаю приемку...");
         state.tempMissingItems = {}; 
@@ -1600,7 +1744,6 @@
         showReportOverlay("Сохранение данных...");
         
         try {
-            // Находим реально доехавшие товары
             let arrivedItemsToClear = [];
             let catSnap = await database.ref("catalogs").once("value");
             let catalogs = catSnap.val() || {};
@@ -1776,7 +1919,6 @@
         let d = localStorage.getItem("draft_" + state.currentShop + "_" + state.currentMode); 
         if(d) { 
            let p = JSON.parse(d); 
-           // Мы убрали проверку времени (12 часов). Теперь корзина не сгорает!
            if (!state.userBasket["_catinfo"]) state.userBasket["_catinfo"] = {};
            for(let k in p.basket) {
                if(k !== "_catinfo" && state.userBasket[k] === undefined) {

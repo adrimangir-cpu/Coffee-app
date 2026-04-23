@@ -700,9 +700,16 @@
             // 2. Обновления статусов
             for (let key in tempMissingStatus) {
                 if (!missingDeletions.has(key)) {
+                    let missingItem = cachedData.missing[key];
+                    let newStatus = tempMissingStatus[key];
+                    
+                    if (newStatus === 'arrived' && missingItem) {
+                        await autoRemoveFromStoplist(missingItem.shop, [missingItem.name]);
+                    }
+                    
                     promises.push(fetch(`${FB_URL}/missing_items/${key}.json`, {
                         method: 'PATCH',
-                        body: JSON.stringify({status: tempMissingStatus[key], timestamp: Date.now()})
+                        body: JSON.stringify({status: newStatus, timestamp: Date.now()})
                     }));
                 }
             }
@@ -773,6 +780,7 @@
                 let currentStat = tempMissingStatus[m.key] || m.status;
                 let isDeleted = missingDeletions.has(m.key);
                 let rowStyle = isDeleted ? "opacity: 0.4; background: #eee;" : "";
+                let safeNameAttr = m.name.replace(/'/g, "\\'");
 
                 if (isMissingEditMode) {
                     activeHtml += `<tr style="${rowStyle}">
@@ -1356,6 +1364,44 @@
                 loadTab('orders', document.querySelector('.tab-btn.active'));
             } catch(e) { alert("❌ Ошибка: " + e.message); }
         } else { alert("Нет активных заказов для оформления."); }
+    }
+
+    // АВТОУДАЛЕНИЕ ДОЕХАВШИХ ТОВАРОВ ИЗ СТОП-ЛИСТА (Для Дашборда)
+    async function autoRemoveFromStoplist(shop, itemNamesArray) {
+        if (!itemNamesArray || itemNamesArray.length === 0) return;
+        try {
+            let snap = await fetch(`${FB_URL}/orders.json`).then(r => r.json());
+            if (!snap) return;
+            let shopOrders = [];
+            for (let k in snap) {
+                let val = snap[k];
+                if (val && val.shop === shop && val.mode === 'stoplist_fill') {
+                    val.key = k;
+                    shopOrders.push(val);
+                }
+            }
+            if (shopOrders.length === 0) return;
+            shopOrders.sort((a,b) => b.timestamp - a.timestamp);
+            let latestStoplist = shopOrders[0];
+            
+            if (!latestStoplist.items) return;
+            let itemsArr = Array.isArray(latestStoplist.items) ? latestStoplist.items : Object.values(latestStoplist.items);
+            
+            let namesToRemove = itemNamesArray.map(n => String(n).trim().toLowerCase());
+            let newItems = itemsArr.filter(i => {
+                if (!i || !i.name) return false;
+                let iName = String(i.name).trim().toLowerCase();
+                return !namesToRemove.includes(iName);
+            });
+            
+            if (newItems.length !== itemsArr.length) {
+                if (newItems.length === 0) {
+                    await fetch(`${FB_URL}/orders/${latestStoplist.key}/items.json`, {method: 'PUT', body: JSON.stringify([{name: "Всё в наличии", qty: "В наличии"}])});
+                } else {
+                    await fetch(`${FB_URL}/orders/${latestStoplist.key}/items.json`, {method: 'PUT', body: JSON.stringify(newItems)});
+                }
+            }
+        } catch(e) { console.error("Auto stoplist update failed:", e); }
     }
 
     function toggleSvodEdit() {

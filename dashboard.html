@@ -780,7 +780,6 @@
                 let currentStat = tempMissingStatus[m.key] || m.status;
                 let isDeleted = missingDeletions.has(m.key);
                 let rowStyle = isDeleted ? "opacity: 0.4; background: #eee;" : "";
-                let safeNameAttr = m.name.replace(/'/g, "\\'");
 
                 if (isMissingEditMode) {
                     activeHtml += `<tr style="${rowStyle}">
@@ -926,7 +925,7 @@
                              🍾 <b style="font-size:17px;">Закончившиеся сиропы:</b><br><div style="color:#333; margin-top:5px; font-weight:900; font-size:16px; line-height: 1.6;">${allSyrups.join("<br>")}</div></div>`;
                 }
 
-                if (!foundItems) html += `<div style="color:#4caf50; font-weight:bold; font-size:17px; padding:10px 0;">Стоп-лист пуст (всё в наличии)</div>`;
+                if (!foundItems || itemsArr[0].name === "Всё в наличии") html += `<div style="color:#4caf50; font-weight:bold; font-size:17px; padding:10px 0;">Стоп-лист пуст (всё в наличии)</div>`;
             } else { html += `<div style="color:#888; font-size:17px; padding:10px 0; font-weight:bold;">Нет данных о стоп-листе</div>`; }
             html += `</div>`;
         });
@@ -1079,6 +1078,39 @@
             }
         });
 
+        // === ОЧИСТКА "НЕТ ЗАКАЗА" ===
+        let keysToDelete = [];
+        let shopHasRealOrder = {};
+        
+        todaysOrders.forEach(o => {
+            let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
+            let isReal = itemsArr.some(i => i && i.name && i.name !== "НЕТ ЗАКАЗА");
+            if (isReal) shopHasRealOrder[o.shop] = true;
+        });
+
+        todaysOrders = todaysOrders.filter(o => {
+            let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
+            let isNone = itemsArr.length === 1 && itemsArr[0].name === "НЕТ ЗАКАЗА";
+            
+            if (isNone && shopHasRealOrder[o.shop]) {
+                keysToDelete.push(o.key);
+                return false;
+            }
+            if (itemsArr.length === 0) {
+                keysToDelete.push(o.key);
+                return false;
+            }
+            return true;
+        });
+
+        if (keysToDelete.length > 0) {
+            keysToDelete.forEach(k => {
+                fetch(`${FB_URL}/orders/${k}.json`, { method: 'DELETE' }).catch(e=>{});
+                delete cachedData.orders[k];
+            });
+        }
+        // =============================
+
         // Группировка: Дата -> Кофейня -> Товары
         let svodDataByDate = {}; 
         
@@ -1087,7 +1119,7 @@
             let dateKey = d.toLocaleDateString('ru-RU');
             
             if (!svodDataByDate[dateKey]) svodDataByDate[dateKey] = {};
-            if (!svodDataByDate[dateKey][o.shop]) svodDataByDate[dateKey][o.shop] = { items: {}, lentaSum: 0, ozonSum: 0, kuperSum: 0, comments: [], all_svod: true };
+            if (!svodDataByDate[dateKey][o.shop]) svodDataByDate[dateKey][o.shop] = { items: {}, lentaSum: 0, ozonSum: 0, kuperSum: 0, comments: [], all_svod: true, no_order: false };
             
             let sd = svodDataByDate[dateKey][o.shop];
             if (o.comment && o.comment.trim() !== "") sd.comments.push(o.comment);
@@ -1097,6 +1129,11 @@
             
             itemsArr.forEach(i => {
                 if (i && i.name) {
+                    if (i.name === "НЕТ ЗАКАЗА") {
+                        sd.no_order = true;
+                        return; // Пропускаем добавление в товары
+                    }
+                    
                     if (!sd.items[i.name]) {
                         sd.items[i.name] = { qty: 0, bot_error: false, status: 'pending' };
                     }
@@ -1113,19 +1150,6 @@
                 }
             });
         });
-
-        // Жесткая фильтрация: если в конкретную дату у кофейни есть хоть один реальный товар, удаляем "НЕТ ЗАКАЗА"
-        for (let dk in svodDataByDate) {
-            for (let s in svodDataByDate[dk]) {
-                let hasReal = false;
-                for (let n in svodDataByDate[dk][s].items) {
-                    if (n !== "НЕТ ЗАКАЗА" && svodDataByDate[dk][s].items[n].qty > 0) hasReal = true;
-                }
-                if (hasReal && svodDataByDate[dk][s].items["НЕТ ЗАКАЗА"]) {
-                    delete svodDataByDate[dk][s].items["НЕТ ЗАКАЗА"];
-                }
-            }
-        }
 
         let btnEditColor = isSvodEditMode ? "#f44336" : "#0288d1";
         let btnEditText = isSvodEditMode ? "❌ Выйти из редактирования" : "✏️ Режим редактирования";
@@ -1194,84 +1218,92 @@
                         if (vendorA < vendorB) return -1; if (vendorA > vendorB) return 1; return a.localeCompare(b);
                     });
 
-                    sortedItemNames.forEach(name => {
-                        let catItem = Object.values(cachedData.catalogOrder).find(c => c && c.name === name) || {};
-                        let vendor = catItem.vendor || 'Лента';
-                        let price = parseFloat(catItem.price) || 0;
-                        
-                        let originalQty = shopsObj[shop].items[name].qty;
-                        let actualQty = (tempSvodQty[dateStr] && tempSvodQty[dateStr][shop] && tempSvodQty[dateStr][shop][name] !== undefined) ? tempSvodQty[dateStr][shop][name] : originalQty;
-                        
-                        let isDeleted = svodDeletions.some(d => d.date === dateStr && d.shop === shop && d.name === name);
-                        let displayQty = isDeleted ? 0 : actualQty;
+                    if (sortedItemNames.length === 0 && shopsObj[shop].no_order) {
+                        html += `<tr class="svoditem_${safeShopDate} svodlvl3_of_${safeDate}" style="display:table-row; background:#f1f8e9;">
+                                    <td colspan="5" style="padding:15px; padding-left:45px; font-weight:bold; color:#2e7d32; text-align:center;">
+                                        ➖ Заказ на эту дату не требуется (отмечено бариста)
+                                    </td>
+                                 </tr>`;
+                    } else {
+                        sortedItemNames.forEach(name => {
+                            let catItem = Object.values(cachedData.catalogOrder).find(c => c && c.name === name) || {};
+                            let vendor = catItem.vendor || 'Лента';
+                            let price = parseFloat(catItem.price) || 0;
+                            
+                            let originalQty = shopsObj[shop].items[name].qty;
+                            let actualQty = (tempSvodQty[dateStr] && tempSvodQty[dateStr][shop] && tempSvodQty[dateStr][shop][name] !== undefined) ? tempSvodQty[dateStr][shop][name] : originalQty;
+                            
+                            let isDeleted = svodDeletions.some(d => d.date === dateStr && d.shop === shop && d.name === name);
+                            let displayQty = isDeleted ? 0 : actualQty;
 
-                        if (vendor.toLowerCase() === 'лента') shopsObj[shop].lentaSum += (displayQty * price);
-                        
-                        let isKuper = shopsObj[shop].lentaSum > 0 && shopsObj[shop].lentaSum < 2000;
-                        if (vendor.toLowerCase() === 'лента' && isKuper) vendor = 'Купер';
+                            if (vendor.toLowerCase() === 'лента') shopsObj[shop].lentaSum += (displayQty * price);
+                            
+                            let isKuper = shopsObj[shop].lentaSum > 0 && shopsObj[shop].lentaSum < 2000;
+                            if (vendor.toLowerCase() === 'лента' && isKuper) vendor = 'Купер';
 
-                        let baseStatus = shopsObj[shop].items[name].status;
-                        if (!shopsObj[shop].all_svod) { baseStatus = 'pending'; }
-                        let itemStatus = (tempSvodStatus[dateStr] && tempSvodStatus[dateStr][shop] && tempSvodStatus[dateStr][shop][name]) ? tempSvodStatus[dateStr][shop][name] : baseStatus;
-                        
-                        let isRepeat = historyKeys.has(shop + "|" + name);
-                        let link1 = catItem.link ? `<a href="${catItem.link}" target="_blank" style="color:#0288d1; font-weight:bold;">🔗 Осн</a>` : "";
-                        let link2 = catItem.link2 ? `<a href="${catItem.link2}" target="_blank" style="color:#e53935; font-weight:bold; margin-left:8px;">🔗 Рез</a>` : "";
-                        let linksHtml = [link1, link2].filter(Boolean).join(" ");
+                            let baseStatus = shopsObj[shop].items[name].status;
+                            if (!shopsObj[shop].all_svod) { baseStatus = 'pending'; }
+                            let itemStatus = (tempSvodStatus[dateStr] && tempSvodStatus[dateStr][shop] && tempSvodStatus[dateStr][shop][name]) ? tempSvodStatus[dateStr][shop][name] : baseStatus;
+                            
+                            let isRepeat = historyKeys.has(shop + "|" + name);
+                            let link1 = catItem.link ? `<a href="${catItem.link}" target="_blank" style="color:#0288d1; font-weight:bold;">🔗 Осн</a>` : "";
+                            let link2 = catItem.link2 ? `<a href="${catItem.link2}" target="_blank" style="color:#e53935; font-weight:bold; margin-left:8px;">🔗 Рез</a>` : "";
+                            let linksHtml = [link1, link2].filter(Boolean).join(" ");
 
-                        let cost = price * displayQty;
-                        if (vendor.toLowerCase() === 'озон' && isRepeat) cost = 0;
-                        
-                        if (vendor.toLowerCase() === 'лента') totalLenta += cost;
-                        else if (vendor.toLowerCase() === 'озон') totalOzon += cost;
-                        else if (vendor.toLowerCase() === 'купер') totalKuper += cost;
+                            let cost = price * displayQty;
+                            if (vendor.toLowerCase() === 'озон' && isRepeat) cost = 0;
+                            
+                            if (vendor.toLowerCase() === 'лента') totalLenta += cost;
+                            else if (vendor.toLowerCase() === 'озон') totalOzon += cost;
+                            else if (vendor.toLowerCase() === 'купер') totalKuper += cost;
 
-                        let safeNameParam = name.replace(/'/g, "\\'");
-                        let safeNameAttr = name.replace(/"/g, '&quot;');
-                        let safeShopAttr = shop.replace(/"/g, '&quot;');
-                        let safeDateAttr = dateStr;
+                            let safeNameParam = name.replace(/'/g, "\\'");
+                            let safeNameAttr = name.replace(/"/g, '&quot;');
+                            let safeShopAttr = shop.replace(/"/g, '&quot;');
+                            let safeDateAttr = dateStr;
 
-                        let repeatBadge = isRepeat ? `<span style='color:#d32f2f; font-size:13px; margin-left:5px; font-weight:bold;'>(Повтор)</span>` : ``;
-                        let rowBg = (itemStatus === 'error') ? `background-color: #fff8f8;` : ``;
+                            let repeatBadge = isRepeat ? `<span style='color:#d32f2f; font-size:13px; margin-left:5px; font-weight:bold;'>(Повтор)</span>` : ``;
+                            let rowBg = (itemStatus === 'error') ? `background-color: #fff8f8;` : ``;
 
-                        let statusText = "Ожидает ⏳";
-                        let statusColor = "#f57c00";
-                        let statusBg = "#fff3e0";
-                        
-                        if (itemStatus === 'ordered') {
-                            statusText = "Заказано ✅"; statusColor = "#2e7d32"; statusBg = "#e8f5e9";
-                        } else if (itemStatus === 'error') {
-                            statusText = "Ошибка ❌"; statusColor = "#c62828"; statusBg = "#ffebee";
-                        }
-                        
-                        let statusBadge = `<span style="background:${statusBg}; color:${statusColor}; padding:6px 10px; border-radius:8px; font-size:13px; font-weight:900; display:inline-block;">${statusText}</span>`;
+                            let statusText = "Ожидает ⏳";
+                            let statusColor = "#f57c00";
+                            let statusBg = "#fff3e0";
+                            
+                            if (itemStatus === 'ordered') {
+                                statusText = "Заказано ✅"; statusColor = "#2e7d32"; statusBg = "#e8f5e9";
+                            } else if (itemStatus === 'error') {
+                                statusText = "Ошибка ❌"; statusColor = "#c62828"; statusBg = "#ffebee";
+                            }
+                            
+                            let statusBadge = `<span style="background:${statusBg}; color:${statusColor}; padding:6px 10px; border-radius:8px; font-size:13px; font-weight:900; display:inline-block;">${statusText}</span>`;
 
-                        if (isSvodEditMode) {
-                            statusBadge = `<button onclick="markSvodStatusChange('${safeDateAttr}', '${safeShopAttr}', '${safeNameParam}', '${itemStatus}')" style="cursor:pointer; background:${statusBg}; color:${statusColor}; border:2px dashed ${statusColor}; padding:4px 8px; border-radius:8px; font-size:13px; font-weight:900; display:inline-block; box-shadow:0 2px 4px rgba(0,0,0,0.1);">${statusText} 🔄</button>`;
-                        }
+                            if (isSvodEditMode) {
+                                statusBadge = `<button onclick="markSvodStatusChange('${safeDateAttr}', '${safeShopAttr}', '${safeNameParam}', '${itemStatus}')" style="cursor:pointer; background:${statusBg}; color:${statusColor}; border:2px dashed ${statusColor}; padding:4px 8px; border-radius:8px; font-size:13px; font-weight:900; display:inline-block; box-shadow:0 2px 4px rgba(0,0,0,0.1);">${statusText} 🔄</button>`;
+                            }
 
-                        if (isSvodEditMode) {
-                            html += `<tr class="svoditem_${safeShopDate} svodlvl3_of_${safeDate}" style="display:table-row; color:${isDeleted ? '#aaa':'#333'}; ${rowBg}">
-                                <td style="padding-left:45px; font-size:17px; font-weight:bold;">${name} ${repeatBadge}</td>
-                                <td style="text-align:center;">
-                                    <input type="number" class="edit-svod-input" data-date="${safeDateAttr}" data-shop="${safeShopAttr}" data-item="${safeNameAttr}" value="${actualQty}" ${isDeleted ? 'disabled' : ''} onchange="preserveSvodInputs(); renderOrdersSvod();" style="width: 70px; text-align: center; font-size: 16px; font-weight: bold; color: ${isDeleted ? '#aaa' : '#311b92'}; border: 2px solid ${isDeleted ? '#eee' : '#7E57C2'}; border-radius: 6px; padding: 4px;">
-                                </td>
-                                <td style="text-align:center;">${statusBadge}</td>
-                                <td style="font-size:16px; color:${isDeleted ? '#aaa' : '#333'}">${vendor}</td>
-                                <td style="text-align:center;">
-                                    <button class="btn-del" ${isDeleted ? 'disabled' : ''} onclick="markSvodDelete(this, '${dateStr}', '${shop}', '${safeNameParam}')">🗑</button>
-                                </td>
-                            </tr>`;
-                        } else {
-                            html += `<tr class="svoditem_${safeShopDate} svodlvl3_of_${safeDate}" style="display:table-row; ${rowBg}">
-                                <td style="padding-left:45px; font-size:17px; font-weight:bold;">${name} ${repeatBadge}</td>
-                                <td style="text-align:center; font-size:18px; font-weight:bold; color:#311b92;">${actualQty}</td>
-                                <td style="text-align:center;">${statusBadge}</td>
-                                <td style="font-size:16px;">${vendor}</td>
-                                <td style="text-align:center;">${linksHtml}</td>
-                            </tr>`;
-                        }
-                    });
+                            if (isSvodEditMode) {
+                                html += `<tr class="svoditem_${safeShopDate} svodlvl3_of_${safeDate}" style="display:table-row; color:${isDeleted ? '#aaa':'#333'}; ${rowBg}">
+                                    <td style="padding-left:45px; font-size:17px; font-weight:bold;">${name} ${repeatBadge}</td>
+                                    <td style="text-align:center;">
+                                        <input type="number" class="edit-svod-input" data-date="${safeDateAttr}" data-shop="${safeShopAttr}" data-item="${safeNameAttr}" value="${actualQty}" ${isDeleted ? 'disabled' : ''} onchange="preserveSvodInputs(); renderOrdersSvod();" style="width: 70px; text-align: center; font-size: 16px; font-weight: bold; color: ${isDeleted ? '#aaa' : '#311b92'}; border: 2px solid ${isDeleted ? '#eee' : '#7E57C2'}; border-radius: 6px; padding: 4px;">
+                                    </td>
+                                    <td style="text-align:center;">${statusBadge}</td>
+                                    <td style="font-size:16px; color:${isDeleted ? '#aaa' : '#333'}">${vendor}</td>
+                                    <td style="text-align:center;">
+                                        <button class="btn-del" ${isDeleted ? 'disabled' : ''} onclick="markSvodDelete(this, '${dateStr}', '${shop}', '${safeNameParam}')">🗑</button>
+                                    </td>
+                                </tr>`;
+                            } else {
+                                html += `<tr class="svoditem_${safeShopDate} svodlvl3_of_${safeDate}" style="display:table-row; ${rowBg}">
+                                    <td style="padding-left:45px; font-size:17px; font-weight:bold;">${name} ${repeatBadge}</td>
+                                    <td style="text-align:center; font-size:18px; font-weight:bold; color:#311b92;">${actualQty}</td>
+                                    <td style="text-align:center;">${statusBadge}</td>
+                                    <td style="font-size:16px;">${vendor}</td>
+                                    <td style="text-align:center;">${linksHtml}</td>
+                                </tr>`;
+                            }
+                        });
+                    }
                     
                     if(shopsObj[shop].comments.length > 0) {
                         html += `<tr class="svoditem_${safeShopDate} svodlvl3_of_${safeDate}" style="display:table-row;"><td colspan="5" style="padding:15px; padding-left:45px; font-style:italic; font-size:17px; color:#ef6c00; background:#fff3e0;">💬 Комментарий: <b>${shopsObj[shop].comments.join(' | ')}</b></td></tr>`;

@@ -287,6 +287,21 @@
         if (isClosing) document.querySelectorAll('.lvl3_of_' + gcId).forEach(el => el.style.display = 'none');
     }
 
+    function toggleSvodShop(safeShopId) {
+        let els = document.querySelectorAll('.svod_' + safeShopId);
+        let isOpening = false;
+        els.forEach(el => {
+            if (el.style.display === 'none' || el.style.display === '') {
+                el.style.display = 'table-row';
+                isOpening = true;
+            } else {
+                el.style.display = 'none';
+            }
+        });
+        if (isOpening) openSvodShops.add(safeShopId);
+        else openSvodShops.delete(safeShopId);
+    }
+
     async function triggerPcBuild(cmd) {
         if (!confirm(`Отправить команду ${cmd} на ПК?`)) return;
         try {
@@ -463,27 +478,43 @@
         renderOrdersSvod(); 
     }
 
-    function renderOrdersSvod() {
+    async function renderOrdersSvod() {
         const box = document.getElementById('content');
-        let cutoffMonth = Date.now() - (30 * 24 * 60 * 60 * 1000); 
-        let todayStart = new Date().setHours(0,0,0,0);
-        let historyKeys = new Set(); let todaysOrders = []; let historyOrdersList = [];
+        
+        // Подгружаем недовозы
+        let resMiss = await fetch(`${FB_URL}/missing_items.json`);
+        let missingData = await resMiss.json() || {};
+        let activeMissing = {};
+        Object.values(missingData).forEach(m => {
+            if (m && m.status !== 'arrived' && m.status !== 'canceled') {
+                if (!activeMissing[m.shop]) activeMissing[m.shop] = new Set();
+                activeMissing[m.shop].add(m.name);
+            }
+        });
+
+        let todaysOrders = []; let historyOrdersList = [];
         let allOrders = Object.values(cachedData.orders).sort((a,b) => (b.timestamp || 0) - (a.timestamp || 0));
+        let lastOrderItems = {}; // Сохраняем только САМЫЙ ПОСЛЕДНИЙ заказ для каждой кофейни
+
+        let cutoffMonth = Date.now() - (30 * 24 * 60 * 60 * 1000); 
 
         allOrders.forEach(o => {
             if (o && (o.mode === 'order' || o.mode === 'new_shop')) {
-                if (!o.ordered) todaysOrders.push(o);
-                else {
+                if (!o.ordered) {
+                    todaysOrders.push(o);
+                } else {
                     if ((o.timestamp || 0) >= cutoffMonth) historyOrdersList.push(o);
-                    if ((o.timestamp || 0) < todayStart) {
+                    // Если это самый первый встретившийся (то есть последний по дате) завершенный заказ
+                    if (!lastOrderItems[o.shop]) {
+                        lastOrderItems[o.shop] = new Set();
                         let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
-                        itemsArr.forEach(i => { if(i) historyKeys.add(o.shop + "|" + i.name); });
+                        itemsArr.forEach(i => { if(i && i.name) lastOrderItems[o.shop].add(i.name); });
                     }
                 }
             }
         });
 
-        // Умная очистка "НЕТ ЗАКАЗА"
+        // === ОЧИСТКА "НЕТ ЗАКАЗА" ===
         let keysToDelete = []; let shopHasRealOrder = {};
         todaysOrders.forEach(o => {
             let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
@@ -598,13 +629,18 @@
                             if (!shopsObj[shop].all_svod) baseStatus = 'pending';
                             let itemStatus = (tempSvodStatus[dateStr] && tempSvodStatus[dateStr][shop] && tempSvodStatus[dateStr][shop][name]) ? tempSvodStatus[dateStr][shop][name] : baseStatus;
                             
-                            let isRepeat = historyKeys.has(shop + "|" + name);
+                            // === УМНАЯ ПРОВЕРКА ПОВТОРОВ ===
+                            let isInLastOrder = lastOrderItems[shop] && lastOrderItems[shop].has(name);
+                            let isInMissing = activeMissing[shop] && activeMissing[shop].has(name);
+                            let isRepeat = isInLastOrder || isInMissing;
+
                             let link1 = catItem.link ? `<a href="${catItem.link}" target="_blank" style="color:#0288d1; font-weight:bold;">🔗 Осн</a>` : "";
                             let link2 = catItem.link2 ? `<a href="${catItem.link2}" target="_blank" style="color:#e53935; font-weight:bold; margin-left:8px;">🔗 Рез</a>` : "";
                             let linksHtml = [link1, link2].filter(Boolean).join(" ");
 
                             let cost = price * displayQty;
                             if (vendor.toLowerCase() === 'озон' && isRepeat) cost = 0;
+                            
                             if (vendor.toLowerCase() === 'лента') totalLenta += cost;
                             else if (vendor.toLowerCase() === 'озон') totalOzon += cost;
                             else if (vendor.toLowerCase() === 'купер') totalKuper += cost;
@@ -612,7 +648,8 @@
                             let safeNameParam = name.replace(/'/g, "\\'"); let safeNameAttr = name.replace(/"/g, '&quot;');
                             let safeShopAttr = shop.replace(/"/g, '&quot;'); let safeDateAttr = dateStr;
 
-                            let repeatBadge = isRepeat ? `<span style='color:#d32f2f; font-size:13px; margin-left:5px; font-weight:bold;'>(Повтор)</span>` : ``;
+                            let repeatReason = isInMissing ? "В недовозах" : "Был в прошлом";
+                            let repeatBadge = isRepeat ? `<span style='color:#d32f2f; font-size:13px; margin-left:5px; font-weight:bold;'>(${repeatReason})</span>` : ``;
                             let rowBg = (itemStatus === 'error') ? `background-color: #fff8f8;` : ``;
 
                             let statusText = "Ожидает ⏳"; let statusColor = "#f57c00"; let statusBg = "#fff3e0";
@@ -691,6 +728,113 @@
         }
         html += `</table></div>`;
         box.innerHTML = html;
+    }
+
+    async function buildSvodReport() {
+      showReportOverlay("Сборка закупки (Выполняю команду)...");
+      
+      try {
+          const [ordersSnap, catalogSnap, missingSnap] = await Promise.all([
+             database.ref("orders").once("value"), 
+             database.ref("catalogs/order").once("value"),
+             database.ref("missing_items").once("value")
+          ]);
+          
+          let catalog = catalogSnap.val() || {};
+          let orders = ordersSnap.val() || {};
+          let missingData = missingSnap.val() || {};
+          let updates = {};
+          let totalSvod = 0;
+          let shopSums = {};
+
+          // 1. Вычисляем активные недовозы
+          let activeMissing = {};
+          Object.values(missingData).forEach(m => {
+              if (m && m.status !== 'arrived' && m.status !== 'canceled') {
+                  if (!activeMissing[m.shop]) activeMissing[m.shop] = new Set();
+                  activeMissing[m.shop].add(m.name);
+              }
+          });
+
+          // 2. Вычисляем ТОЛЬКО последний заказ для каждой кофейни
+          let allOrdersArr = Object.values(orders).sort((a,b) => (b.timestamp || 0) - (a.timestamp || 0));
+          let lastOrderItems = {};
+          allOrdersArr.forEach(o => {
+              if (o && (o.mode === 'order' || o.mode === 'new_shop') && o.ordered) {
+                  if (!lastOrderItems[o.shop]) {
+                      lastOrderItems[o.shop] = new Set();
+                      let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
+                      itemsArr.forEach(i => { if(i && i.name) lastOrderItems[o.shop].add(i.name); });
+                  }
+              }
+          });
+
+          // 3. Формируем свод
+          Object.keys(orders).forEach(k => {
+              let o = orders[k];
+              if (o && (o.mode === 'order' || o.mode === 'new_shop') && o.svod === false) {
+                  updates[k + "/svod"] = true; 
+                  if(!shopSums[o.shop]) shopSums[o.shop] = 0;
+                  
+                  let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
+                  let changed = false;
+
+                  itemsArr.forEach(i => {
+                      if(i && i.name && i.name !== "НЕТ ЗАКАЗА") {
+                          let catItem = Object.values(catalog).find(cat => cat && cat.name === i.name);
+                          let price = catItem ? parseFloat(catItem.price) || 0 : 0;
+                          let vendor = catItem ? String(catItem.vendor).toLowerCase() : 'лента';
+                          
+                          let isOzon = vendor.includes('озон') || vendor.includes('ozon');
+                          let isInLastOrder = lastOrderItems[o.shop] && lastOrderItems[o.shop].has(i.name);
+                          let isInMissing = activeMissing[o.shop] && activeMissing[o.shop].has(i.name);
+                          let isRepeat = isInLastOrder || isInMissing;
+
+                          // БЛОКИРУЕМ ПОВТОРЫ ОЗОНА ДЛЯ БОТА
+                          if (isOzon && isRepeat) {
+                              i.status = 'error';
+                              i.bot_error = true;
+                              changed = true;
+                          } else if (!isOzon) {
+                              let cost = price * parseFloat(i.qty);
+                              totalSvod += cost;
+                              shopSums[o.shop] += cost;
+                          }
+                      }
+                  });
+
+                  if (changed) {
+                      updates[k + "/items"] = itemsArr;
+                  }
+              }
+          });
+
+          if (Object.keys(updates).length > 0) {
+              await database.ref("orders").update(updates);
+          }
+
+          let html = `<div class="report-card"><div class="report-card-title">Сводная закупка</div>`;
+          
+          if (Object.keys(updates).length === 0) {
+              html += `<div style="padding:10px 0; text-align:center; font-weight:900;">Нет новых необработанных заказов на данный момент.</div>`;
+          } else {
+              html += `<div style="padding:10px 0; font-size:15px; color:#555; margin-bottom:10px; font-weight:700;">✅ Команда выполнена. Заказы переведены в статус <b>"Приемка"</b> для сотрудников. Повторы Ozon заблокированы.</div>`;
+              for(let s in shopSums) {
+                  if(shopSums[s] > 0) {
+                      html += `<div class="report-card-item"><span style="font-size:17px; color:#311B92; font-weight:900;">${s}</span><b style="font-size:17px;">${shopSums[s]} ₽</b></div>`;
+                  }
+              }
+              html += `<div style="text-align:right; font-size:22px; color:#4caf50; margin-top:20px; font-weight:900;">ИТОГО: ${totalSvod} ₽</div>`;
+              
+              database.ref("bot_control/notifications").push({ type: "svod_ready", total: totalSvod, timestamp: Date.now() });
+          }
+          html += `</div>`;
+          document.getElementById('report-content-area').innerHTML = html;
+
+      } catch (e) {
+          console.error(e);
+          document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="color:red; font-weight:900; text-align:center;">Ошибка формирования свода.</div></div>`;
+      }
     }
 
     async function saveSvodEdits() {

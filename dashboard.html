@@ -5,7 +5,7 @@
     <title>Coffee CRM - Управление сетью TEIKU</title>
     <style>
         /* =========================================
-           ОБЩИЕ СТИЛИ
+           ОБЩИЕ СТИЛИ И НАВИГАЦИЯ
         ========================================= */
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: linear-gradient(135deg, #FFF0F5 0%, #ede7f6 100%); margin: 0; padding: 20px; color: #333; min-height: 100vh; }
         .nav { background: linear-gradient(135deg, #F06292 0%, #7E57C2 100%); color: white; padding: 20px; border-radius: 12px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 4px 10px rgba(0,0,0,0.15); }
@@ -68,6 +68,9 @@
 </div>
 
 <script>
+    // ==========================================
+    // ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ И ПОДКЛЮЧЕНИЕ
+    // ==========================================
     const FB_URL = "https://project-lenta22-default-rtdb.firebaseio.com";
     let currentCatalog = {};
     let currentPath = "";
@@ -149,6 +152,9 @@
         } catch (e) { alert(`❌ Ошибка: ` + e.message); }
     }
 
+    // ==========================================
+    // АВТОУДАЛЕНИЕ ИЗ СТОП-ЛИСТА
+    // ==========================================
     async function autoRemoveFromStoplist(shop, itemNamesArray) {
         if (!itemNamesArray || itemNamesArray.length === 0) return;
         try {
@@ -185,6 +191,9 @@
         } catch(e) { console.error("Auto stoplist update failed:", e); }
     }
 
+    // ==========================================
+    // ГЛАВНЫЙ ЗАГРУЗЧИК
+    // ==========================================
     async function loadTab(type, btn) {
         document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
         if (btn) btn.classList.add('active');
@@ -311,10 +320,8 @@
         renderOrdersSvod(); 
     }
 
-    // НОВОЕ: ФУНКЦИЯ ОБЪЕДИНЕНИЯ ЗАКАЗОВ
     async function mergePendingOrders() {
         if(!confirm("Объединить все ожидающие заказы по кофейням?\n\nДополненные в разные дни заказы сольются в один общий заказ для каждого адреса.")) return;
-        
         showReportOverlay("Объединяю заказы...");
         try {
             let pendingByShop = {};
@@ -326,30 +333,21 @@
                 }
             }
             
-            let hasMerges = false;
-            let deletes = [];
-            let updates = {};
-            
+            let hasMerges = false; let deletes = []; let updates = {};
             for(let shop in pendingByShop) {
                 let shopOrders = pendingByShop[shop];
                 if(shopOrders.length > 1) {
                     hasMerges = true;
-                    let mergedItems = {};
-                    let comments = [];
-                    let latestTime = 0;
+                    let mergedItems = {}; let comments = []; let latestTime = 0;
                     
                     shopOrders.forEach(o => {
                         if(o.timestamp > latestTime) latestTime = o.timestamp;
                         if(o.comment && o.comment.trim() !== "") comments.push(o.comment.trim());
-                        
                         let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
                         itemsArr.forEach(i => {
                             if(i && i.name && i.name !== "НЕТ ЗАКАЗА") {
-                                if(!mergedItems[i.name]) {
-                                    mergedItems[i.name] = { ...i, qty: parseFloat(i.qty) || 0 };
-                                } else {
-                                    mergedItems[i.name].qty += (parseFloat(i.qty) || 0);
-                                }
+                                if(!mergedItems[i.name]) mergedItems[i.name] = { ...i, qty: parseFloat(i.qty) || 0 };
+                                else mergedItems[i.name].qty += (parseFloat(i.qty) || 0);
                             }
                         });
                         deletes.push(o.key);
@@ -359,39 +357,18 @@
                     if(newItemsArr.length === 0) newItemsArr = [{name: "НЕТ ЗАКАЗА", qty: 0}];
                     
                     let randomKey = "merged_" + Date.now() + "_" + Math.floor(Math.random()*10000);
-                    updates[randomKey] = {
-                        shop: shop,
-                        mode: 'order',
-                        items: newItemsArr,
-                        comment: comments.join(" | "),
-                        timestamp: latestTime,
-                        svod: false,
-                        ordered: false,
-                        userId: "admin_merge"
-                    };
+                    updates[randomKey] = { shop: shop, mode: 'order', items: newItemsArr, comment: comments.join(" | "), timestamp: latestTime, svod: false, ordered: false, userId: "admin_merge" };
                 }
             }
 
-            if(!hasMerges) {
-                hideReportOverlay();
-                return alert("ℹ️ Нет адресов с несколькими разрозненными заказами для объединения.");
-            }
-
-            for(let k of deletes) {
-                await fetch(`${FB_URL}/orders/${k}.json`, { method: 'DELETE' });
-            }
-            
-            if(Object.keys(updates).length > 0) {
-                await fetch(`${FB_URL}/orders.json`, { method: 'PATCH', body: JSON.stringify(updates) });
-            }
+            if(!hasMerges) { hideReportOverlay(); return alert("ℹ️ Нет адресов с несколькими разрозненными заказами для объединения."); }
+            for(let k of deletes) await fetch(`${FB_URL}/orders/${k}.json`, { method: 'DELETE' });
+            if(Object.keys(updates).length > 0) await fetch(`${FB_URL}/orders.json`, { method: 'PATCH', body: JSON.stringify(updates) });
             
             alert("✅ Заказы по адресам успешно объединены в один!");
             hideReportOverlay();
             loadTab('orders', document.querySelector('.tab-btn.active'));
-        } catch(e) {
-            hideReportOverlay();
-            alert("❌ Ошибка объединения: " + e.message);
-        }
+        } catch(e) { hideReportOverlay(); alert("❌ Ошибка объединения: " + e.message); }
     }
 
     async function renderOrdersSvod() {
@@ -399,8 +376,7 @@
         
         let resMiss = await fetch(`${FB_URL}/missing_items.json`);
         let missingData = await resMiss.json() || {};
-        let activeMissing = {};
-        let returnedToBasket = {};
+        let activeMissing = {}; let returnedToBasket = {};
         
         Object.values(missingData).forEach(m => {
             if (m && m.status !== 'arrived' && m.status !== 'canceled') {
@@ -410,16 +386,13 @@
             if (m && m.status === 'canceled') {
                 if (!returnedToBasket[m.shop]) returnedToBasket[m.shop] = {};
                 let ts = m.timestamp || 0;
-                if (!returnedToBasket[m.shop][m.name] || ts > returnedToBasket[m.shop][m.name]) {
-                    returnedToBasket[m.shop][m.name] = ts;
-                }
+                if (!returnedToBasket[m.shop][m.name] || ts > returnedToBasket[m.shop][m.name]) returnedToBasket[m.shop][m.name] = ts;
             }
         });
 
         let todaysOrders = []; let historyOrdersList = [];
         let allOrders = Object.values(cachedData.orders).sort((a,b) => (b.timestamp || 0) - (a.timestamp || 0));
-        let lastOrderItems = {}; 
-        let lastOrderTimestamp = {};
+        let lastOrderItems = {}; let lastOrderTimestamp = {};
         let cutoffMonth = Date.now() - (30 * 24 * 60 * 60 * 1000); 
 
         allOrders.forEach(o => {
@@ -479,7 +452,7 @@
             });
         });
 
-        // Считаем Ленту двойным проходом
+        // ДВОЙНОЙ ПРОХОД (Для динамического пересчета Лента/Купер при редактировании)
         let shopLentaSums = {};
         Object.keys(svodDataByDate).forEach(dateStr => {
             Object.keys(svodDataByDate[dateStr]).forEach(shop => {
@@ -494,7 +467,6 @@
                     
                     let missingStat = activeMissing[shop] ? activeMissing[shop][name] : null;
                     let inTransit = missingStat === 'transit';
-                    
                     let isInLastOrder = lastOrderItems[shop] && lastOrderItems[shop].has(name);
                     let cancelTs = returnedToBasket[shop] ? returnedToBasket[shop][name] : 0;
                     let lastOrdTs = lastOrderTimestamp[shop] || 0;
@@ -503,7 +475,12 @@
                     let isRepeat = isInLastOrder || missingStat === 'pending';
                     let isOzon = vendor.includes('озон') || vendor.includes('ozon');
 
-                    if (!isDeleted && !inTransit && !(isOzon && isRepeat) && (vendor === 'лента' || vendor === 'lenta')) {
+                    let baseStatus = itemsObj[name].status;
+                    if (!svodDataByDate[dateStr][shop].all_svod) baseStatus = 'pending';
+                    let itemStatus = (tempSvodStatus[dateStr] && tempSvodStatus[dateStr][shop] && tempSvodStatus[dateStr][shop][name]) ? tempSvodStatus[dateStr][shop][name] : baseStatus;
+
+                    // Учитываем статус "Ошибка" при пересчете
+                    if (!isDeleted && !inTransit && !(isOzon && isRepeat) && itemStatus !== 'error' && (vendor === 'лента' || vendor === 'lenta')) {
                         shopLentaSums[shop] += (actualQty * price);
                     }
                 });
@@ -590,7 +567,11 @@
                             let isOzon = vendor.toLowerCase().includes('озон') || vendor.toLowerCase().includes('ozon');
 
                             let cost = price * displayQty;
-                            if (inTransit || (isOzon && isRepeat)) cost = 0;
+                            
+                            // ДИНАМИЧЕСКИЙ ПЕРЕСЧЕТ: Игнорируем в итогах
+                            if (inTransit || (isOzon && isRepeat) || itemStatus === 'error') {
+                                cost = 0; 
+                            }
                             
                             if (vendor.toLowerCase().includes('лента')) totalLenta += cost;
                             else if (isOzon) totalOzon += cost;
@@ -693,6 +674,7 @@
     }
 
     async function buildSvodReport() {
+      if (isSvodEditMode) return alert("Пожалуйста, сначала сохраните изменения (кнопка 'СОХРАНИТЬ ИЗМЕНЕНИЯ')");
       showReportOverlay("Сборка закупки (Выполняю команду)...");
       try {
           const [ordersSnap, catalogSnap, missingSnap] = await Promise.all([
@@ -747,7 +729,7 @@
                           let isRepeat = isInLastOrder || missingStat === 'pending';
                           let isOzon = vendor.includes('озон') || vendor.includes('ozon');
                           
-                          if (!inTransit && !(isOzon && isRepeat) && (vendor === 'лента' || vendor === 'lenta')) {
+                          if (!inTransit && !(isOzon && isRepeat) && i.status !== 'error' && (vendor === 'лента' || vendor === 'lenta')) {
                               shopLentaSums[o.shop] += (parseFloat(i.qty) * (parseFloat(catItem.price)||0));
                           }
                       }
@@ -777,7 +759,7 @@
                           let isRepeat = isInLastOrder || missingStat === 'pending';
                           let isOzon = vendor.includes('озон') || vendor.includes('ozon');
 
-                          if (inTransit || (isOzon && isRepeat)) {
+                          if (inTransit || (isOzon && isRepeat) || i.status === 'error') {
                               i.status = 'error'; i.bot_error = true; changed = true;
                           } else {
                               let cost = price * parseFloat(i.qty);
@@ -811,7 +793,8 @@
           }
           html += `</div>`;
           document.getElementById('report-content-area').innerHTML = html;
-      } catch (e) { document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="color:red;">Ошибка</div></div>`; }
+          hideReportOverlay();
+      } catch (e) { hideReportOverlay(); document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="color:red;">Ошибка</div></div>`; }
     }
 
     async function saveSvodEdits() {
@@ -1281,9 +1264,7 @@
                 });
                 html += otherItems.join("");
 
-                if (allSyrups.length > 0) {
-                    html += `<div style='margin-top: 20px; padding-top: 15px; border-top: 2px dashed #ddd; color:#7E57C2;'>🍾 <b style="font-size:17px;">Закончившиеся сиропы:</b><br><div style="color:#333; margin-top:5px; font-weight:900; font-size:16px; line-height: 1.6;">${allSyrups.join("<br>")}</div></div>`;
-                }
+                if (allSyrups.length > 0) html += `<div style='margin-top: 20px; padding-top: 15px; border-top: 2px dashed #ddd; color:#7E57C2;'>🍾 <b style="font-size:17px;">Закончившиеся сиропы:</b><br><div style="color:#333; margin-top:5px; font-weight:900; font-size:16px; line-height: 1.6;">${allSyrups.join("<br>")}</div></div>`;
                 if (!foundItems || itemsArr[0].name === "Всё в наличии") html += `<div style="color:#4caf50; font-weight:bold; font-size:17px; padding:10px 0;">Стоп-лист пуст (всё в наличии)</div>`;
             } else { html += `<div style="color:#888; font-size:17px; padding:10px 0; font-weight:bold;">Нет данных о стоп-листе</div>`; }
             html += `</div>`;

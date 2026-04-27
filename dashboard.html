@@ -481,30 +481,26 @@
     async function renderOrdersSvod() {
         const box = document.getElementById('content');
         
-        // Подгружаем недовозы
         let resMiss = await fetch(`${FB_URL}/missing_items.json`);
         let missingData = await resMiss.json() || {};
         let activeMissing = {};
         Object.values(missingData).forEach(m => {
             if (m && m.status !== 'arrived' && m.status !== 'canceled') {
-                if (!activeMissing[m.shop]) activeMissing[m.shop] = new Set();
-                activeMissing[m.shop].add(m.name);
+                if (!activeMissing[m.shop]) activeMissing[m.shop] = {};
+                activeMissing[m.shop][m.name] = m.status; 
             }
         });
 
         let todaysOrders = []; let historyOrdersList = [];
         let allOrders = Object.values(cachedData.orders).sort((a,b) => (b.timestamp || 0) - (a.timestamp || 0));
-        let lastOrderItems = {}; // Сохраняем только САМЫЙ ПОСЛЕДНИЙ заказ для каждой кофейни
-
+        let lastOrderItems = {}; 
         let cutoffMonth = Date.now() - (30 * 24 * 60 * 60 * 1000); 
 
         allOrders.forEach(o => {
             if (o && (o.mode === 'order' || o.mode === 'new_shop')) {
-                if (!o.ordered) {
-                    todaysOrders.push(o);
-                } else {
+                if (!o.ordered) todaysOrders.push(o);
+                else {
                     if ((o.timestamp || 0) >= cutoffMonth) historyOrdersList.push(o);
-                    // Если это самый первый встретившийся (то есть последний по дате) завершенный заказ
                     if (!lastOrderItems[o.shop]) {
                         lastOrderItems[o.shop] = new Set();
                         let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
@@ -514,7 +510,6 @@
             }
         });
 
-        // === ОЧИСТКА "НЕТ ЗАКАЗА" ===
         let keysToDelete = []; let shopHasRealOrder = {};
         todaysOrders.forEach(o => {
             let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
@@ -533,7 +528,6 @@
             keysToDelete.forEach(k => { fetch(`${FB_URL}/orders/${k}.json`, { method: 'DELETE' }).catch(e=>{}); delete cachedData.orders[k]; });
         }
 
-        // Группировка
         let svodDataByDate = {}; 
         todaysOrders.forEach(o => {
             let d = new Date(o.timestamp); let dateKey = d.toLocaleDateString('ru-RU');
@@ -558,6 +552,30 @@
             });
         });
 
+        let shopLentaSums = {};
+        Object.keys(svodDataByDate).forEach(dateStr => {
+            Object.keys(svodDataByDate[dateStr]).forEach(shop => {
+                if (!shopLentaSums[shop]) shopLentaSums[shop] = 0;
+                let itemsObj = svodDataByDate[dateStr][shop].items;
+                Object.keys(itemsObj).forEach(name => {
+                    let catItem = Object.values(cachedData.catalogOrder).find(c => c && c.name === name) || {};
+                    let vendor = (catItem.vendor || 'Лента').toLowerCase();
+                    let price = parseFloat(catItem.price) || 0;
+                    let actualQty = (tempSvodQty[dateStr] && tempSvodQty[dateStr][shop] && tempSvodQty[dateStr][shop][name] !== undefined) ? tempSvodQty[dateStr][shop][name] : itemsObj[name].qty;
+                    let isDeleted = svodDeletions.some(d => d.date === dateStr && d.shop === shop && d.name === name);
+                    
+                    let missingStat = activeMissing[shop] ? activeMissing[shop][name] : null;
+                    let inTransit = missingStat === 'transit';
+                    let isRepeat = (lastOrderItems[shop] && lastOrderItems[shop].has(name)) || missingStat === 'pending';
+                    let isOzon = vendor.includes('озон') || vendor.includes('ozon');
+
+                    if (!isDeleted && !inTransit && !(isOzon && isRepeat) && (vendor === 'лента' || vendor === 'lenta')) {
+                        shopLentaSums[shop] += (actualQty * price);
+                    }
+                });
+            });
+        });
+
         let btnEditColor = isSvodEditMode ? "#f44336" : "#0288d1";
         let btnEditText = isSvodEditMode ? "💾 СОХРАНИТЬ ИЗМЕНЕНИЯ" : "✏️ РЕДАКТИРОВАТЬ";
 
@@ -572,10 +590,7 @@
                     </div>`;
 
         if (isSvodEditMode) {
-            html += `<div style="margin-bottom:15px; padding:15px; background:#fff3e0; color:#e65100; border-radius:12px; font-size:16px; font-weight:bold; border: 2px dashed #ffb74d;">
-                💡 Нажмите на статус товара 🔄, чтобы переключить: Ожидает ➡️ Заказано ➡️ Ошибка.<br>
-                <b style="color:#d32f2f;">ВНИМАНИЕ:</b> Если сохранить статус "Ошибка ❌", товар автоматически уйдет в корзину сотруднику в мини-приложение!
-            </div>`;
+            html += `<div style="margin-bottom:15px; padding:15px; background:#fff3e0; color:#e65100; border-radius:12px; font-size:16px; font-weight:bold; border: 2px dashed #ffb74d;">💡 Нажмите на статус товара 🔄, чтобы переключить: Ожидает ➡️ Заказано ➡️ Ошибка.<br><b style="color:#d32f2f;">ВНИМАНИЕ:</b> Если сохранить статус "Ошибка ❌", товар автоматически уйдет в корзину сотруднику в мини-приложение!</div>`;
         }
 
         html += `<table style='margin-bottom:20px;'><tr><th>Кофейня / Товар</th><th style="text-align:center;">Кол-во</th><th style="text-align:center;">Статус</th><th>Поставщик</th><th style="text-align:center;">${isSvodEditMode ? 'Удалить' : 'Ссылка'}</th></tr>`;
@@ -621,38 +636,44 @@
                             let isDeleted = svodDeletions.some(d => d.date === dateStr && d.shop === shop && d.name === name);
                             let displayQty = isDeleted ? 0 : actualQty;
 
-                            if (vendor.toLowerCase() === 'лента') shopsObj[shop].lentaSum += (displayQty * price);
-                            let isKuper = shopsObj[shop].lentaSum > 0 && shopsObj[shop].lentaSum < 2000;
-                            if (vendor.toLowerCase() === 'лента' && isKuper) vendor = 'Купер';
+                            let isLenta = vendor.toLowerCase() === 'лента' || vendor.toLowerCase() === 'lenta';
+                            if (isLenta && shopLentaSums[shop] > 0 && shopLentaSums[shop] < 2000) vendor = 'Купер (Авто)';
 
                             let baseStatus = shopsObj[shop].items[name].status;
                             if (!shopsObj[shop].all_svod) baseStatus = 'pending';
                             let itemStatus = (tempSvodStatus[dateStr] && tempSvodStatus[dateStr][shop] && tempSvodStatus[dateStr][shop][name]) ? tempSvodStatus[dateStr][shop][name] : baseStatus;
                             
-                            // === УМНАЯ ПРОВЕРКА ПОВТОРОВ ===
-                            let isInLastOrder = lastOrderItems[shop] && lastOrderItems[shop].has(name);
-                            let isInMissing = activeMissing[shop] && activeMissing[shop].has(name);
-                            let isRepeat = isInLastOrder || isInMissing;
+                            let missingStat = activeMissing[shop] ? activeMissing[shop][name] : null;
+                            let inTransit = missingStat === 'transit';
+                            let isRepeat = (lastOrderItems[shop] && lastOrderItems[shop].has(name)) || missingStat === 'pending';
+                            let isOzon = vendor.toLowerCase().includes('озон') || vendor.toLowerCase().includes('ozon');
+
+                            let cost = price * displayQty;
+                            if (inTransit || (isOzon && isRepeat)) cost = 0;
+                            
+                            if (vendor.toLowerCase().includes('лента')) totalLenta += cost;
+                            else if (isOzon) totalOzon += cost;
+                            else if (vendor.toLowerCase().includes('купер')) totalKuper += cost;
 
                             let link1 = catItem.link ? `<a href="${catItem.link}" target="_blank" style="color:#0288d1; font-weight:bold;">🔗 Осн</a>` : "";
                             let link2 = catItem.link2 ? `<a href="${catItem.link2}" target="_blank" style="color:#e53935; font-weight:bold; margin-left:8px;">🔗 Рез</a>` : "";
                             let linksHtml = [link1, link2].filter(Boolean).join(" ");
 
-                            let cost = price * displayQty;
-                            if (vendor.toLowerCase() === 'озон' && isRepeat) cost = 0;
-                            
-                            if (vendor.toLowerCase() === 'лента') totalLenta += cost;
-                            else if (vendor.toLowerCase() === 'озон') totalOzon += cost;
-                            else if (vendor.toLowerCase() === 'купер') totalKuper += cost;
-
                             let safeNameParam = name.replace(/'/g, "\\'"); let safeNameAttr = name.replace(/"/g, '&quot;');
                             let safeShopAttr = shop.replace(/"/g, '&quot;'); let safeDateAttr = dateStr;
 
-                            let repeatReason = isInMissing ? "В недовозах" : "Был в прошлом";
-                            let repeatBadge = isRepeat ? `<span style='color:#d32f2f; font-size:13px; margin-left:5px; font-weight:bold;'>(${repeatReason})</span>` : ``;
-                            let rowBg = (itemStatus === 'error') ? `background-color: #fff8f8;` : ``;
+                            let repeatBadge = "";
+                            if (inTransit) {
+                                repeatBadge = `<span style='color:#1565c0; font-size:13px; margin-left:5px; font-weight:bold;'>(Уже в пути 🚚)</span>`;
+                                itemStatus = 'error'; 
+                            } else if (isRepeat) {
+                                let reason = missingStat === 'pending' ? "В недовозах" : "Был в прошлом";
+                                repeatBadge = `<span style='color:#d32f2f; font-size:13px; margin-left:5px; font-weight:bold;'>(${reason})</span>`;
+                            }
 
+                            let rowBg = (itemStatus === 'error') ? `background-color: #fff8f8;` : ``;
                             let statusText = "Ожидает ⏳"; let statusColor = "#f57c00"; let statusBg = "#fff3e0";
+                            
                             if (itemStatus === 'ordered') { statusText = "Заказано ✅"; statusColor = "#2e7d32"; statusBg = "#e8f5e9"; } 
                             else if (itemStatus === 'error') { statusText = "Ошибка ❌"; statusColor = "#c62828"; statusBg = "#ffebee"; }
                             
@@ -662,7 +683,7 @@
                                 statusBadge = `<button onclick="markSvodStatusChange('${safeDateAttr}', '${safeShopAttr}', '${safeNameParam}', '${itemStatus}')" style="cursor:pointer; background:${statusBg}; color:${statusColor}; border:2px dashed ${statusColor}; padding:4px 8px; border-radius:8px; font-size:13px; font-weight:900; display:inline-block; box-shadow:0 2px 4px rgba(0,0,0,0.1);">${statusText} 🔄</button>`;
                                 html += `<tr class="svoditem_${safeShopDate} svodlvl3_of_${safeDate}" style="display:table-row; color:${isDeleted ? '#aaa':'#333'}; ${rowBg}">
                                     <td style="padding-left:45px; font-size:17px; font-weight:bold;">${name} ${repeatBadge}</td>
-                                    <td style="text-align:center;"><input type="number" class="edit-svod-input" data-date="${safeDateAttr}" data-shop="${safeShopAttr}" data-item="${safeNameAttr}" value="${actualQty}" ${isDeleted ? 'disabled' : ''} onchange="preserveSvodInputs(); renderOrdersSvod();" style="width: 70px; text-align: center; font-size: 16px; font-weight: bold; color: ${isDeleted ? '#aaa' : '#311b92'}; border: 2px solid ${isDeleted ? '#eee' : '#7E57C2'}; border-radius: 6px; padding: 4px;"></td>
+                                    <td style="text-align:center;"><input type="number" class="edit-svod-input" data-date="${safeDateAttr}" data-shop="${safeShopAttr}" data-item="${safeNameAttr}" value="${actualQty}" ${isDeleted || inTransit ? 'disabled' : ''} onchange="preserveSvodInputs(); renderOrdersSvod();" style="width: 70px; text-align: center; font-size: 16px; font-weight: bold; color: ${isDeleted ? '#aaa' : '#311b92'}; border: 2px solid ${isDeleted ? '#eee' : '#7E57C2'}; border-radius: 6px; padding: 4px;"></td>
                                     <td style="text-align:center;">${statusBadge}</td>
                                     <td style="font-size:16px; color:${isDeleted ? '#aaa' : '#333'}">${vendor}</td>
                                     <td style="text-align:center;"><button class="btn-del" ${isDeleted ? 'disabled' : ''} onclick="markSvodDelete(this, '${dateStr}', '${shop}', '${safeNameParam}')">🗑</button></td>
@@ -732,31 +753,22 @@
 
     async function buildSvodReport() {
       showReportOverlay("Сборка закупки (Выполняю команду)...");
-      
       try {
           const [ordersSnap, catalogSnap, missingSnap] = await Promise.all([
-             database.ref("orders").once("value"), 
-             database.ref("catalogs/order").once("value"),
-             database.ref("missing_items").once("value")
+             database.ref("orders").once("value"), database.ref("catalogs/order").once("value"), database.ref("missing_items").once("value")
           ]);
           
-          let catalog = catalogSnap.val() || {};
-          let orders = ordersSnap.val() || {};
-          let missingData = missingSnap.val() || {};
-          let updates = {};
-          let totalSvod = 0;
-          let shopSums = {};
+          let catalog = catalogSnap.val() || {}; let orders = ordersSnap.val() || {}; let missingData = missingSnap.val() || {};
+          let updates = {}; let totalSvod = 0; let totalLentaAll = 0; let totalOzonAll = 0; let totalKuperAll = 0;
 
-          // 1. Вычисляем активные недовозы
           let activeMissing = {};
           Object.values(missingData).forEach(m => {
               if (m && m.status !== 'arrived' && m.status !== 'canceled') {
-                  if (!activeMissing[m.shop]) activeMissing[m.shop] = new Set();
-                  activeMissing[m.shop].add(m.name);
+                  if (!activeMissing[m.shop]) activeMissing[m.shop] = {};
+                  activeMissing[m.shop][m.name] = m.status;
               }
           });
 
-          // 2. Вычисляем ТОЛЬКО последний заказ для каждой кофейни
           let allOrdersArr = Object.values(orders).sort((a,b) => (b.timestamp || 0) - (a.timestamp || 0));
           let lastOrderItems = {};
           allOrdersArr.forEach(o => {
@@ -769,72 +781,82 @@
               }
           });
 
-          // 3. Формируем свод
+          let shopLentaSums = {};
+          Object.keys(orders).forEach(k => {
+              let o = orders[k];
+              if (o && (o.mode === 'order' || o.mode === 'new_shop') && o.svod === false) {
+                  if(!shopLentaSums[o.shop]) shopLentaSums[o.shop] = 0;
+                  let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
+                  itemsArr.forEach(i => {
+                      if(i && i.name && i.name !== "НЕТ ЗАКАЗА") {
+                          let catItem = Object.values(catalog).find(cat => cat && cat.name === i.name) || {};
+                          let vendor = (catItem.vendor || 'Лента').toLowerCase();
+                          let missingStat = activeMissing[o.shop] ? activeMissing[o.shop][i.name] : null;
+                          let inTransit = missingStat === 'transit';
+                          let isRepeat = (lastOrderItems[o.shop] && lastOrderItems[o.shop].has(i.name)) || missingStat === 'pending';
+                          let isOzon = vendor.includes('озон') || vendor.includes('ozon');
+                          
+                          if (!inTransit && !(isOzon && isRepeat) && (vendor === 'лента' || vendor === 'lenta')) {
+                              shopLentaSums[o.shop] += (parseFloat(i.qty) * (parseFloat(catItem.price)||0));
+                          }
+                      }
+                  });
+              }
+          });
+
           Object.keys(orders).forEach(k => {
               let o = orders[k];
               if (o && (o.mode === 'order' || o.mode === 'new_shop') && o.svod === false) {
                   updates[k + "/svod"] = true; 
-                  if(!shopSums[o.shop]) shopSums[o.shop] = 0;
-                  
                   let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
                   let changed = false;
 
                   itemsArr.forEach(i => {
                       if(i && i.name && i.name !== "НЕТ ЗАКАЗА") {
-                          let catItem = Object.values(catalog).find(cat => cat && cat.name === i.name);
-                          let price = catItem ? parseFloat(catItem.price) || 0 : 0;
-                          let vendor = catItem ? String(catItem.vendor).toLowerCase() : 'лента';
+                          let catItem = Object.values(catalog).find(cat => cat && cat.name === i.name) || {};
+                          let vendor = (catItem.vendor || 'Лента').toLowerCase();
+                          let price = parseFloat(catItem.price) || 0;
                           
+                          let missingStat = activeMissing[o.shop] ? activeMissing[o.shop][i.name] : null;
+                          let inTransit = missingStat === 'transit';
+                          let isRepeat = (lastOrderItems[o.shop] && lastOrderItems[o.shop].has(i.name)) || missingStat === 'pending';
                           let isOzon = vendor.includes('озон') || vendor.includes('ozon');
-                          let isInLastOrder = lastOrderItems[o.shop] && lastOrderItems[o.shop].has(i.name);
-                          let isInMissing = activeMissing[o.shop] && activeMissing[o.shop].has(i.name);
-                          let isRepeat = isInLastOrder || isInMissing;
 
-                          // БЛОКИРУЕМ ПОВТОРЫ ОЗОНА ДЛЯ БОТА
-                          if (isOzon && isRepeat) {
-                              i.status = 'error';
-                              i.bot_error = true;
-                              changed = true;
-                          } else if (!isOzon) {
+                          if (inTransit || (isOzon && isRepeat)) {
+                              i.status = 'error'; i.bot_error = true; changed = true;
+                          } else {
                               let cost = price * parseFloat(i.qty);
                               totalSvod += cost;
-                              shopSums[o.shop] += cost;
+                              if (vendor === 'лента' || vendor === 'lenta') {
+                                  if (shopLentaSums[o.shop] < 2000) totalKuperAll += cost;
+                                  else totalLentaAll += cost;
+                              } else if (isOzon) {
+                                  totalOzonAll += cost;
+                              } else {
+                                  totalKuperAll += cost;
+                              }
                           }
                       }
                   });
-
-                  if (changed) {
-                      updates[k + "/items"] = itemsArr;
-                  }
+                  if (changed) updates[k + "/items"] = itemsArr;
               }
           });
 
-          if (Object.keys(updates).length > 0) {
-              await database.ref("orders").update(updates);
-          }
+          if (Object.keys(updates).length > 0) await database.ref("orders").update(updates);
 
           let html = `<div class="report-card"><div class="report-card-title">Сводная закупка</div>`;
-          
           if (Object.keys(updates).length === 0) {
-              html += `<div style="padding:10px 0; text-align:center; font-weight:900;">Нет новых необработанных заказов на данный момент.</div>`;
+              html += `<div style="padding:10px 0; text-align:center; font-weight:900;">Нет новых заказов.</div>`;
           } else {
-              html += `<div style="padding:10px 0; font-size:15px; color:#555; margin-bottom:10px; font-weight:700;">✅ Команда выполнена. Заказы переведены в статус <b>"Приемка"</b> для сотрудников. Повторы Ozon заблокированы.</div>`;
-              for(let s in shopSums) {
-                  if(shopSums[s] > 0) {
-                      html += `<div class="report-card-item"><span style="font-size:17px; color:#311B92; font-weight:900;">${s}</span><b style="font-size:17px;">${shopSums[s]} ₽</b></div>`;
-                  }
-              }
+              html += `<div style="padding:10px 0; font-size:15px; color:#555; margin-bottom:10px; font-weight:700;">✅ Команда выполнена. Заказы переведены в статус "Приемка".</div>`;
               html += `<div style="text-align:right; font-size:22px; color:#4caf50; margin-top:20px; font-weight:900;">ИТОГО: ${totalSvod} ₽</div>`;
               
-              database.ref("bot_control/notifications").push({ type: "svod_ready", total: totalSvod, timestamp: Date.now() });
+              let textToBot = `📊 **СВОД ГОТОВ К СБОРКЕ!**\n\n🛒 Лента: **${totalLentaAll} ₽**\n📦 Озон: **${totalOzonAll} ₽**\n🛵 Купер: **${totalKuperAll} ₽**\n➖➖➖➖➖➖➖➖\n💵 ИТОГО: **${totalSvod} ₽**`;
+              database.ref("bot_control/notifications").push({ type: "svod_ready_text", text: textToBot, timestamp: Date.now() });
           }
           html += `</div>`;
           document.getElementById('report-content-area').innerHTML = html;
-
-      } catch (e) {
-          console.error(e);
-          document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="color:red; font-weight:900; text-align:center;">Ошибка формирования свода.</div></div>`;
-      }
+      } catch (e) { document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="color:red;">Ошибка</div></div>`; }
     }
 
     async function saveSvodEdits() {
@@ -1217,13 +1239,24 @@
         let shops = ["Бояринова", "Гагарина", "Вертолетчиков", "Липчанского", "Новокосино", "Новокосино 2", "Старое Павлино", "Красноказарменная", "Ухтомского ополчения"];
         let latestStops = {}; let activeOrdersMap = {}; 
 
-        let stopCatalog = {};
-        try { stopCatalog = await fetch(`${FB_URL}/catalogs/stoplist.json`).then(r=>r.json()) || {}; } catch(e) {}
+        let stopCatalog = {}; let missingData = {};
+        try { 
+            stopCatalog = await fetch(`${FB_URL}/catalogs/stoplist.json`).then(r=>r.json()) || {}; 
+            missingData = await fetch(`${FB_URL}/missing_items.json`).then(r=>r.json()) || {};
+        } catch(e) {}
+
+        let missingStatusMap = {};
+        Object.values(missingData).forEach(m => {
+            if (m && m.status !== 'arrived' && m.status !== 'canceled') {
+                if (!missingStatusMap[m.shop]) missingStatusMap[m.shop] = {};
+                missingStatusMap[m.shop][String(m.name).trim().toLowerCase()] = m.status;
+            }
+        });
 
         Object.values(cachedData.orders).forEach(o => {
             if (!o) return;
             if (o.mode === 'stoplist_fill') {
-                if (!latestStops[o.shop] || o.timestamp > latestStops[o.shop].timestamp) { latestStops[o.shop] = o; }
+                if (!latestStops[o.shop] || o.timestamp > latestStops[o.shop].timestamp) latestStops[o.shop] = o;
             }
             if ((o.mode === 'order' || o.mode === 'new_shop') && o.ordered !== true) {
                 if (!activeOrdersMap[o.shop]) activeOrdersMap[o.shop] = {};
@@ -1234,7 +1267,6 @@
                         if (o.svod) {
                             if (i.status === 'error' || i.bot_error) stat = 'error';
                             else if (i.status === 'ordered') stat = 'ordered';
-                            else stat = 'pending';
                         }
                         if (activeOrdersMap[o.shop][i.name] !== 'error' && activeOrdersMap[o.shop][i.name] !== 'ordered') {
                             activeOrdersMap[o.shop][i.name] = stat;
@@ -1270,7 +1302,9 @@
                     let linksHtml = [l1, l2].filter(Boolean).join(" ");
                     
                     let statHtml = "";
-                    if (inOrderCat) {
+                    if (missingStatusMap[s] && missingStatusMap[s][iNameLow] === 'transit') {
+                        statHtml = `<span style="background:#e3f2fd; color:#1565c0; padding:3px 6px; border-radius:6px; font-size:12px; font-weight:900; margin-right:8px;">В пути 🚚</span>`;
+                    } else if (inOrderCat) {
                         let itemStatus = activeOrdersMap[s] ? activeOrdersMap[s][i.name] : null;
                         if (itemStatus === 'ordered') statHtml = `<span style="background:#e8f5e9; color:#2e7d32; padding:3px 6px; border-radius:6px; font-size:12px; font-weight:900; margin-right:8px;">Заказано ✅</span>`;
                         else if (itemStatus === 'error') statHtml = `<span style="background:#ffebee; color:#c62828; padding:3px 6px; border-radius:6px; font-size:12px; font-weight:900; margin-right:8px;">Ошибка ❌</span>`;
@@ -1280,22 +1314,18 @@
 
                     let linkBtn = `<div style="float:right; display:flex; align-items:center;">${statHtml} ${linksHtml}</div>`;
                     
-                    if (isSyrup) {
-                        allSyrups.push(`▪️ ${i.name} ${statHtml}`);
-                    } else {
+                    if (isSyrup) allSyrups.push(`▪️ ${i.name} ${statHtml}`);
+                    else {
                         let affected = [];
                         if (info.sez) affected.push("Сезон: " + info.sez);
                         if (info.main) affected.push("Основа: " + info.main);
                         let subText = affected.length > 0 ? `<div style="font-size:13px; color:#d32f2f; margin-top:4px; font-style:italic; font-weight:600;">(${affected.join(" | ")})</div>` : "";
-
                         otherItems.push(`<div style="padding:10px 0; border-bottom:1px dashed #eee; font-size:17px; display:flex; flex-direction:column; justify-content:center;"><div style="display:flex; justify-content:space-between; align-items:center; width:100%;"><b style="color:#333;">${i.name}</b> ${linkBtn}</div>${subText}</div>`);
                     }
                 });
                 html += otherItems.join("");
 
-                if (allSyrups.length > 0) {
-                    html += `<div style='margin-top: 20px; padding-top: 15px; border-top: 2px dashed #ddd; color:#7E57C2;'>🍾 <b style="font-size:17px;">Закончившиеся сиропы:</b><br><div style="color:#333; margin-top:5px; font-weight:900; font-size:16px; line-height: 1.6;">${allSyrups.join("<br>")}</div></div>`;
-                }
+                if (allSyrups.length > 0) html += `<div style='margin-top: 20px; padding-top: 15px; border-top: 2px dashed #ddd; color:#7E57C2;'>🍾 <b style="font-size:17px;">Закончившиеся сиропы:</b><br><div style="color:#333; margin-top:5px; font-weight:900; font-size:16px; line-height: 1.6;">${allSyrups.join("<br>")}</div></div>`;
                 if (!foundItems || itemsArr[0].name === "Всё в наличии") html += `<div style="color:#4caf50; font-weight:bold; font-size:17px; padding:10px 0;">Стоп-лист пуст (всё в наличии)</div>`;
             } else { html += `<div style="color:#888; font-size:17px; padding:10px 0; font-weight:bold;">Нет данных о стоп-листе</div>`; }
             html += `</div>`;

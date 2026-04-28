@@ -4,7 +4,7 @@
   <base target="_top">
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>Coffee Management App v6.5</title>
+  <title>Coffee Management App v6.6</title>
   
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-app-compat.js"></script>
@@ -111,6 +111,7 @@
     
     .item { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid rgba(0,0,0,0.03); transition: background-color 0.2s; }
     
+    /* Стили для "Уже в заказе" */
     .repeat-item { background-color: #ffebee !important; border-left: 4px solid #E53935; }
     .repeat-item-text { font-size: 11px; color: #C62828; font-weight: 900; margin-bottom: 2px; display: block; line-height: 1; text-transform: uppercase; }
 
@@ -154,6 +155,7 @@
     }
     .validation-error-banner b { font-size: 18px; display: block; margin-bottom: 4px; }
     
+    /* Стили для тумблеров приемки */
     .btn-missing-toggle { border:none; padding:8px 15px; border-radius:10px; font-weight:900; font-size:14px; cursor:pointer; transition: 0.2s; }
     .btn-missing-toggle.active { background:#ffebee; color:#d32f2f; border: 2px solid #d32f2f;}
     .btn-missing-toggle.inactive { background:#f5f5f5; color:#888; border: 2px solid transparent;}
@@ -587,6 +589,48 @@
     }
 
     // ==========================================
+    // АВТОУДАЛЕНИЕ ДОЕХАВШИХ ТОВАРОВ ИЗ СТОП-ЛИСТА
+    // ==========================================
+    async function autoRemoveFromStoplist(shop, itemNamesArray) {
+        if (!itemNamesArray || itemNamesArray.length === 0) return;
+        try {
+            let snap = await database.ref("orders").orderByChild("shop").equalTo(shop).limitToLast(50).once("value");
+            let shopOrders = [];
+            snap.forEach(c => {
+                let val = c.val();
+                if (val && val.mode === 'stoplist_fill') {
+                    val.key = c.key;
+                    shopOrders.push(val);
+                }
+            });
+            
+            if (shopOrders.length === 0) return;
+            shopOrders.sort((a,b) => b.timestamp - a.timestamp);
+            let latestStoplist = shopOrders[0];
+            
+            if (!latestStoplist.items) return;
+            let itemsArr = Array.isArray(latestStoplist.items) ? latestStoplist.items : Object.values(latestStoplist.items);
+            
+            let namesToRemove = itemNamesArray.map(n => String(n).trim().toLowerCase());
+            let newItems = itemsArr.filter(i => {
+                if (!i || !i.name) return false;
+                let iName = String(i.name).trim().toLowerCase();
+                return !namesToRemove.includes(iName);
+            });
+            
+            if (newItems.length !== itemsArr.length) {
+                if (newItems.length === 0) {
+                    await database.ref("orders/" + latestStoplist.key + "/items").set([{name: "Всё в наличии", qty: "В наличии"}]);
+                } else {
+                    await database.ref("orders/" + latestStoplist.key + "/items").set(newItems);
+                }
+            }
+        } catch(e) {
+            console.error("Auto stoplist update failed:", e);
+        }
+    }
+
+    // ==========================================
     // 3. ОСНОВНАЯ ЗАГРУЗКА И ВХОД
     // ==========================================
     async function loadSettings() {
@@ -646,19 +690,15 @@
               let shopOrders = [];
               ordersSnap.forEach(c => { let val = c.val(); if(val && typeof val === 'object') shopOrders.push(val); });
               
-              // Для подсветки недавно заказанных товаров (история за 7 дней)
-              let sevenDaysAgo = Date.now() - (7 * 24 * 60 * 60 * 1000);
+              // Для подсвечивания в ЗАКУПКЕ: Только те, что ПРЯМО СЕЙЧАС ожидают оформления/свода (svod !== true && ordered !== true)
               state.unprocessedItems = new Set();
               
               shopOrders.forEach(o => {
-                  if (o.mode === 'order' || o.mode === 'new_shop') {
-                      let isRecent = (o.timestamp || 0) >= sevenDaysAgo;
-                      if (!o.ordered || isRecent) {
-                          let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
-                          itemsArr.forEach(i => {
-                              if (i && i.name && i.name !== "НЕТ ЗАКАЗА") state.unprocessedItems.add(i.name);
-                          });
-                      }
+                  if ((o.mode === 'order' || o.mode === 'new_shop') && o.svod !== true && o.ordered !== true) {
+                      let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
+                      itemsArr.forEach(i => {
+                          if (i && i.name && i.name !== "НЕТ ЗАКАЗА") state.unprocessedItems.add(i.name);
+                      });
                   }
               });
 
@@ -735,7 +775,7 @@
           
           let isRepeat = state.unprocessedItems && state.unprocessedItems.has(itemName);
           let repeatClass = isRepeat ? "repeat-item" : "";
-          let repeatLabel = isRepeat ? `<span class="repeat-item-text">Недавно заказано / Ожидает сборки</span>` : "";
+          let repeatLabel = isRepeat ? `<span class="repeat-item-text">Ожидает оформления</span>` : "";
 
           html += `<div class="item ${repeatClass}">
                     <div style="flex:1; padding-right:15px;">${repeatLabel}<span style="font-weight: 700; font-size: 15px; line-height: 1.3;">${itemName}</span></div>
@@ -1515,7 +1555,6 @@
             
             if(!latest || !latest.items) { 
                 document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; font-weight:900;">Сегодня стоп-лист не заполнялся.</div></div>`; 
-                hideReportOverlay();
                 return; 
             }
             
@@ -1577,10 +1616,8 @@
             }
             
             document.getElementById('report-content-area').innerHTML = html + "</div>";
-            hideReportOverlay();
         } catch (err) {
             document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; color:red; font-weight:900;">Ошибка загрузки стоп-листа</div></div>`;
-            hideReportOverlay();
         }
     }
 
@@ -1651,7 +1688,6 @@
 
             if (ordersArr.length === 0) {
                 document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; font-weight:900;">Заказов еще не было.</div></div>`;
-                hideReportOverlay();
                 return;
             }
 
@@ -1759,11 +1795,9 @@
             
             html += `</div>`;
             document.getElementById('report-content-area').innerHTML = html;
-            hideReportOverlay();
         } catch (err) {
             console.error(err);
             document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; color:red; font-weight:900;">Ошибка загрузки списка.</div></div>`; 
-            hideReportOverlay();
         }
     }
 
@@ -1996,11 +2030,9 @@
             }
             
             document.getElementById('report-content-area').innerHTML = html || "<div class='report-card'>Пусто</div>";
-            hideReportOverlay();
         } catch (err) {
             console.error(err);
             document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; color:red; font-weight:900;">Ошибка загрузки приемки.</div></div>`; 
-            hideReportOverlay();
         }
     }
 
@@ -2148,10 +2180,8 @@
             }
             
             document.getElementById('report-content-area').innerHTML = html;
-            hideReportOverlay();
         } catch (err) {
             document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; color:red; font-weight:900;">Ошибка загрузки.</div></div>`; 
-            hideReportOverlay();
         }
     }
 

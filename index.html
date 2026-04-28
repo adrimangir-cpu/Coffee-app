@@ -4,7 +4,7 @@
   <base target="_top">
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>Coffee Management App v6.4</title>
+  <title>Coffee Management App v6.5</title>
   
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-app-compat.js"></script>
@@ -479,8 +479,12 @@
       document.getElementById('title').innerText = name;
       localStorage.setItem('saved_shop', name); 
       state.screenHistory = []; 
-      await loadSettings();
-      showScreen('step-2');
+      
+      // Защита от зависаний интерфейса (Point 5)
+      setTimeout(async () => {
+          await loadSettings();
+          showScreen('step-2');
+      }, 100);
     }
 
     function clearShopAndReturn() {
@@ -493,7 +497,7 @@
     function returnToStart() { location.reload(); }
 
     // ==========================================
-    // ЛОГИКА МАРКЕТПЛЕЙСА (НОВОЕ)
+    // ЛОГИКА МАРКЕТПЛЕЙСА
     // ==========================================
     function initMarketplace() {
         triggerHaptic();
@@ -512,7 +516,7 @@
 
     function selectMpMode(mode) {
         triggerHaptic();
-        state.mpType = mode; // 'purchase' или 'refund'
+        state.mpType = mode; 
         document.getElementById('mp-address-title').innerText = `${state.mpVendor.toUpperCase()} | ${mode === 'purchase' ? 'ОФОРМЛЕНИЕ' : 'ВОЗВРАТ'} | АДРЕС`;
         showScreen('step-mp-address');
     }
@@ -544,7 +548,6 @@
                 });
                 persistMpDraft();
                 updateBadgeUI();
-                // Возвращаемся к выбору адреса, сохраняя вендора и тип операции
                 showScreen('step-mp-address', false); 
             } else {
                 alert("Введите сумму больше 0");
@@ -560,7 +563,6 @@
         triggerHaptic();
         let btn = document.getElementById('mp-edit-btn');
         if (state.isMpEditMode) {
-            // Сохраняем
             let inputs = document.querySelectorAll('.mp-edit-input');
             inputs.forEach(inp => {
                 let idx = inp.getAttribute('data-idx');
@@ -575,7 +577,6 @@
             persistMpDraft();
             renderCartItemsInModal();
         } else {
-            // Включаем редактирование
             state.isMpEditMode = true;
             btn.innerText = "💾 Сохранить изменения";
             btn.style.color = "#4caf50";
@@ -633,7 +634,6 @@
                 return !namesToRemove.includes(iName);
             });
             
-            // Обновляем БД, если список изменился
             if (newItems.length !== itemsArr.length) {
                 if (newItems.length === 0) {
                     await database.ref("orders/" + latestStoplist.key + "/items").set([{name: "Всё в наличии", qty: "В наличии"}]);
@@ -647,7 +647,7 @@
     }
 
     // ==========================================
-    // 3. ОСНОВНАЯ ЗАГРУЗКА
+    // 3. ОСНОВНАЯ ЗАГРУЗКА И ВХОД
     // ==========================================
     async function loadSettings() {
         try {
@@ -705,7 +705,6 @@
               let shopOrders = [];
               ordersSnap.forEach(c => { let val = c.val(); if(val && typeof val === 'object') shopOrders.push(val); });
               
-              // Находим товары, которые уже заказаны, но еще не сведены админом
               state.unprocessedItems = new Set();
               shopOrders.forEach(o => {
                   if ((o.mode === 'order' || o.mode === 'new_shop') && o.svod !== true && o.ordered !== true) {
@@ -716,7 +715,6 @@
                   }
               });
 
-              // Возвращаем недовозы/отмены от админа в корзину
               const missSnap = await database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value");
               let hasCanceledMissings = false;
               missSnap.forEach(c => {
@@ -1095,6 +1093,10 @@
               if (n === "_catinfo") return false;
               if (String(q).trim() === "-" || String(q).trim() === "--" || String(q).trim() === "") return false;
               if (state.currentMode !== 'checklist' && (q == 0 || String(q) === "0")) return false; 
+              
+              // ЖЕСТКИЙ ФИЛЬТР: В корзину (закупка) не попадают товары, которых физически нет в справочнике закупки
+              if ((state.currentMode === 'order' || state.currentMode === 'new_shop') && !state.productCatalog[n]) return false;
+              
               return true;
           }).map(([n,q]) => {
                 let catName = (state.userBasket["_catinfo"] && state.userBasket["_catinfo"][n]) || (state.productCatalog[n] ? state.productCatalog[n].cat : "Прочее");
@@ -1181,7 +1183,7 @@
           }
 
           localStorage.removeItem("draft_" + state.currentShop + "_" + state.currentMode);
-      } // КОНЕЦ ОБЫЧНОЙ ЛОГИКИ
+      } 
 
       toggleCartModal(false);
       document.getElementById('success-screen').style.display = 'flex';
@@ -1510,33 +1512,49 @@
     async function viewStopList() {
         showReportOverlay("Загрузка актуального стоп-листа...");
         try {
-            const [ordersSnap, stopCatSnap, orderCatSnap] = await Promise.all([
+            const [ordersSnap, stopCatSnap, orderCatSnap, missSnap] = await Promise.all([
                 database.ref("orders").orderByChild("shop").equalTo(state.currentShop).once("value"),
                 database.ref("catalogs/stoplist").once("value"),
-                database.ref("catalogs/order").once("value")
+                database.ref("catalogs/order").once("value"),
+                database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value")
             ]);
             
+            let missingStatusMap = {};
+            missSnap.forEach(c => {
+                let m = c.val();
+                if (m && m.status !== 'arrived' && m.status !== 'canceled') {
+                    missingStatusMap[String(m.name).trim().toLowerCase()] = m.status;
+                }
+            });
+
             let shopOrders = []; 
-            let activeOrdersMap = {}; 
+            let recentOrdersMap = {}; 
+            let sevenDaysAgo = Date.now() - (7 * 24 * 60 * 60 * 1000); // 7 дней назад
 
             ordersSnap.forEach(c => { 
                 let val = c.val(); 
                 if(val && typeof val === 'object') {
                     shopOrders.push(val); 
-                    if ((val.mode === 'order' || val.mode === 'new_shop') && val.ordered !== true) {
-                        let itemsArr = Array.isArray(val.items) ? val.items : Object.values(val.items || {});
-                        itemsArr.forEach(i => {
-                            if (i && i.name) {
-                                let stat = 'pending';
-                                if (val.svod) {
-                                    if (i.status === 'error' || i.bot_error) stat = 'error';
-                                    else if (i.status === 'ordered') stat = 'ordered';
+                    
+                    if (val.mode === 'order' || val.mode === 'new_shop') {
+                        let isRecent = val.timestamp >= sevenDaysAgo;
+                        if (!val.ordered || isRecent) {
+                            let itemsArr = Array.isArray(val.items) ? val.items : Object.values(val.items || {});
+                            itemsArr.forEach(i => {
+                                if (i && i.name) {
+                                    let stat = 'pending';
+                                    if (val.svod) {
+                                        if (i.status === 'error' || i.bot_error) stat = 'error';
+                                        else if (i.status === 'ordered') stat = 'ordered';
+                                    }
+                                    if (val.ordered) stat = 'ordered'; // Архивные тоже получают статус заказано
+                                    
+                                    if (recentOrdersMap[i.name] !== 'ordered') {
+                                        recentOrdersMap[i.name] = stat;
+                                    }
                                 }
-                                if (activeOrdersMap[i.name] !== 'error' && activeOrdersMap[i.name] !== 'ordered') {
-                                    activeOrdersMap[i.name] = stat;
-                                }
-                            }
-                        });
+                            });
+                        }
                     }
                 }
             });
@@ -1549,6 +1567,7 @@
             
             if(!latest || !latest.items) { 
                 document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; font-weight:900;">Сегодня стоп-лист не заполнялся.</div></div>`; 
+                hideReportOverlay();
                 return; 
             }
             
@@ -1571,16 +1590,20 @@
                 let isSyrup = (info.cat && String(info.cat).toLowerCase().includes("сироп")) || (inOrderCat && inOrderCat.cat && String(inOrderCat.cat).toLowerCase().includes("сироп")) || iNameLow.includes("сироп");
                 
                 let statHtml = "";
+                
+                // СТАТУС ОТОБРАЖАЕТСЯ ТОЛЬКО ЕСЛИ ТОВАР ЕСТЬ В ЗАКУПКЕ
                 if (inOrderCat) {
-                    let itemStatus = activeOrdersMap[i.name] || null;
-                    if (itemStatus === 'ordered') {
-                        statHtml = `<span style="background:#e8f5e9; color:#2e7d32; padding:2px 5px; border-radius:4px; font-size:11px; font-weight:900; margin-left:5px;">Заказано ✅</span>`;
-                    } else if (itemStatus === 'error') {
-                        statHtml = `<span style="background:#ffebee; color:#c62828; padding:2px 5px; border-radius:4px; font-size:11px; font-weight:900; margin-left:5px;">Ошибка ❌</span>`;
-                    } else if (itemStatus === 'pending') {
-                        statHtml = `<span style="background:#fff3e0; color:#f57c00; padding:2px 5px; border-radius:4px; font-size:11px; font-weight:900; margin-left:5px;">Ожидает ⏳</span>`;
+                    if (missingStatusMap[iNameLow] === 'transit') {
+                        statHtml = `<span style="background:#e3f2fd; color:#1565c0; padding:2px 5px; border-radius:4px; font-size:11px; font-weight:900; margin-left:5px;">В пути 🚚</span>`;
                     } else {
-                        statHtml = `<span style="background:#f5f5f5; color:#888; padding:2px 5px; border-radius:4px; font-size:11px; font-weight:900; margin-left:5px;">Не заказано ➖</span>`;
+                        let itemStatus = recentOrdersMap[i.name] || null;
+                        if (itemStatus === 'ordered' || itemStatus === 'pending') {
+                            statHtml = `<span style="background:#e8f5e9; color:#2e7d32; padding:2px 5px; border-radius:4px; font-size:11px; font-weight:900; margin-left:5px;">Заказано ✅</span>`;
+                        } else if (itemStatus === 'error') {
+                            statHtml = `<span style="background:#ffebee; color:#c62828; padding:2px 5px; border-radius:4px; font-size:11px; font-weight:900; margin-left:5px;">Ошибка ❌</span>`;
+                        } else {
+                            statHtml = `<span style="background:#f5f5f5; color:#888; padding:2px 5px; border-radius:4px; font-size:11px; font-weight:900; margin-left:5px;">Не заказано ➖</span>`;
+                        }
                     }
                 }
 
@@ -1607,8 +1630,10 @@
             }
             
             document.getElementById('report-content-area').innerHTML = html + "</div>";
+            hideReportOverlay();
         } catch (err) {
             document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; color:red; font-weight:900;">Ошибка загрузки стоп-листа</div></div>`;
+            hideReportOverlay();
         }
     }
 
@@ -1679,6 +1704,7 @@
 
             if (ordersArr.length === 0) {
                 document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; font-weight:900;">Заказов еще не было.</div></div>`;
+                hideReportOverlay();
                 return;
             }
 
@@ -1786,9 +1812,11 @@
             
             html += `</div>`;
             document.getElementById('report-content-area').innerHTML = html;
+            hideReportOverlay();
         } catch (err) {
             console.error(err);
             document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; color:red; font-weight:900;">Ошибка загрузки списка.</div></div>`; 
+            hideReportOverlay();
         }
     }
 
@@ -2021,9 +2049,11 @@
             }
             
             document.getElementById('report-content-area').innerHTML = html || "<div class='report-card'>Пусто</div>";
+            hideReportOverlay();
         } catch (err) {
             console.error(err);
             document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; color:red; font-weight:900;">Ошибка загрузки приемки.</div></div>`; 
+            hideReportOverlay();
         }
     }
 
@@ -2171,8 +2201,10 @@
             }
             
             document.getElementById('report-content-area').innerHTML = html;
+            hideReportOverlay();
         } catch (err) {
             document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; color:red; font-weight:900;">Ошибка загрузки.</div></div>`; 
+            hideReportOverlay();
         }
     }
 

@@ -554,7 +554,6 @@
         let totalKuper = 0;
         let shopLentaSums = {};
         
-        // Первый проход: вычисляем сумму Ленты
         document.querySelectorAll('.edit-svod-input').forEach(inp => {
             let shop = inp.getAttribute('data-shop');
             let vendor = (inp.getAttribute('data-vendor') || 'лента').toLowerCase();
@@ -573,7 +572,6 @@
             }
         });
         
-        // Второй проход: распределяем с учетом Купера
         document.querySelectorAll('.edit-svod-input').forEach(inp => {
             let shop = inp.getAttribute('data-shop');
             let vendor = (inp.getAttribute('data-vendor') || 'лента').toLowerCase();
@@ -717,6 +715,7 @@
     async function renderOrdersSvod() {
         const box = document.getElementById('content');
         
+        // Подгружаем недовозы
         let resMiss = await fetch(`${FB_URL}/missing_items.json`);
         let missingData = await resMiss.json() || {};
         let activeMissing = {};
@@ -741,7 +740,7 @@
         let allOrders = Object.values(cachedData.orders).sort((a,b) => (b.timestamp || 0) - (a.timestamp || 0));
         let lastOrderItems = {}; 
         let lastOrderTimestamp = {};
-        let cutoffMonth = Date.now() - (14 * 24 * 60 * 60 * 1000); // 14 Дней по твоей просьбе!
+        let cutoffMonth = Date.now() - (14 * 24 * 60 * 60 * 1000); 
 
         allOrders.forEach(o => {
             if (o && (o.mode === 'order' || o.mode === 'new_shop')) {
@@ -759,12 +758,13 @@
             }
         });
 
-        // Фильтруем историю (оставляем только если есть косяки, либо просто недавние)
+        // Фильтруем историю для отображения
         historyOrdersList = historyOrdersList.filter(o => {
             let items = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
             return items.some(i => i.bot_error || i.status === 'error' || i.not_found);
         });
 
+        // Очистка пустых заказов
         let keysToDelete = []; 
         let shopHasRealOrder = {};
         todaysOrders.forEach(o => {
@@ -795,6 +795,7 @@
             });
         }
 
+        // Группировка
         let svodDataByDate = {}; 
         todaysOrders.forEach(o => {
             let d = new Date(o.timestamp); 
@@ -1004,7 +1005,7 @@
                             } else if (isOzon && isRepeat) {
                                 let reason = missingStat === 'pending' ? "В недовозах" : "Был в прошлой закупке (ПРОВЕРЬТЕ!)";
                                 repeatBadge = `<span style='color:#d32f2f; font-size:13px; margin-left:5px; font-weight:bold;'>⚠️ ${reason}</span>`;
-                                rowBg = `background-color: #fff9c4;`; // Желтая подсветка
+                                rowBg = `background-color: #fff9c4;`; 
                             }
 
                             let statusText = "Ожидает ⏳"; 
@@ -1806,7 +1807,7 @@
         const box = document.getElementById('content');
         let shops = ["Бояринова", "Гагарина", "Вертолетчиков", "Липчанского", "Новокосино", "Новокосино 2", "Старое Павлино", "Красноказарменная", "Ухтомского ополчения"];
         let latestStops = {}; 
-        let activeOrdersMap = {}; 
+        let recentOrdersMap = {}; 
 
         let stopCatalog = {}; 
         let missingData = {};
@@ -1823,6 +1824,9 @@
             }
         });
 
+        // Берем заказы за последние 7 дней (Point 2)
+        let sevenDaysAgo = Date.now() - (7 * 24 * 60 * 60 * 1000);
+
         Object.values(cachedData.orders).forEach(o => {
             if (!o) return;
             if (o.mode === 'stoplist_fill') {
@@ -1830,21 +1834,28 @@
                     latestStops[o.shop] = o;
                 }
             }
-            if ((o.mode === 'order' || o.mode === 'new_shop') && o.ordered !== true) {
-                if (!activeOrdersMap[o.shop]) activeOrdersMap[o.shop] = {};
-                let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
-                itemsArr.forEach(i => {
-                    if (i && i.name) {
-                        let stat = 'pending';
-                        if (o.svod) {
-                            if (i.status === 'error' || i.bot_error) stat = 'error';
-                            else if (i.status === 'ordered') stat = 'ordered';
+            if (o.mode === 'order' || o.mode === 'new_shop') {
+                let isRecent = o.timestamp >= sevenDaysAgo;
+                // Захватываем и активные заказы, и уже оформленные за последние 7 дней
+                if (!o.ordered || isRecent) {
+                    if (!recentOrdersMap[o.shop]) recentOrdersMap[o.shop] = {};
+                    let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
+                    itemsArr.forEach(i => {
+                        if (i && i.name) {
+                            let stat = 'pending';
+                            if (o.svod) {
+                                if (i.status === 'error' || i.bot_error) stat = 'error';
+                                else if (i.status === 'ordered') stat = 'ordered';
+                            }
+                            if (o.ordered) stat = 'ordered'; // Если уже в архиве - значит заказано!
+                            
+                            // Сохраняем успешный статус (чтобы одна ошибка не перебила успешный заказ)
+                            if (recentOrdersMap[o.shop][i.name] !== 'ordered') {
+                                recentOrdersMap[o.shop][i.name] = stat;
+                            }
                         }
-                        if (activeOrdersMap[o.shop][i.name] !== 'error' && activeOrdersMap[o.shop][i.name] !== 'ordered') {
-                            activeOrdersMap[o.shop][i.name] = stat;
-                        }
-                    }
-                });
+                    });
+                }
             }
         });
         
@@ -1867,16 +1878,11 @@
                 
                 itemsArr.forEach(i => {
                     if (!i || !i.name) return;
+                    foundItems = true;
                     let iNameLow = String(i.name).trim().toLowerCase();
                     
                     let info = Object.values(stopCatalog).find(c => c && c.name && String(c.name).trim().toLowerCase() === iNameLow) || {};
                     let inOrderCat = Object.values(orderCatalog).find(c => c && c.name && String(c.name).trim().toLowerCase() === iNameLow);
-                    
-                    // НОВОЕ ПРАВИЛО: Если товара нет в закупке, он вообще не показывается
-                    if (!inOrderCat) return; 
-                    
-                    foundItems = true;
-                    
                     let isSyrup = (info.cat && String(info.cat).toLowerCase().includes("сироп")) || (inOrderCat && inOrderCat.cat && String(inOrderCat.cat).toLowerCase().includes("сироп")) || iNameLow.includes("сироп");
                     
                     let l1 = inOrderCat && inOrderCat.link ? `<a href="${inOrderCat.link}" target="_blank" style="color:#fff; background:#0288d1; padding:4px 8px; border-radius:6px; text-decoration:none; font-size:12px; font-weight:bold;">🔗 Осн</a>` : "";
@@ -1886,11 +1892,10 @@
                     let statHtml = "";
                     if (missingStatusMap[s] && missingStatusMap[s][iNameLow] === 'transit') {
                         statHtml = `<span style="background:#e3f2fd; color:#1565c0; padding:3px 6px; border-radius:6px; font-size:12px; font-weight:900; margin-right:8px;">В пути 🚚</span>`;
-                    } else if (inOrderCat) {
-                        let itemStatus = activeOrdersMap[s] ? activeOrdersMap[s][i.name] : null;
-                        if (itemStatus === 'ordered') statHtml = `<span style="background:#e8f5e9; color:#2e7d32; padding:3px 6px; border-radius:6px; font-size:12px; font-weight:900; margin-right:8px;">Заказано ✅</span>`;
+                    } else {
+                        let itemStatus = recentOrdersMap[s] ? recentOrdersMap[s][i.name] : null;
+                        if (itemStatus === 'ordered' || itemStatus === 'pending') statHtml = `<span style="background:#e8f5e9; color:#2e7d32; padding:3px 6px; border-radius:6px; font-size:12px; font-weight:900; margin-right:8px;">Заказано ✅</span>`;
                         else if (itemStatus === 'error') statHtml = `<span style="background:#ffebee; color:#c62828; padding:3px 6px; border-radius:6px; font-size:12px; font-weight:900; margin-right:8px;">Ошибка ❌</span>`;
-                        else if (itemStatus === 'pending') statHtml = `<span style="background:#fff3e0; color:#f57c00; padding:3px 6px; border-radius:6px; font-size:12px; font-weight:900; margin-right:8px;">Ожидает ⏳</span>`;
                         else statHtml = `<span style="background:#f5f5f5; color:#888; padding:3px 6px; border-radius:6px; font-size:12px; font-weight:900; margin-right:8px;">Не заказано ➖</span>`;
                     }
 

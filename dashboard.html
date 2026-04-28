@@ -554,6 +554,7 @@
         let totalKuper = 0;
         let shopLentaSums = {};
         
+        // Первый проход: вычисляем сумму Ленты
         document.querySelectorAll('.edit-svod-input').forEach(inp => {
             let shop = inp.getAttribute('data-shop');
             let vendor = (inp.getAttribute('data-vendor') || 'лента').toLowerCase();
@@ -572,6 +573,7 @@
             }
         });
         
+        // Второй проход: распределяем с учетом Купера
         document.querySelectorAll('.edit-svod-input').forEach(inp => {
             let shop = inp.getAttribute('data-shop');
             let vendor = (inp.getAttribute('data-vendor') || 'лента').toLowerCase();
@@ -740,7 +742,7 @@
         let allOrders = Object.values(cachedData.orders).sort((a,b) => (b.timestamp || 0) - (a.timestamp || 0));
         let lastOrderItems = {}; 
         let lastOrderTimestamp = {};
-        let cutoffMonth = Date.now() - (14 * 24 * 60 * 60 * 1000); 
+        let cutoffMonth = Date.now() - (30 * 24 * 60 * 60 * 1000); 
 
         allOrders.forEach(o => {
             if (o && (o.mode === 'order' || o.mode === 'new_shop')) {
@@ -756,12 +758,6 @@
                     }
                 }
             }
-        });
-
-        // Фильтруем историю для отображения
-        historyOrdersList = historyOrdersList.filter(o => {
-            let items = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
-            return items.some(i => i.bot_error || i.status === 'error' || i.not_found);
         });
 
         // Очистка пустых заказов
@@ -1073,7 +1069,7 @@
 
         html += `
             <div onclick="toggleElements('history-content-div')" style="cursor:pointer; background:#ede7f6; padding:18px; border-radius:12px; font-weight:900; color:#311B92; margin-top:40px; display:flex; justify-content:space-between; font-size:20px;">
-                <span>🕒 История операций (Проблемные закупки за 2 недели)</span><span id="arrow_history-content-div">▼</span>
+                <span>🕒 История операций (Собранные закупки за месяц)</span><span id="arrow_history-content-div">▼</span>
             </div>
             <div class="history-content-div" style="display:none; margin-top:15px;">
                 <table>
@@ -1087,7 +1083,7 @@
                     </tr>`;
         
         if (historyOrdersList.length === 0) {
-            html += `<tr><td colspan="6" style="text-align:center; color:#888; font-size:17px; font-weight:bold;">Нет проблемных или недавних заказов</td></tr>`;
+            html += `<tr><td colspan="6" style="text-align:center; color:#888; font-size:17px; font-weight:bold;">История пуста</td></tr>`;
         } else {
             historyOrdersList.forEach(o => {
                 let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
@@ -1883,6 +1879,7 @@
                     
                     let info = Object.values(stopCatalog).find(c => c && c.name && String(c.name).trim().toLowerCase() === iNameLow) || {};
                     let inOrderCat = Object.values(orderCatalog).find(c => c && c.name && String(c.name).trim().toLowerCase() === iNameLow);
+                    
                     let isSyrup = (info.cat && String(info.cat).toLowerCase().includes("сироп")) || (inOrderCat && inOrderCat.cat && String(inOrderCat.cat).toLowerCase().includes("сироп")) || iNameLow.includes("сироп");
                     
                     let l1 = inOrderCat && inOrderCat.link ? `<a href="${inOrderCat.link}" target="_blank" style="color:#fff; background:#0288d1; padding:4px 8px; border-radius:6px; text-decoration:none; font-size:12px; font-weight:bold;">🔗 Осн</a>` : "";
@@ -1890,13 +1887,16 @@
                     let linksHtml = [l1, l2].filter(Boolean).join(" ");
                     
                     let statHtml = "";
-                    if (missingStatusMap[s] && missingStatusMap[s][iNameLow] === 'transit') {
-                        statHtml = `<span style="background:#e3f2fd; color:#1565c0; padding:3px 6px; border-radius:6px; font-size:12px; font-weight:900; margin-right:8px;">В пути 🚚</span>`;
-                    } else {
-                        let itemStatus = recentOrdersMap[s] ? recentOrdersMap[s][i.name] : null;
-                        if (itemStatus === 'ordered' || itemStatus === 'pending') statHtml = `<span style="background:#e8f5e9; color:#2e7d32; padding:3px 6px; border-radius:6px; font-size:12px; font-weight:900; margin-right:8px;">Заказано ✅</span>`;
-                        else if (itemStatus === 'error') statHtml = `<span style="background:#ffebee; color:#c62828; padding:3px 6px; border-radius:6px; font-size:12px; font-weight:900; margin-right:8px;">Ошибка ❌</span>`;
-                        else statHtml = `<span style="background:#f5f5f5; color:#888; padding:3px 6px; border-radius:6px; font-size:12px; font-weight:900; margin-right:8px;">Не заказано ➖</span>`;
+                    // СТАТУС ОТОБРАЖАЕТСЯ ТОЛЬКО ЕСЛИ ТОВАР ЕСТЬ В ЗАКУПКЕ
+                    if (inOrderCat) {
+                        if (missingStatusMap[s] && missingStatusMap[s][iNameLow] === 'transit') {
+                            statHtml = `<span style="background:#e3f2fd; color:#1565c0; padding:3px 6px; border-radius:6px; font-size:12px; font-weight:900; margin-right:8px;">В пути 🚚</span>`;
+                        } else {
+                            let itemStatus = recentOrdersMap[s] ? recentOrdersMap[s][i.name] : null;
+                            if (itemStatus === 'ordered' || itemStatus === 'pending') statHtml = `<span style="background:#e8f5e9; color:#2e7d32; padding:3px 6px; border-radius:6px; font-size:12px; font-weight:900; margin-right:8px;">Заказано ✅</span>`;
+                            else if (itemStatus === 'error') statHtml = `<span style="background:#ffebee; color:#c62828; padding:3px 6px; border-radius:6px; font-size:12px; font-weight:900; margin-right:8px;">Ошибка ❌</span>`;
+                            else statHtml = `<span style="background:#f5f5f5; color:#888; padding:3px 6px; border-radius:6px; font-size:12px; font-weight:900; margin-right:8px;">Не заказано ➖</span>`;
+                        }
                     }
 
                     let linkBtn = `<div style="float:right; display:flex; align-items:center;">${statHtml} ${linksHtml}</div>`;

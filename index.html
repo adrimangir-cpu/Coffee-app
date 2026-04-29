@@ -4,7 +4,7 @@
   <base target="_top">
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>Coffee Management App v6.7</title>
+  <title>Coffee Management App v6.8</title>
   
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-app-compat.js"></script>
@@ -455,6 +455,23 @@
         return "id_" + res;
     }
 
+    function toggleElements(cls, arrowId) {
+        triggerHaptic();
+        let els = document.querySelectorAll('.' + cls);
+        if (els.length === 0) return;
+
+        let isOpening = els[0].style.display === 'none' || els[0].style.display === '';
+
+        els.forEach(el => {
+            el.style.display = isOpening ? 'block' : 'none';
+        });
+
+        if (arrowId) {
+            let arrowEl = document.getElementById(arrowId);
+            if (arrowEl) arrowEl.innerText = isOpening ? "▲" : "▼";
+        }
+    }
+
     async function handleShopSelection(name) {
       triggerHaptic(); 
       state.currentShop = name; 
@@ -690,7 +707,6 @@
               state.unprocessedItems = new Set();
               
               shopOrders.forEach(o => {
-                  // Для подсвечивания "Ожидает оформления" в ЗАКУПКЕ:
                   if ((o.mode === 'order' || o.mode === 'new_shop') && o.svod !== true && o.ordered !== true) {
                       let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
                       itemsArr.forEach(i => {
@@ -699,7 +715,7 @@
                   }
               });
 
-              // Возврат отмененных недовозов обратно в корзину
+              // Возврат отмененных недовозов обратно в корзину (восстановлено)
               const missSnap = await database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value");
               let hasCanceledMissings = false;
               missSnap.forEach(c => {
@@ -707,8 +723,10 @@
                   if (m && m.status === 'canceled' && !m.added_to_basket) {
                       let qtyNum = parseFloat(m.qty) || 0;
                       state.userBasket[m.name] = (state.userBasket[m.name] || 0) + qtyNum;
+                      
+                      let foundItem = Object.values(state.productCatalog).find(catItem => catItem && catItem.name === m.name);
                       if(!state.userBasket["_catinfo"]) state.userBasket["_catinfo"] = {};
-                      state.userBasket["_catinfo"][m.name] = state.productCatalog[m.name] ? state.productCatalog[m.name].cat : "Прочее";
+                      state.userBasket["_catinfo"][m.name] = foundItem ? foundItem.cat : "Прочее";
                       
                       database.ref("missing_items/" + c.key).update({added_to_basket: true}); 
                       hasCanceledMissings = true;
@@ -1079,8 +1097,11 @@
               if (String(q).trim() === "-" || String(q).trim() === "--" || String(q).trim() === "") return false;
               if (state.currentMode !== 'checklist' && (q == 0 || String(q) === "0")) return false; 
               
-              // ЖЕСТКИЙ ФИЛЬТР: В корзину (закупка) не попадают товары, которых нет в справочнике закупки
-              if ((state.currentMode === 'order' || state.currentMode === 'new_shop') && !state.productCatalog[n]) return false;
+              // ЖЕСТКИЙ ФИЛЬТР: проверяем по ИМЕНИ товара, а не по ключу Firebase (Исправлено!)
+              if (state.currentMode === 'order' || state.currentMode === 'new_shop') {
+                  let itemExists = Object.values(state.productCatalog).some(c => c && c.name === n);
+                  if (!itemExists) return false;
+              }
               
               return true;
           }).map(([n,q]) => {
@@ -1913,8 +1934,8 @@
 
                     let titleSuffix = group.status === 'fully_received' ? " (Принято ✅)" : (group.status === 'pending_svod' ? " (Ожидает сборки ⏳)" : " (Активная приемка 🚚)");
 
-                    html += `<div style="background:#ede7f6; padding:15px; border-radius:12px; font-weight:900; color:#311B92; margin-top:15px; display:flex; justify-content:space-between; font-size:18px; cursor:pointer;" onclick="toggleElements('date_group_${safeDateId}')">
-                                <span>📅 ${group.dateStr}${titleSuffix}</span><span id="arrow_${safeDateId}">${arrow}</span>
+                    html += `<div style="background:#ede7f6; padding:15px; border-radius:12px; font-weight:900; color:#311B92; margin-top:15px; display:flex; justify-content:space-between; font-size:18px; cursor:pointer;" onclick="toggleElements('date_group_${safeDateId}', 'arrow_date_${safeDateId}')">
+                                <span>📅 ${group.dateStr}${titleSuffix}</span><span id="arrow_date_${safeDateId}">${arrow}</span>
                              </div>`;
                              
                     html += `<div class="date_group_${safeDateId}" style="${displayStyle} margin-top:10px;">`;
@@ -1974,10 +1995,18 @@
 
                             const renderList = (arr, vendorKey, title, badgeClass, badgeText, keysStr) => {
                                 if (arr.length === 0) return "";
+                                
+                                let listId = getSafeId("list_" + group.dateStr + vendorKey);
+                                let isListOpen = group.status !== 'fully_received'; 
+                                let listDisplay = isListOpen ? "display: block;" : "display: none;";
+                                let listArrow = isListOpen ? "▲" : "▼";
+
                                 let res = `<div class="report-card" style="border-left: 4px solid ${vendorKey==='ozon'?'#1565c0':'#f57f17'};">
-                                             <div class="report-card-title" style="text-align:center; display:flex; align-items:center; justify-content:center; gap:10px;">
+                                             <div class="report-card-title" style="text-align:center; display:flex; align-items:center; justify-content:center; gap:10px; cursor:pointer; margin-bottom:5px;" onclick="toggleElements('${listId}', 'arrow_${listId}')">
                                                 ${title} <span class="vendor-badge ${badgeClass}" style="margin:0;">${badgeText}</span>
-                                             </div>`;
+                                                <span id="arrow_${listId}" style="color:#888; font-size:14px; margin-left:auto;">${listArrow}</span>
+                                             </div>
+                                             <div class="${listId}" style="${listDisplay} padding-top:10px;">`;
                                 
                                 arr.forEach(name => {
                                     let item = aggregatedItems[name];
@@ -1998,13 +2027,11 @@
                                                       </div>`;
                                         } else if (item.status === 'ordered') {
                                             if (group.status === 'fully_received') {
-                                                // Already fully received history
                                                 res += `<div class="report-card-item" style="flex-direction:row; justify-content:space-between; align-items:center; border-bottom:1px solid #eee;">
                                                             <span style="font-size:15px; font-weight:700; flex:1;"><b>${name}</b> (x${item.qty})</span> 
                                                             <span style="color:#4caf50; background:#e8f5e9; padding:4px 8px; border-radius:6px; font-size:12px; font-weight:900;">Принято ✅</span>
                                                           </div>`;
                                             } else {
-                                                // Active receiving
                                                 let safeNameAttr = name.replace(/"/g, '&quot;');
                                                 res += `<div class="report-card-item" style="flex-direction:column; align-items:flex-start; border-bottom:1px solid #eee;">
                                                             <div style="display:flex; justify-content:space-between; width:100%; align-items:center; margin-bottom:8px;">
@@ -2026,7 +2053,7 @@
                                 if (group.status === 'awaiting_receiving') {
                                     res += `<button onclick="commitMissingAndFinish('${vendorKey}', '${keysStr}')" class="btn-mode" style="background: #4caf50 !important; margin-top:15px; margin-bottom:0; font-size:15px !important; padding:15px !important;">✅ ПОДТВЕРДИТЬ ${badgeText}</button>`;
                                 }
-                                res += `</div>`;
+                                res += `</div></div>`;
                                 return res;
                             };
                             
@@ -2103,10 +2130,11 @@
                 await autoRemoveFromStoplist(state.currentShop, arrivedItemsToClear);
             }
             
+            hideReportOverlay();
             showLastOrder();
         } catch(e) {
+            hideReportOverlay();
             alert("❌ Ошибка: " + e.message);
-            showLastOrder();
         }
     }
 
@@ -2258,7 +2286,7 @@
 
       let saved = localStorage.getItem('saved_shop');
       if(saved && saved !== 'undefined') {
-          await handleShopSelection(saved);
+          handleShopSelection(saved);
       }
     };
   </script>

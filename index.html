@@ -111,7 +111,6 @@
     
     .item { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid rgba(0,0,0,0.03); transition: background-color 0.2s; }
     
-    /* Стили для "Уже в заказе" */
     .repeat-item { background-color: #ffebee !important; border-left: 4px solid #E53935; }
     .repeat-item-text { font-size: 11px; color: #C62828; font-weight: 900; margin-bottom: 2px; display: block; line-height: 1; text-transform: uppercase; }
 
@@ -155,7 +154,6 @@
     }
     .validation-error-banner b { font-size: 18px; display: block; margin-bottom: 4px; }
     
-    /* Стили для тумблеров приемки */
     .btn-missing-toggle { border:none; padding:8px 15px; border-radius:10px; font-weight:900; font-size:14px; cursor:pointer; transition: 0.2s; }
     .btn-missing-toggle.active { background:#ffebee; color:#d32f2f; border: 2px solid #d32f2f;}
     .btn-missing-toggle.inactive { background:#f5f5f5; color:#888; border: 2px solid transparent;}
@@ -464,7 +462,6 @@
       localStorage.setItem('saved_shop', name); 
       state.screenHistory = []; 
       
-      // Защита от зависаний интерфейса (Даем UI время на анимацию)
       setTimeout(async () => {
           await loadSettings();
           showScreen('step-2');
@@ -690,7 +687,6 @@
               let shopOrders = [];
               ordersSnap.forEach(c => { let val = c.val(); if(val && typeof val === 'object') shopOrders.push(val); });
               
-              // Для подсвечивания в ЗАКУПКЕ: Только те, что ПРЯМО СЕЙЧАС ожидают оформления/свода (svod !== true && ordered !== true)
               state.unprocessedItems = new Set();
               
               shopOrders.forEach(o => {
@@ -1688,6 +1684,7 @@
 
             if (ordersArr.length === 0) {
                 document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; font-weight:900;">Заказов еще не было.</div></div>`;
+                hideReportOverlay();
                 return;
             }
 
@@ -1795,9 +1792,11 @@
             
             html += `</div>`;
             document.getElementById('report-content-area').innerHTML = html;
+            hideReportOverlay();
         } catch (err) {
             console.error(err);
             document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; color:red; font-weight:900;">Ошибка загрузки списка.</div></div>`; 
+            hideReportOverlay();
         }
     }
 
@@ -1830,28 +1829,6 @@
                 } 
             });
 
-            let pendingOrders = ordersArr.filter(o => !o.ordered);
-            let unreceivedOrders = ordersArr.filter(o => o.ordered === true && (!o.lenta_received || !o.ozon_received));
-
-            let targetOrders = [];
-            let isSvodDone = false;
-
-            if (unreceivedOrders.length > 0) {
-                targetOrders = unreceivedOrders;
-                isSvodDone = true;
-            } else if (pendingOrders.length > 0) {
-                targetOrders = pendingOrders;
-                isSvodDone = pendingOrders.some(o => o.svod === true);
-            } else {
-                ordersArr.sort((a,b) => (b.timestamp||0) - (a.timestamp||0));
-                let lastOrder = ordersArr[0];
-                if (lastOrder) {
-                    let lastDate = new Date(lastOrder.timestamp).setHours(0,0,0,0);
-                    targetOrders = ordersArr.filter(o => o.ordered && new Date(o.timestamp).setHours(0,0,0,0) === lastDate);
-                    isSvodDone = true;
-                }
-            }
-            
             let html = "";
             
             if (activeMissing.length > 0) {
@@ -1884,144 +1861,181 @@
                 html += `</div>`;
             }
 
-            if(targetOrders.length === 0) { 
+            if(ordersArr.length === 0) { 
                 html += `<div class="report-card"><div style="text-align:center; font-weight:900;">Заказов еще не было.</div></div>`; 
-            } else if(!isSvodDone) {
-                html += `<div class="report-card" style="text-align:center;">
-                        <div class="report-card-title">⏳ Ожидание сборки</div>
-                        <div style="font-weight:700;">Ваш заказ еще находится в обработке у администратора.<br><br>
-                        Приемка откроется сразу после того, как администратор соберет свод по заказам.</div>
-                    </div>`;
             } else {
                 
+                // Группируем по датам
                 let ordersByDate = {};
-                targetOrders.forEach(o => {
+                ordersArr.forEach(o => {
                     let d = new Date(o.timestamp);
                     let dateStr = d.toLocaleDateString('ru-RU');
-                    if (!ordersByDate[dateStr]) ordersByDate[dateStr] = [];
-                    ordersByDate[dateStr].push(o);
+                    if (!ordersByDate[dateStr]) ordersByDate[dateStr] = { orders: [], timestamp: 0 };
+                    ordersByDate[dateStr].orders.push(o);
+                    if (o.timestamp > ordersByDate[dateStr].timestamp) ordersByDate[dateStr].timestamp = o.timestamp;
                 });
 
-                let sortedDates = Object.keys(ordersByDate).sort((a,b) => {
-                    let [d1, m1, y1] = a.split('.'); let [d2, m2, y2] = b.split('.');
-                    return new Date(y1, m1-1, d1) - new Date(y2, m2-1, d2); 
+                let dateGroups = Object.keys(ordersByDate).map(dateStr => {
+                    let group = ordersByDate[dateStr];
+                    let hasUnordered = group.orders.some(o => !o.ordered);
+                    let hasUnreceived = group.orders.some(o => o.ordered && (!o.lenta_received || !o.ozon_received));
+                    let isFullyReceived = group.orders.every(o => o.ordered && o.lenta_received && o.ozon_received);
+
+                    let groupStatus = '';
+                    if (hasUnordered) groupStatus = 'pending_svod';
+                    else if (hasUnreceived) groupStatus = 'awaiting_receiving';
+                    else if (isFullyReceived) groupStatus = 'fully_received';
+
+                    return { dateStr: dateStr, orders: group.orders, status: groupStatus, timestamp: group.timestamp };
                 });
 
-                sortedDates.forEach((dateStr, index) => {
-                    let dateOrders = ordersByDate[dateStr];
-                    let safeDateId = getSafeId("date_" + dateStr);
-                    
-                    let isSvodDoneForDate = dateOrders.every(o => o.ordered); 
+                // Сортируем от новых к старым
+                dateGroups.sort((a,b) => b.timestamp - a.timestamp);
 
-                    let aggregatedItems = {};
-                    let hasRealItems = false;
-                    
-                    dateOrders.forEach(o => {
-                        let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
-                        itemsArr.forEach(i => {
-                            if (!i || !i.name || i.name === "НЕТ ЗАКАЗА") return;
-                            
-                            let catItem = Object.values(orderCatalog).find(c => c && c.name === i.name) || {};
-                            let vendor = (catItem.vendor || 'Лента').toLowerCase() === 'озон' ? 'ozon' : 'lenta';
+                let displayGroups = [];
+                let foundCompleted = false;
 
-                            if (vendor === 'ozon' && o.ozon_received) return;
-                            if (vendor === 'lenta' && o.lenta_received) return;
+                dateGroups.forEach(g => {
+                    if (g.status === 'pending_svod' || g.status === 'awaiting_receiving') {
+                        displayGroups.push(g);
+                    } else if (g.status === 'fully_received' && !foundCompleted) {
+                        displayGroups.push(g);
+                        foundCompleted = true; // Только последнюю успешную историю
+                    }
+                });
 
-                            hasRealItems = true;
-                            if (!aggregatedItems[i.name]) {
-                                aggregatedItems[i.name] = { qty: 0, status: i.status || 'pending', bot_error: i.bot_error || false, vendor: vendor };
-                            }
-                            aggregatedItems[i.name].qty += parseFloat(i.qty) || 0;
-                            if (i.status === 'error' || i.bot_error) {
-                                aggregatedItems[i.name].status = 'error';
-                                aggregatedItems[i.name].bot_error = true;
-                            } else if (i.status === 'ordered' && aggregatedItems[i.name].status !== 'error') {
-                                aggregatedItems[i.name].status = 'ordered';
-                            }
-                        });
-                    });
+                if (displayGroups.length === 0) {
+                     html += `<div class="report-card"><div style="text-align:center; font-weight:900;">Актуальных приемкок нет.</div></div>`;
+                }
 
-                    let isOpen = index === 0; 
+                displayGroups.forEach((group, index) => {
+                    let safeDateId = getSafeId("date_" + group.dateStr);
+                    let isOpen = (group.status !== 'fully_received'); 
                     let displayStyle = isOpen ? "display: block;" : "display: none;";
                     let arrow = isOpen ? "▲" : "▼";
 
+                    let titleSuffix = group.status === 'fully_received' ? " (Принято ✅)" : (group.status === 'pending_svod' ? " (Ожидает сборки ⏳)" : " (Активная приемка 🚚)");
+
                     html += `<div style="background:#ede7f6; padding:15px; border-radius:12px; font-weight:900; color:#311B92; margin-top:15px; display:flex; justify-content:space-between; font-size:18px; cursor:pointer;" onclick="toggleElements('date_group_${safeDateId}')">
-                                <span>📅 Поставка за ${dateStr}</span><span id="arrow_${safeDateId}">${arrow}</span>
+                                <span>📅 ${group.dateStr}${titleSuffix}</span><span id="arrow_${safeDateId}">${arrow}</span>
                              </div>`;
                              
                     html += `<div class="date_group_${safeDateId}" style="${displayStyle} margin-top:10px;">`;
 
-                    if (!isSvodDoneForDate) {
+                    if (group.status === 'pending_svod') {
                         html += `<div class="report-card" style="text-align:center; border: 2px dashed #9575CD;">
                                     <div class="report-card-title">⏳ Ожидание сборки</div>
                                     <div style="font-weight:700;">Заказы за эту дату еще в обработке у администратора.<br>Приемка откроется после сведения.</div>
                                 </div>`;
-                    } else if (!hasRealItems) {
-                         html += `<div class="report-card"><div style="text-align:center; font-weight:900; color:#4caf50;">✅ Все товары за эту дату приняты!</div></div>`;
                     } else {
                         
-                        let itemsOzon = [];
-                        let itemsLenta = [];
+                        let aggregatedItems = {};
+                        let hasRealItems = false;
                         
-                        Object.keys(aggregatedItems).forEach(name => {
-                            if (aggregatedItems[name].vendor === 'ozon') itemsOzon.push(name);
-                            else itemsLenta.push(name);
-                        });
-                        
-                        itemsOzon.sort((a,b) => a.localeCompare(b));
-                        itemsLenta.sort((a,b) => a.localeCompare(b));
-                        
-                        let orderKeysToMark = dateOrders.map(o => o.key).join(',');
-
-                        const renderList = (arr, vendorKey, title, badgeClass, badgeText, keysStr) => {
-                            if (arr.length === 0) return "";
-                            let res = `<div class="report-card" style="border-left: 4px solid ${vendorKey==='ozon'?'#1565c0':'#f57f17'};">
-                                         <div class="report-card-title" style="text-align:center; display:flex; align-items:center; justify-content:center; gap:10px;">
-                                            ${title} <span class="vendor-badge ${badgeClass}" style="margin:0;">${badgeText}</span>
-                                         </div>`;
-                            
-                            arr.forEach(name => {
-                                let item = aggregatedItems[name];
-                                let isMissingAlready = activeMissing.some(am => am.name === name);
+                        group.orders.forEach(o => {
+                            let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
+                            itemsArr.forEach(i => {
+                                if (!i || !i.name || i.name === "НЕТ ЗАКАЗА") return;
                                 
-                                if (isMissingAlready) {
-                                    res += `<div class="report-card-item" style="flex-direction:column; align-items:flex-start; opacity:0.6;">
-                                            <span style="margin-bottom:5px; font-size:16px;"><b>${name}</b> (x${item.qty})</span> 
-                                            <span style="color:#ef6c00; font-size:13px; font-weight:900;">Уже в недовозах 👆</span>
-                                          </div>`;
-                                } else {
-                                    let isError = (item.status === 'error' || item.bot_error === true);
-                                    
-                                    if (isError) {
-                                        res += `<div class="report-card-item" style="flex-direction:row; justify-content:space-between; align-items:center; opacity:0.7; border-bottom:1px solid #eee;">
-                                                    <span style="font-size:15px; font-weight:700; flex:1;"><b>${name}</b> (x${item.qty})</span> 
-                                                    <span style="color:#c62828; background:#ffebee; padding:4px 8px; border-radius:6px; font-size:12px; font-weight:900;">Нет в наличии ❌</span>
-                                                  </div>`;
-                                    } else if (item.status === 'ordered') {
-                                        let safeNameAttr = name.replace(/"/g, '&quot;');
-                                        res += `<div class="report-card-item" style="flex-direction:column; align-items:flex-start; border-bottom:1px solid #eee;">
-                                                    <div style="display:flex; justify-content:space-between; width:100%; align-items:center; margin-bottom:8px;">
-                                                        <span style="font-size:15px; font-weight:700; flex:1;"><b>${name}</b> (x${item.qty})</span>
-                                                        <span style="color:#2e7d32; background:#e8f5e9; padding:4px 8px; border-radius:6px; font-size:12px; font-weight:900;">Заказано ✅</span>
-                                                    </div>
-                                                    <button class="btn-missing-toggle inactive" onclick="toggleMissingLocal(this, '${safeNameAttr}', ${item.qty}, '${vendorKey}')">Не довезли ‼️</button>
-                                                  </div>`;
-                                    } else {
-                                        res += `<div class="report-card-item" style="flex-direction:row; justify-content:space-between; align-items:center; border-bottom:1px solid #eee;">
-                                                    <span style="font-size:15px; font-weight:700; flex:1;"><b>${name}</b> (x${item.qty})</span> 
-                                                    <span style="color:#f57c00; background:#fff3e0; padding:4px 8px; border-radius:6px; font-size:12px; font-weight:900;">Ожидает ⏳</span>
-                                                  </div>`;
-                                    }
+                                let catItem = Object.values(orderCatalog).find(c => c && c.name === i.name) || {};
+                                let vendor = (catItem.vendor || 'Лента').toLowerCase() === 'озон' ? 'ozon' : 'lenta';
+
+                                if (group.status !== 'fully_received') {
+                                    if (vendor === 'ozon' && o.ozon_received) return;
+                                    if (vendor === 'lenta' && o.lenta_received) return;
+                                }
+
+                                hasRealItems = true;
+                                if (!aggregatedItems[i.name]) {
+                                    aggregatedItems[i.name] = { qty: 0, status: i.status || 'pending', bot_error: i.bot_error || false, vendor: vendor };
+                                }
+                                aggregatedItems[i.name].qty += parseFloat(i.qty) || 0;
+                                if (i.status === 'error' || i.bot_error) {
+                                    aggregatedItems[i.name].status = 'error';
+                                    aggregatedItems[i.name].bot_error = true;
+                                } else if (i.status === 'ordered' && aggregatedItems[i.name].status !== 'error') {
+                                    aggregatedItems[i.name].status = 'ordered';
                                 }
                             });
+                        });
+
+                        if (!hasRealItems) {
+                             html += `<div class="report-card"><div style="text-align:center; font-weight:900; color:#4caf50;">✅ Все товары за эту дату приняты!</div></div>`;
+                        } else {
+                            let itemsOzon = [];
+                            let itemsLenta = [];
                             
-                            res += `<button onclick="commitMissingAndFinish('${vendorKey}', '${keysStr}')" class="btn-mode" style="background: #4caf50 !important; margin-top:15px; margin-bottom:0; font-size:15px !important; padding:15px !important;">✅ ПОДТВЕРДИТЬ ${badgeText}</button>`;
-                            res += `</div>`;
-                            return res;
-                        };
-                        
-                        html += renderList(itemsLenta, "lenta", "Приемка", "vendor-lenta", "ЛЕНТА", orderKeysToMark);
-                        html += renderList(itemsOzon, "ozon", "Приемка", "vendor-ozon", "ОЗОН", orderKeysToMark);
+                            Object.keys(aggregatedItems).forEach(name => {
+                                if (aggregatedItems[name].vendor === 'ozon') itemsOzon.push(name);
+                                else itemsLenta.push(name);
+                            });
+                            
+                            itemsOzon.sort((a,b) => a.localeCompare(b));
+                            itemsLenta.sort((a,b) => a.localeCompare(b));
+                            
+                            let orderKeysToMark = group.orders.map(o => o.key).join(',');
+
+                            const renderList = (arr, vendorKey, title, badgeClass, badgeText, keysStr) => {
+                                if (arr.length === 0) return "";
+                                let res = `<div class="report-card" style="border-left: 4px solid ${vendorKey==='ozon'?'#1565c0':'#f57f17'};">
+                                             <div class="report-card-title" style="text-align:center; display:flex; align-items:center; justify-content:center; gap:10px;">
+                                                ${title} <span class="vendor-badge ${badgeClass}" style="margin:0;">${badgeText}</span>
+                                             </div>`;
+                                
+                                arr.forEach(name => {
+                                    let item = aggregatedItems[name];
+                                    let isMissingAlready = activeMissing.some(am => am.name === name);
+                                    
+                                    if (isMissingAlready) {
+                                        res += `<div class="report-card-item" style="flex-direction:column; align-items:flex-start; opacity:0.6;">
+                                                <span style="margin-bottom:5px; font-size:16px;"><b>${name}</b> (x${item.qty})</span> 
+                                                <span style="color:#ef6c00; font-size:13px; font-weight:900;">Уже в недовозах 👆</span>
+                                              </div>`;
+                                    } else {
+                                        let isError = (item.status === 'error' || item.bot_error === true);
+                                        
+                                        if (isError) {
+                                            res += `<div class="report-card-item" style="flex-direction:row; justify-content:space-between; align-items:center; opacity:0.7; border-bottom:1px solid #eee;">
+                                                        <span style="font-size:15px; font-weight:700; flex:1;"><b>${name}</b> (x${item.qty})</span> 
+                                                        <span style="color:#c62828; background:#ffebee; padding:4px 8px; border-radius:6px; font-size:12px; font-weight:900;">Нет в наличии ❌</span>
+                                                      </div>`;
+                                        } else if (item.status === 'ordered') {
+                                            if (group.status === 'fully_received') {
+                                                // Already fully received history
+                                                res += `<div class="report-card-item" style="flex-direction:row; justify-content:space-between; align-items:center; border-bottom:1px solid #eee;">
+                                                            <span style="font-size:15px; font-weight:700; flex:1;"><b>${name}</b> (x${item.qty})</span> 
+                                                            <span style="color:#4caf50; background:#e8f5e9; padding:4px 8px; border-radius:6px; font-size:12px; font-weight:900;">Принято ✅</span>
+                                                          </div>`;
+                                            } else {
+                                                // Active receiving
+                                                let safeNameAttr = name.replace(/"/g, '&quot;');
+                                                res += `<div class="report-card-item" style="flex-direction:column; align-items:flex-start; border-bottom:1px solid #eee;">
+                                                            <div style="display:flex; justify-content:space-between; width:100%; align-items:center; margin-bottom:8px;">
+                                                                <span style="font-size:15px; font-weight:700; flex:1;"><b>${name}</b> (x${item.qty})</span>
+                                                                <span style="color:#2e7d32; background:#e8f5e9; padding:4px 8px; border-radius:6px; font-size:12px; font-weight:900;">Заказано ✅</span>
+                                                            </div>
+                                                            <button class="btn-missing-toggle inactive" onclick="toggleMissingLocal(this, '${safeNameAttr}', ${item.qty}, '${vendorKey}')">Не довезли ‼️</button>
+                                                          </div>`;
+                                            }
+                                        } else {
+                                            res += `<div class="report-card-item" style="flex-direction:row; justify-content:space-between; align-items:center; border-bottom:1px solid #eee;">
+                                                        <span style="font-size:15px; font-weight:700; flex:1;"><b>${name}</b> (x${item.qty})</span> 
+                                                        <span style="color:#f57c00; background:#fff3e0; padding:4px 8px; border-radius:6px; font-size:12px; font-weight:900;">Ожидает ⏳</span>
+                                                      </div>`;
+                                        }
+                                    }
+                                });
+                                
+                                if (group.status === 'awaiting_receiving') {
+                                    res += `<button onclick="commitMissingAndFinish('${vendorKey}', '${keysStr}')" class="btn-mode" style="background: #4caf50 !important; margin-top:15px; margin-bottom:0; font-size:15px !important; padding:15px !important;">✅ ПОДТВЕРДИТЬ ${badgeText}</button>`;
+                                }
+                                res += `</div>`;
+                                return res;
+                            };
+                            
+                            html += renderList(itemsLenta, "lenta", group.status==='fully_received' ? "История" : "Приемка", "vendor-lenta", "ЛЕНТА", orderKeysToMark);
+                            html += renderList(itemsOzon, "ozon", group.status==='fully_received' ? "История" : "Приемка", "vendor-ozon", "ОЗОН", orderKeysToMark);
+                        }
                     }
                     html += `</div>`; 
                 });
@@ -2030,9 +2044,11 @@
             }
             
             document.getElementById('report-content-area').innerHTML = html || "<div class='report-card'>Пусто</div>";
+            hideReportOverlay();
         } catch (err) {
             console.error(err);
             document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; color:red; font-weight:900;">Ошибка загрузки приемки.</div></div>`; 
+            hideReportOverlay();
         }
     }
 
@@ -2180,8 +2196,10 @@
             }
             
             document.getElementById('report-content-area').innerHTML = html;
+            hideReportOverlay();
         } catch (err) {
             document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; color:red; font-weight:900;">Ошибка загрузки.</div></div>`; 
+            hideReportOverlay();
         }
     }
 

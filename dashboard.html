@@ -296,6 +296,12 @@
     let isMpEditMode = false;
     let mpDeletions = new Set();
 
+    // ПАМЯТЬ СОСТОЯНИЙ ИСТОРИЙ (Чтобы не закрывались при автообновлении)
+    let stateHistoryOrders = false;
+    let stateHistoryMp = false;
+    let stateHistoryMissing = false;
+    let stateHistoryStoplist = false;
+
     function getSafeId(str) {
         if (!str) return "id_empty_" + Math.floor(Math.random() * 10000);
         let res = "";
@@ -1068,10 +1074,10 @@
         }
 
         html += `
-            <div onclick="toggleElements('history-content-div')" style="cursor:pointer; background:#ede7f6; padding:18px; border-radius:12px; font-weight:900; color:#311B92; margin-top:40px; display:flex; justify-content:space-between; font-size:20px;">
-                <span>🕒 История операций (Собранные закупки за месяц)</span><span id="arrow_history-content-div">▼</span>
+            <div onclick="stateHistoryOrders = !stateHistoryOrders; renderOrdersSvod();" style="cursor:pointer; background:#ede7f6; padding:18px; border-radius:12px; font-weight:900; color:#311B92; margin-top:40px; display:flex; justify-content:space-between; font-size:20px;">
+                <span>🕒 История операций (Собранные закупки за месяц)</span><span>${stateHistoryOrders ? '▲' : '▼'}</span>
             </div>
-            <div class="history-content-div" style="display:none; margin-top:15px;">
+            <div style="display:${stateHistoryOrders ? 'block' : 'none'}; margin-top:15px;" class="card">
                 <table>
                     <tr>
                         <th>Кофейня</th>
@@ -1510,10 +1516,10 @@
         let hasAnyHistory = shops.some(s => historyData[s].length > 0);
         if (hasAnyHistory) {
             html += `
-                <div onclick="toggleElements('mp-history-content')" style="cursor:pointer; background:#ede7f6; padding:18px; border-radius:12px; font-weight:900; color:#311B92; margin-top:40px; display:flex; justify-content:space-between; font-size:20px;">
-                    <span>🕒 История (Прошлые месяцы)</span><span id="arrow_mp-history-content">▼</span>
+                <div onclick="stateHistoryMp = !stateHistoryMp; renderMarketplaceTab();" style="cursor:pointer; background:#ede7f6; padding:18px; border-radius:12px; font-weight:900; color:#311B92; margin-top:40px; display:flex; justify-content:space-between; font-size:20px;">
+                    <span>🕒 История (Прошлые месяцы)</span><span>${stateHistoryMp ? '▲' : '▼'}</span>
                 </div>
-                <div class="mp-history-content" style="display:none; margin-top:15px;">`;
+                <div style="display:${stateHistoryMp ? 'block' : 'none'}; margin-top:15px;">`;
                 
             shops.forEach(s => {
                 if (historyData[s].length === 0) return;
@@ -1781,10 +1787,10 @@
         let html = activeHtml + `<p style='margin-top:0px; margin-bottom:30px; font-size:16px; color:#777; background:#fff9c4; padding:15px; border-radius:10px;'>💡 <b>Подсказка:</b> Если выбрать статус <b>"НЕТ В НАЛИЧИИ"</b>, товар вернется в корзину сотруднику в мини-приложении.</p>`;
         
         if (hasHistory) {
-            html += `<div onclick="toggleElements('missing-history-content')" style="cursor:pointer; background:#ede7f6; padding:18px; border-radius:12px; font-weight:900; color:#311B92; margin-top:20px; display:flex; justify-content:space-between; font-size:20px;">
-                        <span>🕒 История недовозов (за 30 дней)</span><span id="arrow_missing-history-content">▼</span>
+            html += `<div onclick="stateHistoryMissing = !stateHistoryMissing; renderMissing();" style="cursor:pointer; background:#ede7f6; padding:18px; border-radius:12px; font-weight:900; color:#311B92; margin-top:20px; display:flex; justify-content:space-between; font-size:20px;">
+                        <span>🕒 История недовозов (за 30 дней)</span><span>${stateHistoryMissing ? '▲' : '▼'}</span>
                      </div>
-                     <div class="missing-history-content" style="display:none;">${historyHtml}</div>`;
+                     <div style="display:${stateHistoryMissing ? 'block' : 'none'}; margin-top:15px;" class="card">${historyHtml}</div>`;
         }
         box.innerHTML = html;
     }
@@ -1820,8 +1826,10 @@
             }
         });
 
-        // Берем заказы за последние 7 дней (Point 2)
         let sevenDaysAgo = Date.now() - (7 * 24 * 60 * 60 * 1000);
+        let thirtyDays = Date.now() - (30 * 24 * 60 * 60 * 1000);
+        
+        let stopHistoryArr = [];
 
         Object.values(cachedData.orders).forEach(o => {
             if (!o) return;
@@ -1829,10 +1837,12 @@
                 if (!latestStops[o.shop] || o.timestamp > latestStops[o.shop].timestamp) {
                     latestStops[o.shop] = o;
                 }
+                if (o.timestamp >= thirtyDays) {
+                    stopHistoryArr.push(o);
+                }
             }
             if (o.mode === 'order' || o.mode === 'new_shop') {
                 let isRecent = o.timestamp >= sevenDaysAgo;
-                // Захватываем и активные заказы, и уже оформленные за последние 7 дней
                 if (!o.ordered || isRecent) {
                     if (!recentOrdersMap[o.shop]) recentOrdersMap[o.shop] = {};
                     let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
@@ -1843,9 +1853,8 @@
                                 if (i.status === 'error' || i.bot_error) stat = 'error';
                                 else if (i.status === 'ordered') stat = 'ordered';
                             }
-                            if (o.ordered) stat = 'ordered'; // Если уже в архиве - значит заказано!
+                            if (o.ordered) stat = 'ordered'; 
                             
-                            // Сохраняем успешный статус (чтобы одна ошибка не перебила успешный заказ)
                             if (recentOrdersMap[o.shop][i.name] !== 'ordered') {
                                 recentOrdersMap[o.shop][i.name] = stat;
                             }
@@ -1873,7 +1882,7 @@
                 let itemsArr = Array.isArray(stop.items) ? stop.items : Object.values(stop.items);
                 
                 itemsArr.forEach(i => {
-                    if (!i || !i.name) return;
+                    if (!i || !i.name || i.qty !== 'Закончилось' || i.name === 'Всё в наличии') return;
                     foundItems = true;
                     let iNameLow = String(i.name).trim().toLowerCase();
                     
@@ -1887,7 +1896,6 @@
                     let linksHtml = [l1, l2].filter(Boolean).join(" ");
                     
                     let statHtml = "";
-                    // СТАТУС ОТОБРАЖАЕТСЯ ТОЛЬКО ЕСЛИ ТОВАР ЕСТЬ В ЗАКУПКЕ
                     if (inOrderCat) {
                         if (missingStatusMap[s] && missingStatusMap[s][iNameLow] === 'transit') {
                             statHtml = `<span style="background:#e3f2fd; color:#1565c0; padding:3px 6px; border-radius:6px; font-size:12px; font-weight:900; margin-right:8px;">В пути 🚚</span>`;
@@ -1925,7 +1933,7 @@
                              </div>`;
                 }
                 
-                if (!foundItems || itemsArr[0].name === "Всё в наличии") {
+                if (!foundItems) {
                     html += `<div style="color:#4caf50; font-weight:bold; font-size:17px; padding:10px 0;">Стоп-лист пуст (всё в наличии)</div>`;
                 }
             } else { 
@@ -1934,6 +1942,46 @@
             html += `</div>`;
         });
         html += `</div>`;
+
+        // Добавляем ИСТОРИЮ стоп-листов
+        stopHistoryArr.sort((a,b) => b.timestamp - a.timestamp);
+        let stoplistHistoryHtml = `<table style="width:100%; margin-top:15px;">
+            <tr><th style="width:180px;">Дата и Время</th><th style="width:200px;">Кофейня</th><th>Закончившиеся продукты</th></tr>`;
+
+        if (stopHistoryArr.length === 0) {
+            stoplistHistoryHtml += `<tr><td colspan="3" style="text-align:center; padding:20px; color:#888; font-weight:bold;">За месяц записей нет</td></tr>`;
+        } else {
+            stopHistoryArr.forEach(o => {
+                let d = new Date(o.timestamp);
+                let dateStr = d.toLocaleDateString('ru-RU') + " " + d.toLocaleTimeString('ru-RU', {hour: '2-digit', minute:'2-digit'});
+                let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
+                let productsStr = itemsArr
+                    .filter(i => i && i.name && i.qty === 'Закончилось' && i.name !== "Всё в наличии")
+                    .map(i => i.name)
+                    .join(", ");
+                
+                if (!productsStr) productsStr = "<span style='color:#4caf50;'>Всё в наличии</span>";
+
+                let displayName = o.shop === 'Красноказарменная' ? 'МЭИ' : o.shop;
+
+                stoplistHistoryHtml += `
+                <tr class="order-row">
+                    <td style="font-size:15px; color:#666; font-weight:bold;">${dateStr}</td>
+                    <td><b style="color:#311B92; font-size:16px;">${displayName}</b></td>
+                    <td style="font-size:15px;">${productsStr}</td>
+                </tr>`;
+            });
+        }
+        stoplistHistoryHtml += `</table>`;
+
+        html += `
+        <div onclick="stateHistoryStoplist = !stateHistoryStoplist; renderStoplists();" style="cursor:pointer; background:#ede7f6; padding:18px; border-radius:12px; font-weight:900; color:#311B92; margin-top:40px; display:flex; justify-content:space-between; font-size:20px;">
+            <span>🕒 История стоп-листов (за 30 дней)</span><span>${stateHistoryStoplist ? '▲' : '▼'}</span>
+        </div>
+        <div class="card" style="display:${stateHistoryStoplist ? 'block' : 'none'}; margin-top:15px; padding:20px;">
+            ${stoplistHistoryHtml}
+        </div>`;
+
         box.innerHTML = html;
     }
 

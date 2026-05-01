@@ -138,8 +138,9 @@
     
     .item { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid rgba(0,0,0,0.03); transition: background-color 0.2s; }
     
-    .repeat-item { background-color: #ffebee !important; border-left: 4px solid #E53935; }
-    .repeat-item-text { font-size: 11px; color: #C62828; font-weight: 900; margin-bottom: 2px; display: block; line-height: 1; text-transform: uppercase; }
+    /* Обновленная подсветка "Ожидает оформления" (Оранжевый) */
+    .repeat-item { background-color: #fff3e0 !important; border-left: 4px solid #ff9800; }
+    .repeat-item-text { font-size: 11px; color: #e65100; font-weight: 900; margin-bottom: 2px; display: block; line-height: 1; text-transform: uppercase; }
 
     .controls { display: flex; align-items: center; gap: 6px; background-color: #f8f9fa; padding: 4px; border-radius: 12px; }
     
@@ -186,7 +187,6 @@
       box-shadow: 0 10px 30px rgba(0,0,0,0.2); animation: slideUp 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
       font-weight: 800; font-size: 15px; line-height: 1.4; border: 2px solid rgba(255,255,255,0.2);
     }
-    .validation-error-banner b { font-size: 18px; display: block; margin-bottom: 4px; }
     
     /* Чистая кнопка недовоза */
     .btn-missing-toggle { border: 1px solid #ddd; background: transparent; color: #666; padding: 6px 12px; border-radius: 8px; font-weight: 700; font-size: 13px; cursor:pointer; transition: 0.2s; }
@@ -1163,7 +1163,7 @@
               let [orderCatSnap, newCatSnap, ordersSnap, missSnap] = await Promise.all([
                   database.ref("catalogs/order").once("value"),
                   database.ref("catalogs/newshop").once("value"),
-                  database.ref("orders").orderByChild("shop").equalTo(state.currentShop).once("value"),
+                  database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(100).once("value"),
                   database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value")
               ]);
               
@@ -1172,7 +1172,9 @@
               let combinedCatalog = Object.values(orderCat).concat(Object.values(newCat));
 
               let activeItems = new Set();
+              let sevenDaysAgo = Date.now() - (7 * 24 * 60 * 60 * 1000);
               
+              // Если товар уже висит в недовозах (и не отменен/доехал) — он в пути/ожидании, дублировать нельзя
               missSnap.forEach(c => {
                   let m = c.val();
                   if (m && m.status !== 'arrived' && m.status !== 'canceled') {
@@ -1180,13 +1182,22 @@
                   }
               });
               
+              // Проверяем актуальные заказы
               ordersSnap.forEach(c => {
                   let o = c.val();
-                  if (o && (o.mode === 'order' || o.mode === 'new_shop') && !o.received) {
+                  if (o && (o.mode === 'order' || o.mode === 'new_shop') && (o.timestamp >= sevenDaysAgo)) {
                       let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
                       itemsArr.forEach(i => {
                           if (i && i.name && i.status !== 'error') {
-                              activeItems.add(String(i.name).trim().toLowerCase());
+                              // Узнаем поставщика этого конкретного товара
+                              let cItem = combinedCatalog.find(cat => cat && cat.name === i.name) || {};
+                              let vendor = (cItem.vendor || 'Лента').toLowerCase() === 'озон' ? 'ozon' : 'lenta';
+                              let isVendorReceived = (vendor === 'ozon') ? o.ozon_received : o.lenta_received;
+                              
+                              // Если заказ еще не оформлен ботом, ИЛИ поставщик этого товара еще не принят — товар активен (в ожидании/в пути)
+                              if (!o.ordered || !isVendorReceived) {
+                                  activeItems.add(String(i.name).trim().toLowerCase());
+                              }
                           }
                       });
                   }
@@ -1790,6 +1801,9 @@
                 Object.keys(activeMissing).forEach(missingName => {
                     if (!aggregatedItems[missingName]) {
                         aggregatedItems[missingName] = { qty: "Недовоз", status: 'error', bot_error: true };
+                    } else {
+                        aggregatedItems[missingName].status = 'error';
+                        aggregatedItems[missingName].bot_error = true;
                     }
                 });
 
@@ -1821,7 +1835,7 @@
                         statusHtml = `<span style="color:#888; font-size:13px; font-weight:800;">Ожидает ⏳</span>`;
                     }
 
-                    let displayQty = (item.qty === "Недовоз") ? "" : `${item.qty} шт.`;
+                    let displayQty = (item.qty === "Недовоз") ? "" : `(x${item.qty})`;
 
                     html += `<div class="clean-list-item">
                                 <div class="clean-list-text">
@@ -1899,7 +1913,7 @@
                 html += `<div class="report-card"><div style="text-align:center; font-weight:900;">Заказов еще не было.</div></div>`; 
             } else {
                 
-                // Группируем по датам
+                // Группируем по датам заказа
                 let ordersByDate = {};
                 ordersArr.forEach(o => {
                     let d = new Date(o.timestamp);
@@ -1911,14 +1925,45 @@
 
                 let dateGroups = Object.keys(ordersByDate).map(dateStr => {
                     let group = ordersByDate[dateStr];
-                    let hasUnordered = group.orders.some(o => !o.ordered);
-                    let hasUnreceived = group.orders.some(o => o.ordered && (!o.lenta_received || !o.ozon_received));
-                    let isFullyReceived = group.orders.every(o => o.ordered && o.lenta_received && o.ozon_received);
+                    
+                    let hasUnordered = false;
+                    let hasUnreceived = false;
+                    let allReceived = true;
+
+                    // Умная логика статусов приемки по поставщикам:
+                    group.orders.forEach(o => {
+                        if (!o.ordered) {
+                            hasUnordered = true;
+                            allReceived = false;
+                        } else {
+                            let oHasLenta = false;
+                            let oHasOzon = false;
+                            let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
+                            
+                            itemsArr.forEach(i => {
+                                if(i && i.name && i.name !== "НЕТ ЗАКАЗА") {
+                                    let cItem = Object.values(orderCatalog).find(c => c && c.name === i.name) || {};
+                                    let v = (cItem.vendor || 'Лента').toLowerCase() === 'озон' ? 'ozon' : 'lenta';
+                                    if (v === 'ozon') oHasOzon = true;
+                                    if (v === 'lenta') oHasLenta = true;
+                                }
+                            });
+                            
+                            let thisOrderReceived = true;
+                            if (oHasLenta && !o.lenta_received) thisOrderReceived = false;
+                            if (oHasOzon && !o.ozon_received) thisOrderReceived = false;
+                            
+                            if (!thisOrderReceived) {
+                                hasUnreceived = true;
+                                allReceived = false;
+                            }
+                        }
+                    });
 
                     let groupStatus = '';
                     if (hasUnordered) groupStatus = 'pending_svod';
                     else if (hasUnreceived) groupStatus = 'awaiting_receiving';
-                    else if (isFullyReceived) groupStatus = 'fully_received';
+                    else if (allReceived) groupStatus = 'fully_received';
 
                     return { dateStr: dateStr, orders: group.orders, status: groupStatus, timestamp: group.timestamp };
                 });
@@ -1932,7 +1977,7 @@
                     if (g.status === 'pending_svod' || g.status === 'awaiting_receiving') {
                         activeGroups.push(g);
                     } else if (g.status === 'fully_received' && !historyGroup) {
-                        historyGroup = g; 
+                        historyGroup = g; // Только самая свежая история
                     }
                 });
 
@@ -1985,7 +2030,7 @@
                         });
 
                         if (!hasRealItems && !isHistory) {
-                             groupHtml += `<div class="report-card" style="padding:15px;"><div style="text-align:center; font-weight:900; color:#4caf50;">✅ Все товары за эту дату приняты!</div></div>`;
+                             groupHtml += `<div class="report-card"><div style="text-align:center; font-weight:900; color:#4caf50;">✅ Все товары за эту дату приняты!</div></div>`;
                         } else {
                             let itemsOzon = [];
                             let itemsLenta = [];
@@ -2023,20 +2068,19 @@
                                     let statusUi = "";
                                     
                                     if (mItem) {
-                                        let mText = "Ожидает ⏳"; let mCol = "#ef6c00";
-                                        if(mItem.status === 'transit') { mText = "В пути 🚚"; mCol = "#1565c0"; }
-                                        else if(mItem.status === 'oos' || mItem.status === 'reorder') { mText = "Нет ❌"; mCol = "#c62828"; }
-                                        statusUi = `<span style="color:${mCol}; font-size:13px; font-weight:800;">${mText}</span>`;
+                                        let mText = "В пути 🚚"; let mCol = "#1565c0";
+                                        if(mItem.status === 'oos' || mItem.status === 'reorder') { mText = "Нет ❌"; mCol = "#c62828"; }
+                                        statusUi = `<span style="background:#e3f2fd; color:${mCol}; padding:4px 8px; border-radius:6px; font-size:12px; font-weight:900;">${mText}</span>`;
                                     } else {
                                         let isError = (item.status === 'error' || item.bot_error === true);
                                         if (isError) {
-                                            statusUi = `<span style="color:#c62828; font-size:13px; font-weight:800;">Ошибка ❌</span>`;
+                                            statusUi = `<span style="background:#ffebee; color:#c62828; padding:4px 8px; border-radius:6px; font-size:12px; font-weight:900;">Нет в наличии ❌</span>`;
                                         } else if (item.status === 'ordered') {
                                             if (isHistory) {
-                                                statusUi = `<span style="color:#4caf50; font-size:13px; font-weight:800;">Принято ✅</span>`;
+                                                statusUi = `<span style="background:#e8f5e9; color:#2e7d32; padding:4px 8px; border-radius:6px; font-size:12px; font-weight:900;">Принято ✅</span>`;
                                             } else {
                                                 let safeNameAttr = name.replace(/"/g, '&quot;');
-                                                statusUi = `<button class="btn-missing-toggle inactive" onclick="toggleMissingLocal(this, '${safeNameAttr}', ${item.qty}, '${vendorKey}')">Недовоз</button>`;
+                                                statusUi = `<button class="btn-missing-toggle inactive" onclick="toggleMissingLocal(this, '${safeNameAttr}', ${item.qty}, '${vendorKey}')">Не довезли ‼️</button>`;
                                             }
                                         } else {
                                             statusUi = `<span style="color:#f57c00; font-size:13px; font-weight:800;">Ожидает ⏳</span>`;
@@ -2059,8 +2103,8 @@
                                 return res;
                             };
                             
-                            groupHtml += renderList(itemsLenta, "lenta", isHistory ? "История" : "Приемка", "vendor-lenta", "ЛЕНТА", orderKeysToMark);
-                            groupHtml += renderList(itemsOzon, "ozon", isHistory ? "История" : "Приемка", "vendor-ozon", "ОЗОН", orderKeysToMark);
+                            groupHtml += renderList(itemsLenta, "lenta", isHistory ? "История" : "ПРИЕМКА: ЛЕНТА", "vendor-lenta", "ЛЕНТА", orderKeysToMark);
+                            groupHtml += renderList(itemsOzon, "ozon", isHistory ? "История" : "ПРИЕМКА: OZON", "vendor-ozon", "ОЗОН", orderKeysToMark);
                         }
                     }
                     groupHtml += `</div>`; 
@@ -2073,7 +2117,7 @@
                     activeGroups.forEach(g => { html += renderGroup(g, false); });
                     
                     if (historyGroup) {
-                        html += `<h4 style="color:#311B92; margin-top:30px; margin-bottom:0; text-align:center; text-transform:uppercase; font-size:14px; letter-spacing:1px;">🕒 История принятых поставок</h4>`;
+                        html += `<h4 style="color:#311B92; margin-top:30px; margin-bottom:0; text-align:center; text-transform:uppercase; font-size:14px; letter-spacing:1px;">🕒 Последняя приемка</h4>`;
                         html += renderGroup(historyGroup, true);
                     }
                 }
@@ -2230,8 +2274,10 @@
             }
             
             document.getElementById('report-content-area').innerHTML = html;
+            hideReportOverlay();
         } catch (err) {
             document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; color:red; font-weight:900;">Ошибка загрузки.</div></div>`; 
+            hideReportOverlay();
         }
     }
 
@@ -2304,3 +2350,4 @@
   </script>
 </body>
 </html>
+

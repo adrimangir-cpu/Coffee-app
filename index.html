@@ -138,7 +138,7 @@
     
     .item { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid rgba(0,0,0,0.03); transition: background-color 0.2s; }
     
-    /* Обновленная подсветка "Ожидает оформления" (Оранжевый) */
+    /* Оранжевая подсветка для ожидающих товаров */
     .repeat-item { background-color: #fff3e0 !important; border-left: 4px solid #ff9800; }
     .repeat-item-text { font-size: 11px; color: #e65100; font-weight: 900; margin-bottom: 2px; display: block; line-height: 1; text-transform: uppercase; }
 
@@ -162,7 +162,6 @@
     .report-card { background: #fff; border-radius: 18px; padding: 20px; margin-bottom: 15px; box-shadow: 0 4px 20px rgba(0,0,0,0.05); }
     .report-card-title { font-size: 18px; font-weight: 900; color: #4A148C; margin-bottom: 15px; border-bottom: 2px solid #f0f0f0; padding-bottom: 10px; text-align: center; text-transform: uppercase; }
     
-    /* Стили для чистой Приемки */
     .clean-list-item { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #f1f5f9; padding: 12px 0; }
     .clean-list-item:last-child { border-bottom: none; }
     .clean-list-text { flex: 1; padding-right: 15px; }
@@ -420,6 +419,7 @@
       tempMissingItems: {},
       screenHistory: [],
       
+      // Маркетплейс
       mpVendor: "", mpType: "", mpAddress: "", keypadValue: "0", mpBasket: [], isMpEditMode: false
     };
 
@@ -460,6 +460,7 @@
         let nav = document.getElementById('nav-buttons');
         let cartFab = document.getElementById('cart-fab');
         let mainBtn = document.getElementById('main-action-button');
+        let backBtn = document.getElementById('nav-back-btn');
 
         if (['step-3', 'step-mp-vendor', 'step-mp-mode', 'step-mp-address', 'step-keypad'].includes(screenId)) {
             nav.style.display = 'flex';
@@ -624,8 +625,16 @@
         if (state.mpBasket.length === 0) toggleCartModal(false);
     }
 
-    function persistMpDraft() { localStorage.setItem("draft_marketplace", JSON.stringify(state.mpBasket)); }
-    function restoreMpDraft() { let d = localStorage.getItem("draft_marketplace"); if(d) { state.mpBasket = JSON.parse(d); } }
+    function persistMpDraft() {
+        localStorage.setItem("draft_marketplace", JSON.stringify(state.mpBasket));
+    }
+
+    function restoreMpDraft() {
+        let d = localStorage.getItem("draft_marketplace");
+        if(d) {
+            state.mpBasket = JSON.parse(d);
+        }
+    }
 
     // ==========================================
     // АВТОУДАЛЕНИЕ ДОЕХАВШИХ ТОВАРОВ ИЗ СТОП-ЛИСТА
@@ -633,7 +642,7 @@
     async function autoRemoveFromStoplist(shop, itemNamesArray) {
         if (!itemNamesArray || itemNamesArray.length === 0) return;
         try {
-            let snap = await database.ref("orders").orderByChild("shop").equalTo(shop).limitToLast(50).once("value");
+            let snap = await database.ref("orders").orderByChild("shop").equalTo(shop).limitToLast(30).once("value");
             let shopOrders = [];
             snap.forEach(c => {
                 let val = c.val();
@@ -670,7 +679,7 @@
     }
 
     // ==========================================
-    // 3. ОСНОВНАЯ ЗАГРУЗКА И ВХОД (И ИНТЕЛЛЕКТУАЛЬНАЯ ПРОВЕРКА СТАТУСОВ)
+    // 3. ОСНОВНАЯ ЗАГРУЗКА И ВХОД
     // ==========================================
     async function loadSettings() {
         try {
@@ -684,7 +693,7 @@
             } else {
                 document.getElementById('btn-newshop').style.display = 'none';
             }
-        } catch(e) {}
+        } catch(e) { console.log(e); }
     }
 
     async function initWorkflow(mode) {
@@ -714,82 +723,35 @@
           else if (mode === 'new_shop') path = "catalogs/newshop"; 
           else path = "catalogs/order";
 
-          const [catalogSnap, ordersSnap, missSnap] = await Promise.all([
-              database.ref(path).once("value"),
-              database.ref("orders").orderByChild("shop").equalTo(state.currentShop).once("value"),
-              database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value")
-          ]);
-          
+          const catalogSnap = await database.ref(path).once("value");
           state.productCatalog = catalogSnap.val() || {};
 
           if (mode === 'order' || mode === 'new_shop') {
               for(let k in state.productCatalog) {
-                  if(state.productCatalog[k] && state.productCatalog[k].globalCat && state.appSettings.hidden_categories[state.productCatalog[k].globalCat]) {
+                  let item = state.productCatalog[k];
+                  if(item && item.globalCat && state.appSettings.hidden_categories[item.globalCat]) {
                       delete state.productCatalog[k];
                   }
               }
 
-              // --- ИНТЕЛЛЕКТУАЛЬНЫЙ АНАЛИЗ ПОСЛЕДНИХ СТАТУСОВ ---
-              let latestItemState = {};
+              // Берем только актуальные заказы для проверки "Ожидает оформления"
+              const ordersSnap = await database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(50).once("value");
+              let shopOrders = [];
+              ordersSnap.forEach(c => { let val = c.val(); if(val && typeof val === 'object') shopOrders.push(val); });
               
-              missSnap.forEach(c => {
-                  let m = c.val();
-                  if (m && m.name) {
-                      let nLow = String(m.name).trim().toLowerCase();
-                      if (!latestItemState[nLow] || m.timestamp > latestItemState[nLow].timestamp) {
-                          latestItemState[nLow] = { type: 'missing', status: m.status, timestamp: m.timestamp, isError: (m.status === 'canceled') };
-                      }
-                  }
-              });
-
-              ordersSnap.forEach(c => {
-                  let o = c.val();
-                  if (o && (o.mode === 'order' || o.mode === 'new_shop')) {
+              state.unprocessedItems = new Set();
+              
+              shopOrders.forEach(o => {
+                  if ((o.mode === 'order' || o.mode === 'new_shop') && o.ordered !== true) {
                       let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
                       itemsArr.forEach(i => {
-                          if (i && i.name && i.name !== "НЕТ ЗАКАЗА") {
-                              let nLow = String(i.name).trim().toLowerCase();
-                              
-                              let isReceived = false;
-                              let catInfo = Object.values(state.productCatalog).find(cat => cat && String(cat.name).trim().toLowerCase() === nLow) || {};
-                              let vendor = (catInfo.vendor || 'лента').toLowerCase();
-                              if (vendor.includes('озон') || vendor.includes('ozon')) isReceived = o.ozon_received;
-                              else isReceived = o.lenta_received;
-
-                              let isErr = (i.status === 'error' || i.bot_error === true);
-                              let activeStatus = 'pending';
-                              
-                              if (isReceived) activeStatus = 'received';
-                              else if (isErr) activeStatus = 'error';
-                              else if (o.ordered) activeStatus = 'ordered';
-
-                              if (!latestItemState[nLow] || o.timestamp > latestItemState[nLow].timestamp) {
-                                  latestItemState[nLow] = { type: 'order', status: activeStatus, timestamp: o.timestamp, isError: isErr };
-                              }
-                          }
+                          if (i && i.name && i.name !== "НЕТ ЗАКАЗА") state.unprocessedItems.add(i.name);
                       });
                   }
               });
 
-              state.unprocessedItems = new Set();
-              
-              // Если товар "в процессе" - подсвечиваем оранжевым
-              for (let nLow in latestItemState) {
-                  let s = latestItemState[nLow];
-                  let isProcessing = false;
-                  if (s.type === 'missing') {
-                      if (s.status === 'pending' || s.status === 'transit' || s.status === 'reorder') isProcessing = true;
-                  } else {
-                      if (s.status === 'pending' || s.status === 'ordered') isProcessing = true;
-                  }
-                  
-                  if (isProcessing) {
-                      let originalName = Object.values(state.productCatalog).find(cat => cat && String(cat.name).trim().toLowerCase() === nLow)?.name;
-                      if (originalName) state.unprocessedItems.add(originalName);
-                  }
-              }
-
               // Возврат отмененных недовозов обратно в корзину
+              const missSnap = await database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value");
               let hasCanceledMissings = false;
               missSnap.forEach(c => {
                   let m = c.val();
@@ -1198,11 +1160,12 @@
               ozon_received: false
           });
 
+          // УМНЫЙ АНАЛИЗ ДАТ (СВЕРКА TIMESTAMPS) ПРИ ЗАПОЛНЕНИИ СТОП-ЛИСТА
           if (state.currentMode === 'stoplist_fill') {
               let [orderCatSnap, newCatSnap, ordersSnap, missSnap] = await Promise.all([
                   database.ref("catalogs/order").once("value"),
                   database.ref("catalogs/newshop").once("value"),
-                  database.ref("orders").orderByChild("shop").equalTo(state.currentShop).once("value"),
+                  database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(50).once("value"),
                   database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value")
               ]);
               
@@ -1210,38 +1173,33 @@
               let newCat = newCatSnap.val() || {};
               let combinedCatalog = Object.values(orderCat).concat(Object.values(newCat));
 
-              let latestItemState = {};
+              let activeItems = new Set();
               
               missSnap.forEach(c => {
                   let m = c.val();
-                  if (m && m.name) {
-                      let nLow = String(m.name).trim().toLowerCase();
-                      if (!latestItemState[nLow] || m.timestamp > latestItemState[nLow].timestamp) {
-                          latestItemState[nLow] = { type: 'missing', status: m.status, timestamp: m.timestamp };
-                      }
+                  if (m && m.status !== 'arrived' && m.status !== 'canceled') {
+                      activeItems.add(String(m.name).trim().toLowerCase());
                   }
               });
-
+              
+              // Строим шкалу времени последнего активного заказа каждого товара
+              let itemTimeline = {};
               ordersSnap.forEach(c => {
                   let o = c.val();
                   if (o && (o.mode === 'order' || o.mode === 'new_shop')) {
                       let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
                       itemsArr.forEach(i => {
-                          if (i && i.name && i.name !== "НЕТ ЗАКАЗА") {
-                              let nLow = String(i.name).trim().toLowerCase();
-                              let isReceived = false;
-                              let vendor = (combinedCatalog.find(cat => cat && String(cat.name).trim().toLowerCase() === nLow) || {}).vendor || 'лента';
-                              if (vendor.toLowerCase().includes('озон')) isReceived = o.ozon_received;
-                              else isReceived = o.lenta_received;
+                          if (i && i.name && i.status !== 'error') {
+                              let iName = String(i.name).trim().toLowerCase();
+                              let cItem = combinedCatalog.find(cat => cat && cat.name === i.name) || {};
+                              let vendor = (cItem.vendor || 'Лента').toLowerCase() === 'озон' ? 'ozon' : 'lenta';
+                              let isVendorReceived = (vendor === 'ozon') ? o.ozon_received : o.lenta_received;
                               
-                              let isErr = (i.status === 'error' || i.bot_error === true);
-                              let activeStatus = 'pending';
-                              if (isReceived) activeStatus = 'received';
-                              else if (isErr) activeStatus = 'error';
-                              else if (o.ordered) activeStatus = 'ordered';
-
-                              if (!latestItemState[nLow] || o.timestamp > latestItemState[nLow].timestamp) {
-                                  latestItemState[nLow] = { type: 'order', status: activeStatus, timestamp: o.timestamp };
+                              if (!itemTimeline[iName] || o.timestamp > itemTimeline[iName].time) {
+                                  itemTimeline[iName] = {
+                                      time: o.timestamp,
+                                      isActive: (!o.ordered || !isVendorReceived)
+                                  };
                               }
                           }
                       });
@@ -1254,19 +1212,16 @@
               flatData.forEach(item => {
                   if (item.qty === 'Закончилось') { 
                       let safeName = String(item.name).trim().toLowerCase();
+                      let timeline = itemTimeline[safeName];
                       
-                      let isProcessingNow = false;
-                      if (latestItemState[safeName]) {
-                          let st = latestItemState[safeName];
-                          if (st.type === 'missing' && (st.status === 'pending' || st.status === 'transit' || st.status === 'reorder')) isProcessingNow = true;
-                          if (st.type === 'order' && (st.status === 'pending' || st.status === 'ordered')) isProcessingNow = true;
-                      }
-                      
-                      if (!isProcessingNow) {
+                      // Товар попадет в корзину ТОЛЬКО если он сейчас НЕ активен (не в пути/ожидании) и его нет в актуальных недовозах
+                      if (!activeItems.has(safeName) && (!timeline || !timeline.isActive)) {
                           let foundItem = combinedCatalog.find(c => {
                               if (!c || !c.name) return false;
-                              return String(c.name).trim().toLowerCase() === safeName; 
+                              let cName = String(c.name).trim().toLowerCase();
+                              return cName === safeName; 
                           });
+                          
                           if (foundItem) {
                               let exactName = foundItem.name;
                               let exactCat = foundItem.cat || "Прочее";
@@ -1609,41 +1564,37 @@
         showReportOverlay("Загрузка актуального стоп-листа...");
         try {
             const [ordersSnap, stopCatSnap, orderCatSnap, missSnap] = await Promise.all([
-                database.ref("orders").orderByChild("shop").equalTo(state.currentShop).once("value"),
+                database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(50).once("value"),
                 database.ref("catalogs/stoplist").once("value"),
                 database.ref("catalogs/order").once("value"),
                 database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value")
             ]);
             
-            let latestItemState = {};
+            let missingStatusMap = {};
             missSnap.forEach(c => {
                 let m = c.val();
-                if (m && m.name) {
-                    let nLow = String(m.name).trim().toLowerCase();
-                    if (!latestItemState[nLow] || m.timestamp > latestItemState[nLow].timestamp) {
-                        latestItemState[nLow] = { type: 'missing', status: m.status, timestamp: m.timestamp };
-                    }
+                if (m && m.status !== 'arrived' && m.status !== 'canceled') {
+                    missingStatusMap[String(m.name).trim().toLowerCase()] = m.status;
                 }
             });
 
             let shopOrders = []; 
+            let itemTimeline = {}; 
+
             ordersSnap.forEach(c => { 
-                let o = c.val(); 
-                if(o && typeof o === 'object') {
-                    shopOrders.push(o); 
-                    if (o.mode === 'order' || o.mode === 'new_shop') {
-                        let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
+                let val = c.val(); 
+                if(val && typeof val === 'object') {
+                    shopOrders.push(val); 
+                    if (val.mode === 'order' || val.mode === 'new_shop') {
+                        let itemsArr = Array.isArray(val.items) ? val.items : Object.values(val.items || {});
                         itemsArr.forEach(i => {
-                            if (i && i.name && i.name !== "НЕТ ЗАКАЗА") {
-                                let nLow = String(i.name).trim().toLowerCase();
-                                let vendor = ((orderCatSnap.val() || {})[i.name] || {}).vendor || 'лента';
-                                let isReceived = vendor.toLowerCase().includes('озон') ? o.ozon_received : o.lenta_received;
-                                
-                                let isErr = (i.status === 'error' || i.bot_error);
-                                let activeStatus = isReceived ? 'received' : (isErr ? 'error' : (o.ordered ? 'ordered' : 'pending'));
-                                
-                                if (!latestItemState[nLow] || o.timestamp > latestItemState[nLow].timestamp) {
-                                    latestItemState[nLow] = { type: 'order', status: activeStatus, timestamp: o.timestamp };
+                            if (i && i.name) {
+                                let iName = String(i.name).trim().toLowerCase();
+                                if (!itemTimeline[iName] || val.timestamp > itemTimeline[iName].time) {
+                                    itemTimeline[iName] = {
+                                        time: val.timestamp,
+                                        status: (i.status === 'error' || i.bot_error) ? 'error' : (val.ordered ? 'ordered' : 'pending')
+                                    };
                                 }
                             }
                         });
@@ -1683,23 +1634,25 @@
                 let statHtml = "";
                 
                 if (inOrderCat) {
-                    let st = latestItemState[iNameLow];
-                    if (st) {
-                        if (st.type === 'missing' && st.status === 'transit') {
-                            statHtml = `<span style="color:#1565c0; font-size:13px; font-weight:800; float:right;">В пути 🚚</span>`;
-                        } else if (st.type === 'missing' && st.status === 'reorder') {
-                            statHtml = `<span style="color:#0288d1; font-size:13px; font-weight:800; float:right;">Перезаказано 🔄</span>`;
-                        } else if (st.status === 'ordered') {
-                            statHtml = `<span style="color:#2e7d32; font-size:13px; font-weight:800; float:right;">Заказано ✅</span>`;
-                        } else if (st.status === 'error' || (st.type === 'missing' && st.status === 'canceled')) {
-                            statHtml = `<span style="color:#c62828; font-size:13px; font-weight:800; float:right;">Нет в наличии ❌</span>`;
-                        } else if (st.status === 'pending') {
-                            statHtml = `<span style="color:#f57c00; font-size:13px; font-weight:800; float:right;">Ожидает ⏳</span>`;
+                    if (missingStatusMap[iNameLow] === 'transit') {
+                        statHtml = `<span style="color:#1565c0; font-size:13px; font-weight:800; float:right;">В пути 🚚</span>`;
+                    } else {
+                        // УМНАЯ СВЕРКА ДАТ ЗДЕСЬ
+                        let timeline = itemTimeline[iNameLow];
+                        
+                        // Если заказ сделан ПОСЛЕ отправки стоп-листа
+                        if (timeline && timeline.time > latest.timestamp) {
+                            if (timeline.status === 'ordered') {
+                                statHtml = `<span style="color:#2e7d32; font-size:13px; font-weight:800; float:right;">Заказано ✅</span>`;
+                            } else if (timeline.status === 'error') {
+                                statHtml = `<span style="color:#c62828; font-size:13px; font-weight:800; float:right;">Ошибка ❌</span>`;
+                            } else {
+                                statHtml = `<span style="color:#f57c00; font-size:13px; font-weight:800; float:right;">Ожидает закупки ⏳</span>`;
+                            }
                         } else {
+                            // Если стоп-лист свежее, чем последний заказ (или заказа вообще не было)
                             statHtml = `<span style="color:#888; font-size:13px; font-weight:800; float:right;">Не заказано ➖</span>`;
                         }
-                    } else {
-                        statHtml = `<span style="color:#888; font-size:13px; font-weight:800; float:right;">Не заказано ➖</span>`;
                     }
                 }
 
@@ -1950,7 +1903,7 @@
                     let statText = "Ожидает проверки";
                     let statColor = "#ef6c00";
                     if (m.status === 'transit' || m.status === 'reorder') { statText = "В пути 🚚"; statColor = "#1565c0"; } 
-                    else if (m.status === 'oos' || m.status === 'canceled') { statText = "Нет в наличии ❌"; statColor = "#c62828"; }
+                    else if (m.status === 'oos') { statText = "Нет в наличии ❌"; statColor = "#c62828"; }
 
                     let safeNameAttr = m.name.replace(/'/g, "\\'");
 
@@ -2025,13 +1978,13 @@
                 dateGroups.sort((a,b) => b.timestamp - a.timestamp);
 
                 let activeGroups = [];
-                let historyGroups = [];
+                let historyGroup = null;
 
                 dateGroups.forEach(g => {
                     if (g.status === 'pending_svod' || g.status === 'awaiting_receiving') {
                         activeGroups.push(g);
-                    } else if (g.status === 'fully_received') {
-                        historyGroups.push(g); // Отправляем ВСЕ принятые даты в историю
+                    } else if (g.status === 'fully_received' && !historyGroup) {
+                        historyGroup = g; 
                     }
                 });
 
@@ -2123,7 +2076,7 @@
                                     
                                     if (mItem) {
                                         let mText = "В пути 🚚"; let mCol = "#1565c0";
-                                        if(mItem.status === 'oos' || mItem.status === 'reorder' || mItem.status === 'canceled') { mText = "Нет ❌"; mCol = "#c62828"; }
+                                        if(mItem.status === 'oos' || mItem.status === 'reorder') { mText = "Нет ❌"; mCol = "#c62828"; }
                                         statusUi = `<span style="background:#e3f2fd; color:${mCol}; padding:4px 8px; border-radius:6px; font-size:12px; font-weight:900;">${mText}</span>`;
                                     } else {
                                         let isError = (item.status === 'error' || item.bot_error === true);
@@ -2165,16 +2118,14 @@
                     return groupHtml;
                 };
 
-                if (activeGroups.length === 0 && historyGroups.length === 0) {
+                if (activeGroups.length === 0 && !historyGroup) {
                      html += `<div class="report-card"><div style="text-align:center; font-weight:900;">Актуальных приемок нет.</div></div>`;
                 } else {
                     activeGroups.forEach(g => { html += renderGroup(g, false); });
                     
-                    if (historyGroups.length > 0) {
-                        html += `<h4 style="color:#311B92; margin-top:30px; margin-bottom:0; text-align:center; text-transform:uppercase; font-size:14px; letter-spacing:1px;">🕒 История принятых поставок</h4>`;
-                        historyGroups.forEach(hg => {
-                            html += renderGroup(hg, true);
-                        });
+                    if (historyGroup) {
+                        html += `<h4 style="color:#311B92; margin-top:30px; margin-bottom:0; text-align:center; text-transform:uppercase; font-size:14px; letter-spacing:1px;">🕒 Последняя приемка</h4>`;
+                        html += renderGroup(historyGroup, true);
                     }
                 }
             }

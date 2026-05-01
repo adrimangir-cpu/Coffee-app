@@ -4,7 +4,7 @@
   <base target="_top">
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>Coffee Management App v6.9.1</title>
+  <title>Coffee Management App v6.9</title>
   
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-app-compat.js"></script>
@@ -30,7 +30,6 @@
       --admin-gradient: linear-gradient(135deg, #F06292 0%, #C2185B 100%);
       --danger-gradient: linear-gradient(135deg, #FF5252 0%, #C62828 100%);
       --warning-gradient: linear-gradient(135deg, #FFCA28 0%, #E65100 100%);
-      --boss-pale: #ffffff; 
       
       --header-height: 55px; 
       --safe-area-bottom: env(safe-area-inset-bottom);
@@ -51,7 +50,7 @@
         -webkit-user-select: text; 
         user-select: text; 
         font-family: inherit; 
-        -webkit-appearance: none;
+        -webkit-appearance: none; /* Убирает дефолтный стиль Android */
         appearance: none;
     }
 
@@ -68,6 +67,7 @@
         -moz-osx-font-smoothing: grayscale;
     }
 
+    /* Кастомная стрелка для select (iOS style) */
     select {
         background-image: url('data:image/svg+xml;utf8,<svg fill="%234A148C" height="24" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg"><path d="M7 10l5 5 5-5z"/><path d="M0 0h24v24H0z" fill="none"/></svg>');
         background-repeat: no-repeat;
@@ -103,7 +103,6 @@
     .btn-boss-table, .btn-admin-pink, .btn-boss-red, .btn-boss-yellow, .btn-boss-pale, .btn-admin-white { 
       font-weight: 900 !important; font-size: 15px !important; text-align: center; justify-content: center; display: flex; flex-direction: column; align-items: center; color: #ffffff !important; text-transform: uppercase;
     }
-
     .btn-boss-table { background: var(--boss-gradient) !important; }
     .btn-admin-pink { background: var(--admin-gradient) !important; }
     .btn-boss-red { background: var(--danger-gradient) !important; }
@@ -186,7 +185,6 @@
       box-shadow: 0 10px 30px rgba(0,0,0,0.2); animation: slideUp 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
       font-weight: 800; font-size: 15px; line-height: 1.4; border: 2px solid rgba(255,255,255,0.2);
     }
-    .validation-error-banner b { font-size: 18px; display: block; margin-bottom: 4px; }
     
     /* Чистая кнопка недовоза */
     .btn-missing-toggle { border: 1px solid #ddd; background: transparent; color: #666; padding: 6px 12px; border-radius: 8px; font-weight: 700; font-size: 13px; cursor:pointer; transition: 0.2s; }
@@ -749,7 +747,6 @@
                   }
               });
 
-              // Возврат отмененных недовозов обратно в корзину
               const missSnap = await database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value");
               let hasCanceledMissings = false;
               missSnap.forEach(c => {
@@ -1131,16 +1128,15 @@
               if (String(q).trim() === "-" || String(q).trim() === "--" || String(q).trim() === "") return false;
               if (state.currentMode !== 'checklist' && (q == 0 || String(q) === "0")) return false; 
               
+              if ((state.currentMode === 'order' || state.currentMode === 'new_shop') && !state.productCatalog[n]) return false;
+              
               return true;
           }).map(([n,q]) => {
                 let catName = (state.userBasket["_catinfo"] && state.userBasket["_catinfo"][n]) || (state.productCatalog[n] ? state.productCatalog[n].cat : "Прочее");
                 return {name: n, qty: q, cat: catName};
           });
 
-          // ВАЖНО: Удален жесткий фильтр! Теперь пустая корзина блокируется только для чеклиста.
-          if (flatData.length === 0 && state.currentMode !== 'checklist' && state.currentMode !== 'stoplist_fill') {
-              return alert("Заполните данные перед отправкой!");
-          }
+          if (flatData.length === 0 && state.currentMode !== 'checklist') return alert("Заполните данные перед отправкой!");
 
           state.isProcessing = true;
           let btn = document.getElementById('modal-submit-button'); if(btn) btn.innerText = "ОТПРАВЛЯЮ...";
@@ -1856,7 +1852,7 @@
             let activeMissing = [];
             missSnap.forEach(c => { 
                 let m = c.val(); 
-                if(m && m.status !== 'arrived') {
+                if(m && m.status !== 'arrived' && m.status !== 'canceled') {
                     activeMissing.push({key: c.key, ...m}); 
                 }
             });
@@ -1899,7 +1895,6 @@
                 html += `<div class="report-card"><div style="text-align:center; font-weight:900;">Заказов еще не было.</div></div>`; 
             } else {
                 
-                // Группируем по датам
                 let ordersByDate = {};
                 ordersArr.forEach(o => {
                     let d = new Date(o.timestamp);
@@ -2230,8 +2225,10 @@
             }
             
             document.getElementById('report-content-area').innerHTML = html;
+            hideReportOverlay();
         } catch (err) {
             document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; color:red; font-weight:900;">Ошибка загрузки.</div></div>`; 
+            hideReportOverlay();
         }
     }
 
@@ -2304,4 +2301,3 @@
   </script>
 </body>
 </html>
-

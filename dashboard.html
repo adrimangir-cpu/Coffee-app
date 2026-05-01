@@ -1123,14 +1123,14 @@
       showReportOverlay("Сборка закупки (Выполняю команду)...");
       try {
           const [ordersSnap, catalogSnap, missingSnap] = await Promise.all([
-             database.ref("orders").once("value"), 
-             database.ref("catalogs/order").once("value"), 
-             database.ref("missing_items").once("value")
+             fetch(`${FB_URL}/orders.json`), 
+             fetch(`${FB_URL}/catalogs/order.json`), 
+             fetch(`${FB_URL}/missing_items.json`)
           ]);
           
-          let catalog = catalogSnap.val() || {}; 
-          let orders = ordersSnap.val() || {}; 
-          let missingData = missingSnap.val() || {};
+          let catalog = await catalogSnap.json() || {}; 
+          let orders = await ordersSnap.json() || {}; 
+          let missingData = await missingSnap.json() || {};
           
           let updates = {}; 
           let totalSvod = 0; 
@@ -1241,7 +1241,7 @@
           });
 
           if (Object.keys(updates).length > 0) {
-              await database.ref("orders").update(updates);
+              await fetch(`${FB_URL}/orders.json`, { method: 'PATCH', body: JSON.stringify(updates) });
           }
 
           let html = `<div class="report-card"><div class="report-card-title">Сводная закупка</div>`;
@@ -1252,7 +1252,7 @@
               html += `<div style="text-align:right; font-size:22px; color:#4caf50; margin-top:20px; font-weight:900;">ИТОГО: ${totalSvod} ₽</div>`;
               
               let textToBot = `📊 **СВОД ГОТОВ К СБОРКЕ!**\n\n🛒 Лента: **${totalLentaAll} ₽**\n📦 Озон: **${totalOzonAll} ₽**\n🛵 Купер: **${totalKuperAll} ₽**\n➖➖➖➖➖➖➖➖\n💵 ИТОГО: **${totalSvod} ₽**`;
-              database.ref("bot_control/notifications").push({ type: "svod_ready_text", text: textToBot, timestamp: Date.now() });
+              fetch(`${FB_URL}/bot_control/notifications.json`, { method: 'POST', body: JSON.stringify({ type: "svod_ready_text", text: textToBot, timestamp: Date.now() }) });
           }
           html += `</div>`;
           document.getElementById('report-content-area').innerHTML = html;
@@ -1848,7 +1848,6 @@
             }
         });
 
-        let sevenDaysAgo = Date.now() - (7 * 24 * 60 * 60 * 1000);
         let thirtyDays = Date.now() - (30 * 24 * 60 * 60 * 1000);
         
         let stopHistoryArr = [];
@@ -1864,8 +1863,9 @@
                 }
             }
             if (o.mode === 'order' || o.mode === 'new_shop') {
-                let isRecent = o.timestamp >= sevenDaysAgo;
-                if (!o.ordered || isRecent) {
+                // ВАЖНОЕ ИСПРАВЛЕНИЕ: Смотрим не на 7 дней, а на то, ПРИНЯТ ЛИ ЗАКАЗ.
+                // Если заказ НЕ получен (или получен, но совсем недавно) - то товар для нас "в процессе"
+                if (!o.received) {
                     if (!recentOrdersMap[o.shop]) recentOrdersMap[o.shop] = {};
                     let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
                     itemsArr.forEach(i => {

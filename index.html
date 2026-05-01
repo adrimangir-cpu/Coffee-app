@@ -4,7 +4,7 @@
   <base target="_top">
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>Coffee Management App v6.9.1</title>
+  <title>Coffee Management App v6.9.2</title>
   
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-app-compat.js"></script>
@@ -741,6 +741,7 @@
               state.unprocessedItems = new Set();
               
               shopOrders.forEach(o => {
+                  // Для подсвечивания "Ожидает оформления" в ЗАКУПКЕ:
                   if ((o.mode === 'order' || o.mode === 'new_shop') && o.svod !== true && o.ordered !== true) {
                       let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
                       itemsArr.forEach(i => {
@@ -749,7 +750,7 @@
                   }
               });
 
-              // Возврат отмененных недовозов обратно в корзину
+              // Возврат отмененных недовозов обратно в корзину (восстановлено)
               const missSnap = await database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value");
               let hasCanceledMissings = false;
               missSnap.forEach(c => {
@@ -1130,7 +1131,6 @@
               if (n === "_catinfo") return false;
               if (String(q).trim() === "-" || String(q).trim() === "--" || String(q).trim() === "") return false;
               if (state.currentMode !== 'checklist' && (q == 0 || String(q) === "0")) return false; 
-              
               return true;
           }).map(([n,q]) => {
                 let catName = (state.userBasket["_catinfo"] && state.userBasket["_catinfo"][n]) || (state.productCatalog[n] ? state.productCatalog[n].cat : "Прочее");
@@ -1163,7 +1163,7 @@
               let [orderCatSnap, newCatSnap, ordersSnap, missSnap] = await Promise.all([
                   database.ref("catalogs/order").once("value"),
                   database.ref("catalogs/newshop").once("value"),
-                  database.ref("orders").orderByChild("shop").equalTo(state.currentShop).once("value"),
+                  database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(100).once("value"),
                   database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value")
               ]);
               
@@ -1172,6 +1172,7 @@
               let combinedCatalog = Object.values(orderCat).concat(Object.values(newCat));
 
               let activeItems = new Set();
+              let sevenDaysAgo = Date.now() - (7 * 24 * 60 * 60 * 1000);
               
               missSnap.forEach(c => {
                   let m = c.val();
@@ -1182,7 +1183,7 @@
               
               ordersSnap.forEach(c => {
                   let o = c.val();
-                  if (o && (o.mode === 'order' || o.mode === 'new_shop') && !o.received) {
+                  if (o && (o.mode === 'order' || o.mode === 'new_shop') && !o.received && (o.timestamp >= sevenDaysAgo)) {
                       let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
                       itemsArr.forEach(i => {
                           if (i && i.name && i.status !== 'error') {
@@ -1718,7 +1719,7 @@
             missSnap.forEach(c => {
                 let m = c.val();
                 if (m && m.status !== 'arrived' && m.status !== 'canceled') {
-                    activeMissing[m.name] = m;
+                    activeMissing[m.name] = true;
                 }
             });
 
@@ -1790,6 +1791,9 @@
                 Object.keys(activeMissing).forEach(missingName => {
                     if (!aggregatedItems[missingName]) {
                         aggregatedItems[missingName] = { qty: "Недовоз", status: 'error', bot_error: true };
+                    } else {
+                        aggregatedItems[missingName].status = 'error';
+                        aggregatedItems[missingName].bot_error = true;
                     }
                 });
 
@@ -1803,32 +1807,34 @@
                     return a.localeCompare(b);
                 }).forEach(name => {
                     let item = aggregatedItems[name];
-                    let mInfo = activeMissing[name];
+                    let catItem = Object.values(orderCatalog).find(c => c && c.name === name) || {};
+                    let vendor = (catItem.vendor || 'Лента').toLowerCase();
+                    
+                    let vendorBadge = vendor === 'озон' ? `<span class="vendor-badge vendor-ozon">ОЗОН</span>` : `<span class="vendor-badge vendor-lenta">ЛЕНТА</span>`;
                     
                     let statusHtml = "";
-                    if (mInfo) {
-                        let mText = "Ожидает ⏳"; let mCol = "#ef6c00";
-                        if(mInfo.status === 'transit') { mText = "В пути 🚚"; mCol = "#1565c0"; }
-                        else if(mInfo.status === 'oos' || mInfo.status === 'reorder') { mText = "Нет ❌"; mCol = "#c62828"; }
-                        statusHtml = `<span style="color:${mCol}; font-size:13px; font-weight:800;">${mText}</span>`;
-                    } else if (item.status === 'error' || item.bot_error === true) {
-                        statusHtml = `<span style="color:#c62828; font-size:13px; font-weight:800;">Ошибка ❌</span>`;
-                    } else if (!isSvodDone) {
-                        statusHtml = `<span style="color:#ef6c00; font-size:13px; font-weight:800;">Ожидает свода ⏳</span>`;
-                    } else if (item.status === 'ordered') {
-                        statusHtml = `<span style="color:#2e7d32; font-size:13px; font-weight:800;">В Приемке ✅</span>`;
+                    let isError = (item.status === 'error' || item.bot_error === true || activeMissing[name]);
+
+                    if (!isSvodDone) {
+                        statusHtml = isError ? `<span style="background:#ffebee; color:#c62828; padding:4px 8px; border-radius:6px; font-size:12px; font-weight:900;">Нет в наличии ❌</span>` : `<span style="background:#fff3e0; color:#f57c00; padding:4px 8px; border-radius:6px; font-size:12px; font-weight:900;">В ожидании ⏳</span>`;
                     } else {
-                        statusHtml = `<span style="color:#888; font-size:13px; font-weight:800;">Ожидает ⏳</span>`;
+                        if (isError) {
+                            statusHtml = `<span style="background:#ffebee; color:#c62828; padding:4px 8px; border-radius:6px; font-size:12px; font-weight:900;">Нет в наличии ❌</span>`;
+                        } else if (item.status === 'ordered') {
+                            statusHtml = `<span style="background:#e8f5e9; color:#2e7d32; padding:4px 8px; border-radius:6px; font-size:12px; font-weight:900;">Заказано ✅</span>`;
+                        } else {
+                            statusHtml = `<span style="background:#fff3e0; color:#f57c00; padding:4px 8px; border-radius:6px; font-size:12px; font-weight:900;">Ожидает ⏳</span>`;
+                        }
                     }
 
-                    let displayQty = (item.qty === "Недовоз") ? "" : `${item.qty} шт.`;
+                    let displayQty = (item.qty === "Недовоз") ? "" : `(x${item.qty})`;
 
-                    html += `<div class="clean-list-item">
-                                <div class="clean-list-text">
-                                    <div class="clean-list-title">${name}</div>
-                                    <div class="clean-list-sub">${displayQty}</div>
+                    html += `<div class="report-card-item" style="display:flex; flex-direction:row; align-items:center; justify-content:space-between; border-bottom:1px solid #eee; padding: 12px 0;">
+                                <div style="flex:1; margin-right:10px;">
+                                    ${vendorBadge}<br>
+                                    <span style="font-size:15px; font-weight:700;"><b>${name}</b> ${displayQty}</span> 
                                 </div>
-                                <div class="clean-list-action">${statusHtml}</div>
+                                <div style="flex-shrink:0;">${statusHtml}</div>
                               </div>`;
                 });
             }
@@ -1856,7 +1862,7 @@
             let activeMissing = [];
             missSnap.forEach(c => { 
                 let m = c.val(); 
-                if(m && m.status !== 'arrived') {
+                if(m && m.status !== 'arrived' && m.status !== 'canceled') {
                     activeMissing.push({key: c.key, ...m}); 
                 }
             });
@@ -1923,6 +1929,7 @@
                     return { dateStr: dateStr, orders: group.orders, status: groupStatus, timestamp: group.timestamp };
                 });
 
+                // Сортируем от новых к старым
                 dateGroups.sort((a,b) => b.timestamp - a.timestamp);
 
                 let activeGroups = [];
@@ -1985,13 +1992,13 @@
                         });
 
                         if (!hasRealItems && !isHistory) {
-                             groupHtml += `<div class="report-card" style="padding:15px;"><div style="text-align:center; font-weight:900; color:#4caf50;">✅ Все товары за эту дату приняты!</div></div>`;
+                             groupHtml += `<div class="report-card"><div style="text-align:center; font-weight:900; color:#4caf50;">✅ Все товары за эту дату приняты!</div></div>`;
                         } else {
                             let itemsOzon = [];
                             let itemsLenta = [];
                             
                             Object.keys(aggregatedItems).forEach(name => {
-                                if (aggregatedItems[name].vendor === 'ozon') itemsOzon.push(name);
+                                if (aggregatedItems[name].vendor === 'озон') itemsOzon.push(name);
                                 else itemsLenta.push(name);
                             });
                             
@@ -2029,6 +2036,7 @@
                                         statusUi = `<span style="color:${mCol}; font-size:13px; font-weight:800;">${mText}</span>`;
                                     } else {
                                         let isError = (item.status === 'error' || item.bot_error === true);
+                                        
                                         if (isError) {
                                             statusUi = `<span style="color:#c62828; font-size:13px; font-weight:800;">Ошибка ❌</span>`;
                                         } else if (item.status === 'ordered') {
@@ -2230,8 +2238,10 @@
             }
             
             document.getElementById('report-content-area').innerHTML = html;
+            hideReportOverlay();
         } catch (err) {
             document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; color:red; font-weight:900;">Ошибка загрузки.</div></div>`; 
+            hideReportOverlay();
         }
     }
 

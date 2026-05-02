@@ -1822,40 +1822,244 @@
 
             let html = "";
             
-            // 1. Ожидаемые недовозы (Активные)
-            if (activeMissing.length > 0) {
-                html += `<div class="report-card" style="border: 2px solid #FFCA28;">
-                            <div class="report-card-title" style="color:#E65100;">🚚 Ожидаемые недовозы</div>`;
-                
-                activeMissing.forEach(m => {
-                    let statText = "Ожидает проверки";
-                    let statColor = "#ef6c00";
-                    let bg = "#fff3e0";
+            // --- ПЕРЕКЛЮЧАТЕЛИ ВКЛАДОК (Активная / История) ---
+            // Состояние активной вкладки по умолчанию сохраняем в state (если еще нет)
+            if (!state.currentReceivingTab) state.currentReceivingTab = 'active';
+
+            html += `<div style="display: flex; gap: 10px; margin-bottom: 20px; background: #fff; padding: 6px; border-radius: 14px; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
+                        <button onclick="state.currentReceivingTab = 'active'; showLastOrder();" style="flex: 1; padding: 12px; border: none; border-radius: 10px; font-size: 15px; font-weight: 900; transition: 0.2s; cursor: pointer; ${state.currentReceivingTab === 'active' ? 'background: #4A148C; color: #fff;' : 'background: transparent; color: #888;'}">🚚 Текущая приемка</button>
+                        <button onclick="state.currentReceivingTab = 'history'; showLastOrder();" style="flex: 1; padding: 12px; border: none; border-radius: 10px; font-size: 15px; font-weight: 900; transition: 0.2s; cursor: pointer; ${state.currentReceivingTab === 'history' ? 'background: #9C27B0; color: #fff;' : 'background: transparent; color: #888;'}">🕒 История (10 дней)</button>
+                     </div>`;
+
+
+            if (state.currentReceivingTab === 'active') {
+                // 1. Ожидаемые недовозы (Активные)
+                if (activeMissing.length > 0) {
+                    html += `<div class="report-card" style="border: 2px solid #FFCA28;">
+                                <div class="report-card-title" style="color:#E65100;">🚚 Ожидаемые недовозы</div>`;
                     
-                    if (m.status === 'transit' || m.status === 'reorder') {
-                        statText = "В пути"; statColor = "#1565c0"; bg = "#e3f2fd";
-                    } else if (m.status === 'oos') {
-                        statText = "Нет в наличии"; statColor = "#c62828"; bg = "#ffebee";
-                    } else if (m.status === 'canceled') {
-                        statText = "Ожидает закупки"; statColor = "#e65100"; bg = "#fff8e1";
+                    activeMissing.forEach(m => {
+                        let statText = "Ожидает проверки";
+                        let statColor = "#ef6c00";
+                        let bg = "#fff3e0";
+                        
+                        if (m.status === 'transit' || m.status === 'reorder') {
+                            statText = "В пути"; statColor = "#1565c0"; bg = "#e3f2fd";
+                        } else if (m.status === 'oos') {
+                            statText = "Нет в наличии"; statColor = "#c62828"; bg = "#ffebee";
+                        } else if (m.status === 'canceled') {
+                            statText = "Ожидает закупки"; statColor = "#e65100"; bg = "#fff8e1";
+                        }
+
+                        let safeNameAttr = m.name.replace(/'/g, "\\'");
+
+                        html += `<div class="report-card-item" style="flex-direction:column; align-items:flex-start; border-bottom:1px solid #eee;">
+                                    <span style="margin-bottom:8px; font-size:16px;"><b>${m.name}</b> (x${m.qty})</span> 
+                                    <div style="display:flex; justify-content:space-between; width:100%; align-items:center;">
+                                        <span style="background:${bg}; color:${statColor}; padding:6px 10px; border-radius:8px; font-size:13px; font-weight:900;">${statText}</span>
+                                        <button onclick="markMissingArrived('${m.key}', '${safeNameAttr}')" style="border:none; background:#4caf50; color:#fff; padding:8px 15px; border-radius:10px; font-weight:900; font-size:14px; cursor:pointer;">Доехал ✅</button>
+                                    </div>
+                                 </div>`;
+                    });
+                    html += `</div>`;
+                }
+
+                if(ordersArr.length === 0) { 
+                    html += `<div class="report-card"><div style="text-align:center; font-weight:900;">Заказов за последние 10 дней не найдено.</div></div>`; 
+                } else {
+                    
+                    // Группировка заказов по датам
+                    let ordersByDate = {};
+                    ordersArr.forEach(o => {
+                        let d = new Date(o.timestamp);
+                        let dateStr = d.toLocaleDateString('ru-RU');
+                        if (!ordersByDate[dateStr]) ordersByDate[dateStr] = { orders: [], timestamp: 0 };
+                        ordersByDate[dateStr].orders.push(o);
+                        if (o.timestamp > ordersByDate[dateStr].timestamp) ordersByDate[dateStr].timestamp = o.timestamp;
+                    });
+
+                    // Определение статуса для каждой даты
+                    let dateGroups = Object.keys(ordersByDate).map(dateStr => {
+                        let group = ordersByDate[dateStr];
+                        
+                        let hasUnordered = false;
+                        let hasUnreceived = false;
+
+                        group.orders.forEach(o => {
+                            if (!o.ordered) hasUnordered = true;
+                            else {
+                                let hasLenta = false, hasOzon = false;
+                                let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
+                                itemsArr.forEach(i => {
+                                    if (i && i.name && i.name !== "НЕТ ЗАКАЗА" && i.status !== 'error' && i.bot_error !== true) {
+                                        let catItem = Object.values(orderCatalog).find(c => c && c.name === i.name) || {};
+                                        let vendor = (catItem.vendor || 'Лента').toLowerCase();
+                                        if (vendor === 'озон' || vendor === 'ozon') hasOzon = true;
+                                        else hasLenta = true;
+                                    }
+                                });
+                                
+                                let lentaDone = hasLenta ? o.lenta_received : true;
+                                let ozonDone = hasOzon ? o.ozon_received : true;
+                                
+                                if (!lentaDone || !ozonDone) hasUnreceived = true;
+                            }
+                        });
+
+                        let groupStatus = '';
+                        if (hasUnordered) groupStatus = 'pending_svod';
+                        else if (hasUnreceived) groupStatus = 'awaiting_receiving';
+                        else groupStatus = 'fully_received';
+
+                        return { dateStr: dateStr, orders: group.orders, status: groupStatus, timestamp: group.timestamp };
+                    });
+
+                    dateGroups.sort((a,b) => b.timestamp - a.timestamp);
+
+                    let activeGroups = [];
+                    dateGroups.forEach(g => {
+                        if (g.status === 'pending_svod' || g.status === 'awaiting_receiving') {
+                            activeGroups.push(g);
+                        }
+                    });
+
+                    // --- АКТИВНЫЕ ПРИЕМКИ ---
+                    if (activeGroups.length === 0) {
+                         html += `<div class="report-card"><div style="text-align:center; font-weight:900;">Актуальных приемок нет.</div></div>`;
                     }
 
-                    let safeNameAttr = m.name.replace(/'/g, "\\'");
+                    activeGroups.forEach((group, index) => {
+                        let safeDateId = getSafeId("date_" + group.dateStr);
+                        let titleSuffix = group.status === 'pending_svod' ? " (Ожидает сборки ⏳)" : " (Активная приемка 🚚)";
 
-                    html += `<div class="report-card-item" style="flex-direction:column; align-items:flex-start; border-bottom:1px solid #eee;">
-                                <span style="margin-bottom:8px; font-size:16px;"><b>${m.name}</b> (x${m.qty})</span> 
-                                <div style="display:flex; justify-content:space-between; width:100%; align-items:center;">
-                                    <span style="background:${bg}; color:${statColor}; padding:6px 10px; border-radius:8px; font-size:13px; font-weight:900;">${statText}</span>
-                                    <button onclick="markMissingArrived('${m.key}', '${safeNameAttr}')" style="border:none; background:#4caf50; color:#fff; padding:8px 15px; border-radius:10px; font-weight:900; font-size:14px; cursor:pointer;">Доехал ✅</button>
-                                </div>
-                             </div>`;
-                });
-                html += `</div>`;
-            }
+                        html += `<div style="background:#ede7f6; padding:15px; border-radius:12px; font-weight:900; color:#311B92; margin-top:15px; display:flex; justify-content:space-between; font-size:18px; cursor:pointer;" onclick="toggleElements('date_group_${safeDateId}', 'arrow_date_${safeDateId}')">
+                                    <span>📅 ${group.dateStr}${titleSuffix}</span><span id="arrow_date_${safeDateId}">▼</span>
+                                 </div>`;
+                                 
+                        html += `<div class="date_group_${safeDateId}" style="display:none; margin-top:10px;">`;
 
-            if(ordersArr.length === 0) { 
-                html += `<div class="report-card"><div style="text-align:center; font-weight:900;">Заказов за последние 10 дней не найдено.</div></div>`; 
-            } else {
+                        if (group.status === 'pending_svod') {
+                            html += `<div class="report-card" style="text-align:center; border: 2px dashed #9575CD;">
+                                        <div class="report-card-title">⏳ Ожидание сборки</div>
+                                        <div style="font-weight:700;">Заказы за эту дату еще в обработке у администратора.<br>Приемка откроется после сведения.</div>
+                                    </div>`;
+                        } else {
+                            let aggregatedItems = {};
+                            let hasRealItems = false;
+                            
+                            group.orders.forEach(o => {
+                                let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
+                                itemsArr.forEach(i => {
+                                    if (!i || !i.name || i.name === "НЕТ ЗАКАЗА") return;
+                                    
+                                    let catItem = Object.values(orderCatalog).find(c => c && c.name === i.name) || {};
+                                    let vendor = (catItem.vendor || 'Лента').toLowerCase() === 'озон' ? 'ozon' : 'lenta';
+
+                                    if (vendor === 'ozon' && o.ozon_received) return;
+                                    if (vendor === 'lenta' && o.lenta_received) return;
+
+                                    hasRealItems = true;
+                                    if (!aggregatedItems[i.name]) {
+                                        aggregatedItems[i.name] = { qty: 0, status: i.status || 'pending', bot_error: i.bot_error || false, vendor: vendor };
+                                    }
+                                    aggregatedItems[i.name].qty += parseFloat(i.qty) || 0;
+                                    if (i.status === 'error' || i.bot_error) {
+                                        aggregatedItems[i.name].status = 'error';
+                                        aggregatedItems[i.name].bot_error = true;
+                                    } else if (i.status === 'ordered' && aggregatedItems[i.name].status !== 'error') {
+                                        aggregatedItems[i.name].status = 'ordered';
+                                    }
+                                });
+                            });
+
+                            if (!hasRealItems) {
+                                 html += `<div class="report-card"><div style="text-align:center; font-weight:900; color:#4caf50;">✅ Все товары за эту дату приняты!</div></div>`;
+                            } else {
+                                let itemsOzon = [];
+                                let itemsLenta = [];
+                                
+                                Object.keys(aggregatedItems).forEach(name => {
+                                    if (aggregatedItems[name].vendor === 'ozon') itemsOzon.push(name);
+                                    else itemsLenta.push(name);
+                                });
+                                
+                                itemsOzon.sort((a,b) => a.localeCompare(b));
+                                itemsLenta.sort((a,b) => a.localeCompare(b));
+                                
+                                let orderKeysToMark = group.orders.map(o => o.key).join(',');
+
+                                const renderList = (arr, vendorKey, title, badgeClass, badgeText, keysStr) => {
+                                    if (arr.length === 0) return "";
+                                    
+                                    let listId = getSafeId("list_" + group.dateStr + vendorKey);
+                                    let res = `<div class="report-card" style="border-left: 4px solid ${vendorKey==='ozon'?'#1565c0':'#f57f17'};">
+                                                 <div class="report-card-title" style="text-align:center; display:flex; align-items:center; justify-content:center; gap:10px; cursor:pointer; margin-bottom:5px;" onclick="toggleElements('${listId}', 'arrow_${listId}')">
+                                                    ${title} <span class="vendor-badge ${badgeClass}" style="margin:0;">${badgeText}</span>
+                                                    <span id="arrow_${listId}" style="color:#888; font-size:14px; margin-left:auto;">▼</span>
+                                                 </div>
+                                                 <div class="${listId}" style="display:none; padding-top:10px;">`;
+                                    
+                                    arr.forEach(name => {
+                                        let item = aggregatedItems[name];
+                                        let isMissingAlready = activeMissing.some(am => am.name === name);
+                                        let safeNameAttr = name.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+                                        
+                                        if (isMissingAlready) {
+                                            res += `<div class="report-card-item" style="flex-direction:column; align-items:flex-start; opacity:0.6;">
+                                                        <span style="margin-bottom:5px; font-size:16px;"><b>${name}</b> (x${item.qty})</span> 
+                                                        <span style="color:#ef6c00; font-size:13px; font-weight:900;">Уже в недовозах 👆</span>
+                                                    </div>`;
+                                        } else {
+                                            let isError = (item.status === 'error' || item.bot_error === true);
+                                            
+                                            if (isError) {
+                                                res += `<div class="report-card-item" style="flex-direction:row; justify-content:space-between; align-items:center; opacity:0.7; border-bottom:1px solid #eee;">
+                                                            <span style="font-size:15px; font-weight:700; flex:1;"><b>${name}</b> (x${item.qty})</span> 
+                                                            <span style="color:#c62828; background:#ffebee; padding:4px 8px; border-radius:6px; font-size:12px; font-weight:900;">Нет в наличии ❌</span>
+                                                        </div>`;
+                                            } else if (item.status === 'ordered') {
+                                                let choice = state.receivingChoices ? state.receivingChoices[name]?.status : null;
+                                                let isArr = choice === 'arrived';
+                                                let isMiss = choice === 'missing';
+
+                                                res += `<div class="report-card-item" style="flex-direction:column; align-items:flex-start; border-bottom:1px solid #eee;">
+                                                            <div style="display:flex; justify-content:space-between; width:100%; align-items:center; margin-bottom:8px;">
+                                                                <span style="font-size:15px; font-weight:700; flex:1;"><b>${name}</b> (x${item.qty})</span>
+                                                                <span style="color:#2e7d32; background:#e8f5e9; padding:4px 8px; border-radius:6px; font-size:12px; font-weight:900;">Заказано ✅</span>
+                                                            </div>
+                                                            <div style="display:flex; gap:10px; width:100%;">
+                                                                <button onclick="setReceiveChoice('${safeNameAttr}', ${item.qty}, '${vendorKey}', 'arrived')" style="flex:1; padding:8px; border-radius:8px; border:${isArr ? '2px solid #2e7d32' : '1px solid #ccc'}; background:${isArr ? '#e8f5e9' : '#fafafa'}; color:${isArr ? '#2e7d32' : '#888'}; font-weight:bold; transition:0.2s;">✅ Доехало</button>
+                                                                <button onclick="setReceiveChoice('${safeNameAttr}', ${item.qty}, '${vendorKey}', 'missing')" style="flex:1; padding:8px; border-radius:8px; border:${isMiss ? '2px solid #c62828' : '1px solid #ccc'}; background:${isMiss ? '#ffebee' : '#fafafa'}; color:${isMiss ? '#c62828' : '#888'}; font-weight:bold; transition:0.2s;">❌ Не доехало</button>
+                                                            </div>
+                                                        </div>`;
+                                            } else {
+                                                res += `<div class="report-card-item" style="flex-direction:row; justify-content:space-between; align-items:center; border-bottom:1px solid #eee;">
+                                                            <span style="font-size:15px; font-weight:700; flex:1;"><b>${name}</b> (x${item.qty})</span> 
+                                                            <span style="color:#f57c00; background:#fff3e0; padding:4px 8px; border-radius:6px; font-size:12px; font-weight:900;">Ожидает ⏳</span>
+                                                        </div>`;
+                                            }
+                                        }
+                                    });
+                                    
+                                    res += `<button onclick="finishReceiving('${vendorKey}', '${keysStr}')" class="btn-mode" style="background: var(--btn-stop-grad) !important; margin-top:15px; margin-bottom:0; font-size:15px !important; padding:15px !important;">🏁 ГОТОВО</button>`;
+                                    res += `</div></div>`;
+                                    return res;
+                                };
+                                
+                                html += renderList(itemsLenta, "lenta", "Приемка", "vendor-lenta", "ЛЕНТА", orderKeysToMark);
+                                html += renderList(itemsOzon, "ozon", "Приемка", "vendor-ozon", "ОЗОН", orderKeysToMark);
+                            }
+                        }
+                        html += `</div>`; 
+                    });
+                    
+                    if (activeGroups.length > 0) {
+                        html += `<div style="text-align:center; font-size:13px; color:#888; font-weight:bold; margin-top:15px; margin-bottom:15px;">Убедитесь, что отметили отсутствующие товары перед нажатием "ГОТОВО".</div>`;
+                    }
+                }
+            } 
+            else if (state.currentReceivingTab === 'history') {
+                // --- ИСТОРИЯ ПРИЕМОК ---
                 
                 // Группировка заказов по датам
                 let ordersByDate = {};
@@ -1905,159 +2109,20 @@
 
                 dateGroups.sort((a,b) => b.timestamp - a.timestamp);
 
-                // Разделяем на Активные и Историю
-                let activeGroups = [];
                 let historyGroups = [];
-
                 dateGroups.forEach(g => {
-                    if (g.status === 'pending_svod' || g.status === 'awaiting_receiving') {
-                        activeGroups.push(g);
-                    } else if (g.status === 'fully_received') {
+                    if (g.status === 'fully_received') {
                         historyGroups.push(g); 
                     }
                 });
 
-                // --- АКТИВНЫЕ ПРИЕМКИ ---
-                if (activeGroups.length === 0) {
-                     html += `<div class="report-card"><div style="text-align:center; font-weight:900;">Актуальных приемок нет.</div></div>`;
-                }
-
-                activeGroups.forEach((group, index) => {
-                    let safeDateId = getSafeId("date_" + group.dateStr);
-                    let titleSuffix = group.status === 'pending_svod' ? " (Ожидает сборки ⏳)" : " (Активная приемка 🚚)";
-
-                    html += `<div style="background:#ede7f6; padding:15px; border-radius:12px; font-weight:900; color:#311B92; margin-top:15px; display:flex; justify-content:space-between; font-size:18px; cursor:pointer;" onclick="toggleElements('date_group_${safeDateId}', 'arrow_date_${safeDateId}')">
-                                <span>📅 ${group.dateStr}${titleSuffix}</span><span id="arrow_date_${safeDateId}">▼</span>
-                             </div>`;
-                             
-                    html += `<div class="date_group_${safeDateId}" style="display:none; margin-top:10px;">`;
-
-                    if (group.status === 'pending_svod') {
-                        html += `<div class="report-card" style="text-align:center; border: 2px dashed #9575CD;">
-                                    <div class="report-card-title">⏳ Ожидание сборки</div>
-                                    <div style="font-weight:700;">Заказы за эту дату еще в обработке у администратора.<br>Приемка откроется после сведения.</div>
-                                </div>`;
-                    } else {
-                        let aggregatedItems = {};
-                        let hasRealItems = false;
-                        
-                        group.orders.forEach(o => {
-                            let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
-                            itemsArr.forEach(i => {
-                                if (!i || !i.name || i.name === "НЕТ ЗАКАЗА") return;
-                                
-                                let catItem = Object.values(orderCatalog).find(c => c && c.name === i.name) || {};
-                                let vendor = (catItem.vendor || 'Лента').toLowerCase() === 'озон' ? 'ozon' : 'lenta';
-
-                                if (vendor === 'ozon' && o.ozon_received) return;
-                                if (vendor === 'lenta' && o.lenta_received) return;
-
-                                hasRealItems = true;
-                                if (!aggregatedItems[i.name]) {
-                                    aggregatedItems[i.name] = { qty: 0, status: i.status || 'pending', bot_error: i.bot_error || false, vendor: vendor };
-                                }
-                                aggregatedItems[i.name].qty += parseFloat(i.qty) || 0;
-                                if (i.status === 'error' || i.bot_error) {
-                                    aggregatedItems[i.name].status = 'error';
-                                    aggregatedItems[i.name].bot_error = true;
-                                } else if (i.status === 'ordered' && aggregatedItems[i.name].status !== 'error') {
-                                    aggregatedItems[i.name].status = 'ordered';
-                                }
-                            });
-                        });
-
-                        if (!hasRealItems) {
-                             html += `<div class="report-card"><div style="text-align:center; font-weight:900; color:#4caf50;">✅ Все товары за эту дату приняты!</div></div>`;
-                        } else {
-                            let itemsOzon = [];
-                            let itemsLenta = [];
-                            
-                            Object.keys(aggregatedItems).forEach(name => {
-                                if (aggregatedItems[name].vendor === 'ozon') itemsOzon.push(name);
-                                else itemsLenta.push(name);
-                            });
-                            
-                            itemsOzon.sort((a,b) => a.localeCompare(b));
-                            itemsLenta.sort((a,b) => a.localeCompare(b));
-                            
-                            let orderKeysToMark = group.orders.map(o => o.key).join(',');
-
-                            const renderList = (arr, vendorKey, title, badgeClass, badgeText, keysStr) => {
-                                if (arr.length === 0) return "";
-                                
-                                let listId = getSafeId("list_" + group.dateStr + vendorKey);
-                                let res = `<div class="report-card" style="border-left: 4px solid ${vendorKey==='ozon'?'#1565c0':'#f57f17'};">
-                                             <div class="report-card-title" style="text-align:center; display:flex; align-items:center; justify-content:center; gap:10px; cursor:pointer; margin-bottom:5px;" onclick="toggleElements('${listId}', 'arrow_${listId}')">
-                                                ${title} <span class="vendor-badge ${badgeClass}" style="margin:0;">${badgeText}</span>
-                                                <span id="arrow_${listId}" style="color:#888; font-size:14px; margin-left:auto;">▼</span>
-                                             </div>
-                                             <div class="${listId}" style="display:none; padding-top:10px;">`;
-                                
-                                arr.forEach(name => {
-                                    let item = aggregatedItems[name];
-                                    let isMissingAlready = activeMissing.some(am => am.name === name);
-                                    let safeNameAttr = name.replace(/'/g, "\\'").replace(/"/g, '&quot;');
-                                    
-                                    if (isMissingAlready) {
-                                        res += `<div class="report-card-item" style="flex-direction:column; align-items:flex-start; opacity:0.6;">
-                                                    <span style="margin-bottom:5px; font-size:16px;"><b>${name}</b> (x${item.qty})</span> 
-                                                    <span style="color:#ef6c00; font-size:13px; font-weight:900;">Уже в недовозах 👆</span>
-                                                </div>`;
-                                    } else {
-                                        let isError = (item.status === 'error' || item.bot_error === true);
-                                        if (isError) {
-                                            res += `<div class="report-card-item" style="flex-direction:row; justify-content:space-between; align-items:center; opacity:0.7; border-bottom:1px solid #eee;">
-                                                        <span style="font-size:15px; font-weight:700; flex:1;"><b>${name}</b> (x${item.qty})</span> 
-                                                        <span style="color:#c62828; background:#ffebee; padding:4px 8px; border-radius:6px; font-size:12px; font-weight:900;">Нет в наличии ❌</span>
-                                                    </div>`;
-                                        } else if (item.status === 'ordered') {
-                                            let choice = state.receivingChoices ? state.receivingChoices[name]?.status : null;
-                                            let isArr = choice === 'arrived';
-                                            let isMiss = choice === 'missing';
-
-                                            res += `<div class="report-card-item" style="flex-direction:column; align-items:flex-start; border-bottom:1px solid #eee;">
-                                                        <div style="display:flex; justify-content:space-between; width:100%; align-items:center; margin-bottom:8px;">
-                                                            <span style="font-size:15px; font-weight:700; flex:1;"><b>${name}</b> (x${item.qty})</span>
-                                                            <span style="color:#2e7d32; background:#e8f5e9; padding:4px 8px; border-radius:6px; font-size:12px; font-weight:900;">Заказано ✅</span>
-                                                        </div>
-                                                        <div style="display:flex; gap:10px; width:100%;">
-                                                            <button onclick="setReceiveChoice('${safeNameAttr}', ${item.qty}, '${vendorKey}', 'arrived')" style="flex:1; padding:8px; border-radius:8px; border:${isArr ? '2px solid #2e7d32' : '1px solid #ccc'}; background:${isArr ? '#e8f5e9' : '#fafafa'}; color:${isArr ? '#2e7d32' : '#888'}; font-weight:bold; transition:0.2s;">✅ Доехало</button>
-                                                            <button onclick="setReceiveChoice('${safeNameAttr}', ${item.qty}, '${vendorKey}', 'missing')" style="flex:1; padding:8px; border-radius:8px; border:${isMiss ? '2px solid #c62828' : '1px solid #ccc'}; background:${isMiss ? '#ffebee' : '#fafafa'}; color:${isMiss ? '#c62828' : '#888'}; font-weight:bold; transition:0.2s;">❌ Не доехало</button>
-                                                        </div>
-                                                    </div>`;
-                                        } else {
-                                            res += `<div class="report-card-item" style="flex-direction:row; justify-content:space-between; align-items:center; border-bottom:1px solid #eee;">
-                                                        <span style="font-size:15px; font-weight:700; flex:1;"><b>${name}</b> (x${item.qty})</span> 
-                                                        <span style="color:#f57c00; background:#fff3e0; padding:4px 8px; border-radius:6px; font-size:12px; font-weight:900;">Ожидает ⏳</span>
-                                                    </div>`;
-                                        }
-                                    }
-                                });
-                                
-                                res += `<button onclick="finishReceiving('${vendorKey}', '${keysStr}')" class="btn-mode" style="background: var(--btn-stop-grad) !important; margin-top:15px; margin-bottom:0; font-size:15px !important; padding:15px !important;">🏁 ГОТОВО</button>`;
-                                res += `</div></div>`;
-                                return res;
-                            };
-                            
-                            html += renderList(itemsLenta, "lenta", "Приемка", "vendor-lenta", "ЛЕНТА", orderKeysToMark);
-                            html += renderList(itemsOzon, "ozon", "Приемка", "vendor-ozon", "ОЗОН", orderKeysToMark);
-                        }
-                    }
-                    html += `</div>`; 
-                });
-                
-                // --- 2. ИСТОРИЯ ПРИЕМОК ---
-                if (historyGroups.length > 0) {
-                    html += `<div style="background:#f1f3f4; padding:15px; border-radius:12px; font-weight:900; color:#555; margin-top:30px; display:flex; justify-content:space-between; font-size:18px; cursor:pointer;" onclick="toggleElements('history_container', 'arrow_history')">
-                                <span>🕒 История приемок (10 дней)</span><span id="arrow_history">▼</span>
-                             </div>`;
-                    
-                    html += `<div class="history_container" style="display:none; margin-top:10px;">`;
-                    
+                if (historyGroups.length === 0) {
+                     html += `<div class="report-card"><div style="text-align:center; font-weight:900;">Истории приемок за 10 дней нет.</div></div>`;
+                } else {
                     historyGroups.forEach((group, index) => {
                         let safeDateId = getSafeId("hist_date_" + group.dateStr);
                         
-                        html += `<div style="background:#ffffff; border: 2px solid #e0e0e0; padding:12px; border-radius:10px; font-weight:bold; color:#444; margin-top:10px; display:flex; justify-content:space-between; cursor:pointer; box-shadow: 0 2px 5px rgba(0,0,0,0.02);" onclick="toggleElements('history_data_${safeDateId}', 'arrow_hdata_${safeDateId}')">
+                        html += `<div style="background:#ffffff; border: 2px solid #9C27B0; padding:15px; border-radius:12px; font-weight:bold; color:#444; margin-top:10px; display:flex; justify-content:space-between; cursor:pointer; box-shadow: 0 4px 10px rgba(0,0,0,0.05);" onclick="toggleElements('history_data_${safeDateId}', 'arrow_hdata_${safeDateId}')">
                                     <span>📅 ${group.dateStr} (Принято ✅)</span><span id="arrow_hdata_${safeDateId}">▼</span>
                                  </div>`;
                                  
@@ -2144,10 +2209,7 @@
                         }
                         html += `</div>`; 
                     });
-                    html += `</div>`; 
                 }
-
-                html += `<div style="text-align:center; font-size:13px; color:#888; font-weight:bold; margin-top:15px; margin-bottom:15px;">Убедитесь, что отметили отсутствующие товары перед нажатием "ГОТОВО".</div>`;
             }
             
             document.getElementById('report-content-area').innerHTML = html || "<div class='report-card'>Пусто</div>";

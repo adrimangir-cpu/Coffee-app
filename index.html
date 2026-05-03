@@ -231,7 +231,7 @@
       <button class="btn-mode" style="background: var(--boss-gradient); margin-top: 12px;" onclick="showMyLastOrder()">🕒 ПОСЛЕДНИЙ ЗАКАЗ</button>
       
       <button class="btn-mode" style="background: var(--warning-gradient); margin-top: 12px;" onclick="showLastOrder()">🚚 ПРИЕМКА ЗАКУПКИ</button>
-     
+      
       <div class="bottom-fixed-bar">
         <button class="btn-bottom-exit" onclick="clearShopAndReturn()">⬅️ К списку кофеен</button>
       </div>
@@ -669,7 +669,7 @@
       if (state.unprocessedItems) state.unprocessedItems.clear();
       
       showScreen('step-3');
-     
+      
       var mainBtn = document.getElementById('main-action-button'); 
       var cartFab = document.getElementById('cart-fab');
       
@@ -678,9 +678,9 @@
       } else { 
         mainBtn.style.display = 'none'; cartFab.style.display = 'flex'; 
       }
-     
+      
       document.getElementById('dynamic-list-container').innerHTML = `<div class="report-card"><div class="loading-pulse">⏳ Подключение к базе данных...</div></div>`;
-     
+      
       try {
           await loadSettings();
 
@@ -1113,19 +1113,101 @@
           let btn = document.getElementById('modal-submit-button'); if(btn) btn.innerText = "ОТПРАВЛЯЮ...";
           let mainBtn = document.getElementById('main-action-button'); if(mainBtn) mainBtn.innerText = "ОТПРАВЛЯЮ...";
 
-          await database.ref("orders").push({
-              shop: state.currentShop,
-              mode: state.currentMode,
-              items: flatData,
-              comment: document.getElementById('comment') ? document.getElementById('comment').value : "",
-              timestamp: firebase.database.ServerValue.TIMESTAMP,
-              userId: globalTgUserId,
-              svod: false,
-              ordered: false,
-              lenta_received: false,
-              ozon_received: false
-          });
+          // --- ЛОГИКА ОБЪЕДИНЕНИЯ ЗАКАЗОВ ВНУТРИ MIN APP ---
+          if (state.currentMode === 'order' || state.currentMode === 'new_shop') {
+              try {
+                  // Ищем все ожидающие (не сведенные и не оформленные) заказы для ЭТОЙ кофейни
+                  const existingSnap = await database.ref("orders").orderByChild("shop").equalTo(state.currentShop).once("value");
+                  let pendingKeyToUpdate = null;
+                  let mergedItems = {};
+                  let mergedComments = [];
+                  
+                  // Сначала кладем то, что бариста отправляет прямо сейчас
+                  flatData.forEach(item => {
+                      mergedItems[item.name] = { ...item, qty: parseFloat(item.qty) || 0 };
+                  });
 
+                  let newComment = document.getElementById('comment') ? document.getElementById('comment').value.trim() : "";
+                  if (newComment) mergedComments.push(newComment);
+
+                  existingSnap.forEach(c => {
+                      let o = c.val();
+                      if (o && (o.mode === 'order' || o.mode === 'new_shop') && o.svod === false && o.ordered === false) {
+                          if (!pendingKeyToUpdate) {
+                              // Берем первый найденный незаконченный заказ как "базу" для обновления
+                              pendingKeyToUpdate = c.key;
+                          } else {
+                              // Остальные удалим, чтобы не плодить дубли
+                              database.ref(`orders/${c.key}`).remove();
+                          }
+
+                          if (o.comment && o.comment.trim() !== "") {
+                              mergedComments.push(o.comment.trim());
+                          }
+
+                          let oldItems = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
+                          oldItems.forEach(i => {
+                              if (i && i.name && i.name !== "НЕТ ЗАКАЗА") {
+                                  if (!mergedItems[i.name]) {
+                                      mergedItems[i.name] = { ...i, qty: parseFloat(i.qty) || 0 };
+                                  } else {
+                                      // Если товар уже был и отправляется заново - суммируем количество!
+                                      mergedItems[i.name].qty += (parseFloat(i.qty) || 0);
+                                  }
+                              }
+                          });
+                      }
+                  });
+
+                  let finalItemsArr = Object.values(mergedItems);
+                  if (finalItemsArr.length === 0) finalItemsArr = [{name: "НЕТ ЗАКАЗА", qty: 0}];
+
+                  let finalDataToSave = {
+                      shop: state.currentShop,
+                      mode: state.currentMode,
+                      items: finalItemsArr,
+                      comment: mergedComments.join(" | "),
+                      timestamp: firebase.database.ServerValue.TIMESTAMP,
+                      userId: globalTgUserId,
+                      svod: false,
+                      ordered: false,
+                      lenta_received: false,
+                      ozon_received: false
+                  };
+
+                  if (pendingKeyToUpdate) {
+                      // Если был старый заказ, перезаписываем его объединенными данными
+                      await database.ref(`orders/${pendingKeyToUpdate}`).update(finalDataToSave);
+                  } else {
+                      // Если это абсолютно первый заказ
+                      await database.ref("orders").push(finalDataToSave);
+                  }
+                  
+              } catch(e) {
+                  console.error("Ошибка при объединении:", e);
+                  alert("Произошла ошибка при отправке.");
+                  state.isProcessing = false;
+                  if(btn) btn.innerText = "ПОДТВЕРДИТЬ И ОТПРАВИТЬ";
+                  if(mainBtn) mainBtn.innerText = "ОТПРАВИТЬ";
+                  return;
+              }
+          } else {
+              // Для чек-листа и стоп-листа оставляем стандартную отправку
+              await database.ref("orders").push({
+                  shop: state.currentShop,
+                  mode: state.currentMode,
+                  items: flatData,
+                  comment: document.getElementById('comment') ? document.getElementById('comment').value : "",
+                  timestamp: firebase.database.ServerValue.TIMESTAMP,
+                  userId: globalTgUserId,
+                  svod: false,
+                  ordered: false,
+                  lenta_received: false,
+                  ozon_received: false
+              });
+          }
+
+          // Удаление из стоп-листа при заполнении
           if (state.currentMode === 'stoplist_fill') {
               let [orderCatSnap, newCatSnap, ordersSnap, missSnap] = await Promise.all([
                   database.ref("catalogs/order").once("value"),
@@ -1445,73 +1527,6 @@
         }
     }
 
-    // УМНЫЙ СВОД АДМИНА
-    async function buildSvodReport() {
-      showReportOverlay("Сборка закупки (Выполняю команду)...");
-      
-      try {
-          const [ordersSnap, catalogSnap] = await Promise.all([
-             database.ref("orders").once("value"), 
-             database.ref("catalogs/order").once("value")
-          ]);
-          
-          let catalog = catalogSnap.val() || {};
-          let updates = {};
-          let totalSvod = 0;
-          let shopSums = {};
-
-          ordersSnap.forEach(c => {
-              let o = c.val();
-              if (o && (o.mode === 'order' || o.mode === 'new_shop') && o.svod === false) {
-                  updates[c.key + "/svod"] = true; 
-                  if(!shopSums[o.shop]) shopSums[o.shop] = 0;
-                  
-                  let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
-                  itemsArr.forEach(i => {
-                      if(i && i.name) {
-                          let catItem = Object.values(catalog).find(cat => cat && cat.name === i.name);
-                          let price = catItem ? parseFloat(catItem.price) || 0 : 0;
-                          let vendor = catItem ? String(catItem.vendor).toLowerCase() : 'лента';
-                          
-                          if (vendor !== 'озон') {
-                              let cost = price * parseFloat(i.qty);
-                              totalSvod += cost;
-                              shopSums[o.shop] += cost;
-                          }
-                      }
-                  });
-              }
-          });
-
-          if (Object.keys(updates).length > 0) {
-              await database.ref("orders").update(updates);
-          }
-
-          let html = `<div class="report-card"><div class="report-card-title">Сводная закупка</div>`;
-          
-          if (Object.keys(updates).length === 0) {
-              html += `<div style="padding:10px 0; text-align:center; font-weight:900;">Нет новых необработанных заказов на данный момент.</div>`;
-          } else {
-              html += `<div style="padding:10px 0; font-size:15px; color:#555; margin-bottom:10px; font-weight:700;">✅ Команда выполнена. Заказы переведены в статус <b>"Приемка"</b> для сотрудников. Подробный Свод с ссылками отправлен вам в сообщения бота.</div>`;
-              for(let s in shopSums) {
-                  if(shopSums[s] > 0) {
-                      html += `<div class="report-card-item"><span style="font-size:17px; color:#311B92; font-weight:900;">${s}</span><b style="font-size:17px;">${shopSums[s]} ₽</b></div>`;
-                  }
-              }
-              html += `<div style="text-align:right; font-size:22px; color:#4caf50; margin-top:20px; font-weight:900;">ИТОГО: ${totalSvod} ₽</div>`;
-              
-              database.ref("bot_control/notifications").push({ type: "svod_ready", total: totalSvod, timestamp: Date.now() });
-          }
-          html += `</div>`;
-          
-          document.getElementById('report-content-area').innerHTML = html;
-
-      } catch (e) {
-          console.error(e);
-          document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="color:red; font-weight:900; text-align:center;">Ошибка формирования свода.</div></div>`;
-      }
-    }
-
     // СТОП ЛИСТ ИЗ CRM БЕЗ ССЫЛОК ДЛЯ СОТРУДНИКОВ
     async function viewStopList() {
         showReportOverlay("Загрузка актуального стоп-листа...");
@@ -1599,8 +1614,10 @@
                         statHtml = `<span style="background:#e3f2fd; color:#1565c0; padding:2px 5px; border-radius:4px; font-size:11px; font-weight:900; margin-left:5px;">В пути 🚚</span>`;
                     } else {
                         let itemStatus = recentOrdersMap[i.name] || null;
-                        if (itemStatus === 'ordered' || itemStatus === 'pending') {
-                            statHtml = `<span style="background:#e8f5e9; color:#2e7d32; padding:2px 5px; border-radius:4px; font-size:11px; font-weight:900; margin-left:5px;">Заказано ✅</span>`;
+                        if (itemStatus === 'ordered') {
+                            statHtml = `<span style="background:#e8f5e9; color:#2e7d32; padding:2px 5px; border-radius:4px; font-size:11px; font-weight:900; margin-left:5px;">Оформлено ✅</span>`;
+                        } else if (itemStatus === 'pending') {
+                            statHtml = `<span style="background:#fff3e0; color:#f57c00; padding:2px 5px; border-radius:4px; font-size:11px; font-weight:900; margin-left:5px;">В корзине ⏳</span>`;
                         } else if (itemStatus === 'error') {
                             statHtml = `<span style="background:#ffebee; color:#c62828; padding:2px 5px; border-radius:4px; font-size:11px; font-weight:900; margin-left:5px;">Ошибка ❌</span>`;
                         } else {
@@ -1759,12 +1776,12 @@
                     let isError = (item.status === 'error' || item.bot_error === true || activeMissing[name]);
 
                     if (!isSvodDone) {
-                        statusHtml = isError ? `<span style="background:#ffebee; color:#c62828; padding:4px 8px; border-radius:6px; font-size:12px; font-weight:900;">Нет в наличии ❌</span>` : `<span style="background:#fff3e0; color:#f57c00; padding:4px 8px; border-radius:6px; font-size:12px; font-weight:900;">В ожидании ⏳</span>`;
+                        statusHtml = isError ? `<span style="background:#ffebee; color:#c62828; padding:4px 8px; border-radius:6px; font-size:12px; font-weight:900;">Нет в наличии ❌</span>` : `<span style="background:#fff3e0; color:#f57c00; padding:4px 8px; border-radius:6px; font-size:12px; font-weight:900;">В корзине ⏳</span>`;
                     } else {
                         if (isError) {
                             statusHtml = `<span style="background:#ffebee; color:#c62828; padding:4px 8px; border-radius:6px; font-size:12px; font-weight:900;">Нет в наличии ❌</span>`;
                         } else if (item.status === 'ordered') {
-                            statusHtml = `<span style="background:#e8f5e9; color:#2e7d32; padding:4px 8px; border-radius:6px; font-size:12px; font-weight:900;">Заказано ✅</span>`;
+                            statusHtml = `<span style="background:#e8f5e9; color:#2e7d32; padding:4px 8px; border-radius:6px; font-size:12px; font-weight:900;">Оформлено ✅</span>`;
                         } else {
                             statusHtml = `<span style="background:#fff3e0; color:#f57c00; padding:4px 8px; border-radius:6px; font-size:12px; font-weight:900;">Ожидает ⏳</span>`;
                         }

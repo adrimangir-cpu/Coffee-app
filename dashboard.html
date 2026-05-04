@@ -16,6 +16,16 @@
             min-height: 100vh; 
         }
         
+        .sticky-top-wrapper {
+            position: sticky;
+            top: 0;
+            z-index: 2000;
+            background: linear-gradient(135deg, #FFF0F5 0%, #ede7f6 100%);
+            padding-top: 20px;
+            margin-top: -20px;
+            padding-bottom: 10px;
+        }
+
         .nav { 
             background: linear-gradient(135deg, #F06292 0%, #7E57C2 100%); 
             color: white; 
@@ -34,7 +44,7 @@
         .tabs { 
             display: flex; 
             gap: 10px; 
-            margin-bottom: 20px; 
+            margin-bottom: 10px; 
             overflow-x: auto; 
             padding-bottom: 10px; 
         }
@@ -93,6 +103,11 @@
             border-bottom: 1px solid #f0f0f0; 
         }
         
+        .svod-row:hover {
+            background-color: #f1f8e9 !important;
+            transition: background-color 0.2s;
+        }
+
         /* =========================================
            ФОРМЫ ВВОДА И КНОПКИ
         ========================================= */
@@ -175,10 +190,6 @@
             border-radius: 12px; 
             margin-bottom: 20px; 
             border: 1px solid #e0e0e0; 
-            position: sticky;
-            top: 0;
-            z-index: 100;
-            box-shadow: 0 4px 10px rgba(0,0,0,0.05);
         }
         
         .toggle-label { 
@@ -245,24 +256,26 @@
 </head>
 <body>
 
-<div class="nav">
-    <h1 style="margin:0;">💼 Coffee 45 TEIKU CRM</h1>
-    <div id="db-status">☁️ База активна</div>
+<div class="sticky-top-wrapper">
+    <div class="nav">
+        <h1 style="margin:0;">💼 Coffee 22 TEIKU CRM</h1>
+        <div id="db-status">☁️ База активна</div>
+    </div>
+
+    <div class="tabs">
+        <button class="tab-btn active" onclick="loadTab('orders', this)">📋 Свод и Заказы</button>
+        <button class="tab-btn" onclick="loadTab('marketplace', this)">🛒 Маркетплейсы</button>
+        <button class="tab-btn" onclick="loadTab('checks_table', this)">✅ Таблица Чек-листов</button>
+        <button class="tab-btn" onclick="loadTab('stoplists', this)">🛑 Стоп-листы</button>
+        <button class="tab-btn" onclick="loadTab('missing', this)">‼️ Недовозы</button>
+        <button class="tab-btn" onclick="loadTab('catalog_order', this)">🛒 Справочник Закупки</button>
+        <button class="tab-btn" onclick="loadTab('catalog_checklist', this)">📝 Справочник Чек-листа</button>
+        <button class="tab-btn" onclick="loadTab('catalog_stoplist', this)">🛑 Справочник Стоп-листа</button>
+        <button class="tab-btn" onclick="loadTab('stats', this)">📈 Статистика</button>
+    </div>
 </div>
 
-<div class="tabs">
-    <button class="tab-btn active" onclick="loadTab('orders', this)">📋 Свод и Заказы</button>
-    <button class="tab-btn" onclick="loadTab('marketplace', this)">🛒 Маркетплейсы</button>
-    <button class="tab-btn" onclick="loadTab('checks_table', this)">✅ Таблица Чек-листов</button>
-    <button class="tab-btn" onclick="loadTab('stoplists', this)">🛑 Стоп-листы</button>
-    <button class="tab-btn" onclick="loadTab('missing', this)">‼️ Недовозы</button>
-    <button class="tab-btn" onclick="loadTab('catalog_order', this)">🛒 Справочник Закупки</button>
-    <button class="tab-btn" onclick="loadTab('catalog_checklist', this)">📝 Справочник Чек-листа</button>
-    <button class="tab-btn" onclick="loadTab('catalog_stoplist', this)">🛑 Справочник Стоп-листа</button>
-    <button class="tab-btn" onclick="loadTab('stats', this)">📈 Статистика</button>
-</div>
-
-<div class="card" id="content">Загрузка данных...</div>
+<div class="card" id="content" style="margin-top: 10px;">Загрузка данных...</div>
 
 <div id="report-overlay">
     <div class="loading-pulse" id="overlay-text">⌛ Обработка...</div>
@@ -296,11 +309,12 @@
     let isMpEditMode = false;
     let mpDeletions = new Set();
 
-    // ПАМЯТЬ СОСТОЯНИЙ ИСТОРИЙ (Чтобы не закрывались при автообновлении)
     let stateHistoryOrders = false;
     let stateHistoryMp = false;
     let stateHistoryMissing = false;
     let stateHistoryStoplist = false;
+    
+    const shopListAll = ["Бояринова", "Гагарина", "Вертолетчиков", "Липчанского", "Новокосино", "Новокосино 2", "Старое Павлино", "Красноказарменная", "Ухтомского ополчения"];
 
     function getSafeId(str) {
         if (!str) return "id_empty_" + Math.floor(Math.random() * 10000);
@@ -544,8 +558,11 @@
     function preserveSvodInputs() {
         document.querySelectorAll('.edit-svod-input').forEach(inp => {
             let d = inp.getAttribute('data-date');
-            let s = inp.getAttribute('data-shop'); 
             let n = inp.getAttribute('data-item'); 
+            
+            let shopSelect = document.querySelector(`.edit-svod-shop-select[data-item="${n.replace(/"/g, '&quot;')}"][data-date="${d}"]`);
+            let s = shopSelect ? shopSelect.value : inp.getAttribute('data-shop');
+
             if (!tempSvodQty[d]) tempSvodQty[d] = {};
             if (!tempSvodQty[d][s]) tempSvodQty[d][s] = {};
             tempSvodQty[d][s][n] = parseFloat(inp.value) || 0;
@@ -553,16 +570,17 @@
     }
 
     function recalcSvodTotals() {
-        preserveSvodInputs();
-        
         let totalLenta = 0; 
         let totalOzon = 0; 
         let totalKuper = 0;
         let shopLentaSums = {};
         
-        // Первый проход: вычисляем сумму Ленты
         document.querySelectorAll('.edit-svod-input').forEach(inp => {
-            let shop = inp.getAttribute('data-shop');
+            let n = inp.getAttribute('data-item');
+            let d = inp.getAttribute('data-date');
+            let shopSelect = document.querySelector(`.edit-svod-shop-select[data-item="${n.replace(/"/g, '&quot;')}"][data-date="${d}"]`);
+            let currentShop = shopSelect ? shopSelect.value : inp.getAttribute('data-shop');
+            
             let vendor = (inp.getAttribute('data-vendor') || 'лента').toLowerCase();
             let price = parseFloat(inp.getAttribute('data-price')) || 0;
             let inTransit = inp.getAttribute('data-transit') === 'true';
@@ -570,16 +588,19 @@
             let itemStatus = inp.getAttribute('data-status');
             
             let qty = parseFloat(inp.value) || 0;
-            if (!shopLentaSums[shop]) shopLentaSums[shop] = 0;
+            if (!shopLentaSums[currentShop]) shopLentaSums[currentShop] = 0;
             
             if (!isDeleted && !inTransit && itemStatus !== 'error' && (vendor.includes('лента') || vendor.includes('lenta'))) {
-                shopLentaSums[shop] += (qty * price);
+                shopLentaSums[currentShop] += (qty * price);
             }
         });
         
-        // Второй проход: распределяем с учетом Купера
         document.querySelectorAll('.edit-svod-input').forEach(inp => {
-            let shop = inp.getAttribute('data-shop');
+            let n = inp.getAttribute('data-item');
+            let d = inp.getAttribute('data-date');
+            let shopSelect = document.querySelector(`.edit-svod-shop-select[data-item="${n.replace(/"/g, '&quot;')}"][data-date="${d}"]`);
+            let currentShop = shopSelect ? shopSelect.value : inp.getAttribute('data-shop');
+            
             let vendor = (inp.getAttribute('data-vendor') || 'лента').toLowerCase();
             let price = parseFloat(inp.getAttribute('data-price')) || 0;
             let inTransit = inp.getAttribute('data-transit') === 'true';
@@ -595,7 +616,7 @@
             }
             
             if (vendor.includes('лента') || vendor.includes('lenta')) {
-                if (shopLentaSums[shop] > 0 && shopLentaSums[shop] < 2000) totalKuper += cost;
+                if (shopLentaSums[currentShop] > 0 && shopLentaSums[currentShop] < 2000) totalKuper += cost;
                 else totalLenta += cost;
             } else if (isOzon) {
                 totalOzon += cost;
@@ -720,7 +741,6 @@
     async function renderOrdersSvod() {
         const box = document.getElementById('content');
         
-        // Подгружаем недовозы
         let resMiss = await fetch(`${FB_URL}/missing_items.json`);
         let missingData = await resMiss.json() || {};
         let activeMissing = {};
@@ -763,7 +783,6 @@
             }
         });
 
-        // Очистка пустых заказов
         let keysToDelete = []; 
         let shopHasRealOrder = {};
         todaysOrders.forEach(o => {
@@ -794,7 +813,6 @@
             });
         }
 
-        // Группировка
         let svodDataByDate = {}; 
         todaysOrders.forEach(o => {
             let d = new Date(o.timestamp); 
@@ -861,7 +879,7 @@
         let btnEditColor = isSvodEditMode ? "#f44336" : "#0288d1";
         let btnEditText = isSvodEditMode ? "💾 СОХРАНИТЬ ИЗМЕНЕНИЯ" : "✏️ РЕДАКТИРОВАТЬ";
 
-        let html = `<div style="display:flex; justify-content:space-between; margin-bottom:15px; align-items:center;">
+        let html = `<div style="position: sticky; top: 120px; z-index: 1500; background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(10px); padding: 15px 20px; border-radius: 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; border: 1px solid #f0f0f0;">
                         <h3 style='color:#311B92; font-size:24px; margin:0;'>📊 Свод по кофейням (Ожидают сборки)</h3>
                         <div style="display:flex; gap: 10px;">
                             <button onclick="mergePendingOrders()" class="btn-add" style="background: linear-gradient(135deg, #9C27B0 0%, #4A148C 100%);">🔗 ОБЪЕДИНИТЬ</button>
@@ -874,7 +892,9 @@
 
         if (isSvodEditMode) {
             html += `<div style="margin-bottom:15px; padding:15px; background:#fff3e0; color:#e65100; border-radius:12px; font-size:16px; font-weight:bold; border: 2px dashed #ffb74d;">
-                        💡 Нажмите на статус товара 🔄, чтобы переключить: Ожидает ➡️ Заказано ➡️ Ошибка.<br>
+                        💡 <b>Режим редактирования активен:</b><br>
+                        - Нажмите на статус товара 🔄, чтобы переключить: Ожидает ➡️ Заказано ➡️ Ошибка.<br>
+                        - Вы можете перенести товар в другой магазин, выбрав его из списка.<br>
                         <b style="color:#d32f2f;">ВНИМАНИЕ:</b> Если не перевести повтор в статус "Ошибка ❌", бот закажет его!
                      </div>`;
         }
@@ -900,7 +920,6 @@
         } else {
             sortedDates.forEach(dateStr => {
                 let safeDate = getSafeId(dateStr);
-                // По умолчанию скрыто, показываем только если добавлено в openSvodDates
                 let displayDate = openSvodDates.has(safeDate) ? 'table-row' : 'none';
 
                 html += `<tr class="cat-group-header" onclick="toggleSvodDate('${safeDate}')">
@@ -1018,9 +1037,16 @@
 
                             if (isSvodEditMode) {
                                 statusBadge = `<button onclick="markSvodStatusChange('${dateStr}', '${jsShop}', '${jsName}', '${itemStatus}')" style="cursor:pointer; background:${statusBg}; color:${statusColor}; border:2px dashed ${statusColor}; padding:4px 8px; border-radius:8px; font-size:13px; font-weight:900; display:inline-block; box-shadow:0 2px 4px rgba(0,0,0,0.1);">${statusText} 🔄</button>`;
+                                
+                                let shopOptions = shopListAll.map(sName => `<option value="${sName}" ${sName === shop ? 'selected' : ''}>${sName}</option>`).join('');
+                                let shopSelectHtml = `<select class="edit-svod-shop-select" data-original-shop="${htmlShop}" data-item="${htmlName}" data-date="${dateStr}" style="margin-top: 5px; font-size: 13px; padding: 4px; border: 1px solid #ccc; border-radius: 4px; width: 100%;" onchange="recalcSvodTotals()">${shopOptions}</select>`;
+
                                 html += `
-                                <tr class="svoditem_${safeShopDate} svodlvl3_of_${safeDate}" style="display:${displayShop}; color:${isDeleted ? '#aaa':'#333'}; ${rowBg}">
-                                    <td style="padding-left:45px; font-size:17px; font-weight:bold;">${name} ${repeatBadge}</td>
+                                <tr class="svod-row svoditem_${safeShopDate} svodlvl3_of_${safeDate}" style="display:${displayShop}; color:${isDeleted ? '#aaa':'#333'}; ${rowBg}">
+                                    <td style="padding-left:45px; font-size:17px; font-weight:bold;">
+                                        ${name} ${repeatBadge}
+                                        ${shopSelectHtml}
+                                    </td>
                                     <td style="text-align:center;">
                                         <input type="number" class="edit-svod-input" data-date="${dateStr}" data-shop="${htmlShop}" data-item="${htmlName}" data-vendor="${originalVendor}" data-price="${price}" data-repeat="${isRepeat}" data-transit="${inTransit}" data-deleted="${isDeleted}" data-status="${itemStatus}" value="${actualQty}" ${isDeleted || inTransit ? 'disabled' : ''} oninput="recalcSvodTotals()" style="width: 70px; text-align: center; font-size: 16px; font-weight: bold; color: ${isDeleted ? '#aaa' : '#311b92'}; border: 2px solid ${isDeleted ? '#eee' : '#7E57C2'}; border-radius: 6px; padding: 4px;">
                                     </td>
@@ -1032,7 +1058,7 @@
                                 </tr>`;
                             } else {
                                 html += `
-                                <tr class="svoditem_${safeShopDate} svodlvl3_of_${safeDate}" style="display:${displayShop}; ${rowBg}">
+                                <tr class="svod-row svoditem_${safeShopDate} svodlvl3_of_${safeDate}" style="display:${displayShop}; ${rowBg}">
                                     <td style="padding-left:45px; font-size:17px; font-weight:bold;">${name} ${repeatBadge}</td>
                                     <td style="text-align:center; font-size:18px; font-weight:bold; color:#311b92;">${actualQty}</td>
                                     <td style="text-align:center;">${statusBadge}</td>
@@ -1252,9 +1278,8 @@
         preserveSvodInputs(); 
         
         try {
-            let hasChanges = false; 
             let promises = [];
-            let assignedMap = {}; // Tracks memory to prevent duplication bug
+            let moves = [];
             
             for (let k in cachedData.orders) {
                 let o = cachedData.orders[k];
@@ -1277,16 +1302,29 @@
                         let updatedQty = (tempSvodQty[dKey] && tempSvodQty[dKey][o.shop] && tempSvodQty[dKey][o.shop][itm.name] !== undefined) ? tempSvodQty[dKey][o.shop][itm.name] : undefined;
                         let updatedStatus = (tempSvodStatus[dKey] && tempSvodStatus[dKey][o.shop] && tempSvodStatus[dKey][o.shop][itm.name] !== undefined) ? tempSvodStatus[dKey][o.shop][itm.name] : undefined;
                         
+                        // Логика переноса в другой магазин
+                        let shopSelect = document.querySelector(`.edit-svod-shop-select[data-item="${itm.name.replace(/"/g, '&quot;')}"][data-date="${dKey}"]`);
+                        let newShop = shopSelect ? shopSelect.value : o.shop;
+                        
+                        let finalQty = updatedQty !== undefined ? updatedQty : itm.qty;
+                        let finalStatus = updatedStatus !== undefined ? updatedStatus : itm.status;
+                        let finalBotError = (finalStatus === 'error') ? true : itm.bot_error;
+
+                        if (newShop !== o.shop) {
+                            needsUpdate = true;
+                            moves.push({
+                                date: dKey,
+                                fromShop: o.shop,
+                                toShop: newShop,
+                                item: { ...itm, qty: finalQty, status: finalStatus, bot_error: finalBotError }
+                            });
+                            continue; // Не добавляем в текущий заказ
+                        }
+
                         if (updatedStatus !== undefined && itm.status !== updatedStatus) {
                             needsUpdate = true;
                             if (updatedStatus === 'error' && itm.status !== 'error') {
-                                let newMissing = { 
-                                    shop: o.shop, 
-                                    name: itm.name, 
-                                    qty: updatedQty !== undefined ? updatedQty : itm.qty, 
-                                    status: 'canceled', 
-                                    timestamp: Date.now() 
-                                };
+                                let newMissing = { shop: o.shop, name: itm.name, qty: finalQty, status: 'canceled', timestamp: Date.now() };
                                 promises.push(fetch(`${FB_URL}/missing_items.json`, { method: 'POST', body: JSON.stringify(newMissing) }));
                             }
                             itm.status = updatedStatus; 
@@ -1295,38 +1333,49 @@
                             itm.error = (updatedStatus === 'error');
                         }
                         
-                        if (updatedQty !== undefined) { 
-                            if (!assignedMap[dKey]) assignedMap[dKey] = {};
-                            if (!assignedMap[dKey][o.shop]) assignedMap[dKey][o.shop] = {};
-                            
-                            if (!assignedMap[dKey][o.shop][itm.name]) {
-                                if (String(updatedQty) !== String(itm.qty)) {
-                                    needsUpdate = true;
-                                    itm.qty = updatedQty; 
-                                }
-                                assignedMap[dKey][o.shop][itm.name] = true;
-                            } else {
-                                if (itm.qty != 0) {
-                                    needsUpdate = true;
-                                    itm.qty = 0; // Duplicates are zeroed out
-                                }
-                            }
+                        if (updatedQty !== undefined && String(updatedQty) !== String(itm.qty)) { 
+                            needsUpdate = true;
+                            itm.qty = updatedQty; 
                         }
-                        
+
                         if (parseFloat(itm.qty) > 0 || itm.name === "НЕТ ЗАКАЗА") {
                             newItemsArr.push(itm);
                         } else if (parseFloat(itm.qty) === 0) {
-                            needsUpdate = true; // Flushed out 0s
+                            needsUpdate = true;
                         }
                     }
                     
                     if (needsUpdate) {
-                        hasChanges = true;
                         if (newItemsArr.length === 0) newItemsArr = [{name: "НЕТ ЗАКАЗА", qty: 0}];
                         promises.push(fetch(`${FB_URL}/orders/${k}/items.json`, {method:'PUT', body: JSON.stringify(newItemsArr)}));
                     }
                 }
             }
+
+            // Обработка переносов в другие магазины
+            for (let move of moves) {
+                let targetOrderKey = Object.keys(cachedData.orders).find(k => {
+                    let to = cachedData.orders[k];
+                    return to && to.shop === move.toShop && !to.ordered && new Date(to.timestamp).toLocaleDateString('ru-RU') === move.date;
+                });
+                if (targetOrderKey) {
+                    let targetOrder = cachedData.orders[targetOrderKey];
+                    let tItems = Array.isArray(targetOrder.items) ? targetOrder.items : Object.values(targetOrder.items||{});
+                    let existingItem = tItems.find(i => i.name === move.item.name);
+                    if (existingItem) {
+                        existingItem.qty = parseFloat(existingItem.qty) + parseFloat(move.item.qty);
+                    } else {
+                        // Убираем "НЕТ ЗАКАЗА" если он там был
+                        tItems = tItems.filter(i => i.name !== "НЕТ ЗАКАЗА");
+                        tItems.push(move.item);
+                    }
+                    promises.push(fetch(`${FB_URL}/orders/${targetOrderKey}/items.json`, {method:'PUT', body: JSON.stringify(tItems)}));
+                } else {
+                    let newOrder = { shop: move.toShop, mode: 'order', items: [move.item], timestamp: new Date().getTime(), svod: false, ordered: false, userId: 'admin_move' };
+                    promises.push(fetch(`${FB_URL}/orders.json`, {method:'POST', body: JSON.stringify(newOrder)}));
+                }
+            }
+
             await Promise.all(promises);
             alert("✅ Изменения успешно сохранены!");
             isSvodEditMode = false; 
@@ -1334,7 +1383,6 @@
             tempSvodQty = {}; 
             tempSvodStatus = {};
             
-            // Микро-задержка, чтобы база успела переварить изменения до скачивания
             setTimeout(() => {
                 loadTab('orders', document.querySelector('.tab-btn.active'));
             }, 600);
@@ -1870,6 +1918,7 @@
                 }
             }
             if (o.mode === 'order' || o.mode === 'new_shop') {
+                let isRecent = o.timestamp >= (Date.now() - (7 * 24 * 60 * 60 * 1000));
                 if (!o.received) {
                     if (!recentOrdersMap[o.shop]) recentOrdersMap[o.shop] = {};
                     let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
@@ -1937,12 +1986,11 @@
                             let itemStatus = null;
                             
                             if (orderInfo) {
-                                // Строгая проверка: если последняя закупка была слишком давно (>7 дней от даты стоп-листа), считаем зависшей
                                 let diffDays = (stop.timestamp - orderInfo.timestamp) / (1000 * 3600 * 24);
                                 if (diffDays <= 7) {
                                     itemStatus = orderInfo.stat;
                                 } else {
-                                    itemStatus = 'obsolete'; // Не заказано
+                                    itemStatus = 'obsolete';
                                 }
                             }
                             
@@ -1989,7 +2037,6 @@
         });
         html += `</div>`;
 
-        // Добавляем ИСТОРИЮ стоп-листов
         stopHistoryArr.sort((a,b) => b.timestamp - a.timestamp);
         let stoplistHistoryHtml = `<table style="width:100%; margin-top:15px;">
             <tr><th style="width:180px;">Дата и Время</th><th style="width:200px;">Кофейня</th><th>Закончившиеся продукты</th></tr>`;

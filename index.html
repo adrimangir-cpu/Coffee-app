@@ -4,7 +4,7 @@
   <base target="_top">
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>Coffee Management App v8.4</title>
+  <title>Coffee Management App v8.0</title>
   
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-app-compat.js"></script>
@@ -40,7 +40,7 @@
     input, textarea, select { -webkit-user-select: text; user-select: text; font-family: inherit; }
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: var(--bg-color); color: var(--text-color); font-size: 16px; line-height: 1.4; padding-bottom: 20px; overflow-x: hidden; scroll-behavior: smooth; -webkit-font-smoothing: antialiased; }
    
-    #step-1, #step-2, #step-stoplist, #step-panel, #step-admin-purchase, #step-3, #step-mp-month, #step-mp-vendor, #step-mp-mode, #step-mp-address, #step-mp-keypad { padding-bottom: 110px; }
+    #step-1, #step-2, #step-stoplist, #step-panel, #step-admin-purchase, #step-3, #step-mp-month, #step-mp-vendor, #step-mp-mode, #step-mp-address, #step-keypad { padding-bottom: 110px; }
 
     /* =========================================
        2. АНИМАЦИИ
@@ -305,7 +305,7 @@
       </div>
     </div>
 
-    <div id="step-mp-keypad" style="display:none;">
+    <div id="step-keypad" style="display:none;">
       <h3 style="text-align:center; color:#4A148C; margin-bottom: 10px; font-weight:900;" id="mp-keypad-title">ВВЕДИТЕ СУММУ</h3>
       <div class="display-box" id="keypad-display">0</div>
       <div class="keypad-grid">
@@ -395,7 +395,7 @@
       currentReceivingTab: 'active',
       
       // Маркетплейс
-      mpMonthOption: "current", 
+      mpMonthOption: "current",
       mpVendor: "", 
       mpType: "", 
       mpAddress: "", 
@@ -423,7 +423,7 @@
     }
 
     function showScreen(screenId, recordHistory = true) {
-      const allScreens = ['step-1', 'step-2', 'step-stoplist', 'step-panel', 'step-admin-purchase', 'step-3', 'step-mp-month', 'step-mp-vendor', 'step-mp-mode', 'step-mp-address', 'step-mp-keypad'];
+      const allScreens = ['step-1', 'step-2', 'step-stoplist', 'step-panel', 'step-admin-purchase', 'step-3', 'step-mp-month', 'step-mp-vendor', 'step-mp-mode', 'step-mp-address', 'step-keypad'];
       
       let currentVisible = allScreens.find(id => document.getElementById(id).style.display === 'block');
       if (recordHistory && currentVisible && currentVisible !== screenId) {
@@ -456,7 +456,7 @@
         let cartFab = document.getElementById('cart-fab');
         let mainBtn = document.getElementById('main-action-button');
 
-        if (['step-3', 'step-mp-month', 'step-mp-vendor', 'step-mp-mode', 'step-mp-address', 'step-mp-keypad'].includes(screenId)) {
+        if (['step-3', 'step-mp-month', 'step-mp-vendor', 'step-mp-mode', 'step-mp-address', 'step-keypad'].includes(screenId)) {
             nav.style.display = 'flex';
         } else {
             nav.style.display = 'none';
@@ -530,13 +530,13 @@
         state.currentMode = 'marketplace';
         state.mpVendor = ""; 
         state.mpType = ""; 
-        state.mpAddress = ""; 
+        state.mpAddress = "";
         state.mpMonthOption = "current";
         document.getElementById('title').innerText = "Маркетплейс";
         showScreen('step-mp-month');
         updateBadgeUI();
     }
-
+    
     function selectMpMonth(option) {
         triggerHaptic();
         state.mpMonthOption = option;
@@ -562,7 +562,7 @@
         state.keypadValue = "0";
         document.getElementById('keypad-display').innerText = "0";
         document.getElementById('mp-keypad-title').innerText = `${state.mpVendor.toUpperCase()} | ${addr} | ВВЕДИТЕ СУММУ`;
-        showScreen('step-mp-keypad');
+        showScreen('step-keypad');
     }
 
     function pressKey(key) {
@@ -1995,7 +1995,7 @@
                         itemsArr.forEach(i => {
                             if (!i || !i.name || i.name === "НЕТ ЗАКАЗА") return;
                             
-                            // Забираем всё, что было "Заказано"
+                            // Изменение: берем в приемку все товары со статусом ordered
                             if (i.status === 'ordered' && i.bot_error !== true) {
                                 let catItem = Object.values(orderCatalog).find(c => c && c.name === i.name) || {};
                                 let vendor = (catItem.vendor || 'Лента').toLowerCase() === 'озон' ? 'ozon' : 'lenta';
@@ -2052,7 +2052,7 @@
                                     let btnArrId = `btn_arr_${vendorKey}_${getSafeId(name)}`;
                                     let btnMissId = `btn_miss_${vendorKey}_${getSafeId(name)}`;
                                     
-                                    let choice = state.receivingChoices ? state.receivingChoices[name]?.status : null;
+                                    let choice = (state.receivingChoices && state.receivingChoices[name]) ? state.receivingChoices[name].status : null;
                                     let isArr = choice === 'arrived';
                                     let isMiss = choice === 'missing';
 
@@ -2240,7 +2240,6 @@
         if(!confirm(`Точно отправляю администратору? Данные по поставщику ${vendorName} будут сохранены.`)) return;
 
         triggerHaptic();
-        showReportOverlay("Сохранение приемки...");
         
         try {
             let keys = keysStr.split(',');
@@ -2256,6 +2255,8 @@
                 showLastOrder();
                 return;
             }
+
+            showReportOverlay("Сохранение приемки...");
 
             for(let name in missingMap) {
                 await database.ref("missing_items").push({ 

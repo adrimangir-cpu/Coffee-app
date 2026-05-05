@@ -118,7 +118,7 @@
 
         .svod-row { transition: 0.2s; }
         .svod-row:focus-within { background-color: #e3f2fd !important; outline: 2px solid #0288d1; outline-offset: -2px; }
-        .svod-row:hover { background-color: #e3f2fd !important; }
+        .svod-row:hover { background-color: #f1f8e9 !important; }
 
         /* =========================================
            ФОРМЫ ВВОДА И КНОПКИ
@@ -498,7 +498,7 @@
                 let ordersObj = await resOrders.json() || {};
                 Object.keys(ordersObj).forEach(k => { if (ordersObj[k]) ordersObj[k].key = k; });
                 cachedData.orders = ordersObj;
-                renderOrdersSvod();
+                await renderOrdersSvod();
             }
             else if (type === 'marketplace') {
                 isMpEditMode = false;
@@ -787,6 +787,7 @@
     }
 
     async function renderOrdersSvod() {
+      try {
         const box = document.getElementById('content');
         let svodActionBar = document.getElementById('svod-action-bar');
         
@@ -808,6 +809,14 @@
                 }
             }
         });
+
+        // Создаем карту поставщиков для сверхбыстрой сортировки
+        let vendorMap = {};
+        if (cachedData.catalogOrder) {
+            Object.values(cachedData.catalogOrder).forEach(c => {
+                if (c && c.name) vendorMap[c.name] = (c.vendor || 'Лента').toLowerCase();
+            });
+        }
 
         let todaysOrders = []; 
         let historyOrdersList = [];
@@ -831,6 +840,8 @@
                 }
             }
         });
+
+        historyOrdersList = historyOrdersList.slice(0, 150); // Ограничиваем историю 150 записями во избежание зависания
 
         let keysToDelete = []; 
         let shopHasRealOrder = {};
@@ -1002,11 +1013,10 @@
                                 </td>
                              </tr>`;
                              
+                    // ОПТИМИЗИРОВАННАЯ СОРТИРОВКА: ИСПОЛЬЗУЕМ VENDOR MAP
                     let sortedItemNames = Object.keys(shopsObj[shop].items).sort((a,b) => {
-                        let catItemA = Object.values(cachedData.catalogOrder).find(c => c && c.name === a) || {};
-                        let catItemB = Object.values(cachedData.catalogOrder).find(c => c && c.name === b) || {};
-                        let vA = (catItemA.vendor || 'Лента').toLowerCase(); 
-                        let vB = (catItemB.vendor || 'Лента').toLowerCase();
+                        let vA = vendorMap[a] || 'лента'; 
+                        let vB = vendorMap[b] || 'лента';
                         if (vA < vB) return -1; 
                         if (vA > vB) return 1; 
                         return a.localeCompare(b);
@@ -1193,6 +1203,10 @@
         }
         html += `</table></div>`;
         box.innerHTML = html;
+      } catch (e) {
+          console.error(e);
+          document.getElementById('content').innerHTML = `<div style="color:red; font-size:18px; padding:20px;">Ошибка рендера Свода: ${e.message}</div>`;
+      }
     }
 
     async function saveSvodEdits() {
@@ -1344,7 +1358,6 @@
             alert("Нет активных заказов для оформления."); 
         }
     }
-
     // ==========================================
     // 2. ВКЛАДКА: МАРКЕТПЛЕЙСЫ
     // ==========================================

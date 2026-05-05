@@ -4,7 +4,7 @@
   <base target="_top">
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>Coffee Management App v8.6</title>
+  <title>Coffee Management App v8.7</title>
   
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-app-compat.js"></script>
@@ -391,6 +391,7 @@
       appSettings: { hidden_categories: {}, new_shop_order_active: false },
       tempMissingItems: {},
       receivingChoices: {}, 
+      missingChoices: {}, // НОВОЕ: Для пачки недовозов
       screenHistory: [],
       currentReceivingTab: 'active',
       
@@ -1923,7 +1924,7 @@
     }
 
     // ==========================================
-    // 8. ПРИЕМКА ТОВАРА И НЕДОВОЗЫ (БЕЗ ПЕРЕЗАГРУЗОК)
+    // 8. ПРИЕМКА ТОВАРА И НЕДОВОЗЫ
     // ==========================================
     
     function setReceiveChoice(name, qty, vendor, status, btnArrId, btnMissId) {
@@ -1940,6 +1941,55 @@
         } else if (status === 'missing') {
             if (btnMiss) { btnMiss.style.border = '2px solid #c62828'; btnMiss.style.background = '#ffebee'; btnMiss.style.color = '#c62828'; }
             if (btnArr) { btnArr.style.border = '1px solid #ccc'; btnArr.style.background = '#fafafa'; btnArr.style.color = '#888'; }
+        }
+    }
+
+    // НОВОЕ: Групповое выделение недовозов для бариста
+    function toggleMissingArrived(key, name, btnId) {
+        triggerHaptic();
+        if (!state.missingChoices) state.missingChoices = {};
+        
+        if (state.missingChoices[key]) {
+            delete state.missingChoices[key];
+            document.getElementById(btnId).style.background = '#fafafa';
+            document.getElementById(btnId).style.border = '1px solid #ccc';
+            document.getElementById(btnId).style.color = '#888';
+        } else {
+            state.missingChoices[key] = name;
+            document.getElementById(btnId).style.background = '#e8f5e9';
+            document.getElementById(btnId).style.border = '2px solid #2e7d32';
+            document.getElementById(btnId).style.color = '#2e7d32';
+        }
+    }
+
+    async function finishMissingReceiving() {
+        if (!state.missingChoices || Object.keys(state.missingChoices).length === 0) {
+            alert("Вы не отметили ни одного недовоза как 'Доехал'.");
+            return;
+        }
+        
+        if(!confirm(`Точно отправить данные о прибытии ${Object.keys(state.missingChoices).length} позиций?`)) return;
+
+        triggerHaptic();
+        showReportOverlay("Сохранение данных...");
+        
+        try {
+            let namesToRemove = [];
+            for (let key in state.missingChoices) {
+                await database.ref("missing_items/" + key).update({
+                    status: 'arrived',
+                    timestamp: firebase.database.ServerValue.TIMESTAMP 
+                });
+                namesToRemove.push(state.missingChoices[key]);
+            }
+            
+            await autoRemoveFromStoplist(state.currentShop, namesToRemove);
+            
+            state.missingChoices = {};
+            showLastOrder(); 
+        } catch(e) {
+            alert("❌ Ошибка: " + e.message);
+            showLastOrder();
         }
     }
 
@@ -2000,15 +2050,19 @@
                         }
 
                         let safeNameAttr = String(m.name).replace(/'/g, "\\'").replace(/"/g, '&quot;');
+                        let btnMissArrId = `btn_miss_arr_${m.key}`;
+                        let isMarked = state.missingChoices && state.missingChoices[m.key] !== undefined;
 
                         html += `<div class="report-card-item" style="flex-direction:column; align-items:flex-start; border-bottom:1px solid #eee;">
                                     <span style="margin-bottom:8px; font-size:16px;"><b>${m.name}</b> (x${m.qty})</span> 
                                     <div style="display:flex; justify-content:space-between; width:100%; align-items:center;">
                                         <span style="background:${bg}; color:${statColor}; padding:6px 10px; border-radius:8px; font-size:13px; font-weight:900;">${statText}</span>
-                                        <button onclick="markMissingArrived('${m.key}', '${safeNameAttr}')" style="border:none; background:#4caf50; color:#fff; padding:8px 15px; border-radius:10px; font-weight:900; font-size:14px; cursor:pointer;">Доехал ✅</button>
+                                        <button id="${btnMissArrId}" onclick="toggleMissingArrived('${m.key}', '${safeNameAttr}', '${btnMissArrId}')" style="border:${isMarked ? '2px solid #2e7d32' : '1px solid #ccc'}; background:${isMarked ? '#e8f5e9' : '#fafafa'}; color:${isMarked ? '#2e7d32' : '#888'}; padding:8px 15px; border-radius:10px; font-weight:900; font-size:14px; cursor:pointer;">Доехал ✅</button>
                                     </div>
                                  </div>`;
                     });
+                    
+                    html += `<button onclick="finishMissingReceiving()" class="btn-mode" style="background: var(--warning-gradient) !important; margin-top:15px; margin-bottom:0; font-size:15px !important; padding:15px !important;">🏁 ПОДТВЕРДИТЬ НЕДОВОЗЫ</button>`;
                     html += `</div>`;
                 }
 
@@ -2025,6 +2079,7 @@
                         itemsArr.forEach(i => {
                             if (!i || !i.name || i.name === "НЕТ ЗАКАЗА") return;
                             
+                            // Изменение: берем в приемку все товары со статусом ordered
                             if (i.status === 'ordered' && i.bot_error !== true) {
                                 let catItem = Object.values(orderCatalog).find(c => c && c.name === i.name) || {};
                                 let vendor = (catItem.vendor || 'Лента').toLowerCase() === 'озон' ? 'ozon' : 'lenta';
@@ -2081,7 +2136,7 @@
                                     let btnArrId = `btn_arr_${vendorKey}_${getSafeId(name)}`;
                                     let btnMissId = `btn_miss_${vendorKey}_${getSafeId(name)}`;
                                     
-                                    let choice = (state.receivingChoices && state.receivingChoices[name]) ? state.receivingChoices[name].status : null;
+                                    let choice = state.receivingChoices ? state.receivingChoices[name]?.status : null;
                                     let isArr = choice === 'arrived';
                                     let isMiss = choice === 'missing';
 
@@ -2234,9 +2289,11 @@
             }
             
             document.getElementById('report-content-area').innerHTML = html || "<div class='report-card'>Пусто</div>";
+            hideReportOverlay();
         } catch (err) {
             console.error(err);
             document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; color:red; font-weight:900;">Ошибка загрузки приемки.</div></div>`; 
+            hideReportOverlay();
         }
     }
 
@@ -2269,6 +2326,7 @@
         if(!confirm(`Точно отправляю администратору? Данные по поставщику ${vendorName} будут сохранены.`)) return;
 
         triggerHaptic();
+        showReportOverlay("Сохранение приемки...");
         
         try {
             let keys = keysStr.split(',');
@@ -2279,13 +2337,12 @@
             }
 
             if (isAlreadyProcessed) {
+                hideReportOverlay();
                 alert("⚠️ Внимание! Эта приемка уже была только что обработана с другого устройства. Данные обновлены.");
                 state.receivingChoices = {}; 
                 showLastOrder();
                 return;
             }
-
-            showReportOverlay("Сохранение приемки...");
 
             for(let name in missingMap) {
                 await database.ref("missing_items").push({ 
@@ -2312,24 +2369,57 @@
 
             showLastOrder(); 
         } catch(e) {
+            hideReportOverlay();
             alert("❌ Ошибка: " + e.message);
             showLastOrder();
         }
     }
 
-    async function markMissingArrived(key, name) {
+    // НОВОЕ: Групповое сохранение недовозов для Админа
+    async function saveAllMissingChanges() {
         triggerHaptic();
-        showReportOverlay("Сохранение данных...");
+        let selects = document.querySelectorAll('.missing-status-select');
+        let updates = [];
+        selects.forEach(sel => {
+            if (sel.value !== sel.getAttribute('data-old')) {
+                updates.push({
+                    key: sel.getAttribute('data-key'),
+                    val: sel.value,
+                    shop: sel.getAttribute('data-shop'),
+                    name: sel.getAttribute('data-name')
+                });
+            }
+        });
+
+        if (updates.length === 0) {
+            alert("Вы не изменили ни одного статуса.");
+            return;
+        }
+
+        if(!confirm(`Сохранить изменения для ${updates.length} позиций?`)) return;
+
+        showReportOverlay("Сохранение...");
         try {
-            await database.ref("missing_items/" + key).update({
-                status: 'arrived',
-                timestamp: firebase.database.ServerValue.TIMESTAMP 
-            });
-            await autoRemoveFromStoplist(state.currentShop, [name]);
-            showLastOrder();
+            let arrivedByShop = {};
+            for (let u of updates) {
+                await database.ref("missing_items/" + u.key).update({
+                    status: u.val,
+                    timestamp: Date.now()
+                });
+                if (u.val === 'arrived') {
+                    if(!arrivedByShop[u.shop]) arrivedByShop[u.shop] = [];
+                    arrivedByShop[u.shop].push(u.name);
+                }
+            }
+
+            for(let shop in arrivedByShop) {
+                await autoRemoveFromStoplist(shop, arrivedByShop[shop]);
+            }
+
+            openMissingAdmin();
         } catch(e) {
-            alert("❌ Ошибка: " + e.message);
-            showLastOrder();
+            alert("Ошибка: " + e.message);
+            openMissingAdmin();
         }
     }
 
@@ -2388,7 +2478,7 @@
                             </div>
                             <button class="btn-del" onclick="deleteMissingItem('${m.key}')" style="padding:6px 10px; font-size:14px; margin-left:10px;">🗑</button>
                         </div>
-                        <select onchange="updateMissingStatus('${m.key}', this.value, '${m.shop}', '${safeNameAttr}')" style="margin-top:10px; padding:10px; border-radius:8px; width:100%; border:2px solid #ddd; background:#fafafa; font-weight:900; font-size:15px; color:#4A148C;">
+                        <select class="missing-status-select" data-key="${m.key}" data-shop="${m.shop}" data-name="${safeNameAttr}" data-old="${m.status}" style="margin-top:10px; padding:10px; border-radius:8px; width:100%; border:2px solid #ddd; background:#fafafa; font-weight:900; font-size:15px; color:#4A148C;">
                             <option value="pending" ${m.status==='pending'?'selected':''}>Ожидает проверки</option>
                             <option value="transit" ${m.status==='transit'?'selected':''}>В пути (от поставщика)</option>
                             <option value="reorder" ${m.status==='reorder'?'selected':''}>Отменен (Админ закажет сам)</option>
@@ -2401,7 +2491,7 @@
             
             let html = `<div class="report-card">
                             <div class="report-card-title" style="color:#EC407A;">‼️ Актуальные Недовозы</div>
-                            ${hasActive ? activeHtml : "<div style='text-align:center; padding:10px; font-weight:900;'>Нет активных недовозов.</div>"}
+                            ${hasActive ? activeHtml + `<button onclick="saveAllMissingChanges()" class="btn-mode" style="background: var(--btn-stop-grad) !important; margin-top:20px; font-size:15px !important; padding:15px !important;">🏁 СОХРАНИТЬ ИЗМЕНЕНИЯ</button>` : "<div style='text-align:center; padding:10px; font-weight:900;'>Нет активных недовозов.</div>"}
                         </div>`;
             
             if (hasHistory) {
@@ -2415,22 +2505,6 @@
         } catch (err) {
             document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; color:red; font-weight:900;">Ошибка загрузки.</div></div>`; 
         }
-    }
-
-    async function updateMissingStatus(key, val, shop, name) {
-        await database.ref("missing_items/" + key).update({
-            status: val,
-            timestamp: Date.now()
-        });
-        if (val === 'canceled') {
-            alert("Статус обновлен. Товар возвращен в корзину сотруднику и скрыт из списка недовозов.");
-        } else if (val === 'arrived') {
-            await autoRemoveFromStoplist(shop, [name]);
-            alert("Статус обновлен. Товар отмечен как доставленный и убран из стоп-листа!");
-        } else {
-            alert("Статус обновлен.");
-        }
-        openMissingAdmin(); 
     }
     
     async function deleteMissingItem(key) {

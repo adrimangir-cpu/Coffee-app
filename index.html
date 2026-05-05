@@ -358,7 +358,7 @@
     </div>
   </div>
 
-  <script>
+ <script>
     // ==========================================
     // 1. ИНИЦИАЛИЗАЦИЯ И ПРАВА ДОСТУПА
     // ==========================================
@@ -391,7 +391,7 @@
       currentReceivingTab: 'active',
       
       // Маркетплейс
-      mpMonthOption: "current", // 'current' или 'prev'
+      mpMonthOption: "current",
       mpVendor: "", mpType: "", mpAddress: "", keypadValue: "0", mpBasket: [], isMpEditMode: false
     };
 
@@ -1519,45 +1519,58 @@
     async function showMyLastOrder() {
         showReportOverlay("Считаю суммарный заказ...");
         try {
-            const snap = await database.ref("orders").orderByChild("shop").equalTo(state.currentShop).once("value");
+            const snap = await database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(50).once("value");
             let aggregated = {};
+            let allOrders = [];
             
             snap.forEach(child => {
                 let o = child.val();
-                if (o && (o.mode === 'order' || o.mode === 'new_shop') && !o.received) {
-                    let items = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
-                    items.forEach(i => {
-                        if (i && i.name && i.name !== "НЕТ ЗАКАЗА") {
-                            if (!aggregated[i.name]) aggregated[i.name] = { qty: 0, status: 'pending' };
-                            aggregated[i.name].qty += parseFloat(i.qty) || 0;
-                            if (o.ordered || o.svod) aggregated[i.name].status = 'ordered';
-                        }
-                    });
+                if (o && (o.mode === 'order' || o.mode === 'new_shop')) {
+                    allOrders.push(o);
                 }
             });
 
+            allOrders.sort((a,b) => (b.timestamp || 0) - (a.timestamp || 0));
+
+            let pendingOrders = allOrders.filter(o => !o.ordered && !o.svod);
+            let targetOrders = [];
+
+            if (pendingOrders.length > 0) {
+                targetOrders = pendingOrders;
+            } else if (allOrders.length > 0) {
+                let lastDate = new Date(allOrders[0].timestamp).setHours(0,0,0,0);
+                targetOrders = allOrders.filter(o => new Date(o.timestamp).setHours(0,0,0,0) === lastDate);
+            }
+
+            targetOrders.forEach(o => {
+                let items = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
+                items.forEach(i => {
+                    if (i && i.name && i.name !== "НЕТ ЗАКАЗА") {
+                        if (!aggregated[i.name]) aggregated[i.name] = { qty: 0, status: 'pending' };
+                        aggregated[i.name].qty += parseFloat(i.qty) || 0;
+                        if (o.ordered || o.svod) aggregated[i.name].status = 'ordered';
+                    }
+                });
+            });
+
             let html = `<div class="report-card"><div class="report-card-title">Ваш текущий заказ:</div>`;
-            
             if (Object.keys(aggregated).length === 0) {
-                 html += `<div style="text-align:center; padding:10px; font-weight:bold; color:#888;">Активных заказов нет.</div>`;
+                 html += `<div style="text-align:center; padding:10px; font-weight:bold; color:#888;">Заказов не найдено.</div>`;
             } else {
                 for (let name in aggregated) {
-                    let statusHtml = "";
-                    if (aggregated[name].status === 'ordered') {
-                        statusHtml = `<span style="color:#2e7d32; font-size:13px; font-weight:900; background:#e8f5e9; padding:2px 6px; border-radius:6px;">Заказано ✅</span>`;
-                    } else {
-                        statusHtml = `<span style="color:#f57c00; font-size:13px; font-weight:900; background:#fff3e0; padding:2px 6px; border-radius:6px;">Ожидает ⏳</span>`;
-                    }
-                    
+                    let st = aggregated[name].status;
+                    let stHtml = st === 'ordered' 
+                        ? `<span style="color:#2e7d32; font-size:13px; font-weight:900; background:#e8f5e9; padding:3px 8px; border-radius:6px;">Заказано ✅</span>`
+                        : `<span style="color:#f57c00; font-size:13px; font-weight:900; background:#fff3e0; padding:3px 8px; border-radius:6px;">Ожидает ⏳</span>`;
                     html += `<div style="display:flex; justify-content:space-between; align-items:center; padding:12px 0; border-bottom:1px solid #eee;">
-                                <div><b style="font-size:16px;">${name}</b> <br> ${statusHtml}</div>
+                                <div><b style="font-size:16px;">${name}</b> <br> <div style="margin-top:5px;">${stHtml}</div></div>
                                 <span style="font-weight:900; font-size:18px; color:#311B92;">${aggregated[name].qty} шт</span>
                              </div>`;
                 }
             }
             document.getElementById('report-content-area').innerHTML = html + "</div>";
         } catch(e) { 
-            document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; color:red; font-weight:900;">Ошибка загрузки.</div></div>`; 
+            document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; color:red; font-weight:900;">Ошибка загрузки: ${e.message}</div></div>`; 
         }
     }
 
@@ -1848,7 +1861,7 @@
     }
 
     // ==========================================
-    // 8. ПРИЕМКА ТОВАРА И НЕДОВОЗЫ (Без перезагрузки)
+    // 8. ПРИЕМКА ТОВАРА И НЕДОВОЗЫ
     // ==========================================
     
     function setReceiveChoice(name, qty, vendor, status, btnArrId, btnMissId) {
@@ -1989,6 +2002,8 @@
                                          </div>
                                          <div class="${listId}" style="display:block; padding-top:10px;">`;
                             
+                            let expectedCount = 0;
+
                             names.forEach(name => {
                                 let item = aggregatedObj[name];
                                 let isMissingAlready = activeMissing.some(am => am.name === name);
@@ -2000,6 +2015,7 @@
                                                 <span style="color:#ef6c00; font-size:13px; font-weight:900;">Уже в недовозах 👆</span>
                                             </div>`;
                                 } else {
+                                    expectedCount++;
                                     let btnArrId = `btn_arr_${vendorKey}_${getSafeId(name)}`;
                                     let btnMissId = `btn_miss_${vendorKey}_${getSafeId(name)}`;
                                     
@@ -2020,7 +2036,7 @@
                                 }
                             });
                             
-                            res += `<button onclick="finishReceiving('${vendorKey}', '${kStr}')" class="btn-mode" style="background: var(--btn-stop-grad) !important; margin-top:15px; margin-bottom:0; font-size:15px !important; padding:15px !important;">🏁 ГОТОВО (${badgeText})</button>`;
+                            res += `<button onclick="finishReceiving('${vendorKey}', '${kStr}', ${expectedCount})" class="btn-mode" style="background: var(--btn-stop-grad) !important; margin-top:15px; margin-bottom:0; font-size:15px !important; padding:15px !important;">🏁 ГОТОВО (${badgeText})</button>`;
                             res += `</div></div>`;
                             return res;
                         };
@@ -2156,52 +2172,34 @@
             }
             
             document.getElementById('report-content-area').innerHTML = html || "<div class='report-card'>Пусто</div>";
-            hideReportOverlay();
         } catch (err) {
             console.error(err);
             document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; color:red; font-weight:900;">Ошибка загрузки приемки.</div></div>`; 
-            hideReportOverlay();
         }
     }
 
-    async function finishReceiving(vendorKey, keysStr) {
+    async function finishReceiving(vendorKey, keysStr, expectedCount) {
         let vendorName = vendorKey === 'ozon' ? 'ОЗОН' : 'ЛЕНТА';
 
-        // Проверяем, есть ли неотмеченные товары
-        let hasUncheckedItems = false;
-        let keys = keysStr.split(',');
-        let arrivedItemsToClear = [];
+        let checkedCount = 0;
         let missingMap = {};
+        let arrivedItemsToClear = [];
 
-        const catSnap = await database.ref("catalogs").once("value");
-        let catalogs = catSnap.val() || {};
-        let combinedCat = {...(catalogs.order||{}), ...(catalogs.newshop||{})};
-
-        for(let k of keys) {
-            let oSnap = await database.ref("orders/" + k).once("value");
-            let o = oSnap.val();
-            if (o && o.items) {
-                let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items);
-                itemsArr.forEach(i => {
-                    if (!i || !i.name || i.name === "НЕТ ЗАКАЗА") return;
-                    let catInfo = Object.values(combinedCat).find(c => c && c.name === i.name) || {};
-                    let v = (catInfo.vendor || 'Лента').toLowerCase() === 'озон' ? 'ozon' : 'lenta';
-                    
-                    if (v === vendorKey && i.status === 'ordered' && i.bot_error !== true) {
-                        let choice = state.receivingChoices ? state.receivingChoices[i.name] : null;
-                        if (!choice) {
-                            hasUncheckedItems = true;
-                        } else if (choice.status === 'missing') {
-                            missingMap[i.name] = choice.qty;
-                        } else if (choice.status === 'arrived') {
-                            if(!arrivedItemsToClear.includes(i.name)) arrivedItemsToClear.push(i.name);
-                        }
+        if (state.receivingChoices) {
+            for (let name in state.receivingChoices) {
+                let choice = state.receivingChoices[name];
+                if (choice.vendor === vendorKey) {
+                    checkedCount++;
+                    if (choice.status === 'missing') {
+                        missingMap[name] = choice.qty;
+                    } else if (choice.status === 'arrived') {
+                        arrivedItemsToClear.push(name);
                     }
-                });
+                }
             }
         }
 
-        if (hasUncheckedItems) {
+        if (checkedCount < expectedCount) {
             alert("❌ Пожалуйста, отметьте все позиции (✅ Принято или ❌ Недовоз) перед нажатием ГОТОВО!");
             return;
         }
@@ -2212,6 +2210,7 @@
         showReportOverlay("Сохранение приемки...");
         
         try {
+            let keys = keysStr.split(',');
             let isAlreadyProcessed = false;
             for(let k of keys) {
                 let snap = await database.ref(`orders/${k}/${vendorKey}_received`).once("value");
@@ -2219,14 +2218,12 @@
             }
 
             if (isAlreadyProcessed) {
-                hideReportOverlay();
                 alert("⚠️ Внимание! Эта приемка уже была только что обработана с другого устройства. Данные обновлены.");
                 state.receivingChoices = {}; 
                 showLastOrder();
                 return;
             }
 
-            // Отправляем уникальные недовозы
             for(let name in missingMap) {
                 await database.ref("missing_items").push({ 
                     shop: state.currentShop, name: name, qty: missingMap[name], 
@@ -2250,31 +2247,13 @@
                 }
             }
 
-            hideReportOverlay();
-            showLastOrder();
-        } catch(e) {
-            hideReportOverlay();
-            alert("❌ Ошибка: " + e.message);
-        }
-    }
-
-    async function markMissingArrived(key, name) {
-        triggerHaptic();
-        showReportOverlay("Сохранение данных...");
-        try {
-            await database.ref("missing_items/" + key).update({
-                status: 'arrived',
-                timestamp: firebase.database.ServerValue.TIMESTAMP 
-            });
-            await autoRemoveFromStoplist(state.currentShop, [name]);
-            showLastOrder();
+            showLastOrder(); 
         } catch(e) {
             alert("❌ Ошибка: " + e.message);
             showLastOrder();
         }
     }
 
-    // НЕДОВОЗЫ В ПАНЕЛИ АДМИНА МИНИ-АППА
     async function openMissingAdmin() {
         showReportOverlay("Проверка недовозов...");
         try {

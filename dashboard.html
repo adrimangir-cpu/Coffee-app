@@ -434,7 +434,6 @@
         }
     }
 
-    // НОВОЕ: Функция для кнопки "Собрать Свод" из CRM
     async function buildSvodReport() {
         if(!confirm("Вы уверены, что хотите СОБРАТЬ СВОД?\nЭто переведет все ожидающие заказы в статус Свода, посчитает итоги и отправит оповещение в Телеграм.")) return;
         
@@ -556,9 +555,6 @@
         }
     }
 
-    // ==========================================
-    // АВТОУДАЛЕНИЕ ИЗ СТОП-ЛИСТА
-    // ==========================================
     async function autoRemoveFromStoplist(shop, itemNamesArray) {
         if (!itemNamesArray || itemNamesArray.length === 0) return;
         try {
@@ -602,7 +598,6 @@
             console.error("Auto stoplist update failed:", e);
         }
     }
-
     // ==========================================
     // ГЛАВНЫЙ ЗАГРУЗЧИК
     // ==========================================
@@ -756,6 +751,7 @@
         let totalKuper = 0;
         let shopLentaSums = {};
         
+        // 1. Сначала считаем сумму Ленты для условий переброса на Купер
         document.querySelectorAll('.edit-svod-input').forEach(inp => {
             let shop = inp.getAttribute('data-shop');
             let name = inp.getAttribute('data-item');
@@ -763,22 +759,39 @@
             
             let vendorSelect = document.querySelector(`.edit-svod-vendor-select[data-item="${name.replace(/"/g, '&quot;')}"][data-date="${date}"][data-shop="${shop}"]`);
             let vendor = vendorSelect ? vendorSelect.value.toLowerCase() : (inp.getAttribute('data-vendor') || 'лента').toLowerCase();
-            
             let targetShop = (tempSvodShop[date] && tempSvodShop[date][shop] && tempSvodShop[date][shop][name]) ? tempSvodShop[date][shop][name] : shop;
-            
             let price = parseFloat(inp.getAttribute('data-price')) || 0;
             let inTransit = inp.getAttribute('data-transit') === 'true';
             let isDeleted = inp.getAttribute('data-deleted') === 'true';
             let itemStatus = inp.getAttribute('data-status');
-            
             let qty = parseFloat(inp.value) || 0;
-            if (!shopLentaSums[targetShop]) shopLentaSums[targetShop] = 0;
             
+            if (!shopLentaSums[targetShop]) shopLentaSums[targetShop] = 0;
             if (!isDeleted && !inTransit && itemStatus !== 'error' && (vendor.includes('лента') || vendor.includes('lenta'))) {
                 shopLentaSums[targetShop] += (qty * price);
             }
         });
+
+        // Добавляем расчет по новым добавленным вручную позициям (чтобы они тоже учитывались в фильтрации)
+        document.querySelectorAll('.new-svod-row').forEach(row => {
+            let nameSel = row.querySelector('.new-svod-name');
+            let shop = nameSel.getAttribute('data-shop').replace(/&quot;/g, '"');
+            let name = nameSel.value;
+            let qty = parseFloat(row.querySelector('.new-svod-qty').value) || 0;
+            let vendorSel = row.querySelector('.new-svod-vendor');
+            let vendor = vendorSel ? vendorSel.value.toLowerCase() : 'лента';
+
+            if(name && qty > 0) {
+                let catItem = Object.values(cachedData.catalogOrder).find(c => c && c.name === name) || {};
+                let price = parseFloat(catItem.price) || 0;
+                if (!shopLentaSums[shop]) shopLentaSums[shop] = 0;
+                if (vendor.includes('лента') || vendor.includes('lenta')) {
+                    shopLentaSums[shop] += (qty * price);
+                }
+            }
+        });
         
+        // 2. Считаем итоговые суммы с учетом переброса Лента -> Купер
         document.querySelectorAll('.edit-svod-input').forEach(inp => {
             let shop = inp.getAttribute('data-shop');
             let name = inp.getAttribute('data-item');
@@ -786,9 +799,7 @@
             
             let vendorSelect = document.querySelector(`.edit-svod-vendor-select[data-item="${name.replace(/"/g, '&quot;')}"][data-date="${date}"][data-shop="${shop}"]`);
             let vendor = vendorSelect ? vendorSelect.value.toLowerCase() : (inp.getAttribute('data-vendor') || 'лента').toLowerCase();
-
             let targetShop = (tempSvodShop[date] && tempSvodShop[date][shop] && tempSvodShop[date][shop][name]) ? tempSvodShop[date][shop][name] : shop;
-
             let price = parseFloat(inp.getAttribute('data-price')) || 0;
             let inTransit = inp.getAttribute('data-transit') === 'true';
             let isDeleted = inp.getAttribute('data-deleted') === 'true';
@@ -798,9 +809,7 @@
             let isOzon = vendor.includes('озон') || vendor.includes('ozon');
             
             let cost = price * qty;
-            if (inTransit || itemStatus === 'error' || isDeleted) {
-                cost = 0;
-            }
+            if (inTransit || itemStatus === 'error' || isDeleted) cost = 0;
             
             if (vendor.includes('лента') || vendor.includes('lenta')) {
                 if (shopLentaSums[targetShop] > 0 && shopLentaSums[targetShop] < 2000) totalKuper += cost;
@@ -809,6 +818,31 @@
                 totalOzon += cost;
             } else if (vendor.includes('купер') || vendor.includes('kuper')) {
                 totalKuper += cost;
+            }
+        });
+
+        document.querySelectorAll('.new-svod-row').forEach(row => {
+            let nameSel = row.querySelector('.new-svod-name');
+            let shop = nameSel.getAttribute('data-shop').replace(/&quot;/g, '"');
+            let name = nameSel.value;
+            let qty = parseFloat(row.querySelector('.new-svod-qty').value) || 0;
+            let vendorSel = row.querySelector('.new-svod-vendor');
+            let vendor = vendorSel ? vendorSel.value.toLowerCase() : 'лента';
+
+            if(name && qty > 0) {
+                let catItem = Object.values(cachedData.catalogOrder).find(c => c && c.name === name) || {};
+                let price = parseFloat(catItem.price) || 0;
+                let cost = price * qty;
+                let isOzon = vendor.includes('озон') || vendor.includes('ozon');
+
+                if (vendor.includes('лента') || vendor.includes('lenta')) {
+                    if (shopLentaSums[shop] > 0 && shopLentaSums[shop] < 2000) totalKuper += cost;
+                    else totalLenta += cost;
+                } else if (isOzon) {
+                    totalOzon += cost;
+                } else if (vendor.includes('купер') || vendor.includes('kuper')) {
+                    totalKuper += cost;
+                }
             }
         });
         
@@ -856,13 +890,31 @@
         renderOrdersSvod(); 
     }
 
-    // НОВОЕ: Добавление позиции без автообновления страницы
+    // НОВОЕ: Автообновление Поставщика при ручном добавлении
+    function updateNewRowVendor(sel) {
+        let opt = sel.options[sel.selectedIndex];
+        let vendor = opt.getAttribute('data-vendor');
+        if (!vendor) return;
+        
+        let tr = sel.closest('tr');
+        let vSel = tr.querySelector('.new-svod-vendor');
+        if (vSel) {
+            let vLower = vendor.toLowerCase();
+            let found = Array.from(vSel.options).some(o => o.value.toLowerCase() === vLower);
+            if (!found) {
+                vSel.insertAdjacentHTML('beforeend', `<option value="${vendor}">${vendor}</option>`);
+            }
+            vSel.value = Array.from(vSel.options).find(o => o.value.toLowerCase() === vLower).value;
+        }
+    }
+
     function addSvodRowUI(btn, dateStr, shop, safeShopDate, safeDate) {
-        let itemOptions = `<option value="">-- Выберите товар --</option>`;
+        let itemOptions = `<option value="" data-vendor="">-- Выберите товар --</option>`;
         let sortedCat = Object.values(cachedData.catalogOrder).sort((a,b) => (a.name||'').localeCompare(b.name||''));
         sortedCat.forEach(c => {
             if(c && c.name) {
-                itemOptions += `<option value="${c.name.replace(/"/g, '&quot;')}">${c.name}</option>`;
+                let v = (c.vendor || 'Лента').replace(/"/g, '&quot;');
+                itemOptions += `<option value="${c.name.replace(/"/g, '&quot;')}" data-vendor="${v}">${c.name}</option>`;
             }
         });
 
@@ -874,25 +926,24 @@
         
         tr.innerHTML = `
             <td style="padding-left:45px;">
-                <select class="new-svod-name" data-date="${dateStr}" data-shop="${shop.replace(/"/g, '&quot;')}" style="font-size:14px; padding:4px; width:100%; border:2px solid #4caf50; font-weight:bold; color:#2e7d32;">
+                <select class="new-svod-name" data-date="${dateStr}" data-shop="${shop.replace(/"/g, '&quot;')}" style="font-size:14px; padding:4px; width:100%; border:2px solid #4caf50; font-weight:bold; color:#2e7d32;" onchange="updateNewRowVendor(this); recalcSvodTotals();">
                     ${itemOptions}
                 </select>
             </td>
             <td style="text-align:center;">
-                <input type="number" class="new-svod-qty" value="1" style="width:70px; text-align:center; font-size:16px; font-weight:bold; border:2px solid #4caf50; border-radius:6px; padding:4px;">
+                <input type="number" class="new-svod-qty" value="1" oninput="recalcSvodTotals()" style="width:70px; text-align:center; font-size:16px; font-weight:bold; border:2px solid #4caf50; border-radius:6px; padding:4px;">
             </td>
             <td style="text-align:center;"><span style="color:#2e7d32; font-weight:bold; font-size:13px;">Новый 🆕</span></td>
             <td>
-                <select class="new-svod-vendor" style="font-size: 14px; padding: 4px; border: 1px solid #ccc; border-radius: 4px; width: 100%;">
+                <select class="new-svod-vendor" style="font-size: 14px; padding: 4px; border: 1px solid #ccc; border-radius: 4px; width: 100%;" onchange="recalcSvodTotals()">
                     ${vendorOptions}
                 </select>
             </td>
             <td style="text-align:center;">
-                <button class="btn-del" onclick="this.closest('tr').remove()">🗑</button>
+                <button class="btn-del" onclick="this.closest('tr').remove(); recalcSvodTotals();">🗑</button>
             </td>
         `;
         
-        // Вставляем новую строку перед кнопкой "Добавить товар"
         btn.closest('tr').insertAdjacentElement('beforebegin', tr);
     }
 
@@ -1343,7 +1394,6 @@
                         });
                     }
                     
-                    // Кнопка добавления позиции в режиме редактирования
                     if (isSvodEditMode) {
                         let jsShop = shop.replace(/'/g, "\\'").replace(/"/g, '&quot;');
                         html += `<tr class="svoditem_${safeShopDate} svodlvl3_of_${safeDate}" style="display:${displayShop};">
@@ -1440,8 +1490,13 @@
                 let vendorSel = row.querySelector('.new-svod-vendor');
 
                 let dateStr = nameSel.getAttribute('data-date');
+                // Декодируем shop из атрибута
                 let shop = nameSel.getAttribute('data-shop');
+                if (shop.includes('&quot;')) shop = shop.replace(/&quot;/g, '"');
+                
                 let name = nameSel.value;
+                if (name.includes('&quot;')) name = name.replace(/&quot;/g, '"');
+                
                 let qty = parseFloat(qtyInp.value) || 0;
                 let vendor = vendorSel.value;
 
@@ -1637,7 +1692,6 @@
             alert("Нет активных заказов для оформления."); 
         }
     }
-
     // ==========================================
     // 2. ВКЛАДКА: МАРКЕТПЛЕЙСЫ
     // ==========================================
@@ -1781,7 +1835,6 @@
         let grandTotal = Object.values(currentTotals).reduce((a,b)=>a+b, 0);
         let grandColor = grandTotal < 0 ? "#D32F2F" : "#C2185B";
         
-        // Делаем сводную таблицу сворачиваемой
         html += `
             <div class="cat-group-header" style="margin-top:40px; background:#e1bee7; padding:18px; border-radius:12px; font-weight:900; color:#4A148C; display:flex; justify-content:space-between; font-size:20px; text-transform:uppercase;" onclick="toggleElements('mp_svod_table', 'arrow_mp_svod')">
                 <span>СВОДНАЯ ТАБЛИЦА МАРКЕТПЛЕЙСОВ (${headerLabel})</span><span id="arrow_mp_svod">▼</span>

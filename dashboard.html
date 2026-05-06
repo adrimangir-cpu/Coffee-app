@@ -335,7 +335,7 @@
     // Маркетплейс
     let isMpEditMode = false;
     let mpDeletions = new Set();
-    let mpViewMonth = 'current'; // Переменная для вкладки "Текущий/Прошлый месяц"
+    let mpViewMonth = 'current';
 
     let stateHistoryOrders = false;
     let stateHistoryMp = false;
@@ -431,6 +431,128 @@
             alert(`✅ Команда ${cmd} успешно отправлена боту-снайперу!`);
         } catch (e) {
             alert(`❌ Ошибка: ` + e.message);
+        }
+    }
+
+    // НОВОЕ: Функция для кнопки "Собрать Свод" из CRM
+    async function buildSvodReport() {
+        if(!confirm("Вы уверены, что хотите СОБРАТЬ СВОД?\nЭто переведет все ожидающие заказы в статус Свода, посчитает итоги и отправит оповещение в Телеграм.")) return;
+        
+        showReportOverlay("Сборка закупки (Выполняю команду)...");
+        try {
+            const [resOrders, resCatalog, resMissing] = await Promise.all([
+               fetch(`${FB_URL}/orders.json`), 
+               fetch(`${FB_URL}/catalogs/order.json`), 
+               fetch(`${FB_URL}/missing_items.json`)
+            ]);
+            
+            let ordersSnap = await resOrders.json() || {};
+            let catalog = await resCatalog.json() || {}; 
+            let missingData = await resMissing.json() || {};
+            
+            let updates = {}; 
+            let totalSvod = 0; 
+            let totalLentaAll = 0; 
+            let totalOzonAll = 0; 
+            let totalKuperAll = 0;
+
+            let activeMissing = {};
+            Object.values(missingData).forEach(m => {
+                if (m && m.status !== 'arrived' && m.status !== 'canceled') {
+                    if (!activeMissing[m.shop]) activeMissing[m.shop] = {};
+                    activeMissing[m.shop][m.name] = m.status;
+                }
+            });
+
+            let shopLentaSums = {};
+            let svodByShop = {};
+
+            Object.keys(ordersSnap).forEach(key => {
+                let o = ordersSnap[key];
+                if (o && (o.mode === 'order' || o.mode === 'new_shop') && o.svod === false) {
+                    if(!shopLentaSums[o.shop]) shopLentaSums[o.shop] = 0;
+                    if(!svodByShop[o.shop]) svodByShop[o.shop] = 0;
+                    
+                    let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
+                    itemsArr.forEach(i => {
+                        if(i && i.name && i.name !== "НЕТ ЗАКАЗА") {
+                            let catItem = Object.values(catalog).find(cat => cat && cat.name === i.name) || {};
+                            let vendor = (catItem.vendor || 'Лента').toLowerCase();
+                            let missingStat = activeMissing[o.shop] ? activeMissing[o.shop][i.name] : null;
+                            let inTransit = missingStat === 'transit';
+                            
+                            if (!inTransit && i.status !== 'error' && (vendor.includes('лента') || vendor.includes('lenta'))) {
+                                shopLentaSums[o.shop] += (parseFloat(i.qty) * (parseFloat(catItem.price)||0));
+                            }
+                        }
+                    });
+                }
+            });
+
+            Object.keys(ordersSnap).forEach(key => {
+                let o = ordersSnap[key];
+                if (o && (o.mode === 'order' || o.mode === 'new_shop') && o.svod === false) {
+                    updates[key + "/svod"] = true; 
+                    let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
+                    let changed = false;
+
+                    itemsArr.forEach(i => {
+                        if(i && i.name && i.name !== "НЕТ ЗАКАЗА") {
+                            let catItem = Object.values(catalog).find(cat => cat && cat.name === i.name) || {};
+                            let vendor = (catItem.vendor || 'Лента').toLowerCase();
+                            let price = parseFloat(catItem.price) || 0;
+                            
+                            let missingStat = activeMissing[o.shop] ? activeMissing[o.shop][i.name] : null;
+                            let inTransit = missingStat === 'transit';
+                            
+                            if (inTransit || i.status === 'error') {
+                                i.status = 'error'; 
+                                i.bot_error = true; 
+                                changed = true;
+                            } else {
+                                let cost = price * parseFloat(i.qty);
+                                totalSvod += cost;
+                                svodByShop[o.shop] += cost;
+                                
+                                let isOzon = vendor.includes('озон') || vendor.includes('ozon');
+                                if (vendor.includes('лента') || vendor.includes('lenta')) {
+                                    if (shopLentaSums[o.shop] < 2000) totalKuperAll += cost;
+                                    else totalLentaAll += cost;
+                                } else if (isOzon) {
+                                    totalOzonAll += cost;
+                                } else {
+                                    totalKuperAll += cost;
+                                }
+                            }
+                        }
+                    });
+                    if (changed) updates[key + "/items"] = itemsArr;
+                }
+            });
+
+            if (Object.keys(updates).length > 0) {
+                await fetch(`${FB_URL}/orders.json`, { method: 'PATCH', body: JSON.stringify(updates) });
+                
+                let textToBot = `📊 **СВОД ГОТОВ К СБОРКЕ!**\n\n`;
+                for(let shopName in svodByShop) {
+                    if (svodByShop[shopName] > 0) {
+                        textToBot += `📍 ${shopName}: **${Math.round(svodByShop[shopName])} ₽**\n`;
+                    }
+                }
+                textToBot += `➖➖➖➖➖➖➖➖\n💵 ИТОГО: **${Math.round(totalSvod)} ₽**`;
+                
+                await fetch(`${FB_URL}/bot_control/notifications.json`, { method: 'POST', body: JSON.stringify({ type: "svod_ready_text", text: textToBot, timestamp: Date.now() }) });
+                
+                alert("✅ Свод успешно собран и отправлен в Телеграм!");
+            } else {
+                alert("ℹ️ Нет новых заказов для сборки свода.");
+            }
+            
+            hideReportOverlay();
+            loadTab('orders', document.querySelector('.tab-btn.active'));
+        } catch (e) { 
+            hideReportOverlay();
+            alert("❌ Ошибка формирования свода: " + e.message); 
         }
     }
 
@@ -734,6 +856,46 @@
         renderOrdersSvod(); 
     }
 
+    // НОВОЕ: Добавление позиции без автообновления страницы
+    function addSvodRowUI(btn, dateStr, shop, safeShopDate, safeDate) {
+        let itemOptions = `<option value="">-- Выберите товар --</option>`;
+        let sortedCat = Object.values(cachedData.catalogOrder).sort((a,b) => (a.name||'').localeCompare(b.name||''));
+        sortedCat.forEach(c => {
+            if(c && c.name) {
+                itemOptions += `<option value="${c.name.replace(/"/g, '&quot;')}">${c.name}</option>`;
+            }
+        });
+
+        let vendorOptions = ["Лента", "Озон", "Купер", "Wildberries", "Самокат", "METRO"].map(v => `<option value="${v}">${v}</option>`).join('');
+
+        let tr = document.createElement('tr');
+        tr.className = `svod-row svoditem_${safeShopDate} svodlvl3_of_${safeDate} new-svod-row`;
+        tr.style.backgroundColor = "#e8f5e9";
+        
+        tr.innerHTML = `
+            <td style="padding-left:45px;">
+                <select class="new-svod-name" data-date="${dateStr}" data-shop="${shop.replace(/"/g, '&quot;')}" style="font-size:14px; padding:4px; width:100%; border:2px solid #4caf50; font-weight:bold; color:#2e7d32;">
+                    ${itemOptions}
+                </select>
+            </td>
+            <td style="text-align:center;">
+                <input type="number" class="new-svod-qty" value="1" style="width:70px; text-align:center; font-size:16px; font-weight:bold; border:2px solid #4caf50; border-radius:6px; padding:4px;">
+            </td>
+            <td style="text-align:center;"><span style="color:#2e7d32; font-weight:bold; font-size:13px;">Новый 🆕</span></td>
+            <td>
+                <select class="new-svod-vendor" style="font-size: 14px; padding: 4px; border: 1px solid #ccc; border-radius: 4px; width: 100%;">
+                    ${vendorOptions}
+                </select>
+            </td>
+            <td style="text-align:center;">
+                <button class="btn-del" onclick="this.closest('tr').remove()">🗑</button>
+            </td>
+        `;
+        
+        // Вставляем новую строку перед кнопкой "Добавить товар"
+        btn.closest('tr').insertAdjacentElement('beforebegin', tr);
+    }
+
     async function mergePendingOrders() {
         if(!confirm("Объединить все ожидающие заказы по кофейням?\n\nДополненные в разные дни заказы сольются в один общий заказ для каждого адреса.")) return;
         
@@ -984,6 +1146,7 @@
         if (sortedDates.length > 0 || isSvodEditMode) {
             svodActionBar.style.display = 'flex';
             document.getElementById('svod-action-buttons').innerHTML = `
+                <button onclick="buildSvodReport()" class="btn-add" style="background: linear-gradient(135deg, #FF9800 0%, #F57C00 100%); font-size:14px; padding:10px 18px;">📋 СОБРАТЬ СВОД</button>
                 <button onclick="mergePendingOrders()" class="btn-add" style="background: linear-gradient(135deg, #9C27B0 0%, #4A148C 100%);">🔗 ОБЪЕДИНИТЬ</button>
                 <button onclick="triggerPcBuild('START_OZON')" class="btn-add" style="background: linear-gradient(135deg, #2196F3 0%, #1976D2 100%);">🔵 Авто-Озон</button>
                 <button onclick="triggerPcBuild('START_LENTA')" class="btn-add" style="background: linear-gradient(135deg, #FFC107 0%, #F57C00 100%);">🟡 Авто-Лента</button>
@@ -1000,8 +1163,9 @@
             html += `<div style="margin-bottom:15px; padding:15px; background:#fff3e0; color:#e65100; border-radius:12px; font-size:16px; font-weight:bold; border: 2px dashed #ffb74d;">
                         💡 <b>Режим редактирования активен:</b><br>
                         - Нажмите на статус товара 🔄, чтобы переключить: Ожидает ➡️ Заказано ➡️ Ошибка.<br>
-                        - Вы можете перенести товар на другого поставщика или на другой адрес, выбрав из списка.<br>
-                        <b style="color:#d32f2f;">ВНИМАНИЕ:</b> Если не перевести повтор в статус "Ошибка ❌", бот закажет его!
+                        - Вы можете перенести товар на другого поставщика или на другой адрес.<br>
+                        - Внизу каждого адреса есть кнопка <b>➕ Добавить товар</b>, она позволяет добавлять новые позиции.<br>
+                        <b style="color:#d32f2f;">ВНИМАНИЕ:</b> Нажмите "СОХРАНИТЬ ИЗМЕНЕНИЯ", когда закончите все правки!
                      </div>`;
         }
 
@@ -1178,6 +1342,17 @@
                             }
                         });
                     }
+                    
+                    // Кнопка добавления позиции в режиме редактирования
+                    if (isSvodEditMode) {
+                        let jsShop = shop.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+                        html += `<tr class="svoditem_${safeShopDate} svodlvl3_of_${safeDate}" style="display:${displayShop};">
+                                    <td colspan="5" style="text-align:center; padding:15px; background:#f9fbe7; border-bottom: 2px dashed #c5e1a5;">
+                                        <button class="btn-add" style="background: linear-gradient(135deg, #4caf50 0%, #2e7d32 100%); padding:8px 16px; font-size:14px; border-radius:8px;" onclick="addSvodRowUI(this, '${dateStr}', '${jsShop}', '${safeShopDate}', '${safeDate}')">➕ Добавить товар</button>
+                                    </td>
+                                 </tr>`;
+                    }
+
                     if(shopsObj[shop].comments.length > 0) {
                         html += `<tr class="svoditem_${safeShopDate} svodlvl3_of_${safeDate}" style="display:${displayShop};">
                                     <td colspan="5" style="padding:15px; padding-left:45px; font-style:italic; font-size:17px; color:#ef6c00; background:#fff3e0;">
@@ -1256,6 +1431,45 @@
         try {
             let promises = []; 
             let moves = [];
+            let newItemsByOrder = {};
+            let newOrdersToCreate = {};
+
+            document.querySelectorAll('.new-svod-row').forEach(row => {
+                let nameSel = row.querySelector('.new-svod-name');
+                let qtyInp = row.querySelector('.new-svod-qty');
+                let vendorSel = row.querySelector('.new-svod-vendor');
+
+                let dateStr = nameSel.getAttribute('data-date');
+                let shop = nameSel.getAttribute('data-shop');
+                let name = nameSel.value;
+                let qty = parseFloat(qtyInp.value) || 0;
+                let vendor = vendorSel.value;
+
+                if(!name || qty <= 0) return;
+
+                let catItem = Object.values(cachedData.catalogOrder).find(c => c && c.name === name) || {};
+                let cat = catItem.cat || "Прочее";
+
+                let targetOrderKey = Object.keys(cachedData.orders).find(k => {
+                    let o = cachedData.orders[k];
+                    return o && o.shop === shop && !o.ordered && new Date(o.timestamp).toLocaleDateString('ru-RU') === dateStr;
+                });
+
+                let itemObj = { name: name, qty: qty, vendor: vendor, status: 'pending', bot_error: false, cat: cat };
+
+                if (targetOrderKey) {
+                    if(!newItemsByOrder[targetOrderKey]) newItemsByOrder[targetOrderKey] = [];
+                    newItemsByOrder[targetOrderKey].push(itemObj);
+                } else {
+                    let pseudoKey = "new_" + dateStr + "_" + shop;
+                    if(!newOrdersToCreate[pseudoKey]) {
+                        let [d, m, y] = dateStr.split('.');
+                        let ts = new Date(y, m-1, d).getTime();
+                        newOrdersToCreate[pseudoKey] = { shop: shop, mode: 'order', items: [], timestamp: ts, svod: false, ordered: false, userId: 'admin_dashboard' };
+                    }
+                    newOrdersToCreate[pseudoKey].items.push(itemObj);
+                }
+            });
             
             for (let k in cachedData.orders) {
                 let o = cachedData.orders[k];
@@ -1326,6 +1540,18 @@
                         }
                     }
                     
+                    if (newItemsByOrder[k]) {
+                        needsUpdate = true;
+                        newItemsByOrder[k].forEach(newItem => {
+                            let existing = newItemsArr.find(i => i.name === newItem.name);
+                            if (existing) {
+                                existing.qty = parseFloat(existing.qty) + parseFloat(newItem.qty);
+                            } else {
+                                newItemsArr.push(newItem);
+                            }
+                        });
+                    }
+
                     if (needsUpdate) {
                         if (newItemsArr.length === 0) newItemsArr = [{name: "НЕТ ЗАКАЗА", qty: 0}];
                         promises.push(fetch(`${FB_URL}/orders/${k}/items.json`, {method:'PUT', body: JSON.stringify(newItemsArr)}));
@@ -1333,7 +1559,10 @@
                 }
             }
             
-            // Обработка переносов в другие магазины
+            for (let pseudoKey in newOrdersToCreate) {
+                promises.push(fetch(`${FB_URL}/orders.json`, {method:'POST', body: JSON.stringify(newOrdersToCreate[pseudoKey])}));
+            }
+
             for (let move of moves) {
                 let targetOrderKey = Object.keys(cachedData.orders).find(k => {
                     let to = cachedData.orders[k];
@@ -1351,13 +1580,15 @@
                     }
                     promises.push(fetch(`${FB_URL}/orders/${targetOrderKey}/items.json`, {method:'PUT', body: JSON.stringify(tItems)}));
                 } else {
-                    let newOrder = { shop: move.toShop, mode: 'order', items: [move.item], timestamp: new Date().getTime(), svod: false, ordered: false, userId: 'admin_move' };
+                    let [d, m, y] = move.date.split('.');
+                    let ts = new Date(y, m-1, d).getTime();
+                    let newOrder = { shop: move.toShop, mode: 'order', items: [move.item], timestamp: ts, svod: false, ordered: false, userId: 'admin_move' };
                     promises.push(fetch(`${FB_URL}/orders.json`, {method:'POST', body: JSON.stringify(newOrder)}));
                 }
             }
 
             await Promise.all(promises);
-            alert("✅ Изменения успешно сохранены!");
+            alert("✅ Все изменения и новые позиции успешно сохранены!");
             isSvodEditMode = false; 
             svodDeletions = []; 
             tempSvodQty = {}; 
@@ -1406,7 +1637,8 @@
             alert("Нет активных заказов для оформления."); 
         }
     }
-   // ==========================================
+
+    // ==========================================
     // 2. ВКЛАДКА: МАРКЕТПЛЕЙСЫ
     // ==========================================
     function renderMarketplaceTab() {
@@ -1416,7 +1648,6 @@
         
         let now = new Date(); 
         
-        // Определяем фильтр по месяцам
         let filterMonth, filterYear;
         if (mpViewMonth === 'current') {
             filterMonth = now.getMonth();
@@ -2568,9 +2799,9 @@
         } catch(e) {}
     }
     
-    setInterval(quietRefreshOrders, 10000);
+    setInterval(quietRefreshOrders, 15000); // 15 секунд
 
     window.onload = () => loadTab('orders', document.querySelector('.tab-btn'));
 </script>
 </body>
-</html> 
+</html>

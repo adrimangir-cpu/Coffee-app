@@ -277,7 +277,7 @@
 
 <div class="sticky-top-wrapper">
     <div class="nav">
-        <h1 style="margin:1;">💼 Coffee Teiku CRM</h1>
+        <h1 style="margin:1;">💼 Coffee 22 Teiku CRM</h1>
         <div id="db-status">☁️ База активна</div>
     </div>
 
@@ -325,6 +325,7 @@
     let tempSvodStatus = {}; 
     let tempSvodVendor = {}; 
     let tempSvodShop = {};
+    let tempSvodNewRows = []; // Память для новых добавленных позиций
     let openSvodDates = new Set();
     let openSvodShops = new Set();
     
@@ -598,6 +599,7 @@
             console.error("Auto stoplist update failed:", e);
         }
     }
+
     // ==========================================
     // ГЛАВНЫЙ ЗАГРУЗЧИК
     // ==========================================
@@ -628,6 +630,7 @@
                 tempSvodStatus = {};
                 tempSvodVendor = {};
                 tempSvodShop = {};
+                tempSvodNewRows = [];
                 
                 let resOrders = await fetch(`${FB_URL}/orders.json`);
                 let ordersObj = await resOrders.json() || {};
@@ -711,6 +714,7 @@
         tempSvodStatus = {}; 
         tempSvodVendor = {};
         tempSvodShop = {};
+        tempSvodNewRows = []; 
         renderOrdersSvod(); 
     }
 
@@ -742,6 +746,25 @@
             if (!tempSvodShop[d][s]) tempSvodShop[d][s] = {};
             tempSvodShop[d][s][n] = sel.value;
         });
+
+        tempSvodNewRows = [];
+        document.querySelectorAll('.new-svod-row').forEach(row => {
+            let nameSel = row.querySelector('.new-svod-name');
+            let qtyInp = row.querySelector('.new-svod-qty');
+            let vendorSel = row.querySelector('.new-svod-vendor');
+
+            let dateStr = nameSel.getAttribute('data-date');
+            let shop = nameSel.getAttribute('data-shop');
+            if (shop.includes('&quot;')) shop = shop.replace(/&quot;/g, '"');
+
+            tempSvodNewRows.push({
+                date: dateStr,
+                shop: shop,
+                name: nameSel.value,
+                qty: qtyInp.value, 
+                vendor: vendorSel ? vendorSel.value : 'Лента'
+            });
+        });
     }
 
     function recalcSvodTotals() {
@@ -751,7 +774,6 @@
         let totalKuper = 0;
         let shopLentaSums = {};
         
-        // 1. Сначала считаем сумму Ленты для условий переброса на Купер
         document.querySelectorAll('.edit-svod-input').forEach(inp => {
             let shop = inp.getAttribute('data-shop');
             let name = inp.getAttribute('data-item');
@@ -772,7 +794,6 @@
             }
         });
 
-        // Добавляем расчет по новым добавленным вручную позициям (чтобы они тоже учитывались в фильтрации)
         document.querySelectorAll('.new-svod-row').forEach(row => {
             let nameSel = row.querySelector('.new-svod-name');
             let shop = nameSel.getAttribute('data-shop').replace(/&quot;/g, '"');
@@ -791,7 +812,6 @@
             }
         });
         
-        // 2. Считаем итоговые суммы с учетом переброса Лента -> Купер
         document.querySelectorAll('.edit-svod-input').forEach(inp => {
             let shop = inp.getAttribute('data-shop');
             let name = inp.getAttribute('data-item');
@@ -890,7 +910,6 @@
         renderOrdersSvod(); 
     }
 
-    // НОВОЕ: Автообновление Поставщика при ручном добавлении
     function updateNewRowVendor(sel) {
         let opt = sel.options[sel.selectedIndex];
         let vendor = opt.getAttribute('data-vendor');
@@ -1394,7 +1413,50 @@
                         });
                     }
                     
+                    // Восстанавливаем ранее добавленные вручную строки, чтобы они не пропадали
                     if (isSvodEditMode) {
+                        let preservedNew = tempSvodNewRows.filter(r => r.date === dateStr && r.shop === shop);
+                        preservedNew.forEach(r => {
+                            let itemOptions = `<option value="" data-vendor="">-- Выберите товар --</option>`;
+                            let sortedCat = Object.values(cachedData.catalogOrder).sort((a,b) => (a.name||'').localeCompare(b.name||''));
+                            sortedCat.forEach(c => {
+                                if(c && c.name) {
+                                    let v = (c.vendor || 'Лента').replace(/"/g, '&quot;');
+                                    let sel = (c.name === r.name) ? 'selected' : '';
+                                    itemOptions += `<option value="${c.name.replace(/"/g, '&quot;')}" data-vendor="${v}" ${sel}>${c.name}</option>`;
+                                }
+                            });
+
+                            let vendorOptions = ["Лента", "Озон", "Купер", "Wildberries", "Самокат", "METRO"].map(v => {
+                                let sel = (v.toLowerCase() === r.vendor.toLowerCase()) ? 'selected' : '';
+                                return `<option value="${v}" ${sel}>${v}</option>`;
+                            }).join('');
+
+                            let htmlShop = shop.replace(/"/g, '&quot;');
+                            
+                            html += `
+                            <tr class="svod-row svoditem_${safeShopDate} svodlvl3_of_${safeDate} new-svod-row" style="background-color: #e8f5e9; display:${displayShop};">
+                                <td style="padding-left:45px;">
+                                    <select class="new-svod-name" data-date="${dateStr}" data-shop="${htmlShop}" style="font-size:14px; padding:4px; width:100%; border:2px solid #4caf50; font-weight:bold; color:#2e7d32;" onchange="updateNewRowVendor(this); recalcSvodTotals();">
+                                        ${itemOptions}
+                                    </select>
+                                </td>
+                                <td style="text-align:center;">
+                                    <input type="number" class="new-svod-qty" value="${r.qty}" oninput="recalcSvodTotals()" style="width:70px; text-align:center; font-size:16px; font-weight:bold; border:2px solid #4caf50; border-radius:6px; padding:4px;">
+                                </td>
+                                <td style="text-align:center;"><span style="color:#2e7d32; font-weight:bold; font-size:13px;">Новый 🆕</span></td>
+                                <td>
+                                    <select class="new-svod-vendor" style="font-size: 14px; padding: 4px; border: 1px solid #ccc; border-radius: 4px; width: 100%;" onchange="recalcSvodTotals()">
+                                        ${vendorOptions}
+                                    </select>
+                                </td>
+                                <td style="text-align:center;">
+                                    <button class="btn-del" onclick="this.closest('tr').remove(); recalcSvodTotals();">🗑</button>
+                                </td>
+                            </tr>`;
+                        });
+
+                        // Кнопка добавления позиции в режиме редактирования
                         let jsShop = shop.replace(/'/g, "\\'").replace(/"/g, '&quot;');
                         html += `<tr class="svoditem_${safeShopDate} svodlvl3_of_${safeDate}" style="display:${displayShop};">
                                     <td colspan="5" style="text-align:center; padding:15px; background:#f9fbe7; border-bottom: 2px dashed #c5e1a5;">
@@ -1490,7 +1552,6 @@
                 let vendorSel = row.querySelector('.new-svod-vendor');
 
                 let dateStr = nameSel.getAttribute('data-date');
-                // Декодируем shop из атрибута
                 let shop = nameSel.getAttribute('data-shop');
                 if (shop.includes('&quot;')) shop = shop.replace(/&quot;/g, '"');
                 
@@ -1597,6 +1658,7 @@
                     
                     if (newItemsByOrder[k]) {
                         needsUpdate = true;
+                        newItemsArr = newItemsArr.filter(i => i.name !== "НЕТ ЗАКАЗА");
                         newItemsByOrder[k].forEach(newItem => {
                             let existing = newItemsArr.find(i => i.name === newItem.name);
                             if (existing) {
@@ -1650,6 +1712,7 @@
             tempSvodStatus = {};
             tempSvodVendor = {};
             tempSvodShop = {};
+            tempSvodNewRows = [];
             
             setTimeout(() => {
                 loadTab('orders', document.querySelector('.tab-btn.active'));
@@ -1692,6 +1755,7 @@
             alert("Нет активных заказов для оформления."); 
         }
     }
+
     // ==========================================
     // 2. ВКЛАДКА: МАРКЕТПЛЕЙСЫ
     // ==========================================

@@ -4,7 +4,7 @@
   <base target="_top">
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>Coffee Management App v8.7</title>
+  <title>Coffee Management App v8.8</title>
   
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-app-compat.js"></script>
@@ -391,7 +391,7 @@
       appSettings: { hidden_categories: {}, new_shop_order_active: false },
       tempMissingItems: {},
       receivingChoices: {}, 
-      missingChoices: {}, // НОВОЕ: Для пачки недовозов
+      missingChoices: {}, 
       screenHistory: [],
       currentReceivingTab: 'active',
       
@@ -586,7 +586,7 @@
                 updateBadgeUI();
                 showScreen('step-mp-address', false); 
             } else {
-                alert("Введите сумму больше 0");
+                showPopupError("Ошибка", "Введите сумму больше 0");
             }
         } else {
             if (state.keypadValue === "0") state.keypadValue = key;
@@ -774,7 +774,7 @@
                   }
               });
 
-              if (hasCanceledMissings) alert("⚠️ Отмененные администратором недовозы возвращены в вашу корзину.");
+              if (hasCanceledMissings) showPopupError("Внимание", "⚠️ Отмененные администратором недовозы возвращены в вашу корзину.");
           }
           
           restoreFromDraft();
@@ -833,23 +833,26 @@
           let repeatClass = isRepeat ? "repeat-item" : "";
           let repeatLabel = isRepeat ? `<span class="repeat-item-text">Ожидает оформления</span>` : "";
 
+          // Экранирование для HTML-атрибутов
+          let escName = String(itemName).replace(/'/g, "\\'").replace(/"/g, '&quot;');
+
           html += `<div class="item ${repeatClass}">
                     <div style="flex:1; padding-right:15px;">${repeatLabel}<span style="font-weight: 700; font-size: 15px; line-height: 1.3;">${itemName}</span></div>
                     <div class="controls" id="controls-${safeId}">`;
           
           if (state.currentMode === 'stoplist_fill') {
               let isStopped = state.userBasket[itemName] === 'Закончилось';
-              html += `<button style="border:none; padding:10px; border-radius:12px; font-weight:bold; background:${isStopped?'#FF5252':'#E8F5E9'}; color:${isStopped?'#fff':'#4CAF50'};" onclick="toggleStopItem('${itemName.replace(/'/g, "\\'")}', '${cat}', this)">${isStopped?'ЗАКОНЧИЛОСЬ':'В НАЛИЧИИ'}</button>`;
+              html += `<button style="border:none; padding:10px; border-radius:12px; font-weight:bold; background:${isStopped?'#FF5252':'#E8F5E9'}; color:${isStopped?'#fff':'#4CAF50'};" onclick="toggleStopItem('${escName}', '${cat}', this)">${isStopped?'ЗАКОНЧИЛОСЬ':'В НАЛИЧИИ'}</button>`;
           } 
           else if (state.currentMode === 'checklist' && (item.unit && String(item.unit).toLowerCase().includes("объем"))) {
               let sVal = state.userBasket[itemName];
               if (sVal === undefined || sVal === null) sVal = "-";
 
               if(sVal !== "-" && sVal !== "Полная" && sVal !== "Половина" && sVal !== "Меньше половины" && String(sVal) !== "0" && sVal !== "CUSTOM") {
-                  html += `<input type="text" class="qty-input" style="width:80px; border-bottom:2px solid #7E57C2;" value="${sVal}" onchange="registerInputChange('${itemName.replace(/'/g, "\\'")}', this.value, '${cat}')" onfocus="handleInputFocus(this)">
-                           <button class="reset-btn" onclick="registerInputChange('${itemName.replace(/'/g, "\\'")}', '-', '${cat}'); renderProductList();">✕</button>`;
+                  html += `<input type="text" class="qty-input" style="width:80px; border-bottom:2px solid #7E57C2;" value="${sVal}" onchange="registerInputChange('${escName}', this.value, '${cat}')" onfocus="handleInputFocus(this)">
+                           <button class="reset-btn" onclick="registerInputChange('${escName}', '-', '${cat}'); renderProductList();">✕</button>`;
               } else {
-                  html += `<select class="vol-select" onchange="handleVolumeSelection(this, '${itemName.replace(/'/g, "\\'")}', '${cat}', '${safeId}')">
+                  html += `<select class="vol-select" onchange="handleVolumeSelection(this, '${escName}', '${cat}', '${safeId}')">
                               <option value="-" ${sVal==='-'?'selected':''}>--</option>
                               <option value="Полная" ${sVal==='Полная'?'selected':''}>Полная</option>
                               <option value="Половина" ${sVal==='Половина'?'selected':''}>Половина</option>
@@ -863,9 +866,9 @@
               let val = state.userBasket[itemName];
               if (val === undefined || val === null || val === "-") val = (state.currentMode === 'checklist' ? "-" : "0");
 
-              html += `<button class="qty-btn" onclick="adjustQuantity('${itemName.replace(/'/g, "\\'")}', -1, '${cat}', '${safeId}')">−</button>
-                       <input type="text" class="qty-input" id="input-${safeId}" value="${val}" onchange="registerInputChange('${itemName.replace(/'/g, "\\'")}', this.value, '${cat}')" onfocus="handleInputFocus(this)">
-                       <button class="qty-btn" onclick="adjustQuantity('${itemName.replace(/'/g, "\\'")}', 1, '${cat}', '${safeId}')">+</button>`;
+              html += `<button class="qty-btn" onclick="adjustQuantity('${escName}', -1, '${cat}', '${safeId}')">−</button>
+                       <input type="text" class="qty-input" id="input-${safeId}" value="${val}" onchange="registerInputChange('${escName}', this.value, '${cat}')" onfocus="handleInputFocus(this)">
+                       <button class="qty-btn" onclick="adjustQuantity('${escName}', 1, '${cat}', '${safeId}')">+</button>`;
           }
           html += `</div></div>`;
         }
@@ -888,8 +891,9 @@
     function handleVolumeSelection(select, name, cat, safeId) {
         if (select.value === 'CUSTOM') {
             let container = document.getElementById('controls-' + safeId);
-            container.innerHTML = `<input type="text" class="qty-input" style="width:80px; border-bottom:2px solid #7E57C2;" value="" onchange="registerInputChange('${name}', this.value, '${cat}')" onfocus="handleInputFocus(this)">
-                                   <button class="reset-btn" onclick="registerInputChange('${name}', '-', '${cat}'); renderProductList();">✕</button>`;
+            let escName = String(name).replace(/'/g, "\\'").replace(/"/g, '&quot;');
+            container.innerHTML = `<input type="text" class="qty-input" style="width:80px; border-bottom:2px solid #7E57C2;" value="" onchange="registerInputChange('${escName}', this.value, '${cat}')" onfocus="handleInputFocus(this)">
+                                   <button class="reset-btn" onclick="registerInputChange('${escName}', '-', '${cat}'); renderProductList();">✕</button>`;
             setTimeout(() => { container.querySelector('input').focus(); }, 100);
         } else {
             registerInputChange(name, select.value, cat);
@@ -1054,11 +1058,12 @@
                 let cat = state.userBasket["_catinfo"] ? state.userBasket["_catinfo"][name] : "";
                 
                 if(String(v) !== "0" && v !== 0 && String(v) !== "-") {
+                    let escName = String(name).replace(/'/g, "\\'").replace(/"/g, '&quot;');
                     html += `<div class="item">
                                 <span>${name}</span>
                                 <div style="display:flex; align-items:center;">
                                     <b style="color:var(--deep-purple); font-size:18px; margin-right:15px;">${v}</b>
-                                    <button class="btn-remove-item" onclick="removeFromCart('${name.replace(/'/g, "\\'")}', '${cat}')">✕</button>
+                                    <button class="btn-remove-item" onclick="removeFromCart('${escName}', '${cat}')">✕</button>
                                 </div>
                              </div>`;
                 }
@@ -1091,8 +1096,8 @@
       if (state.isProcessing) return;
 
       if (state.currentMode === 'marketplace') {
-          if (state.mpBasket.length === 0) return alert("Корзина пуста!");
-          if (state.isMpEditMode) return alert("Сначала сохраните изменения (кнопка 'Сохранить изменения')");
+          if (state.mpBasket.length === 0) return showPopupError("Внимание", "Корзина пуста!");
+          if (state.isMpEditMode) return showPopupError("Внимание", "Сначала сохраните изменения (кнопка 'Сохранить изменения')");
           
           state.isProcessing = true;
           let btn = document.getElementById('modal-submit-button'); btn.innerText = "ОТПРАВЛЯЮ...";
@@ -1121,7 +1126,7 @@
               state.mpBasket = [];
               localStorage.removeItem("draft_marketplace");
           } catch(e) {
-              alert("Ошибка: " + e.message);
+              showPopupError("Ошибка", e.message);
               state.isProcessing = false; btn.innerText = "ПОДТВЕРДИТЬ И ОТПРАВИТЬ";
               return;
           }
@@ -1164,13 +1169,12 @@
                 return {name: n, qty: q, cat: catName};
           });
 
-          if (flatData.length === 0 && state.currentMode !== 'checklist') return alert("Заполните данные перед отправкой!");
+          if (flatData.length === 0 && state.currentMode !== 'checklist') return showPopupError("Внимание", "Заполните данные перед отправкой!");
 
           state.isProcessing = true;
           let btn = document.getElementById('modal-submit-button'); if(btn) btn.innerText = "ОТПРАВЛЯЮ...";
           let mainBtn = document.getElementById('main-action-button'); if(mainBtn) mainBtn.innerText = "ОТПРАВЛЯЮ...";
 
-          // --- ЛОГИКА ОБЪЕДИНЕНИЯ ЗАКАЗОВ ВНУТРИ MIN APP ---
           if (state.currentMode === 'order' || state.currentMode === 'new_shop') {
               try {
                   const existingSnap = await database.ref("orders").orderByChild("shop").equalTo(state.currentShop).once("value");
@@ -1234,14 +1238,13 @@
                   }
                   
               } catch(e) {
-                  alert("Произошла ошибка при отправке.");
+                  showPopupError("Ошибка", "Произошла ошибка при отправке.");
                   state.isProcessing = false;
                   if(btn) btn.innerText = "ПОДТВЕРДИТЬ И ОТПРАВИТЬ";
                   if(mainBtn) mainBtn.innerText = "ОТПРАВИТЬ";
                   return;
               }
           } else {
-              // Для чек-листа и стоп-листа оставляем стандартную отправку
               await database.ref("orders").push({
                   shop: state.currentShop,
                   mode: state.currentMode,
@@ -1256,12 +1259,11 @@
               });
           }
 
-          // Удаление из стоп-листа при заполнении
           if (state.currentMode === 'stoplist_fill') {
               let [orderCatSnap, newCatSnap, ordersSnap, missSnap] = await Promise.all([
                   database.ref("catalogs/order").once("value"),
                   database.ref("catalogs/newshop").once("value"),
-                  database.ref("orders").orderByChild("shop").equalTo(state.currentShop).once("value"),
+                  database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(300).once("value"),
                   database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value")
               ]);
               
@@ -1341,17 +1343,18 @@
     }
 
     function processNoOrder() {
-        if(confirm("Вы уверены, что заказ не нужен?")) {
-            database.ref("orders").push({ 
-                shop: state.currentShop, 
-                mode: "order", 
-                items: [{name: "НЕТ ЗАКАЗА", qty:0}], 
-                timestamp: firebase.database.ServerValue.TIMESTAMP, 
-                userId: globalTgUserId,
-                svod: false,
-                ordered: false
+        if (window.Telegram && Telegram.WebApp && Telegram.WebApp.showConfirm) {
+            Telegram.WebApp.showConfirm("Вы уверены, что заказ не нужен?", function(confirmed) {
+                if (confirmed) {
+                    database.ref("orders").push({ shop: state.currentShop, mode: "order", items: [{name: "НЕТ ЗАКАЗА", qty:0}], timestamp: firebase.database.ServerValue.TIMESTAMP, userId: globalTgUserId, svod: false, ordered: false });
+                    showScreen('step-2');
+                }
             });
-            showScreen('step-2');
+        } else {
+            if(confirm("Вы уверены, что заказ не нужен?")) {
+                database.ref("orders").push({ shop: state.currentShop, mode: "order", items: [{name: "НЕТ ЗАКАЗА", qty:0}], timestamp: firebase.database.ServerValue.TIMESTAMP, userId: globalTgUserId, svod: false, ordered: false });
+                showScreen('step-2');
+            }
         }
     }
 
@@ -1363,8 +1366,8 @@
       let isBoss = TG_BOSS_IDS.includes(String(globalTgUserId));
       let isAdmin = TG_ADMIN_IDS.includes(String(globalTgUserId));
 
-      if (role === 'admin' && !isAdmin) return alert("Доступ запрещен. Только для администратора.");
-      if (role === 'boss' && !isBoss && !isAdmin) return alert("Доступ запрещен. Только для руководства.");
+      if (role === 'admin' && !isAdmin) return showPopupError("Доступ запрещен", "Только для администратора.");
+      if (role === 'boss' && !isBoss && !isAdmin) return showPopupError("Доступ запрещен", "Только для руководства.");
       
       showScreen('step-panel');
       let grid = document.getElementById('panel-controls-grid');
@@ -1641,7 +1644,7 @@
       showReportOverlay("Формирование отчета: " + category + "...");
       
       try {
-          const ordersSnap = await database.ref("orders").limitToLast(1000).once("value");
+          const ordersSnap = await database.ref("orders").limitToLast(300).once("value");
           
           let latestChecklists = {}; 
           ordersSnap.forEach(child => {
@@ -1740,7 +1743,7 @@
             let isBossView = (cmd === 'status_checklist_boss');
             
             try {
-                let snap = await database.ref("orders").limitToLast(1000).once("value");
+                let snap = await database.ref("orders").limitToLast(300).once("value");
                 let filledChecklist = new Set();
                 let filledOrder = {}; 
                 
@@ -1924,11 +1927,12 @@
     }
 
     // ==========================================
-    // 8. ПРИЕМКА ТОВАРА И НЕДОВОЗЫ
+    // 8. ПРИЕМКА ТОВАРА И НЕДОВОЗЫ (БЕЗ ПЕРЕЗАГРУЗОК)
     // ==========================================
     
-    function setReceiveChoice(name, qty, vendor, status, btnArrId, btnMissId) {
+    function setReceiveChoice(encodedName, qty, vendor, status, btnArrId, btnMissId) {
         triggerHaptic();
+        let name = decodeURIComponent(encodedName);
         if (!state.receivingChoices) state.receivingChoices = {};
         state.receivingChoices[name] = { qty: qty, vendor: vendor, status: status };
         
@@ -1944,9 +1948,10 @@
         }
     }
 
-    // НОВОЕ: Групповое выделение недовозов для бариста
-    function toggleMissingArrived(key, name, btnId) {
+    // Групповое выделение недовозов для бариста
+    function toggleMissingArrived(key, encodedName, btnId) {
         triggerHaptic();
+        let name = decodeURIComponent(encodedName);
         if (!state.missingChoices) state.missingChoices = {};
         
         if (state.missingChoices[key]) {
@@ -1964,11 +1969,9 @@
 
     async function finishMissingReceiving() {
         if (!state.missingChoices || Object.keys(state.missingChoices).length === 0) {
-            alert("Вы не отметили ни одного недовоза как 'Доехал'.");
+            showPopupError("Внимание", "Вы не отметили ни одного недовоза как 'Доехал'.");
             return;
         }
-        
-        if(!confirm(`Точно отправить данные о прибытии ${Object.keys(state.missingChoices).length} позиций?`)) return;
 
         triggerHaptic();
         showReportOverlay("Сохранение данных...");
@@ -1988,7 +1991,7 @@
             state.missingChoices = {};
             showLastOrder(); 
         } catch(e) {
-            alert("❌ Ошибка: " + e.message);
+            showPopupError("Ошибка", e.message);
             showLastOrder();
         }
     }
@@ -2049,7 +2052,7 @@
                             statText = "Ожидает закупки"; statColor = "#e65100"; bg = "#fff8e1";
                         }
 
-                        let safeNameAttr = String(m.name).replace(/'/g, "\\'").replace(/"/g, '&quot;');
+                        let safeNameEnc = encodeURIComponent(String(m.name));
                         let btnMissArrId = `btn_miss_arr_${m.key}`;
                         let isMarked = state.missingChoices && state.missingChoices[m.key] !== undefined;
 
@@ -2057,7 +2060,7 @@
                                     <span style="margin-bottom:8px; font-size:16px;"><b>${m.name}</b> (x${m.qty})</span> 
                                     <div style="display:flex; justify-content:space-between; width:100%; align-items:center;">
                                         <span style="background:${bg}; color:${statColor}; padding:6px 10px; border-radius:8px; font-size:13px; font-weight:900;">${statText}</span>
-                                        <button id="${btnMissArrId}" onclick="toggleMissingArrived('${m.key}', '${safeNameAttr}', '${btnMissArrId}')" style="border:${isMarked ? '2px solid #2e7d32' : '1px solid #ccc'}; background:${isMarked ? '#e8f5e9' : '#fafafa'}; color:${isMarked ? '#2e7d32' : '#888'}; padding:8px 15px; border-radius:10px; font-weight:900; font-size:14px; cursor:pointer;">Доехал ✅</button>
+                                        <button id="${btnMissArrId}" onclick="toggleMissingArrived('${m.key}', '${safeNameEnc}', '${btnMissArrId}')" style="border:${isMarked ? '2px solid #2e7d32' : '1px solid #ccc'}; background:${isMarked ? '#e8f5e9' : '#fafafa'}; color:${isMarked ? '#2e7d32' : '#888'}; padding:8px 15px; border-radius:10px; font-weight:900; font-size:14px; cursor:pointer;">Доехал ✅</button>
                                     </div>
                                  </div>`;
                     });
@@ -2079,7 +2082,6 @@
                         itemsArr.forEach(i => {
                             if (!i || !i.name || i.name === "НЕТ ЗАКАЗА") return;
                             
-                            // Изменение: берем в приемку все товары со статусом ordered
                             if (i.status === 'ordered' && i.bot_error !== true) {
                                 let catItem = Object.values(orderCatalog).find(c => c && c.name === i.name) || {};
                                 let vendor = (catItem.vendor || 'Лента').toLowerCase() === 'озон' ? 'ozon' : 'lenta';
@@ -2124,7 +2126,7 @@
                             names.forEach(name => {
                                 let item = aggregatedObj[name];
                                 let isMissingAlready = activeMissing.some(am => am.name === name);
-                                let safeNameAttr = String(name).replace(/'/g, "\\'").replace(/"/g, '&quot;');
+                                let safeNameEnc = encodeURIComponent(String(name));
                                 
                                 if (isMissingAlready) {
                                     res += `<div class="report-card-item" style="flex-direction:column; align-items:flex-start; opacity:0.6;">
@@ -2146,8 +2148,8 @@
                                                     <span style="color:#2e7d32; background:#e8f5e9; padding:4px 8px; border-radius:6px; font-size:12px; font-weight:900;">Едет к вам 🚚</span>
                                                 </div>
                                                 <div style="display:flex; gap:10px; width:100%;">
-                                                    <button id="${btnArrId}" onclick="setReceiveChoice('${safeNameAttr}', ${item.qty}, '${vendorKey}', 'arrived', '${btnArrId}', '${btnMissId}')" style="flex:1; padding:8px; border-radius:8px; border:${isArr ? '2px solid #2e7d32' : '1px solid #ccc'}; background:${isArr ? '#e8f5e9' : '#fafafa'}; color:${isArr ? '#2e7d32' : '#888'}; font-weight:bold; transition:0.2s;">✅ Принято</button>
-                                                    <button id="${btnMissId}" onclick="setReceiveChoice('${safeNameAttr}', ${item.qty}, '${vendorKey}', 'missing', '${btnArrId}', '${btnMissId}')" style="flex:1; padding:8px; border-radius:8px; border:${isMiss ? '2px solid #c62828' : '1px solid #ccc'}; background:${isMiss ? '#ffebee' : '#fafafa'}; color:${isMiss ? '#c62828' : '#888'}; font-weight:bold; transition:0.2s;">❌ Недовоз</button>
+                                                    <button id="${btnArrId}" onclick="setReceiveChoice('${safeNameEnc}', ${item.qty}, '${vendorKey}', 'arrived', '${btnArrId}', '${btnMissId}')" style="flex:1; padding:8px; border-radius:8px; border:${isArr ? '2px solid #2e7d32' : '1px solid #ccc'}; background:${isArr ? '#e8f5e9' : '#fafafa'}; color:${isArr ? '#2e7d32' : '#888'}; font-weight:bold; transition:0.2s;">✅ Принято</button>
+                                                    <button id="${btnMissId}" onclick="setReceiveChoice('${safeNameEnc}', ${item.qty}, '${vendorKey}', 'missing', '${btnArrId}', '${btnMissId}')" style="flex:1; padding:8px; border-radius:8px; border:${isMiss ? '2px solid #c62828' : '1px solid #ccc'}; background:${isMiss ? '#ffebee' : '#fafafa'}; color:${isMiss ? '#c62828' : '#888'}; font-weight:bold; transition:0.2s;">❌ Недовоз</button>
                                                 </div>
                                             </div>`;
                                 }
@@ -2289,17 +2291,13 @@
             }
             
             document.getElementById('report-content-area').innerHTML = html || "<div class='report-card'>Пусто</div>";
-            hideReportOverlay();
         } catch (err) {
             console.error(err);
             document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; color:red; font-weight:900;">Ошибка загрузки приемки.</div></div>`; 
-            hideReportOverlay();
         }
     }
 
     async function finishReceiving(vendorKey, keysStr, expectedCount) {
-        let vendorName = vendorKey === 'ozon' ? 'ОЗОН' : 'ЛЕНТА';
-
         let checkedCount = 0;
         let missingMap = {};
         let arrivedItemsToClear = [];
@@ -2319,11 +2317,9 @@
         }
 
         if (checkedCount < expectedCount) {
-            alert("❌ Пожалуйста, отметьте все позиции (✅ Принято или ❌ Недовоз) перед нажатием ГОТОВО!");
+            showPopupError("Внимание", "Пожалуйста, отметьте все позиции (✅ Принято или ❌ Недовоз) перед нажатием ГОТОВО!");
             return;
         }
-
-        if(!confirm(`Точно отправляю администратору? Данные по поставщику ${vendorName} будут сохранены.`)) return;
 
         triggerHaptic();
         showReportOverlay("Сохранение приемки...");
@@ -2337,8 +2333,7 @@
             }
 
             if (isAlreadyProcessed) {
-                hideReportOverlay();
-                alert("⚠️ Внимание! Эта приемка уже была только что обработана с другого устройства. Данные обновлены.");
+                showPopupError("Внимание", "Эта приемка уже была только что обработана с другого устройства. Данные обновлены.");
                 state.receivingChoices = {}; 
                 showLastOrder();
                 return;
@@ -2369,36 +2364,34 @@
 
             showLastOrder(); 
         } catch(e) {
-            hideReportOverlay();
-            alert("❌ Ошибка: " + e.message);
+            showPopupError("Ошибка", e.message);
             showLastOrder();
         }
     }
 
-    // НОВОЕ: Групповое сохранение недовозов для Админа
+    // Групповое сохранение недовозов для Админа
     async function saveAllMissingChanges() {
         triggerHaptic();
         let selects = document.querySelectorAll('.missing-status-select');
         let updates = [];
+        
         selects.forEach(sel => {
             if (sel.value !== sel.getAttribute('data-old')) {
                 updates.push({
                     key: sel.getAttribute('data-key'),
                     val: sel.value,
                     shop: sel.getAttribute('data-shop'),
-                    name: sel.getAttribute('data-name')
+                    name: decodeURIComponent(sel.getAttribute('data-name'))
                 });
             }
         });
 
         if (updates.length === 0) {
-            alert("Вы не изменили ни одного статуса.");
+            showPopupError("Внимание", "Вы не изменили ни одного статуса.");
             return;
         }
 
-        if(!confirm(`Сохранить изменения для ${updates.length} позиций?`)) return;
-
-        showReportOverlay("Сохранение...");
+        showReportOverlay("Сохранение изменений...");
         try {
             let arrivedByShop = {};
             for (let u of updates) {
@@ -2418,7 +2411,7 @@
 
             openMissingAdmin();
         } catch(e) {
-            alert("Ошибка: " + e.message);
+            showPopupError("Ошибка", e.message);
             openMissingAdmin();
         }
     }
@@ -2468,7 +2461,7 @@
                     </div>`;
                 } else {
                     hasActive = true;
-                    let safeNameAttr = String(m.name).replace(/'/g, "\\'").replace(/"/g, '&quot;');
+                    let safeNameEnc = encodeURIComponent(String(m.name));
                     activeHtml += `<div style="padding:15px 0; border-bottom:1px solid #eee;">
                         <div style="display:flex; justify-content:space-between; align-items:flex-start;">
                             <div style="flex:1;">
@@ -2476,9 +2469,9 @@
                                 <span style="font-size:16px; font-weight:700;">${m.name} (${m.qty} шт)</span>
                                 ${linksHtml}
                             </div>
-                            <button class="btn-del" onclick="deleteMissingItem('${m.key}')" style="padding:6px 10px; font-size:14px; margin-left:10px;">🗑</button>
+                            <button class="btn-del" onclick="deleteMissingItem('${m.key}')" style="padding:6px 10px; font-size:14px; margin-left:10px; background:#ffebee; color:#c62828; border:none; border-radius:8px; font-weight:bold; cursor:pointer;">🗑</button>
                         </div>
-                        <select class="missing-status-select" data-key="${m.key}" data-shop="${m.shop}" data-name="${safeNameAttr}" data-old="${m.status}" style="margin-top:10px; padding:10px; border-radius:8px; width:100%; border:2px solid #ddd; background:#fafafa; font-weight:900; font-size:15px; color:#4A148C;">
+                        <select class="missing-status-select" data-key="${m.key}" data-shop="${m.shop}" data-name="${safeNameEnc}" data-old="${m.status}" style="margin-top:10px; padding:10px; border-radius:8px; width:100%; border:2px solid #ddd; background:#fafafa; font-weight:900; font-size:15px; color:#4A148C;">
                             <option value="pending" ${m.status==='pending'?'selected':''}>Ожидает проверки</option>
                             <option value="transit" ${m.status==='transit'?'selected':''}>В пути (от поставщика)</option>
                             <option value="reorder" ${m.status==='reorder'?'selected':''}>Отменен (Админ закажет сам)</option>
@@ -2491,7 +2484,7 @@
             
             let html = `<div class="report-card">
                             <div class="report-card-title" style="color:#EC407A;">‼️ Актуальные Недовозы</div>
-                            ${hasActive ? activeHtml + `<button onclick="saveAllMissingChanges()" class="btn-mode" style="background: var(--btn-stop-grad) !important; margin-top:20px; font-size:15px !important; padding:15px !important;">🏁 СОХРАНИТЬ ИЗМЕНЕНИЯ</button>` : "<div style='text-align:center; padding:10px; font-weight:900;'>Нет активных недовозов.</div>"}
+                            ${hasActive ? activeHtml + `<button onclick="saveAllMissingChanges()" class="btn-mode" style="background: var(--btn-stop-grad) !important; margin-top:20px; font-size:15px !important; padding:15px !important; margin-bottom:0;">🏁 СОХРАНИТЬ ИЗМЕНЕНИЯ</button>` : "<div style='text-align:center; padding:10px; font-weight:900;'>Нет активных недовозов.</div>"}
                         </div>`;
             
             if (hasHistory) {
@@ -2508,9 +2501,18 @@
     }
     
     async function deleteMissingItem(key) {
-        if(confirm("Удалить недовоз навсегда?")) {
-            await database.ref("missing_items/" + key).remove();
-            openMissingAdmin();
+        if (window.Telegram && Telegram.WebApp && Telegram.WebApp.showConfirm) {
+            Telegram.WebApp.showConfirm("Удалить недовоз навсегда?", async function(confirmed) {
+                if (confirmed) {
+                    await database.ref("missing_items/" + key).remove();
+                    openMissingAdmin();
+                }
+            });
+        } else {
+            if(confirm("Удалить недовоз навсегда?")) {
+                await database.ref("missing_items/" + key).remove();
+                openMissingAdmin();
+            }
         }
     }
 

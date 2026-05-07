@@ -3,12 +3,15 @@
 <head>
     <base target="_top">
     <meta charset="UTF-8">
-   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <!-- ВАЖНО: Разрешаем масштабирование (удалено user-scalable=no) -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Coffee CRM - Управление сетью TEIKU</title>
 
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-database-compat.js"></script>
+    <!-- Библиотека для генерации PDF -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 
     <style>
         /* =========================================
@@ -112,8 +115,7 @@
             padding: 20px; 
             border-radius: 16px; 
             box-shadow: 0 4px 20px rgba(0,0,0,0.08); 
-            overflow-x: auto;
-            -webkit-overflow-scrolling: touch;
+            overflow: visible; /* ВАЖНО для зума на мобильных! */
         }
         
         table { 
@@ -121,7 +123,6 @@
             border-collapse: collapse; 
             margin-top: 15px; 
             font-size: 16px; 
-            min-width: 900px; /* Включаем скролл на телефонах */
         }
         
         th { 
@@ -201,7 +202,7 @@
             cursor: pointer; 
             font-weight: 900; 
             font-size: 14px; 
-            white-space: normal; /* Позволяем тексту переноситься */
+            white-space: normal; 
             text-align: center;
             display: inline-flex;
             align-items: center;
@@ -320,32 +321,19 @@
         /* =========================================
            МЕДИАЗАПРОСЫ ДЛЯ МОБИЛЬНЫХ УСТРОЙСТВ
         ========================================= */
-        .menu-toggle { display: none; font-size: 28px; cursor: pointer; background: none; border: none; color: white; padding: 0 5px; }
+        .menu-toggle { display: none; font-size: 16px; cursor: pointer; background: rgba(255,255,255,0.2); border: 1px solid white; color: white; padding: 8px 12px; border-radius:8px; font-weight: bold; }
 
         @media (max-width: 768px) {
             body { padding: 10px; }
-            .sticky-top-wrapper { padding-top: 10px; margin-top: -10px; position: relative; z-index: 1;}
+            .sticky-top-wrapper { padding-top: 10px; margin-top: -10px; position: static; z-index: 1;}
             
             .menu-toggle { display: block; }
             
             .nav { padding: 15px; flex-direction: column; gap: 10px; text-align: center; }
             .nav h0 { font-size: 20px; }
 
-            .tabs { 
-                display: none; 
-                flex-direction: column; 
-                position: absolute; 
-                top: 75px; 
-                left: 10px; 
-                right: 10px; 
-                background: white; 
-                border-radius: 12px; 
-                box-shadow: 0 10px 30px rgba(0,0,0,0.3); 
-                z-index: 3000; 
-                padding: 10px; 
-            }
-            .tabs.open { display: flex; }
-            .tab-btn { padding: 15px; text-align: left; width: 100%; font-size: 16px; border-bottom: 1px solid #f0f0f0; border-radius: 8px;}
+            /* Прячем табы на мобилках полностью - используется grid меню */
+            .tabs { display: none !important; }
             
             #svod-action-bar { flex-direction: column; align-items: flex-start; gap: 10px; padding: 15px 10px; }
             #svod-action-buttons { flex-direction: row; display: flex; flex-wrap: wrap; gap: 8px; width: 100%; justify-content: flex-start; }
@@ -355,9 +343,15 @@
             .summary-item { flex: 1 1 40%; }
             .summary-total { flex: 1 1 100%; }
 
-            .card { padding: 10px; } 
+            .card { padding: 10px; overflow: visible !important; } 
             
             th, td { font-size: 14px; padding: 8px 6px; }
+        }
+        
+        @keyframes pulseLoading { 
+            0% { opacity: 0.4; transform: scale(0.98); } 
+            50% { opacity: 1; transform: scale(1.02); } 
+            100% { opacity: 0.4; transform: scale(0.98); } 
         }
     </style>
 </head>
@@ -368,10 +362,12 @@
         <h0 style="margin:1;">💼 Coffee Teiku CRM</h0>
         <div style="display:flex; align-items:center; gap:15px;">
             <div id="db-status" style="font-size:14px;">☁️ База активна</div>
-            <button class="menu-toggle" onclick="document.querySelector('.tabs').classList.toggle('open')">☰</button>
+            <!-- На мобилке эта кнопка возвращает к плиточному меню -->
+            <button class="menu-toggle" onclick="renderHome()">🏠 Главное меню</button>
         </div>
     </div>
 
+    <!-- Вкладки для ПК -->
     <div class="tabs">
         <button class="tab-btn active" onclick="loadTab('orders', this)">📋 Свод и Заказы</button>
         <button class="tab-btn" onclick="loadTab('marketplace', this)">🛒 Маркетплейсы</button>
@@ -522,6 +518,197 @@
             alert(`✅ Команда ${cmd} успешно отправлена боту-снайперу!`);
         } catch (e) {
             alert(`❌ Ошибка: ` + e.message);
+        }
+    }
+    // ==========================================
+    // НОВОЕ: ГЛАВНОЕ МЕНЮ ДЛЯ ТЕЛЕФОНОВ
+    // ==========================================
+    function renderHome() {
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        document.getElementById('svod-action-bar').style.display = 'none';
+        currentTabType = 'home';
+        
+        const box = document.getElementById('content');
+        let html = `<h2 style="text-align:center; color:#4A148C; margin-bottom: 20px;">Выберите раздел</h2>
+                    <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 15px;">`;
+        
+        const menuItems = [
+            {name: "📋 Свод и Заказы", id: "orders", color: "linear-gradient(135deg, #7E57C2 0%, #4A148C 100%)"},
+            {name: "🛒 Маркетплейсы", id: "marketplace", color: "linear-gradient(135deg, #0288d1 0%, #01579b 100%)"},
+            {name: "✅ Чек-листы", id: "checks_table", color: "linear-gradient(135deg, #4caf50 0%, #2e7d32 100%)"},
+            {name: "🛑 Стоп-листы", id: "stoplists", color: "linear-gradient(135deg, #e53935 0%, #b71c1c 100%)"},
+            {name: "‼️ Недовозы", id: "missing", color: "linear-gradient(135deg, #f57c00 0%, #e65100 100%)"},
+            {name: "🛒 Справ. Закупки", id: "catalog_order", color: "linear-gradient(135deg, #8d6e63 0%, #5d4037 100%)"},
+            {name: "📝 Справ. Чек-листа", id: "catalog_checklist", color: "linear-gradient(135deg, #78909c 0%, #455a64 100%)"},
+            {name: "🛑 Справ. Стопов", id: "catalog_stoplist", color: "linear-gradient(135deg, #f06292 0%, #c2185b 100%)"},
+            {name: "📈 Статистика", id: "stats", color: "linear-gradient(135deg, #26a69a 0%, #00695c 100%)"}
+        ];
+        
+        menuItems.forEach(item => {
+            html += `<button onclick="loadTab('${item.id}')" style="background: ${item.color}; color:white; border:none; padding:30px 10px; border-radius:16px; font-size:16px; font-weight:bold; cursor:pointer; box-shadow:0 4px 10px rgba(0,0,0,0.2);">${item.name}</button>`;
+        });
+        html += `</div>`;
+        box.innerHTML = html;
+    }
+
+    // ==========================================
+    // НОВОЕ: ГЕНЕРАЦИЯ PDF ДЛЯ ЧЕК-ЛИСТОВ
+    // ==========================================
+    async function sendChecklistPdf() {
+        if(!confirm("Сформировать PDF-отчет и отправить админу в Телеграм?")) return;
+        
+        showReportOverlay("Формирование PDF... Подождите");
+        
+        // Разворачиваем все категории, чтобы они попали в PDF
+        document.querySelectorAll('.chk-row').forEach(row => {
+            row.style.display = 'table-row';
+        });
+
+        const element = document.getElementById('checks-table-container');
+        
+        const opt = {
+            margin:       [0.3, 0.3, 0.3, 0.3],
+            filename:     'Checklist_Report.pdf',
+            image:        { type: 'jpeg', quality: 0.98 },
+            html2canvas:  { scale: 2, useCORS: true, logging: false },
+            jsPDF:        { unit: 'in', format: 'a2', orientation: 'landscape' } // A2 чтобы влезла широкая таблица
+        };
+
+        try {
+            // Генерируем base64 (Data URI)
+            const pdfDataUri = await html2pdf().set(opt).from(element).outputPdf('datauristring');
+            
+            // Отправляем в Firebase для бота
+            await fetch(`${FB_URL}/bot_control/notifications.json`, {
+                method: 'POST',
+                body: JSON.stringify({ 
+                    type: "checklist_pdf", 
+                    file_data: pdfDataUri, 
+                    filename: `Отчет_Чеклисты_${new Date().toLocaleDateString('ru-RU')}.pdf`,
+                    text: "✅ Автоматический отчет по чек-листам",
+                    timestamp: Date.now() 
+                })
+            });
+            
+            hideReportOverlay();
+            alert("✅ PDF-отчет успешно сформирован и отправлен боту!");
+        } catch (e) {
+            hideReportOverlay();
+            alert("❌ Ошибка при создании PDF: " + e.message);
+        }
+    }
+
+    // ==========================================
+    // ГЛАВНЫЙ ЗАГРУЗЧИК Вкладок
+    // ==========================================
+    async function loadTab(type, btn) {
+        if (type === 'home') {
+            renderHome();
+            return;
+        }
+
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        if (btn) btn.classList.add('active');
+        else {
+            // Если вызов из главного меню, активируем нужную вкладку ПК
+            let tabBtn = document.querySelector(`.tab-btn[onclick*="'${type}'"]`);
+            if (tabBtn) tabBtn.classList.add('active');
+        }
+        
+        document.getElementById('svod-action-bar').style.display = 'none';
+        
+        currentTabType = type;
+        const box = document.getElementById('content');
+        box.innerHTML = "<div style='text-align:center; padding:40px; font-weight:bold; font-size:20px; color:#7E57C2;'>⌛ Синхронизация данных...</div>";
+
+        try {
+            let [resCat, resNewCat] = await Promise.all([
+                fetch(`${FB_URL}/catalogs/order.json`),
+                fetch(`${FB_URL}/catalogs/newshop.json`)
+            ]);
+            let catOrd = await resCat.json() || {};
+            let catNew = await resNewCat.json() || {};
+            cachedData.catalogOrder = { ...catOrd, ...catNew };
+            cachedData.catalog = cachedData.catalogOrder;
+
+            if (type === 'orders') {
+                isSvodEditMode = false;
+                svodDeletions = [];
+                tempSvodQty = {};
+                tempSvodStatus = {};
+                tempSvodVendor = {};
+                tempSvodShop = {};
+                tempSvodNewRows = [];
+                
+                let resOrders = await fetch(`${FB_URL}/orders.json`);
+                let ordersObj = await resOrders.json() || {};
+                Object.keys(ordersObj).forEach(k => { if (ordersObj[k]) ordersObj[k].key = k; });
+                cachedData.orders = ordersObj;
+                await renderOrdersSvod();
+            }
+            else if (type === 'marketplace') {
+                isMpEditMode = false;
+                mpDeletions.clear();
+                let res = await fetch(`${FB_URL}/marketplace_records.json`);
+                cachedData.marketplace = await res.json() || {};
+                renderMarketplaceTab();
+            }
+            else if (type === 'missing') {
+                isMissingEditMode = false;
+                missingDeletions.clear();
+                tempMissingStatus = {};
+                let resMiss = await fetch(`${FB_URL}/missing_items.json`);
+                cachedData.missing = await resMiss.json() || {};
+                renderMissing();
+            }
+            else if (type === 'stoplists') {
+                let resOrders = await fetch(`${FB_URL}/orders.json`);
+                cachedData.orders = await resOrders.json() || {};
+                renderStoplists();
+            }
+            else if (type === 'checks_table') {
+                isChecklistEditMode = false; 
+                let [resCheck, resOrders] = await Promise.all([
+                    fetch(`${FB_URL}/catalogs/checklist.json`), 
+                    fetch(`${FB_URL}/orders.json`)
+                ]);
+                cachedData.catalog = await resCheck.json() || {};
+                let ordersObj = await resOrders.json() || {};
+                Object.keys(ordersObj).forEach(k => { if (ordersObj[k]) ordersObj[k].key = k; });
+                cachedData.orders = ordersObj;
+                renderChecksTable();
+            }
+            else if (type === 'catalog_order') {
+                isNewShopCatalog = false;
+                currentPath = "catalogs/order";
+                let [res, setRes] = await Promise.all([
+                    fetch(`${FB_URL}/${currentPath}.json`),
+                    fetch(`${FB_URL}/settings.json`)
+                ]);
+                currentCatalog = await res.json() || {};
+                appSettings = await setRes.json() || { hidden_categories: {}, new_shop_order_active: false };
+                if (!appSettings.hidden_categories) appSettings.hidden_categories = {};
+                renderCatalogOrder();
+            } 
+            else if (type === 'catalog_checklist') {
+                currentPath = "catalogs/checklist";
+                let res = await fetch(`${FB_URL}/${currentPath}.json`);
+                currentCatalog = await res.json() || {};
+                renderCatalogChecklist();
+            }
+            else if (type === 'catalog_stoplist') {
+                currentPath = "catalogs/stoplist";
+                let res = await fetch(`${FB_URL}/${currentPath}.json`);
+                currentCatalog = await res.json() || {};
+                renderCatalogStoplist();
+            }
+            else if (type === 'stats') {
+                let resOrders = await fetch(`${FB_URL}/orders.json`);
+                cachedData.orders = await resOrders.json() || {};
+                renderStats();
+            }
+        } catch (e) {
+            box.innerHTML = `<div style="color:red; font-weight:bold; font-size:18px;">Ошибка загрузки: ${e.message}</div>`;
         }
     }
 
@@ -687,114 +874,6 @@
             }
         } catch(e) {
             console.error("Auto stoplist update failed:", e);
-        }
-    }
-
-    // ==========================================
-    // ГЛАВНЫЙ ЗАГРУЗЧИК
-    // ==========================================
-    async function loadTab(type, btn) {
-        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-        if (btn) btn.classList.add('active');
-        
-        // --- ЗАКРЫТИЕ МЕНЮ ПОСЛЕ ВЫБОРА НА ТЕЛЕФОНЕ ---
-        let tabsMenu = document.querySelector('.tabs');
-        if (tabsMenu && tabsMenu.classList.contains('open')) tabsMenu.classList.remove('open');
-        
-        document.getElementById('svod-action-bar').style.display = 'none';
-        
-        currentTabType = type;
-        const box = document.getElementById('content');
-        box.innerHTML = "<div style='text-align:center; padding:40px; font-weight:bold; font-size:20px; color:#7E57C2;'>⌛ Синхронизация данных...</div>";
-
-        try {
-            let [resCat, resNewCat] = await Promise.all([
-                fetch(`${FB_URL}/catalogs/order.json`),
-                fetch(`${FB_URL}/catalogs/newshop.json`)
-            ]);
-            let catOrd = await resCat.json() || {};
-            let catNew = await resNewCat.json() || {};
-            cachedData.catalogOrder = { ...catOrd, ...catNew };
-            cachedData.catalog = cachedData.catalogOrder;
-
-            if (type === 'orders') {
-                isSvodEditMode = false;
-                svodDeletions = [];
-                tempSvodQty = {};
-                tempSvodStatus = {};
-                tempSvodVendor = {};
-                tempSvodShop = {};
-                tempSvodNewRows = [];
-                
-                let resOrders = await fetch(`${FB_URL}/orders.json`);
-                let ordersObj = await resOrders.json() || {};
-                Object.keys(ordersObj).forEach(k => { if (ordersObj[k]) ordersObj[k].key = k; });
-                cachedData.orders = ordersObj;
-                await renderOrdersSvod();
-            }
-            else if (type === 'marketplace') {
-                isMpEditMode = false;
-                mpDeletions.clear();
-                let res = await fetch(`${FB_URL}/marketplace_records.json`);
-                cachedData.marketplace = await res.json() || {};
-                renderMarketplaceTab();
-            }
-            else if (type === 'missing') {
-                isMissingEditMode = false;
-                missingDeletions.clear();
-                tempMissingStatus = {};
-                let resMiss = await fetch(`${FB_URL}/missing_items.json`);
-                cachedData.missing = await resMiss.json() || {};
-                renderMissing();
-            }
-            else if (type === 'stoplists') {
-                let resOrders = await fetch(`${FB_URL}/orders.json`);
-                cachedData.orders = await resOrders.json() || {};
-                renderStoplists();
-            }
-            else if (type === 'checks_table') {
-                isChecklistEditMode = false; 
-                let [resCheck, resOrders] = await Promise.all([
-                    fetch(`${FB_URL}/catalogs/checklist.json`), 
-                    fetch(`${FB_URL}/orders.json`)
-                ]);
-                cachedData.catalog = await resCheck.json() || {};
-                let ordersObj = await resOrders.json() || {};
-                Object.keys(ordersObj).forEach(k => { if (ordersObj[k]) ordersObj[k].key = k; });
-                cachedData.orders = ordersObj;
-                renderChecksTable();
-            }
-            else if (type === 'catalog_order') {
-                isNewShopCatalog = false;
-                currentPath = "catalogs/order";
-                let [res, setRes] = await Promise.all([
-                    fetch(`${FB_URL}/${currentPath}.json`),
-                    fetch(`${FB_URL}/settings.json`)
-                ]);
-                currentCatalog = await res.json() || {};
-                appSettings = await setRes.json() || { hidden_categories: {}, new_shop_order_active: false };
-                if (!appSettings.hidden_categories) appSettings.hidden_categories = {};
-                renderCatalogOrder();
-            } 
-            else if (type === 'catalog_checklist') {
-                currentPath = "catalogs/checklist";
-                let res = await fetch(`${FB_URL}/${currentPath}.json`);
-                currentCatalog = await res.json() || {};
-                renderCatalogChecklist();
-            }
-            else if (type === 'catalog_stoplist') {
-                currentPath = "catalogs/stoplist";
-                let res = await fetch(`${FB_URL}/${currentPath}.json`);
-                currentCatalog = await res.json() || {};
-                renderCatalogStoplist();
-            }
-            else if (type === 'stats') {
-                let resOrders = await fetch(`${FB_URL}/orders.json`);
-                cachedData.orders = await resOrders.json() || {};
-                renderStats();
-            }
-        } catch (e) {
-            box.innerHTML = `<div style="color:red; font-weight:bold; font-size:18px;">Ошибка загрузки: ${e.message}</div>`;
         }
     }
 
@@ -1038,7 +1117,7 @@
         tr.style.backgroundColor = "#e8f5e9";
         
         tr.innerHTML = `
-            <td style="padding-left:45px;">
+            <td style="padding-left:15px;">
                 <select class="new-svod-name" data-date="${dateStr}" data-shop="${shop.replace(/"/g, '&quot;')}" style="font-size:14px; padding:4px; width:100%; border:2px solid #4caf50; font-weight:bold; color:#2e7d32;" onchange="updateNewRowVendor(this); recalcSvodTotals();">
                     ${itemOptions}
                 </select>
@@ -1277,7 +1356,7 @@
                     let price = parseFloat(catItem.price) || 0;
                     
                     let actualVendor = (tempSvodVendor[dateStr] && tempSvodVendor[dateStr][shop] && tempSvodVendor[dateStr][shop][name]) ? tempSvodVendor[dateStr][shop][name] : vendor;
-                    let actualShop = (tempSvodShop[dateStr] && tempSvodShop[dateStr][shop] && tempSvodShop[dateStr][shop][name]) ? tempSvodShop[date][shop][name] : shop;
+                    let actualShop = (tempSvodShop[dateStr] && tempSvodShop[dateStr][shop] && tempSvodShop[dateStr][shop][name]) ? tempSvodShop[dateStr][shop][name] : shop;
                     
                     if (!shopLentaSums[actualShop]) shopLentaSums[actualShop] = 0;
 
@@ -1333,7 +1412,7 @@
                      </div>`;
         }
 
-        html += `<div style="overflow-x:auto;"><table style='margin-bottom:20px;'>
+        html += `<table style='margin-bottom:20px;'>
                     <tr>
                         <th>Кофейня / Товар</th>
                         <th style="text-align:center;">Кол-во</th>
@@ -2294,9 +2373,9 @@
                     
                     activeHtml += `
                     <tr>
-                        <td><b style="font-size:16px; color:#311b92;">${displayName}</b></td>
-                        <td style="font-size:15px;">${m.name} ${linksHtml}</td>
-                        <td style="font-size:16px; font-weight:bold; text-align:center;">${m.qty}</td>
+                        <td><b style="font-size:18px; color:#311b92;">${displayName}</b></td>
+                        <td style="font-size:17px;">${m.name} ${linksHtml}</td>
+                        <td style="font-size:18px; font-weight:bold; text-align:center;">${m.qty}</td>
                         <td style="font-weight:900; font-size:14px; color:${statColor};">${statText}</td>
                         <td style="text-align:center;"></td>
                     </tr>`;
@@ -2395,7 +2474,7 @@
             }
         });
         
-        let html = `<h3 style="color:#D50000; margin-bottom:20px; font-size:22px;">🛑 Актуальные Стоп-листы на точках</h3><div style="display:flex; flex-wrap:wrap; gap:20px;">`;
+        let html = `<h3 style="color:#D50000; margin-bottom:20px; font-size:24px;">🛑 Актуальные Стоп-листы на точках</h3><div style="display:flex; flex-wrap:wrap; gap:20px;">`;
         let orderCatalog = cachedData.catalogOrder || cachedData.catalog || {};
         
         shops.forEach(s => {
@@ -2571,11 +2650,14 @@
         let html = `
             <div style="display:flex; justify-content:space-between; margin-bottom:15px; align-items:center; flex-wrap:wrap; gap:10px;">
                 <h3 style="color:#1a237e; font-size:22px; margin:0;">✅ Сводная Таблица Чек-листов (Актуальные данные)</h3>
-                <button id="chk-btn-edit" onclick="isChecklistEditMode ? saveChecklistEdits() : toggleChecklistEdit()" class="btn-add" style="background:${btnEditColor};">${btnEditText}</button>
+                <div style="display:flex; gap:10px;">
+                    <button class="btn-add" style="background: linear-gradient(135deg, #00897b 0%, #3949ab 100%);" onclick="sendChecklistPdf()">📤 Отправить отчет PDF</button>
+                    <button id="chk-btn-edit" onclick="isChecklistEditMode ? saveChecklistEdits() : toggleChecklistEdit()" class="btn-add" style="background:${btnEditColor};">${btnEditText}</button>
+                </div>
             </div>`;
         html += `<p style="font-size:15px; color:#7E57C2; font-weight:bold;">Нажмите на категорию, чтобы развернуть список товаров.</p>`;
         
-        html += `<div style="overflow-x:auto;"><table style="min-width:1200px;"><tr><th style="width:200px;">Товар</th>`;
+        html += `<div id="checks-table-container" style="background:white; padding:10px; border-radius:12px;"><table style="min-width:1200px;"><tr><th style="width:200px;">Товар</th>`;
         shops.forEach(s => {
             let dateStr = "Нет данных";
             if (latestChecklists[s] && latestChecklists[s].timestamp) {
@@ -3010,7 +3092,15 @@
     
     setInterval(quietRefreshOrders, 15000); // 15 секунд
 
-    window.onload = () => loadTab('orders', document.querySelector('.tab-btn'));
+    // Загрузка нужной вкладки при старте
+    window.onload = () => {
+        // Если телефон - загружаем плиточное меню
+        if (window.innerWidth <= 768) {
+            loadTab('home');
+        } else {
+            loadTab('orders', document.querySelector('.tab-btn'));
+        }
+    };
 </script>
 </body>
 </html>

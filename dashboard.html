@@ -2340,7 +2340,6 @@
             missingData = await fetch(`${FB_URL}/missing_items.json`).then(r=>r.json()) || {};
         } catch(e) {}
 
-        // Мапа недовозов (приемки)
         let missingStatusMap = {};
         Object.values(missingData).forEach(m => {
             if (m && m.status !== 'arrived' && m.status !== 'canceled') {
@@ -2380,7 +2379,6 @@
                                 }
                                 if (o.ordered) stat = 'ordered'; 
                                 
-                                // Надежное сохранение в мапу с приведением регистра
                                 let safeName = String(i.name).trim().toLowerCase();
                                 let currentSaved = recentOrdersMap[o.shop][safeName];
                                 if (!currentSaved || o.timestamp > currentSaved.timestamp) {
@@ -2416,7 +2414,13 @@
                     let iNameLow = String(i.name).trim().toLowerCase();
                     
                     let info = Object.values(stopCatalog).find(c => c && c.name && String(c.name).trim().toLowerCase() === iNameLow) || {};
-                    let inOrderCat = Object.values(orderCatalog).find(c => c && c.name && String(c.name).trim().toLowerCase() === iNameLow);
+                    
+                    // 💡 УМНЫЙ ПОИСК В СПРАВОЧНИКЕ ЗАКУПКИ (Перекрестный)
+                    let inOrderCat = Object.values(orderCatalog).find(c => {
+                        if (!c || !c.name) return false;
+                        let cName = String(c.name).trim().toLowerCase();
+                        return cName === iNameLow || cName.includes(iNameLow) || iNameLow.includes(cName);
+                    });
                     
                     let isSyrup = (info.cat && String(info.cat).toLowerCase().includes("сироп")) || (inOrderCat && inOrderCat.cat && String(inOrderCat.cat).toLowerCase().includes("сироп")) || iNameLow.includes("сироп");
                     
@@ -2426,20 +2430,25 @@
                     
                     let statHtml = "";
                     
-                    // СТАТУСЫ ПОЯВЛЯЮТСЯ ТОЛЬКО ЕСЛИ ТОВАР ЕСТЬ В СПРАВОЧНИКЕ ЗАКУПКИ
                     if (inOrderCat) {
-                        let missingStat = missingStatusMap[s] ? missingStatusMap[s][iNameLow] : null;
-                        let orderInfo = recentOrdersMap[s] ? recentOrdersMap[s][iNameLow] : null;
-
-                        // Логика для взаимозаменяемости мороженого
-                        let isIceCreamVanilla = iNameLow.includes("мороженое ваниль");
-                        if (isIceCreamVanilla) {
-                            if (!missingStat && missingStatusMap[s]) {
-                                let aliasKey = Object.keys(missingStatusMap[s]).find(k => k.includes("мороженое ваниль"));
+                        // 💡 УМНЫЙ ПОИСК СТАТУСОВ (Приемка)
+                        let missingStat = null;
+                        if (missingStatusMap[s]) {
+                            let exact = missingStatusMap[s][iNameLow];
+                            if (exact) missingStat = exact;
+                            else {
+                                let aliasKey = Object.keys(missingStatusMap[s]).find(k => k.includes(iNameLow) || iNameLow.includes(k));
                                 if (aliasKey) missingStat = missingStatusMap[s][aliasKey];
                             }
-                            if (!orderInfo && recentOrdersMap[s]) {
-                                let aliasKey = Object.keys(recentOrdersMap[s]).find(k => k.includes("мороженое ваниль"));
+                        }
+
+                        // 💡 УМНЫЙ ПОИСК СТАТУСОВ (Корзина)
+                        let orderInfo = null;
+                        if (recentOrdersMap[s]) {
+                            let exact = recentOrdersMap[s][iNameLow];
+                            if (exact) orderInfo = exact;
+                            else {
+                                let aliasKey = Object.keys(recentOrdersMap[s]).find(k => k.includes(iNameLow) || iNameLow.includes(k));
                                 if (aliasKey) orderInfo = recentOrdersMap[s][aliasKey];
                             }
                         }
@@ -2532,7 +2541,6 @@
 
         box.innerHTML = html;
     }
-
     // ==========================================
     // 5. ВКЛАДКА: ТАБЛИЦА ЧЕК-ЛИСТОВ
     // ==========================================

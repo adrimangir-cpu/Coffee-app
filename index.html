@@ -842,6 +842,9 @@
       }
     }
     
+    // ==========================================
+    // 2. ОТРИСОВКА СПИСКА С БЛОКИРОВКОЙ
+    // ==========================================
     function renderProductList() {
       var html = "";
       
@@ -883,21 +886,38 @@
           let safeId = getSafeId(itemName);
           let escName = escapeName(itemName);
           
-          let isRepeat = state.unprocessedItems && state.unprocessedItems.has(itemName);
-          // Проверяем, не находится ли товар в пути
-          let isTransit = state.transitItems && state.transitItems.has(itemName);
+          let clean = cleanName(itemName); // Очищаем имя для проверки блокировок
           
-          let repeatClass = isRepeat ? "repeat-item" : (isTransit ? "repeat-item" : "");
-          let borderStyle = isTransit ? "border-left: 4px solid #1976D2;" : "";
-          let repeatLabel = isRepeat ? `<span class="repeat-item-text">Ожидает оформления</span>` : (isTransit ? `<span class="repeat-item-text" style="color:#1565C0;">Уже в пути 🚚</span>` : "");
+          let isPending = state.unprocessedItems && state.unprocessedItems.has(clean);
+          let isTransit = state.transitItems && state.transitItems.has(clean);
+          let isOrdered = state.orderedItems && state.orderedItems.has(clean);
+          
+          let repeatClass = "";
+          let repeatLabel = "";
+          let borderStyle = "";
+
+          if (isOrdered) {
+              repeatClass = "repeat-item";
+              borderStyle = "border-left: 4px solid #4CAF50;";
+              repeatLabel = `<span class="repeat-item-text" style="color:#2E7D32;">Уже заказано ✅</span>`;
+          } else if (isTransit) {
+              repeatClass = "repeat-item";
+              borderStyle = "border-left: 4px solid #1976D2;";
+              repeatLabel = `<span class="repeat-item-text" style="color:#1565C0;">Уже в пути 🚚</span>`;
+          } else if (isPending) {
+              repeatClass = "repeat-item";
+              borderStyle = "border-left: 4px solid #F57C00;";
+              repeatLabel = `<span class="repeat-item-text" style="color:#E65100;">Ожидает оформления ⏳</span>`;
+          }
 
           html += `<div class="item ${repeatClass}" style="${borderStyle}">
-                    <div style="flex:1; padding-right:15px; opacity:${isTransit ? '0.6' : '1'};">${repeatLabel}<span style="font-weight: 700; font-size: 15px; line-height: 1.3;">${itemName}</span></div>
+                    <div style="flex:1; padding-right:15px; opacity:${(isTransit || isOrdered) ? '0.6' : '1'};">${repeatLabel}<span style="font-weight: 700; font-size: 15px; line-height: 1.3;">${itemName}</span></div>
                     <div class="controls" id="controls-${safeId}">`;
           
-          // Если товар В ПУТИ, блокируем его заказ
-          if (isTransit && (state.currentMode === 'order' || state.currentMode === 'new_shop')) {
-              html += `<div style="font-size:14px; font-weight:bold; color:#1565C0; padding:10px;">В пути</div>`;
+          let isLocked = (isTransit || isOrdered) && (state.currentMode === 'order' || state.currentMode === 'new_shop');
+
+          if (isLocked) {
+              html += `<div style="font-size:14px; font-weight:bold; color:${isOrdered ? '#2E7D32' : '#1565C0'}; padding:10px;">${isOrdered ? 'Заказано' : 'В пути'}</div>`;
           }
           else if (state.currentMode === 'stoplist_fill') {
               let isStopped = state.userBasket[itemName] === 'Закончилось';

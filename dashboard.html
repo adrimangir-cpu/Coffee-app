@@ -2340,11 +2340,22 @@
             missingData = await fetch(`${FB_URL}/missing_items.json`).then(r=>r.json()) || {};
         } catch(e) {}
 
+        // 💡 СУПЕР-ФУНКЦИЯ ОЧИСТКИ НАЗВАНИЙ (Убирает скобки, весовки, пробелы)
+        function cleanName(str) {
+            if (!str) return "";
+            return str.toLowerCase()
+                .replace(/ё/g, 'е')
+                .replace(/\([^)]*\)/g, '') // удаляет (Maribell) и т.д.
+                .replace(/[0-9.,]+\s*(кг|г|мл|л|шт)/g, '') // удаляет 1кг, 1000г
+                .replace(/(брекет|коробка)/g, '') // удаляет слова для мороженого
+                .replace(/[^a-zа-я0-9]/g, ''); // склеивает остаток в одно слово без пробелов/дефисов
+        }
+
         let missingStatusMap = {};
         Object.values(missingData).forEach(m => {
             if (m && m.status !== 'arrived' && m.status !== 'canceled') {
                 if (!missingStatusMap[m.shop]) missingStatusMap[m.shop] = {};
-                missingStatusMap[m.shop][String(m.name).trim().toLowerCase()] = m.status;
+                missingStatusMap[m.shop][String(m.name).trim()] = m.status; // Сохраняем как есть
             }
         });
 
@@ -2379,10 +2390,10 @@
                                 }
                                 if (o.ordered) stat = 'ordered'; 
                                 
-                                let safeName = String(i.name).trim().toLowerCase();
-                                let currentSaved = recentOrdersMap[o.shop][safeName];
+                                let rawName = String(i.name).trim();
+                                let currentSaved = recentOrdersMap[o.shop][rawName];
                                 if (!currentSaved || o.timestamp > currentSaved.timestamp) {
-                                    recentOrdersMap[o.shop][safeName] = { stat: stat, timestamp: o.timestamp };
+                                    recentOrdersMap[o.shop][rawName] = { stat: stat, timestamp: o.timestamp };
                                 }
                             }
                         }
@@ -2412,14 +2423,14 @@
                     if (!i || !i.name || i.qty !== 'Закончилось' || i.name === 'Всё в наличии') return;
                     foundItems = true;
                     let iNameLow = String(i.name).trim().toLowerCase();
+                    let cleanedItemName = cleanName(i.name); // Очищенное имя для сравнений
                     
                     let info = Object.values(stopCatalog).find(c => c && c.name && String(c.name).trim().toLowerCase() === iNameLow) || {};
                     
-                    // 💡 УМНЫЙ ПОИСК В СПРАВОЧНИКЕ ЗАКУПКИ (Перекрестный)
+                    // 💡 Ищем в каталоге закупки через чистые имена (без весовок и скобок)
                     let inOrderCat = Object.values(orderCatalog).find(c => {
                         if (!c || !c.name) return false;
-                        let cName = String(c.name).trim().toLowerCase();
-                        return cName === iNameLow || cName.includes(iNameLow) || iNameLow.includes(cName);
+                        return cleanName(c.name) === cleanedItemName;
                     });
                     
                     let isSyrup = (info.cat && String(info.cat).toLowerCase().includes("сироп")) || (inOrderCat && inOrderCat.cat && String(inOrderCat.cat).toLowerCase().includes("сироп")) || iNameLow.includes("сироп");
@@ -2431,26 +2442,18 @@
                     let statHtml = "";
                     
                     if (inOrderCat) {
-                        // 💡 УМНЫЙ ПОИСК СТАТУСОВ (Приемка)
+                        // Ищем статус в приемке
                         let missingStat = null;
                         if (missingStatusMap[s]) {
-                            let exact = missingStatusMap[s][iNameLow];
-                            if (exact) missingStat = exact;
-                            else {
-                                let aliasKey = Object.keys(missingStatusMap[s]).find(k => k.includes(iNameLow) || iNameLow.includes(k));
-                                if (aliasKey) missingStat = missingStatusMap[s][aliasKey];
-                            }
+                            let aliasKey = Object.keys(missingStatusMap[s]).find(k => cleanName(k) === cleanedItemName);
+                            if (aliasKey) missingStat = missingStatusMap[s][aliasKey];
                         }
 
-                        // 💡 УМНЫЙ ПОИСК СТАТУСОВ (Корзина)
+                        // Ищем статус в корзине
                         let orderInfo = null;
                         if (recentOrdersMap[s]) {
-                            let exact = recentOrdersMap[s][iNameLow];
-                            if (exact) orderInfo = exact;
-                            else {
-                                let aliasKey = Object.keys(recentOrdersMap[s]).find(k => k.includes(iNameLow) || iNameLow.includes(k));
-                                if (aliasKey) orderInfo = recentOrdersMap[s][aliasKey];
-                            }
+                            let aliasKey = Object.keys(recentOrdersMap[s]).find(k => cleanName(k) === cleanedItemName);
+                            if (aliasKey) orderInfo = recentOrdersMap[s][aliasKey];
                         }
 
                         if (missingStat === 'pending' || missingStat === 'transit') {

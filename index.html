@@ -672,6 +672,9 @@
       state.userBasket = {}; 
       if (state.unprocessedItems) state.unprocessedItems.clear();
       
+      // Создаем новый список для товаров "в пути"
+      state.transitItems = new Set();
+      
       showScreen('step-3');
       
       var mainBtn = document.getElementById('main-action-button'); 
@@ -754,11 +757,16 @@
                   });
               }
 
+              // --- ОБРАБОТКА НЕДОВОЗОВ ---
               const missSnap = await database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value");
               let hasCanceledMissings = false;
+              
               missSnap.forEach(c => {
                   let m = c.val();
-                  if (m && m.status === 'canceled' && !m.added_to_basket) {
+                  if (!m) return;
+                  
+                  // Ловим отмененные (возвращаем в корзину)
+                  if (m.status === 'canceled' && !m.added_to_basket) {
                       let qtyNum = parseFloat(m.qty) || 0;
                       state.userBasket[m.name] = (state.userBasket[m.name] || 0) + qtyNum;
                       
@@ -769,6 +777,17 @@
                       database.ref("missing_items/" + c.key).update({added_to_basket: true}); 
                       hasCanceledMissings = true;
                   }
+                  
+                  // НОВОЕ: Ловим товары "В ПУТИ"
+                  if (m.status === 'transit' || m.status === 'pending') {
+                      state.transitItems.add(m.name);
+                      
+                      // Если товар в пути, удаляем его из авто-добавления (из стоп-листа или отмененных)
+                      if (state.userBasket[m.name]) {
+                          delete state.userBasket[m.name];
+                          if (state.userBasket["_catinfo"]) delete state.userBasket["_catinfo"][m.name];
+                      }
+                  }
               });
 
               if (hasCanceledMissings) showPopupError("Внимание", "⚠️ Отмененные администратором недовозы возвращены в вашу корзину.");
@@ -777,7 +796,8 @@
 
               // --- ЗАЩИТА ОТ ДУБЛЕЙ ---
               for (let key in state.userBasket) {
-                  if (key !== "_catinfo" && activeOrderedItems.has(key)) {
+                  // Удаляем из корзины то, что уже заказано ИЛИ то, что уже в пути
+                  if (key !== "_catinfo" && (activeOrderedItems.has(key) || state.transitItems.has(key))) {
                       delete state.userBasket[key];
                       if (state.userBasket["_catinfo"]) delete state.userBasket["_catinfo"][key];
                   }
@@ -793,7 +813,6 @@
           document.getElementById('dynamic-list-container').innerHTML = `<div class="report-card"><div style="text-align:center; padding:20px; color:red; font-weight:bold;">Ошибка базы данных: ${err.message}</div></div>`;
       }
     }
-
     function renderProductList() {
       var html = "";
       
@@ -836,14 +855,22 @@
           let escName = escapeName(itemName);
           
           let isRepeat = state.unprocessedItems && state.unprocessedItems.has(itemName);
-          let repeatClass = isRepeat ? "repeat-item" : "";
-          let repeatLabel = isRepeat ? `<span class="repeat-item-text">Ожидает оформления</span>` : "";
+          // Проверяем, не находится ли товар в пути
+          let isTransit = state.transitItems && state.transitItems.has(itemName);
+          
+          let repeatClass = isRepeat ? "repeat-item" : (isTransit ? "repeat-item" : "");
+          let borderStyle = isTransit ? "border-left: 4px solid #1976D2;" : "";
+          let repeatLabel = isRepeat ? `<span class="repeat-item-text">Ожидает оформления</span>` : (isTransit ? `<span class="repeat-item-text" style="color:#1565C0;">Уже в пути 🚚</span>` : "");
 
-          html += `<div class="item ${repeatClass}">
-                    <div style="flex:1; padding-right:15px;">${repeatLabel}<span style="font-weight: 700; font-size: 15px; line-height: 1.3;">${itemName}</span></div>
+          html += `<div class="item ${repeatClass}" style="${borderStyle}">
+                    <div style="flex:1; padding-right:15px; opacity:${isTransit ? '0.6' : '1'};">${repeatLabel}<span style="font-weight: 700; font-size: 15px; line-height: 1.3;">${itemName}</span></div>
                     <div class="controls" id="controls-${safeId}">`;
           
-          if (state.currentMode === 'stoplist_fill') {
+          // Если товар В ПУТИ, блокируем его заказ
+          if (isTransit && (state.currentMode === 'order' || state.currentMode === 'new_shop')) {
+              html += `<div style="font-size:14px; font-weight:bold; color:#1565C0; padding:10px;">В пути</div>`;
+          }
+          else if (state.currentMode === 'stoplist_fill') {
               let isStopped = state.userBasket[itemName] === 'Закончилось';
               html += `<button style="border:none; padding:10px; border-radius:12px; font-weight:bold; background:${isStopped?'#FF5252':'#E8F5E9'}; color:${isStopped?'#fff':'#4CAF50'};" onclick="toggleStopItem('${escName}', '${cat}', this)">${isStopped?'ЗАКОНЧИЛОСЬ':'В НАЛИЧИИ'}</button>`;
           } 

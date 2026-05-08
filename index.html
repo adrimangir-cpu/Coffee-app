@@ -377,7 +377,16 @@
       mpBasket: [], 
       isMpEditMode: false
     };
-
+    
+   function cleanName(str) {
+        if (!str) return "";
+        return str.toLowerCase()
+            .replace(/ё/g, 'е')
+            .replace(/\([^)]*\)/g, '') 
+            .replace(/[0-9.,]+\s*(кг|г|мл|л|шт)/g, '') 
+            .replace(/(брекет|коробка)/g, '') 
+            .replace(/[^a-zа-я0-9]/g, ''); 
+    }
     function triggerHaptic() { 
         try { 
             if (window.Telegram && Telegram.WebApp && Telegram.WebApp.HapticFeedback) {
@@ -665,16 +674,20 @@
         } catch(e) { console.log(e); }
     }
 
+    // ==========================================
+    // 1. ИНИЦИАЛИЗАЦИЯ И ПРИНУДИТЕЛЬНАЯ ЧИСТКА КОРЗИНЫ
+    // ==========================================
     async function initWorkflow(mode) {
       triggerHaptic(); 
       state.currentMode = mode; 
       document.body.classList.add('workflow-active');
       state.userBasket = {}; 
-      if (state.unprocessedItems) state.unprocessedItems.clear();
       
-      // Создаем новый список для товаров "в пути"
+      // Сеты теперь будут хранить ОЧИЩЕННЫЕ названия
       state.transitItems = new Set();
-      
+      state.orderedItems = new Set(); 
+      state.unprocessedItems = new Set();
+
       showScreen('step-3');
       
       var mainBtn = document.getElementById('main-action-button'); 
@@ -713,43 +726,98 @@
               const ordersSnap = await database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(100).once("value");
               let shopOrders = [];
               ordersSnap.forEach(c => { let val = c.val(); if(val && typeof val === 'object') shopOrders.push(val); });
-              
-              state.unprocessedItems = new Set();
-              let activeOrderedItems = new Set();
-              let pendingOrderItems = new Set();
 
+              let orderedItems = new Set();
+              let transitItems = new Set();
+              let pendingItems = new Set();
+
+              // 1. ПОЛУЧАЕМ НЕДОВОЗЫ (В пути / Ожидает)
+              const missSnap = await database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value");
+              let hasCanceledMissings = false;
+
+              missSnap.forEach(c => {
+                  let m = c.val();
+                  if (!m || !m.name) return;
+                  let clean = cleanName(m.name); // Очищаем название
+
+                  if (m.status === 'transit' || m.status === 'pending') {
+                      transitItems.add(clean);
+                  }
+              });
+
+              // 2. ИЩЕМ ЗАКАЗАННОЕ В АКТИВНЫХ ЗАКАЗАХ
               shopOrders.forEach(o => {
-                  if ((o.mode === 'order' || o.mode === 'new_shop') && (!o.lenta_received && !o.ozon_received)) {
+                  if ((o.mode === 'order' || o.mode === 'new_shop') && (!o.lenta_received || !o.ozon_received)) {
                       let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
                       itemsArr.forEach(i => {
                           if (i && i.name && i.name !== "НЕТ ЗАКАЗА") {
+                              let clean = cleanName(i.name); // Очищаем название
                               let isOrdered = o.svod === true || o.ordered === true || i.status === 'ordered';
                               let isError = i.status === 'error' || i.bot_error === true;
 
-                              if (isOrdered && !isError) {
-                                  activeOrderedItems.add(i.name);
-                              } else if (!isOrdered && !isError) {
-                                  pendingOrderItems.add(i.name);
-                                  state.unprocessedItems.add(i.name);
+                              if (!isError) {
+                                  if (isOrdered) orderedItems.add(clean);
+                                  else pendingItems.add(clean);
                               }
                           }
                       });
                   }
               });
 
-              // --- ИНТЕГРАЦИЯ СТОП-ЛИСТА ---
+              // 3. Загружаем черновик (корзину)
+              restoreFromDraft();
+
+              // 4. ПРИНУДИТЕЛЬНАЯ ОЧИСТКА КОРЗИНЫ
+              for (let key in state.userBasket) {
+                  if (key === "_catinfo") continue;
+                  let cleanKey = cleanName(key); // Очищаем то, что в корзине
+
+                  // Если товар заказан, в пути или уже ждет оформления - УДАЛЯЕМ из корзины жестко
+                  if (orderedItems.has(cleanKey) || transitItems.has(cleanKey) || pendingItems.has(cleanKey)) {
+                      delete state.userBasket[key];
+                      if (state.userBasket["_catinfo"]) delete state.userBasket["_catinfo"][key];
+                  }
+              }
+
+              // 5. Обработка отмененных недовозов -> кидаем в корзину
+              missSnap.forEach(c => {
+                  let m = c.val();
+                  if (!m || !m.name) return;
+                  if (m.status === 'canceled' && !m.added_to_basket) {
+                      let qtyNum = parseFloat(m.qty) || 0;
+                      state.userBasket[m.name] = (state.userBasket[m.name] || 0) + qtyNum;
+
+                      let foundItem = Object.values(state.productCatalog).find(catItem => catItem && catItem.name === m.name);
+                      if(!state.userBasket["_catinfo"]) state.userBasket["_catinfo"] = {};
+                      state.userBasket["_catinfo"][m.name] = foundItem ? foundItem.cat : "Прочее";
+
+                      database.ref("missing_items/" + c.key).update({added_to_basket: true}); 
+                      hasCanceledMissings = true;
+                  }
+              });
+
+              if (hasCanceledMissings) showPopupError("Внимание", "⚠️ Отмененные администратором недовозы возвращены в вашу корзину.");
+
+              // 6. УМНЫЙ СТОП-ЛИСТ
               let latestStoplist = shopOrders.slice().reverse().find(o => o.mode === 'stoplist_fill');
               if (latestStoplist && latestStoplist.items) {
                   let itemsArr = Array.isArray(latestStoplist.items) ? latestStoplist.items : Object.values(latestStoplist.items);
                   itemsArr.forEach(i => {
                       if (i && i.name && i.qty === 'Закончилось') {
-                          let catItem = Object.values(state.productCatalog).find(c => c && c.name === i.name);
+                          let cleanStopName = cleanName(i.name); // Очищенное название из стоп-листа
+
+                          // Ищем в справочнике закупки
+                          let catItem = Object.values(state.productCatalog).find(c => c && cleanName(c.name) === cleanStopName);
+
                           if (catItem) {
-                              if (!activeOrderedItems.has(i.name) && !pendingOrderItems.has(i.name)) {
-                                  if (!state.userBasket[i.name]) {
-                                      state.userBasket[i.name] = 1;
+                              // Если товар НЕ заказан, НЕ в пути, НЕ ждет оформления
+                              if (!orderedItems.has(cleanStopName) && !transitItems.has(cleanStopName) && !pendingItems.has(cleanStopName)) {
+                                  // Добавляем в корзину идеальное название из справочника
+                                  let exactName = catItem.name;
+                                  if (state.userBasket[exactName] === undefined) {
+                                      state.userBasket[exactName] = 1;
                                       if (!state.userBasket["_catinfo"]) state.userBasket["_catinfo"] = {};
-                                      state.userBasket["_catinfo"][i.name] = catItem.cat || "Прочее";
+                                      state.userBasket["_catinfo"][exactName] = catItem.cat || "Прочее";
                                   }
                               }
                           }
@@ -757,51 +825,11 @@
                   });
               }
 
-              // --- ОБРАБОТКА НЕДОВОЗОВ ---
-              const missSnap = await database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value");
-              let hasCanceledMissings = false;
-              
-              missSnap.forEach(c => {
-                  let m = c.val();
-                  if (!m) return;
-                  
-                  // Ловим отмененные (возвращаем в корзину)
-                  if (m.status === 'canceled' && !m.added_to_basket) {
-                      let qtyNum = parseFloat(m.qty) || 0;
-                      state.userBasket[m.name] = (state.userBasket[m.name] || 0) + qtyNum;
-                      
-                      let foundItem = Object.values(state.productCatalog).find(catItem => catItem && catItem.name === m.name);
-                      if(!state.userBasket["_catinfo"]) state.userBasket["_catinfo"] = {};
-                      state.userBasket["_catinfo"][m.name] = foundItem ? foundItem.cat : "Прочее";
-                      
-                      database.ref("missing_items/" + c.key).update({added_to_basket: true}); 
-                      hasCanceledMissings = true;
-                  }
-                  
-                  // НОВОЕ: Ловим товары "В ПУТИ"
-                  if (m.status === 'transit' || m.status === 'pending') {
-                      state.transitItems.add(m.name);
-                      
-                      // Если товар в пути, удаляем его из авто-добавления (из стоп-листа или отмененных)
-                      if (state.userBasket[m.name]) {
-                          delete state.userBasket[m.name];
-                          if (state.userBasket["_catinfo"]) delete state.userBasket["_catinfo"][m.name];
-                      }
-                  }
-              });
+              // Обновляем глобальные переменные для отрисовки замков в UI
+              state.transitItems = transitItems;
+              state.orderedItems = orderedItems;
+              state.unprocessedItems = pendingItems;
 
-              if (hasCanceledMissings) showPopupError("Внимание", "⚠️ Отмененные администратором недовозы возвращены в вашу корзину.");
-
-              restoreFromDraft();
-
-              // --- ЗАЩИТА ОТ ДУБЛЕЙ ---
-              for (let key in state.userBasket) {
-                  // Удаляем из корзины то, что уже заказано ИЛИ то, что уже в пути
-                  if (key !== "_catinfo" && (activeOrderedItems.has(key) || state.transitItems.has(key))) {
-                      delete state.userBasket[key];
-                      if (state.userBasket["_catinfo"]) delete state.userBasket["_catinfo"][key];
-                  }
-              }
           } else {
               restoreFromDraft();
           }
@@ -813,6 +841,7 @@
           document.getElementById('dynamic-list-container').innerHTML = `<div class="report-card"><div style="text-align:center; padding:20px; color:red; font-weight:bold;">Ошибка базы данных: ${err.message}</div></div>`;
       }
     }
+    
     function renderProductList() {
       var html = "";
       

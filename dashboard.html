@@ -38,7 +38,7 @@
             color: white; 
             padding: 18px 25px; 
             border-radius: 12px; 
-            margin-bottom: 15px; 
+            margin-bottom: 10px; 
             display: flex; 
             justify-content: space-between; 
             align-items: center; 
@@ -53,12 +53,11 @@
         }
 
         /* =========================================
-           ВКЛАДКИ МЕНЮ (Закрепленные)
+           ВКЛАДКИ МЕНЮ (Сворачиваемые)
         ========================================= */
         .tabs { 
             display: flex; 
             gap: 10px; 
-            margin-bottom: 10px; 
             overflow-x: auto; 
             padding-bottom: 5px; 
         }
@@ -93,8 +92,8 @@
         }
         
         .action-container button, .action-container .tab-btn {
-            flex: 1 1 auto; /* Кнопки растягиваются на всю доступную ширину */
-            min-width: 140px; /* Минимальная ширина для мобилок */
+            flex: 1 1 auto; 
+            min-width: 140px; 
         }
 
         /* =========================================
@@ -309,7 +308,7 @@
         </div>
     </div>
 
-    <!-- Вкладки снова закреплены! -->
+    <!-- Вкладки всегда закреплены сверху -->
     <div class="tabs">
         <button class="tab-btn active" onclick="loadTab('orders', this)">📋 Свод и Заказы</button>
         <button class="tab-btn" onclick="loadTab('marketplace', this)">🛒 Маркетплейсы</button>
@@ -359,17 +358,10 @@
     let mpViewMonth = 'current';
 
     // Глобальные стейты для памяти UI
-    let openSvodDates = new Set();
-    let openSvodShops = new Set();
-    let stateHistoryOrdersSvod = false; 
-    let stateHistoryMp = false;
-    let stateHistoryMissing = false;
-    let stateHistoryStoplist = false;
     let expandedDivs = new Set();
-    
     const shopListAll = ["Бояринова", "Гагарина", "Вертолетчиков", "Липчанского", "Новокосино", "Новокосино 2", "Старое Павлино", "Красноказарменная", "Ухтомского ополчения"];
 
-    // 💡 СУПЕР-ФУНКЦИЯ ОЧИСТКИ НАЗВАНИЙ (Убирает скобки, весовки, пробелы)
+    // 💡 СУПЕР-ФУНКЦИЯ ОЧИСТКИ НАЗВАНИЙ
     function cleanName(str) {
         if (!str) return "";
         return str.toLowerCase()
@@ -380,28 +372,8 @@
             .replace(/[^a-zа-я0-9]/g, ''); 
     }
 
-    // Сохранение и загрузка состояния UI
-    function saveUIState() {
-        let st = {
-            openSvodDates: Array.from(openSvodDates),
-            openSvodShops: Array.from(openSvodShops),
-            stateHistoryOrdersSvod, stateHistoryMp, stateHistoryMissing, stateHistoryStoplist
-        };
-        localStorage.setItem('crm_ui_state', JSON.stringify(st));
-    }
-
     function loadUIState() {
         try {
-            let savedState = localStorage.getItem('crm_ui_state');
-            if (savedState) {
-                let st = JSON.parse(savedState);
-                openSvodDates = new Set(st.openSvodDates || []);
-                openSvodShops = new Set(st.openSvodShops || []);
-                stateHistoryOrdersSvod = st.stateHistoryOrdersSvod || false;
-                stateHistoryMp = st.stateHistoryMp || false;
-                stateHistoryMissing = st.stateHistoryMissing || false;
-                stateHistoryStoplist = st.stateHistoryStoplist || false;
-            }
             expandedDivs = new Set(JSON.parse(localStorage.getItem('expandedDivs') || '[]'));
         } catch(e) {}
     }
@@ -430,13 +402,17 @@
         document.getElementById('report-overlay').style.display = 'none';
     }
 
-    // Умное сворачивание/разворачивание любых блоков (flex или table-row)
+    // Умное сворачивание/разворачивание
     function toggleCatElements(cls, arrowId) { 
         let els = document.querySelectorAll('.' + cls);
         if (els.length === 0) return;
         
         let isOpening = els[0].style.display === 'none';
-        updateExpanded(cls, isOpening);
+        
+        // ВАЖНО: Мы НЕ сохраняем состояние для панелей с действиями (чтобы они сворачивались при обновлении)
+        if (!cls.includes('action')) {
+            updateExpanded(cls, isOpening);
+        }
         
         els.forEach(el => {
             if (el.tagName === 'TR') {
@@ -472,20 +448,6 @@
                 el.style.display = 'none';
             });
         }
-    }
-
-    function toggleSvodShopItems(safeShopDate) {
-        if(openSvodShops.has(safeShopDate)) openSvodShops.delete(safeShopDate);
-        else openSvodShops.add(safeShopDate);
-        saveUIState();
-        renderOrdersSvod();
-    }
-
-    function toggleSvodDate(safeDate) {
-        if(openSvodDates.has(safeDate)) openSvodDates.delete(safeDate);
-        else openSvodDates.add(safeDate);
-        saveUIState();
-        renderOrdersSvod();
     }
 
     async function triggerPcBuild(cmd) {
@@ -855,14 +817,17 @@
                                 i.bot_error = true; 
                                 changed = true;
                             } else {
+                                let isAutoKuper = false;
                                 let isLenta = vendor.includes('лента') || vendor.includes('lenta');
                                 if (isLenta && shopLentaSums[o.shop] > 0 && shopLentaSums[o.shop] < 2000) {
                                     vendor = 'купер (авто)';
+                                    isAutoKuper = true;
                                 }
                                 
                                 let price1 = parseFloat(catItem.price) || 0;
                                 let price2 = parseFloat(catItem.price2) || 0;
-                                let finalPrice = ((vendor.includes('купер') || vendor.includes('kuper')) && price2 > 0) ? price2 : price1;
+                                let isRegularKuper = !isAutoKuper && (vendor.includes('купер') || vendor.includes('kuper'));
+                                let finalPrice = (isRegularKuper && price2 > 0) ? price2 : price1;
 
                                 let cost = finalPrice * parseFloat(i.qty);
                                 totalSvod += cost;
@@ -1033,8 +998,15 @@
             let itemStatus = inp.getAttribute('data-status');
             let qty = parseFloat(inp.value) || 0;
             
+            let isAutoKuper = false;
+            let isLenta = vendor.includes('лента') || vendor.includes('lenta');
+            if (isLenta && shopLentaSums[targetShop] > 0 && shopLentaSums[targetShop] < 2000) {
+                vendor = 'купер (авто)';
+                isAutoKuper = true;
+            }
+
             if (!shopLentaSums[targetShop]) shopLentaSums[targetShop] = 0;
-            if (!isDeleted && !inTransit && itemStatus !== 'error' && (vendor.includes('лента') || vendor.includes('lenta'))) {
+            if (!isDeleted && !inTransit && itemStatus !== 'error' && (isLenta || isAutoKuper)) {
                 shopLentaSums[targetShop] += (qty * price1);
             }
         });
@@ -1051,7 +1023,15 @@
                 let catItem = Object.values(cachedData.catalogOrder).find(c => c && c.name === name) || {};
                 let price1 = parseFloat(catItem.price) || 0;
                 if (!shopLentaSums[shop]) shopLentaSums[shop] = 0;
-                if (vendor.includes('лента') || vendor.includes('lenta')) {
+                
+                let isAutoKuper = false;
+                let isLenta = vendor.includes('лента') || vendor.includes('lenta');
+                if (isLenta && shopLentaSums[shop] > 0 && shopLentaSums[shop] < 2000) {
+                    vendor = 'купер (авто)';
+                    isAutoKuper = true;
+                }
+
+                if (isLenta || isAutoKuper) {
                     shopLentaSums[shop] += (qty * price1);
                 }
             }
@@ -1069,24 +1049,26 @@
             let isDeleted = inp.getAttribute('data-deleted') === 'true';
             let itemStatus = inp.getAttribute('data-status');
             let qty = parseFloat(inp.value) || 0;
-            let isOzon = vendor.includes('озон') || vendor.includes('ozon');
 
-            let catItem = Object.values(cachedData.catalogOrder).find(c => c && c.name === name) || {};
+            let isAutoKuper = false;
             let isLenta = vendor.includes('лента') || vendor.includes('lenta');
             if (isLenta && shopLentaSums[targetShop] > 0 && shopLentaSums[targetShop] < 2000) {
                 vendor = 'купер (авто)';
+                isAutoKuper = true;
             }
 
+            let catItem = Object.values(cachedData.catalogOrder).find(c => c && c.name === name) || {};
             let price1 = parseFloat(catItem.price) || 0;
             let price2 = parseFloat(catItem.price2) || 0;
-            let finalPrice = ((vendor.includes('купер') || vendor.includes('kuper')) && price2 > 0) ? price2 : price1;
+            let isRegularKuper = !isAutoKuper && (vendor.includes('купер') || vendor.includes('kuper'));
+            let finalPrice = (isRegularKuper && price2 > 0) ? price2 : price1;
             
             let cost = finalPrice * qty;
             if (inTransit || itemStatus === 'error' || isDeleted) cost = 0;
             
             if (vendor.includes('лента') || vendor.includes('lenta')) {
                 totalLenta += cost;
-            } else if (isOzon) {
+            } else if (vendor.includes('озон') || vendor.includes('ozon')) {
                 totalOzon += cost;
             } else if (vendor.includes('купер') || vendor.includes('kuper')) {
                 totalKuper += cost;
@@ -1103,22 +1085,24 @@
 
             if(name && qty > 0) {
                 let catItem = Object.values(cachedData.catalogOrder).find(c => c && c.name === name) || {};
-                let isOzon = vendor.includes('озон') || vendor.includes('ozon');
-
+                
+                let isAutoKuper = false;
                 let isLenta = vendor.includes('лента') || vendor.includes('lenta');
                 if (isLenta && shopLentaSums[shop] > 0 && shopLentaSums[shop] < 2000) {
                     vendor = 'купер (авто)';
+                    isAutoKuper = true;
                 }
 
                 let price1 = parseFloat(catItem.price) || 0;
                 let price2 = parseFloat(catItem.price2) || 0;
-                let finalPrice = ((vendor.includes('купер') || vendor.includes('kuper')) && price2 > 0) ? price2 : price1;
+                let isRegularKuper = !isAutoKuper && (vendor.includes('купер') || vendor.includes('kuper'));
+                let finalPrice = (isRegularKuper && price2 > 0) ? price2 : price1;
 
                 let cost = finalPrice * qty;
 
                 if (vendor.includes('лента') || vendor.includes('lenta')) {
                     totalLenta += cost;
-                } else if (isOzon) {
+                } else if (vendor.includes('озон') || vendor.includes('ozon')) {
                     totalOzon += cost;
                 } else if (vendor.includes('купер') || vendor.includes('kuper')) {
                     totalKuper += cost;
@@ -1449,6 +1433,13 @@
                     let actualVendor = (tempSvodVendor[dateStr] && tempSvodVendor[dateStr][shop] && tempSvodVendor[dateStr][shop][name]) ? tempSvodVendor[dateStr][shop][name] : vendor;
                     let actualShop = (tempSvodShop[dateStr] && tempSvodShop[dateStr][shop] && tempSvodShop[dateStr][shop][name]) ? tempSvodShop[dateStr][shop][name] : shop;
                     
+                    let isAutoKuper = false;
+                    let isLenta = actualVendor.toLowerCase().includes('лента') || actualVendor.toLowerCase().includes('lenta');
+                    if (isLenta && shopLentaSums[actualShop] > 0 && shopLentaSums[actualShop] < 2000) {
+                        actualVendor = 'Купер (Авто)';
+                        isAutoKuper = true;
+                    }
+
                     if (!shopLentaSums[actualShop]) shopLentaSums[actualShop] = 0;
 
                     let actualQty = (tempSvodQty[dateStr] && tempSvodQty[dateStr][shop] && tempSvodQty[dateStr][shop][name] !== undefined) ? tempSvodQty[dateStr][shop][name] : itemsObj[name].qty;
@@ -1461,7 +1452,7 @@
                     if (!svodDataByDate[dateStr][shop].all_svod && baseStatus !== 'from_stoplist') baseStatus = 'pending';
                     let itemStatus = (tempSvodStatus[dateStr] && tempSvodStatus[dateStr][shop] && tempSvodStatus[dateStr][shop][name]) ? tempSvodStatus[dateStr][shop][name] : baseStatus;
 
-                    if (!isDeleted && !inTransit && itemStatus !== 'error' && (actualVendor.toLowerCase().includes('лента') || actualVendor.toLowerCase().includes('lenta'))) {
+                    if (!isDeleted && !inTransit && itemStatus !== 'error' && (isLenta || isAutoKuper)) {
                         shopLentaSums[actualShop] += (actualQty * price1);
                     }
                 });
@@ -1477,7 +1468,7 @@
             return new Date(y2, m2-1, d2) - new Date(y1, m1-1, d1); 
         });
 
-        let html = `<h3 style="color:#311B92; font-size:24px; margin-top:0; margin-bottom:15px;">📊 Ожидают сборки</h3>`;
+        let html = `<h3 style="color:#311B92; font-size:22px; margin-top:0; margin-bottom:15px;">📊 Ожидают сборки</h3>`;
 
         if (sortedDates.length > 0 || isSvodEditMode) {
             let isActionsOpen = expandedDivs.has('svod-action-buttons');
@@ -1524,7 +1515,7 @@
         } else {
             sortedDates.forEach(dateStr => {
                 let safeDate = getSafeId(dateStr);
-                let isDateOpen = openSvodDates.has(safeDate) || expandedDivs.has(`svodlvl2_${safeDate}`);
+                let isDateOpen = expandedDivs.has(`svodlvl2_${safeDate}`);
                 let displayDate = isDateOpen ? 'table-row' : 'none';
 
                 html += `<tr class="cat-group-header" onclick="toggleCatElements('svodlvl2_${safeDate}', 'arrow_sdate_${safeDate}')">
@@ -1536,7 +1527,7 @@
                 let shopsObj = svodDataByDate[dateStr];
                 Object.keys(shopsObj).sort().forEach(shop => {
                     let safeShopDate = getSafeId(dateStr + shop);
-                    let isShopOpen = openSvodShops.has(safeShopDate) || expandedDivs.has(`svoditem_${safeShopDate}`);
+                    let isShopOpen = expandedDivs.has(`svoditem_${safeShopDate}`);
                     let displayShop = (isDateOpen && isShopOpen) ? 'table-row' : 'none';
 
                     let displayName = shop === 'Красноказарменная' ? 'МЭИ' : shop;
@@ -1575,9 +1566,11 @@
                             let isDeleted = svodDeletions.some(d => d.date === dateStr && d.shop === shop && d.name === name);
                             let displayQty = isDeleted ? 0 : actualQty;
 
+                            let isAutoKuper = false;
                             let isLenta = actualVendor.toLowerCase().includes('лента') || actualVendor.toLowerCase().includes('lenta');
                             if (isLenta && shopLentaSums[actualShop] > 0 && shopLentaSums[actualShop] < 2000) {
                                 actualVendor = 'Купер (Авто)';
+                                isAutoKuper = true;
                             }
 
                             let baseStatus = shopsObj[shop].items[name].status;
@@ -1594,9 +1587,11 @@
                             let isRepeat = isInLastOrder || missingStat === 'pending';
                             let isOzon = actualVendor.toLowerCase().includes('озон') || actualVendor.toLowerCase().includes('ozon');
 
+                            // Логика цены: Купер(Авто) сохраняет Цену 1
                             let price1 = parseFloat(catItem.price) || 0;
                             let price2 = parseFloat(catItem.price2) || 0;
-                            let finalPrice = ((actualVendor.toLowerCase().includes('купер') || actualVendor.toLowerCase().includes('kuper')) && price2 > 0) ? price2 : price1;
+                            let isRegularKuper = !isAutoKuper && (actualVendor.toLowerCase().includes('купер') || actualVendor.toLowerCase().includes('kuper'));
+                            let finalPrice = (isRegularKuper && price2 > 0) ? price2 : price1;
 
                             let cost = finalPrice * displayQty;
                             if (inTransit || itemStatus === 'error') {
@@ -1605,7 +1600,7 @@
                             
                             if (actualVendor.toLowerCase().includes('лента')) totalLenta += cost;
                             else if (isOzon) totalOzon += cost;
-                            else if (actualVendor.toLowerCase().includes('купер')) totalKuper += cost;
+                            else if (actualVendor.toLowerCase().includes('купер') || actualVendor.toLowerCase().includes('kuper')) totalKuper += cost;
 
                             let link1 = catItem.link ? `<a href="${catItem.link}" target="_blank" style="color:#0288d1; font-weight:bold;">🔗 Осн</a>` : "";
                             let link2 = catItem.link2 ? `<a href="${catItem.link2}" target="_blank" style="color:#e53935; font-weight:bold; margin-left:8px;">🔗 Рез</a>` : "";
@@ -1672,7 +1667,7 @@
                                         ${shopSelectHtml}
                                     </td>
                                     <td style="text-align:center;">
-                                        <input type="number" class="edit-svod-input" data-date="${dateStr}" data-shop="${htmlShop}" data-item="${htmlName}" data-vendor="${vendor}" data-price="${finalPrice}" data-repeat="${isRepeat}" data-transit="${inTransit}" data-deleted="${isDeleted}" data-status="${itemStatus}" value="${actualQty}" ${isDeleted || inTransit ? 'disabled' : ''} oninput="recalcSvodTotals()" style="width: 70px; text-align: center; font-size: 15px; font-weight: bold; color: ${isDeleted ? '#aaa' : '#311b92'}; border: 2px solid ${isDeleted ? '#eee' : '#7E57C2'}; border-radius: 6px; padding: 4px;">
+                                        <input type="number" class="edit-svod-input" data-date="${dateStr}" data-shop="${htmlShop}" data-item="${htmlName}" data-vendor="${vendor}" data-price="${price1}" data-repeat="${isRepeat}" data-transit="${inTransit}" data-deleted="${isDeleted}" data-status="${itemStatus}" value="${actualQty}" ${isDeleted || inTransit ? 'disabled' : ''} oninput="recalcSvodTotals()" style="width: 70px; text-align: center; font-size: 15px; font-weight: bold; color: ${isDeleted ? '#aaa' : '#311b92'}; border: 2px solid ${isDeleted ? '#eee' : '#7E57C2'}; border-radius: 6px; padding: 4px;">
                                     </td>
                                     <td style="text-align:center;">${statusBadge}</td>
                                     <td style="font-size:14px; color:${isDeleted ? '#aaa' : '#333'}">${displayVendorCell}</td>
@@ -1764,12 +1759,14 @@
                     </div>`;
         }
 
+        let isOrdHistOpen = expandedDivs.has('history_orders_list');
         html += `
-            <div onclick="stateHistoryOrdersSvod = !stateHistoryOrdersSvod; saveUIState(); renderOrdersSvod();" style="cursor:pointer; background:#ede7f6; padding:18px; border-radius:12px; font-weight:900; color:#311B92; margin-top:40px; display:flex; justify-content:space-between; font-size:18px;">
-                <span>🕒 История операций (Последние 150 заказов)</span><span id="arrow_hist_ord">${stateHistoryOrdersSvod ? '▲' : '▼'}</span>
+            <div class="cat-group-header" style="margin-top:40px; padding: 14px 20px; border-radius: 12px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.05);" onclick="toggleCatElements('history_orders_list', 'arrow_hist_ord')">
+                <span style="font-size:16px;">🕒 История операций (Последние 150 заказов)</span><span id="arrow_hist_ord">${isOrdHistOpen ? '▲' : '▼'}</span>
             </div>
-            <div class="card history_orders_list" style="display:${stateHistoryOrdersSvod ? 'block' : 'none'}; margin-top:15px;">
-                <table>
+            <div class="history_orders_list action-container" style="display: ${isOrdHistOpen ? 'block' : 'none'};">
+            <div class="card" style="padding:15px; margin-bottom: 20px; width:100%;">
+                <table style="min-width:900px;">
                     <tr>
                         <th>Кофейня</th>
                         <th>Тип</th>
@@ -1805,7 +1802,7 @@
                 </tr>`;
             });
         }
-        html += `</table></div>`;
+        html += `</table></div></div>`;
         box.innerHTML = html;
       } catch (e) {
           console.error(e);
@@ -2101,15 +2098,16 @@
         let btnEditText = isMpEditMode ? "💾 Сохранить изменения" : "✏️ Редактировать";
         
         let headerLabel = mpViewMonth === 'current' ? "Текущий месяц" : "Прошлый месяц";
+        let isActionsOpen = expandedDivs.has('mp-action-buttons');
         
         let html = `
             <h3 style="color:#4A148C; margin-top:0; margin-bottom:15px; font-size:24px;">🛒 Маркетплейсы (${headerLabel})</h3>
             
             <div class="cat-group-header" style="padding: 12px 15px; border-radius: 12px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.05);" onclick="toggleCatElements('mp-action-buttons', 'arrow_mp_actions')">
                 <span style="font-size:16px; color:#4A148C; font-weight:900;">⚡ Действия и Фильтры</span>
-                <span id="arrow_mp_actions">${expandedDivs.has('mp-action-buttons') ? '▲' : '▼'}</span>
+                <span id="arrow_mp_actions">${isActionsOpen ? '▲' : '▼'}</span>
             </div>
-            <div class="mp-action-buttons action-container" style="display: ${expandedDivs.has('mp-action-buttons') ? 'flex' : 'none'}; gap: 10px; flex-wrap: wrap; margin-bottom: 20px;">
+            <div class="mp-action-buttons action-container" style="display: ${isActionsOpen ? 'flex' : 'none'}; gap: 10px; flex-wrap: wrap; margin-bottom: 20px;">
                 <button class="tab-btn ${mpViewMonth === 'current' ? 'active' : ''}" style="flex: 1 1 auto; padding:10px 20px; font-size:15px;" onclick="mpViewMonth='current'; renderMarketplaceTab()">Текущий месяц</button>
                 <button class="tab-btn ${mpViewMonth === 'prev' ? 'active' : ''}" style="flex: 1 1 auto; padding:10px 20px; font-size:15px; background: ${mpViewMonth === 'prev' ? 'linear-gradient(135deg, #FF9800 0%, #F57C00 100%)' : '#fff'}; color: ${mpViewMonth === 'prev' ? '#fff' : '#7E57C2'}" onclick="mpViewMonth='prev'; renderMarketplaceTab()">Прошлый месяц</button>
                 <button id="mp-btn-edit" class="btn-add" style="flex: 1 1 auto; background:${btnEditColor};" onclick="isMpEditMode ? saveMpEdits() : toggleMpEdit()">${btnEditText}</button>
@@ -2182,7 +2180,7 @@
         
         let isSvodOpen = expandedDivs.has('mp_svod_table');
         html += `
-            <div class="cat-group-header" style="margin-top:40px; background:#e1bee7; padding:18px; border-radius:12px; font-weight:900; color:#4A148C; display:flex; justify-content:space-between; font-size:18px; text-transform:uppercase;" onclick="toggleCatElements('mp_svod_table', 'arrow_mp_svod')">
+            <div class="cat-group-header" style="margin-top:40px; background:#e1bee7; padding:18px; border-radius:12px; font-weight:900; color:#4A148C; display:flex; justify-content:space-between; font-size:16px; text-transform:uppercase;" onclick="toggleCatElements('mp_svod_table', 'arrow_mp_svod')">
                 <span>СВОДНАЯ ТАБЛИЦА (${headerLabel})</span><span id="arrow_mp_svod">${isSvodOpen ? '▲' : '▼'}</span>
             </div>
             <div class="card mp_svod_table" style="display:${isSvodOpen ? 'block' : 'none'}; margin-top:5px; background:#fdfcff; border:2px solid #e1bee7;">
@@ -2202,11 +2200,14 @@
 
         let hasAnyHistory = shops.some(s => historyData[s].length > 0);
         if (hasAnyHistory) {
+            let isHistOpen = expandedDivs.has('mphist_container');
             html += `
-                <div onclick="stateHistoryMp = !stateHistoryMp; saveUIState(); renderMarketplaceTab();" style="cursor:pointer; background:#ede7f6; padding:18px; border-radius:12px; font-weight:900; color:#311B92; margin-top:40px; display:flex; justify-content:space-between; font-size:18px;">
-                    <span>🕒 Вся старая история (За всё время)</span><span id="arrow_hist_mp">${stateHistoryMp ? '▲' : '▼'}</span>
+                <div class="cat-group-header" style="padding: 14px 20px; border-radius: 12px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; margin-top:40px; box-shadow: 0 2px 8px rgba(0,0,0,0.05);" onclick="toggleCatElements('mphist_container', 'arrow_hist_mp')">
+                    <span style="font-size:16px; color:#311B92; font-weight:900;">🕒 Вся старая история (За всё время)</span>
+                    <span id="arrow_hist_mp">${isHistOpen ? '▲' : '▼'}</span>
                 </div>
-                <div style="display:${stateHistoryMp ? 'block' : 'none'}; margin-top:15px;" class="card">`;
+                <div class="mphist_container action-container" style="display: ${isHistOpen ? 'block' : 'none'}; flex-direction: column; margin-bottom: 20px; width: 100%;">
+                <div class="card" style="padding:15px; margin-bottom: 20px; width:100%; box-sizing: border-box;">`;
                 
             shops.forEach(s => {
                 if (historyData[s].length === 0) return;
@@ -2241,7 +2242,7 @@
                 });
                 html += `</table></div>`;
             });
-            html += `</div>`;
+            html += `</div></div>`;
         }
         box.innerHTML = html;
     }
@@ -2515,10 +2516,17 @@
         let html = activeHtml + `<p style='margin-top:0px; margin-bottom:30px; font-size:15px; color:#777; background:#fff9c4; padding:15px; border-radius:10px;'>💡 <b>Подсказка:</b> Если выбрать статус <b>"НЕТ В НАЛИЧИИ"</b>, товар вернется в корзину сотруднику в мини-приложении.</p>`;
         
         if (hasHistory) {
-            html += `<div onclick="stateHistoryMissing = !stateHistoryMissing; saveUIState(); renderMissing();" style="cursor:pointer; background:#ede7f6; padding:18px; border-radius:12px; font-weight:900; color:#311B92; margin-top:20px; display:flex; justify-content:space-between; font-size:18px;">
-                        <span>🕒 История недовозов (за 30 дней)</span><span id="arrow_hist_miss">${stateHistoryMissing ? '▲' : '▼'}</span>
+            let isHistOpen = expandedDivs.has('miss-history-container');
+            html += `<div class="cat-group-header" style="padding: 14px 20px; border-radius: 12px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.05);" onclick="toggleCatElements('miss-history-container', 'arrow_hist_miss')">
+                        <span style="font-size:16px; color:#311B92; font-weight:900;">🕒 История недовозов (за 30 дней)</span>
+                        <span id="arrow_hist_miss">${isHistOpen ? '▲' : '▼'}</span>
                      </div>
-                     <div style="display:${stateHistoryMissing ? 'block' : 'none'}; margin-top:15px;" class="card">${historyHtml}</table></div>`;
+                     <div class="miss-history-container action-container" style="display: ${isHistOpen ? 'block' : 'none'}; flex-direction: column; margin-bottom: 20px; width: 100%;">
+                        <div class="card" style="padding:15px; width:100%; box-sizing: border-box;">
+                            ${historyHtml}
+                        </table>
+                        </div>
+                     </div>`;
         }
         box.innerHTML = html;
     }
@@ -2598,18 +2606,7 @@
             }
         });
         
-        let isActionsOpen = expandedDivs.has('stop-cat-actions');
-        let html = `
-            <h3 style="margin-top:0; margin-bottom:15px; font-size:24px; color:#D50000;">🛑 Актуальные Стоп-листы на точках</h3>
-            <div class="cat-group-header" style="padding: 12px 15px; border-radius: 12px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; box-shadow: 0 2px 8px rgba(0,0,0,0.05);" onclick="toggleCatElements('stop-cat-actions', 'arrow_stopcat_actions')">
-                <span style="font-size:16px; color:#D50000; font-weight:900;">⚡ Действия</span>
-                <span id="arrow_stopcat_actions">${isActionsOpen ? '▲' : '▼'}</span>
-            </div>
-            <div class="stop-cat-actions action-container" style="display: ${isActionsOpen ? 'flex' : 'none'}; gap: 10px; flex-wrap: wrap; margin-bottom: 15px;">
-                <button class="btn-add" style="flex: 1 1 auto; background: linear-gradient(135deg, #FF5252 0%, #D32F2F 100%);" onclick="addItemStoplist()">➕ Добавить позицию</button>
-                <button class="btn-save" style="flex: 1 1 auto; padding:12px 18px;" onclick="saveCatalog()">💾 Сохранить в базу</button>
-            </div>
-            <div style="display:flex; flex-wrap:wrap; gap:20px;">`;
+        let html = `<h3 style="color:#D50000; margin-top:0; margin-bottom:20px; font-size:24px;">🛑 Актуальные Стоп-листы на точках</h3><div style="display:flex; flex-wrap:wrap; gap:20px;">`;
         let orderCatalog = cachedData.catalogOrder || cachedData.catalog || {};
         
         shops.forEach(s => {
@@ -2730,12 +2727,16 @@
         }
         stoplistHistoryHtml += `</table>`;
 
+        let isHistOpen = expandedDivs.has('stoplist-history-container');
         html += `
-        <div onclick="stateHistoryStoplist = !stateHistoryStoplist; saveUIState(); renderStoplists();" style="cursor:pointer; background:#ede7f6; padding:18px; border-radius:12px; font-weight:900; color:#311B92; margin-top:40px; display:flex; justify-content:space-between; font-size:18px;">
-            <span>🕒 История стоп-листов (за 30 дней)</span><span id="arrow_hist_stop">${stateHistoryStoplist ? '▲' : '▼'}</span>
+        <div class="cat-group-header" style="padding: 14px 20px; border-radius: 12px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; margin-top:40px; box-shadow: 0 2px 8px rgba(0,0,0,0.05);" onclick="toggleCatElements('stoplist-history-container', 'arrow_hist_stop')">
+            <span style="font-size:16px; color:#311B92; font-weight:900;">🕒 История стоп-листов (за 30 дней)</span>
+            <span id="arrow_hist_stop">${isHistOpen ? '▲' : '▼'}</span>
         </div>
-        <div class="card" style="display:${stateHistoryStoplist ? 'block' : 'none'}; margin-top:15px; padding:20px;">
-            ${stoplistHistoryHtml}
+        <div class="stoplist-history-container action-container" style="display: ${isHistOpen ? 'block' : 'none'}; flex-direction: column; margin-bottom: 20px; width: 100%;">
+            <div class="card" style="padding:15px; width:100%; box-sizing: border-box;">
+                ${stoplistHistoryHtml}
+            </div>
         </div>`;
 
         box.innerHTML = html;
@@ -2783,7 +2784,7 @@
         
         let isActionsOpen = expandedDivs.has('chk-action-buttons');
         let html = `
-            <h3 style="color:#1a237e; font-size:24px; margin-top:0; margin-bottom:15px;">✅ Сводная Таблица Чек-листов</h3>
+            <h3 style="color:#1a237e; font-size:24px; margin-top:0; margin-bottom:15px;">✅ Сводная Таблица Чек-листов (Актуальные данные)</h3>
             <div class="cat-group-header" style="padding: 12px 15px; border-radius: 12px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; box-shadow: 0 2px 8px rgba(0,0,0,0.05);" onclick="toggleCatElements('chk-action-buttons', 'arrow_chk_actions')">
                 <span style="font-size:16px; color:#1a237e; font-weight:900;">⚡ Действия</span>
                 <span id="arrow_chk_actions">${isActionsOpen ? '▲' : '▼'}</span>

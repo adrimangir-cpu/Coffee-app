@@ -674,7 +674,7 @@
         } catch(e) { console.log(e); }
     }
 
-   // ==========================================
+ // ==========================================
     // 1. ИНИЦИАЛИЗАЦИЯ И ПРИНУДИТЕЛЬНАЯ ЧИСТКА КОРЗИНЫ
     // ==========================================
     async function initWorkflow(mode) {
@@ -746,19 +746,30 @@
                   }
               });
 
-              // 2. ИЩЕМ ЗАКАЗАННОЕ В АКТИВНЫХ ЗАКАЗАХ
+              // 2. ИЩЕМ ЗАКАЗАННОЕ В АКТИВНЫХ ЗАКАЗАХ (с умной проверкой приемки)
               shopOrders.forEach(o => {
-                  if ((o.mode === 'order' || o.mode === 'new_shop') && (!o.lenta_received || !o.ozon_received)) {
+                  if (o.mode === 'order' || o.mode === 'new_shop') {
                       let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
                       itemsArr.forEach(i => {
                           if (i && i.name && i.name !== "НЕТ ЗАКАЗА") {
-                              let clean = cleanName(i.name); // Очищаем название
-                              let isOrdered = o.svod === true || o.ordered === true || i.status === 'ordered';
-                              let isError = i.status === 'error' || i.bot_error === true;
+                              let clean = cleanName(i.name);
+                              
+                              // Определяем, к какому поставщику относится этот конкретный товар
+                              let catItem = Object.values(state.productCatalog).find(c => c && cleanName(c.name) === clean);
+                              let vendor = (i.vendor || (catItem ? catItem.vendor : 'Лента')).toLowerCase();
+                              let isOzon = vendor.includes('озон') || vendor.includes('ozon');
+                              
+                              // Если товар от этого поставщика УЖЕ ПРИНЯТ в этом заказе — он свободен для нового заказа
+                              let isReceived = isOzon ? o.ozon_received : o.lenta_received;
+                              
+                              if (!isReceived) {
+                                  let isOrdered = o.svod === true || o.ordered === true || i.status === 'ordered';
+                                  let isError = i.status === 'error' || i.bot_error === true;
 
-                              if (!isError) {
-                                  if (isOrdered) orderedItems.add(clean);
-                                  else pendingItems.add(clean);
+                                  if (!isError) {
+                                      if (isOrdered) orderedItems.add(clean);
+                                      else pendingItems.add(clean);
+                                  }
                               }
                           }
                       });

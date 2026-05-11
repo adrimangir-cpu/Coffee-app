@@ -1637,7 +1637,7 @@ async function validateAndSubmit(isFromModal) {
         }
     }
 
-   async function showMyLastOrder() {
+  async function showMyLastOrder() {
         showReportOverlay("Считаю суммарный заказ...");
         try {
             const snap = await database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(50).once("value");
@@ -1655,46 +1655,43 @@ async function validateAndSubmit(isFromModal) {
                  return;
             }
 
-            // Группируем заказы по дате (чтобы склеить дополненные в течение одного дня)
-            let ordersByDate = {};
-            allOrders.forEach(o => {
-                let dStr = new Date(o.timestamp).toLocaleDateString('ru-RU');
-                if (!ordersByDate[dStr]) {
-                    ordersByDate[dStr] = { timestamp: o.timestamp, orders: [] };
-                }
-                ordersByDate[dStr].orders.push(o);
-                if (o.timestamp > ordersByDate[dStr].timestamp) {
-                    ordersByDate[dStr].timestamp = o.timestamp; // Сохраняем самый свежий таймштамп дня
-                }
-            });
+            // Сортируем все заказы по времени: от самых новых к старым
+            allOrders.sort((a,b) => (b.timestamp || 0) - (a.timestamp || 0));
 
-            // Сортируем даты по убыванию (сначала самые новые)
-            let sortedDates = Object.keys(ordersByDate).sort((a,b) => ordersByDate[b].timestamp - ordersByDate[a].timestamp);
+            // Берем строго два последних объекта заказа (Текущий и Прошлый)
+            let currentOrderObj = allOrders[0];
+            let prevOrderObj = allOrders.length > 1 ? allOrders[1] : null;
 
-            // Берем только текущий и предыдущий дни
-            let currentOrderDate = sortedDates[0];
-            let prevOrderDate = sortedDates.length > 1 ? sortedDates[1] : null;
-
-            // Вспомогательная функция для агрегации заказа за один день
-            const aggregateOrders = (ordersArray) => {
+            // Вспомогательная функция для сборки одного конкретного заказа
+            const aggregateSingleOrder = (o) => {
                 let aggregated = {};
-                ordersArray.forEach(o => {
-                    let items = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
-                    items.forEach(i => {
-                        if (i && i.name && i.name !== "НЕТ ЗАКАЗА") {
-                            if (!aggregated[i.name]) aggregated[i.name] = { qty: 0, status: 'pending', is_error: false };
-                            aggregated[i.name].qty += parseFloat(i.qty) || 0;
-                            if (o.ordered || o.svod) aggregated[i.name].status = 'ordered';
-                            if (i.status === 'error' || i.bot_error) aggregated[i.name].is_error = true;
+                if (!o) return aggregated;
+                
+                let items = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
+                items.forEach(i => {
+                    if (i && i.name && i.name !== "НЕТ ЗАКАЗА") {
+                        if (!aggregated[i.name]) aggregated[i.name] = { qty: 0, status: 'pending', is_error: false };
+                        aggregated[i.name].qty += parseFloat(i.qty) || 0;
+                        
+                        // 💡 ИСПРАВЛЕНИЕ: Статус зависит СТРОГО от индивидуального статуса товара или глобального "Заказы оформлены"
+                        if (i.status === 'ordered' || o.ordered === true) {
+                            aggregated[i.name].status = 'ordered';
+                        } else if (i.status === 'from_stoplist') {
+                            aggregated[i.name].status = 'from_stoplist';
                         }
-                    });
+                        
+                        if (i.status === 'error' || i.bot_error === true) {
+                            aggregated[i.name].is_error = true;
+                        }
+                    }
                 });
                 return aggregated;
             };
 
-            let currentAgg = aggregateOrders(ordersByDate[currentOrderDate].orders);
-            let prevAgg = prevOrderDate ? aggregateOrders(ordersByDate[prevOrderDate].orders) : null;
+            let currentAgg = aggregateSingleOrder(currentOrderObj);
+            let prevAgg = aggregateSingleOrder(prevOrderObj);
 
+            // Получаем недовозы для подсветки ошибок
             const missSnap = await database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value");
             let activeMissing = {};
             missSnap.forEach(c => {
@@ -1702,7 +1699,7 @@ async function validateAndSubmit(isFromModal) {
                 if (m && m.status !== 'arrived' && m.status !== 'canceled') activeMissing[m.name] = true;
             });
 
-            // Задаем вкладку по умолчанию, если она еще не открыта
+            // Задаем вкладку по умолчанию
             if (!state.currentMyOrderTab) state.currentMyOrderTab = 'current';
 
             let html = "";
@@ -1713,7 +1710,7 @@ async function validateAndSubmit(isFromModal) {
                         <button onclick="state.currentMyOrderTab = 'prev'; showMyLastOrder();" style="flex: 1; padding: 12px; border: none; border-radius: 10px; font-size: 15px; font-weight: 900; transition: 0.2s; cursor: pointer; ${state.currentMyOrderTab === 'prev' ? 'background: #9C27B0; color: #fff;' : 'background: transparent; color: #888;'}">Прошлый заказ</button>
                      </div>`;
 
-            // Функция отрисовки самой карточки с товарами
+            // Функция отрисовки карточки
             const renderOrderBlock = (aggData, dateStr, title, isMain) => {
                 if (!aggData || Object.keys(aggData).length === 0) {
                     return `<div class="report-card" style="margin-bottom:15px; border: 2px solid ${isMain ? '#7E57C2' : '#9C27B0'};">
@@ -1734,6 +1731,8 @@ async function validateAndSubmit(isFromModal) {
                     let stHtml = "";
                     if (isError) {
                          stHtml = `<span style="color:#c62828; font-size:13px; font-weight:900; background:#ffebee; padding:3px 8px; border-radius:6px;">Нет в наличии ❌</span>`;
+                    } else if (item.status === 'from_stoplist') {
+                         stHtml = `<span style="color:#c62828; font-size:13px; font-weight:900; background:#ffcdd2; padding:3px 8px; border-radius:6px;">Из стоп-листа 🛑</span>`;
                     } else if (item.status === 'ordered') {
                          stHtml = `<span style="color:#2e7d32; font-size:13px; font-weight:900; background:#e8f5e9; padding:3px 8px; border-radius:6px;">Заказано ✅</span>`;
                     } else {
@@ -1749,11 +1748,14 @@ async function validateAndSubmit(isFromModal) {
                 return blockHtml;
             };
 
+            let currentOrderDateStr = currentOrderObj ? new Date(currentOrderObj.timestamp).toLocaleDateString('ru-RU') + ' ' + new Date(currentOrderObj.timestamp).toLocaleTimeString('ru-RU', {hour: '2-digit', minute:'2-digit'}) : '---';
+            let prevOrderDateStr = prevOrderObj ? new Date(prevOrderObj.timestamp).toLocaleDateString('ru-RU') + ' ' + new Date(prevOrderObj.timestamp).toLocaleTimeString('ru-RU', {hour: '2-digit', minute:'2-digit'}) : '---';
+
             // Выводим только ту вкладку, которая выбрана
             if (state.currentMyOrderTab === 'current') {
-                html += renderOrderBlock(currentAgg, currentOrderDate, "Текущий заказ", true);
+                html += renderOrderBlock(currentAgg, currentOrderDateStr, "Текущий заказ", true);
             } else {
-                html += renderOrderBlock(prevAgg, prevOrderDate || "---", "Прошлый заказ", false);
+                html += renderOrderBlock(prevAgg, prevOrderDateStr, "Прошлый заказ", false);
             }
 
             document.getElementById('report-content-area').innerHTML = html;
@@ -2047,10 +2049,12 @@ async function validateAndSubmit(isFromModal) {
         }
     }
 
-    function setReceiveChoice(name, qty, vendor, status, btnArrId, btnMissId) {
+    function setReceiveChoice(name, qty, vendor, status, btnArrId, btnMissId, dateStr) {
         triggerHaptic();
         if (!state.receivingChoices) state.receivingChoices = {};
-        state.receivingChoices[name] = { qty: qty, vendor: vendor, status: status };
+        
+        // Уникальный ключ, чтобы один товар из разных дат не перебивал друг друга
+        state.receivingChoices[dateStr + "_" + name] = { name: name, qty: qty, vendor: vendor, status: status, date: dateStr };
         
         let btnArr = document.getElementById(btnArrId);
         let btnMiss = document.getElementById(btnMissId);
@@ -2110,7 +2114,7 @@ async function validateAndSubmit(isFromModal) {
         }
     }
 
-    async function showLastOrder() {
+   async function showLastOrder() {
         showReportOverlay("Загружаю приемку...");
         try {
             const [ordersSnap, missSnap, catSnap] = await Promise.all([
@@ -2190,16 +2194,12 @@ async function validateAndSubmit(isFromModal) {
                     html += `</div>`;
                 }
 
-                let activeItemsOzon = {};
-                let activeItemsLenta = {};
-                let keysOzon = new Set();
-                let keysLenta = new Set();
-                let datesOzon = new Set();
-                let datesLenta = new Set();
-
+                // 💡 НОВАЯ ЛОГИКА ГРУППИРОВКИ ПО ДАТАМ
+                let activeByDate = {}; 
+                
                 ordersArr.forEach(o => {
                     let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
-                    let orderDate = new Date(o.timestamp).toLocaleDateString('ru-RU', {day:'2-digit', month:'2-digit'});
+                    let orderDate = new Date(o.timestamp).toLocaleDateString('ru-RU', {day:'2-digit', month:'2-digit', year:'numeric'});
                     
                     itemsArr.forEach(i => {
                         if (!i || !i.name || i.name === "НЕТ ЗАКАЗА") return;
@@ -2207,22 +2207,24 @@ async function validateAndSubmit(isFromModal) {
                             let catItem = Object.values(orderCatalog).find(c => c && c.name === i.name) || {};
                             let vendor = (catItem.vendor || 'Лента').toLowerCase() === 'озон' ? 'ozon' : 'lenta';
 
-                            if (vendor === 'ozon' && !o.ozon_received) {
-                                if(!activeItemsOzon[i.name]) activeItemsOzon[i.name] = {qty: 0};
-                                activeItemsOzon[i.name].qty += parseFloat(i.qty) || 0;
-                                keysOzon.add(o.key);
-                                datesOzon.add(orderDate);
-                            } else if (vendor === 'lenta' && !o.lenta_received) {
-                                if(!activeItemsLenta[i.name]) activeItemsLenta[i.name] = {qty: 0};
-                                activeItemsLenta[i.name].qty += parseFloat(i.qty) || 0;
-                                keysLenta.add(o.key);
-                                datesLenta.add(orderDate);
+                            if ((vendor === 'ozon' && !o.ozon_received) || (vendor === 'lenta' && !o.lenta_received)) {
+                                if (!activeByDate[orderDate]) {
+                                    activeByDate[orderDate] = { lenta: { items: {}, keys: new Set() }, ozon: { items: {}, keys: new Set() }, timestamp: o.timestamp };
+                                }
+                                
+                                let targetGroup = vendor === 'ozon' ? activeByDate[orderDate].ozon : activeByDate[orderDate].lenta;
+                                
+                                if(!targetGroup.items[i.name]) targetGroup.items[i.name] = {qty: 0};
+                                targetGroup.items[i.name].qty += parseFloat(i.qty) || 0;
+                                targetGroup.keys.add(o.key);
+                                
+                                if (o.timestamp > activeByDate[orderDate].timestamp) activeByDate[orderDate].timestamp = o.timestamp;
                             }
                         }
                     });
                 });
 
-                if (Object.keys(activeItemsOzon).length === 0 && Object.keys(activeItemsLenta).length === 0) {
+                if (Object.keys(activeByDate).length === 0) {
                     html += `<div class="report-card"><div style="text-align:center; font-weight:900;">Нет активных приемок.</div></div>`;
                 } else {
                     html += `<div style="background:#ede7f6; padding:15px; border-radius:12px; font-weight:900; color:#311B92; margin-top:15px; text-align:center; font-size:18px;">
@@ -2230,13 +2232,13 @@ async function validateAndSubmit(isFromModal) {
                              </div>
                              <div style="margin-top:10px;">`;
 
-                    const renderActiveList = (aggregatedObj, keysSet, datesSet, vendorKey, title, badgeClass, badgeText) => {
+                    const renderActiveList = (aggregatedObj, keysSet, dateStr, vendorKey, title, badgeClass, badgeText) => {
                         let names = Object.keys(aggregatedObj).sort((a,b) => a.localeCompare(b));
                         if (names.length === 0) return "";
                         
                         let kStr = Array.from(keysSet).join(',');
-                        let listId = getSafeId("list_active_" + vendorKey);
-                        let datesStr = Array.from(datesSet).join(', ');
+                        let safeDateStr = getSafeId(dateStr);
+                        let listId = getSafeId("list_active_" + vendorKey + "_" + dateStr);
                         
                         let res = `<div class="report-card" style="border-left: 4px solid ${vendorKey==='ozon'?'#1565c0':'#f57f17'};">
                                      <div class="report-card-title" style="text-align:center; display:flex; flex-direction:column; align-items:center; justify-content:center; cursor:pointer; margin-bottom:5px;" onclick="toggleElements('${listId}', 'arrow_${listId}')">
@@ -2244,7 +2246,7 @@ async function validateAndSubmit(isFromModal) {
                                             ${title} <span class="vendor-badge ${badgeClass}" style="margin:0;">${badgeText}</span>
                                             <span id="arrow_${listId}" style="color:#888; font-size:14px; margin-left:auto;">▼</span>
                                         </div>
-                                        <div style="font-size:13px; color:#888; margin-top:5px; font-weight:normal;">Заказы от: ${datesStr}</div>
+                                        <div style="font-size:13px; color:#888; margin-top:5px; font-weight:normal;">Заказ от: ${dateStr}</div>
                                      </div>
                                      <div class="${listId}" style="display:block; padding-top:10px;">`;
                         
@@ -2262,10 +2264,11 @@ async function validateAndSubmit(isFromModal) {
                                         </div>`;
                             } else {
                                 expectedCount++;
-                                let btnArrId = `btn_arr_${vendorKey}_${getSafeId(name)}`;
-                                let btnMissId = `btn_miss_${vendorKey}_${getSafeId(name)}`;
+                                let btnArrId = `btn_arr_${vendorKey}_${safeDateStr}_${getSafeId(name)}`;
+                                let btnMissId = `btn_miss_${vendorKey}_${safeDateStr}_${getSafeId(name)}`;
                                 
-                                let choice = state.receivingChoices ? state.receivingChoices[name]?.status : null;
+                                let choiceKey = dateStr + "_" + name;
+                                let choice = state.receivingChoices ? state.receivingChoices[choiceKey]?.status : null;
                                 let isArr = choice === 'arrived';
                                 let isMiss = choice === 'missing';
 
@@ -2275,35 +2278,38 @@ async function validateAndSubmit(isFromModal) {
                                                 <span style="color:#2e7d32; background:#e8f5e9; padding:4px 8px; border-radius:6px; font-size:12px; font-weight:900;">Едет к вам 🚚</span>
                                             </div>
                                             <div style="display:flex; gap:10px; width:100%;">
-                                                <button id="${btnArrId}" onclick="setReceiveChoice('${safeNameEsc}', ${item.qty}, '${vendorKey}', 'arrived', '${btnArrId}', '${btnMissId}')" style="flex:1; padding:8px; border-radius:8px; border:${isArr ? '2px solid #2e7d32' : '1px solid #ccc'}; background:${isArr ? '#e8f5e9' : '#fafafa'}; color:${isArr ? '#2e7d32' : '#888'}; font-weight:bold; transition:0.2s;">✅ Принято</button>
-                                                <button id="${btnMissId}" onclick="setReceiveChoice('${safeNameEsc}', ${item.qty}, '${vendorKey}', 'missing', '${btnArrId}', '${btnMissId}')" style="flex:1; padding:8px; border-radius:8px; border:${isMiss ? '2px solid #c62828' : '1px solid #ccc'}; background:${isMiss ? '#ffebee' : '#fafafa'}; color:${isMiss ? '#c62828' : '#888'}; font-weight:bold; transition:0.2s;">❌ Недовоз</button>
+                                                <button id="${btnArrId}" onclick="setReceiveChoice('${safeNameEsc}', ${item.qty}, '${vendorKey}', 'arrived', '${btnArrId}', '${btnMissId}', '${dateStr}')" style="flex:1; padding:8px; border-radius:8px; border:${isArr ? '2px solid #2e7d32' : '1px solid #ccc'}; background:${isArr ? '#e8f5e9' : '#fafafa'}; color:${isArr ? '#2e7d32' : '#888'}; font-weight:bold; transition:0.2s;">✅ Принято</button>
+                                                <button id="${btnMissId}" onclick="setReceiveChoice('${safeNameEsc}', ${item.qty}, '${vendorKey}', 'missing', '${btnArrId}', '${btnMissId}', '${dateStr}')" style="flex:1; padding:8px; border-radius:8px; border:${isMiss ? '2px solid #c62828' : '1px solid #ccc'}; background:${isMiss ? '#ffebee' : '#fafafa'}; color:${isMiss ? '#c62828' : '#888'}; font-weight:bold; transition:0.2s;">❌ Недовоз</button>
                                             </div>
                                         </div>`;
                             }
                         });
                         
-                        res += `<button onclick="finishReceiving('${vendorKey}', '${kStr}', ${expectedCount})" class="btn-mode" style="background: var(--btn-stop-grad) !important; margin-top:15px; margin-bottom:0; font-size:15px !important; padding:15px !important;">🏁 ГОТОВО (${badgeText})</button>`;
+                        res += `<button onclick="finishReceiving('${vendorKey}', '${kStr}', ${expectedCount}, '${dateStr}')" class="btn-mode" style="background: var(--btn-stop-grad) !important; margin-top:15px; margin-bottom:0; font-size:15px !important; padding:15px !important;">🏁 ГОТОВО (${badgeText})</button>`;
                         res += `</div></div>`;
                         return res;
                     };
                     
-                    html += renderActiveList(activeItemsLenta, keysLenta, datesLenta, "lenta", "Ожидает", "vendor-lenta", "ЛЕНТА");
-                    html += renderActiveList(activeItemsOzon, keysOzon, datesOzon, "ozon", "Ожидает", "vendor-ozon", "ОЗОН");
+                    let sortedDates = Object.keys(activeByDate).sort((a,b) => activeByDate[b].timestamp - activeByDate[a].timestamp);
+
+                    sortedDates.forEach(dateStr => {
+                        let grp = activeByDate[dateStr];
+                        html += renderActiveList(grp.lenta.items, grp.lenta.keys, dateStr, "lenta", "Ожидает", "vendor-lenta", "ЛЕНТА");
+                        html += renderActiveList(grp.ozon.items, grp.ozon.keys, dateStr, "ozon", "Ожидает", "vendor-ozon", "ОЗОН");
+                    });
                     
                     html += `</div>`;
                     html += `<div style="text-align:center; font-size:13px; color:#888; font-weight:bold; margin-top:15px; margin-bottom:15px;">Убедитесь, что отметили отсутствующие товары перед нажатием "ГОТОВО".</div>`;
                 }
             } 
             else if (state.currentReceivingTab === 'history') {
-                // Строим историю по датам фактической ПРИЕМКИ (received_ts)
                 let historyByDate = {};
 
-                // 1. Добавляем принятые заказы Lenta/Ozon
                 ordersArr.forEach(o => {
                     let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
                     
                     if (o.lenta_received) {
-                        let ts = o.lenta_received_ts || o.timestamp; // фолбек на дату заказа если нет времени приемки
+                        let ts = o.lenta_received_ts || o.timestamp; 
                         let dateStr = new Date(ts).toLocaleDateString('ru-RU');
                         if (!historyByDate[dateStr]) historyByDate[dateStr] = { items: [], ts: ts };
                         
@@ -2333,7 +2339,6 @@ async function validateAndSubmit(isFromModal) {
                     }
                 });
 
-                // 2. Добавляем "Доехавшие" недовозы в историю
                 historyMissing.forEach(m => {
                     let ts = m.timestamp;
                     let dateStr = new Date(ts).toLocaleDateString('ru-RU');
@@ -2420,20 +2425,20 @@ async function validateAndSubmit(isFromModal) {
         }
     }
 
-    async function finishReceiving(vendorKey, keysStr, expectedCount) {
+   async function finishReceiving(vendorKey, keysStr, expectedCount, dateStr) {
         let checkedCount = 0;
         let missingMap = {};
         let arrivedItemsToClear = [];
 
         if (state.receivingChoices) {
-            for (let name in state.receivingChoices) {
-                let choice = state.receivingChoices[name];
-                if (choice.vendor === vendorKey) {
+            for (let k in state.receivingChoices) {
+                let choice = state.receivingChoices[k];
+                if (choice.vendor === vendorKey && choice.date === dateStr) {
                     checkedCount++;
                     if (choice.status === 'missing') {
-                        missingMap[name] = choice.qty;
+                        missingMap[choice.name] = choice.qty;
                     } else if (choice.status === 'arrived') {
-                        arrivedItemsToClear.push(name);
+                        arrivedItemsToClear.push(choice.name);
                     }
                 }
             }
@@ -2457,7 +2462,12 @@ async function validateAndSubmit(isFromModal) {
 
             if (isAlreadyProcessed) {
                 showPopupError("Внимание", "Эта приемка уже была только что обработана с другого устройства. Данные обновлены.");
-                state.receivingChoices = {}; 
+                // Чистим кэш только для этой даты и поставщика
+                if (state.receivingChoices) {
+                    for (let k in state.receivingChoices) {
+                        if (state.receivingChoices[k].vendor === vendorKey && state.receivingChoices[k].date === dateStr) delete state.receivingChoices[k];
+                    }
+                }
                 showLastOrder();
                 return;
             }
@@ -2470,7 +2480,7 @@ async function validateAndSubmit(isFromModal) {
             }
             
             let updates = {};
-            let ts = Date.now(); // Сохраняем точное время приемки для истории
+            let ts = Date.now(); 
             keys.forEach(k => { 
                 updates[`orders/${k}/${vendorKey}_received`] = true; 
                 updates[`orders/${k}/${vendorKey}_received_ts`] = ts; 
@@ -2482,8 +2492,8 @@ async function validateAndSubmit(isFromModal) {
             }
             
             if (state.receivingChoices) {
-                for (let name in state.receivingChoices) {
-                    if (state.receivingChoices[name].vendor === vendorKey) delete state.receivingChoices[name];
+                for (let k in state.receivingChoices) {
+                    if (state.receivingChoices[k].vendor === vendorKey && state.receivingChoices[k].date === dateStr) delete state.receivingChoices[k];
                 }
             }
 

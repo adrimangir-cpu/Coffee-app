@@ -1638,7 +1638,7 @@ async function validateAndSubmit(isFromModal) {
     }
 
    async function showMyLastOrder() {
-        showReportOverlay("Считаю суммарный заказ...");
+        showReportOverlay("Загружаю заказы...");
         try {
             const snap = await database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(50).once("value");
             let allOrders = [];
@@ -1655,30 +1655,44 @@ async function validateAndSubmit(isFromModal) {
                  return;
             }
 
-            allOrders.sort((a,b) => (b.timestamp || 0) - (a.timestamp || 0));
-
-            let targetOrders = allOrders.filter(o => (!o.lenta_received || !o.ozon_received)); 
-            
-            if (targetOrders.length === 0) {
-                let lastDate = new Date(allOrders[0].timestamp).setHours(0,0,0,0);
-                targetOrders = allOrders.filter(o => new Date(o.timestamp).setHours(0,0,0,0) === lastDate);
-            }
-
-            let aggregated = {};
-            let latestTime = 0;
-            
-            targetOrders.forEach(o => {
-                if(o.timestamp > latestTime) latestTime = o.timestamp;
-                let items = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
-                items.forEach(i => {
-                    if (i && i.name && i.name !== "НЕТ ЗАКАЗА") {
-                        if (!aggregated[i.name]) aggregated[i.name] = { qty: 0, status: 'pending', is_error: false };
-                        aggregated[i.name].qty += parseFloat(i.qty) || 0;
-                        if (o.ordered || o.svod) aggregated[i.name].status = 'ordered';
-                        if (i.status === 'error' || i.bot_error) aggregated[i.name].is_error = true;
-                    }
-                });
+            // Группируем заказы по дате (чтобы объединить дополненные в течение дня)
+            let ordersByDate = {};
+            allOrders.forEach(o => {
+                let dStr = new Date(o.timestamp).toLocaleDateString('ru-RU');
+                if (!ordersByDate[dStr]) {
+                    ordersByDate[dStr] = { timestamp: o.timestamp, orders: [] };
+                }
+                ordersByDate[dStr].orders.push(o);
+                if (o.timestamp > ordersByDate[dStr].timestamp) {
+                    ordersByDate[dStr].timestamp = o.timestamp; // Сохраняем самый свежий таймштамп дня
+                }
             });
+
+            // Сортируем даты по убыванию (сначала самые новые)
+            let sortedDates = Object.keys(ordersByDate).sort((a,b) => ordersByDate[b].timestamp - ordersByDate[a].timestamp);
+
+            // Оставляем ТОЛЬКО два последних дня
+            let currentOrderDate = sortedDates[0];
+            let prevOrderDate = sortedDates.length > 1 ? sortedDates[1] : null;
+
+            const aggregateOrders = (ordersArray) => {
+                let aggregated = {};
+                ordersArray.forEach(o => {
+                    let items = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
+                    items.forEach(i => {
+                        if (i && i.name && i.name !== "НЕТ ЗАКАЗА") {
+                            if (!aggregated[i.name]) aggregated[i.name] = { qty: 0, status: 'pending', is_error: false };
+                            aggregated[i.name].qty += parseFloat(i.qty) || 0;
+                            if (o.ordered || o.svod) aggregated[i.name].status = 'ordered';
+                            if (i.status === 'error' || i.bot_error) aggregated[i.name].is_error = true;
+                        }
+                    });
+                });
+                return aggregated;
+            };
+
+            let currentAgg = aggregateOrders(ordersByDate[currentOrderDate].orders);
+            let prevAgg = prevOrderDate ? aggregateOrders(ordersByDate[prevOrderDate].orders) : null;
 
             const missSnap = await database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value");
             let activeMissing = {};
@@ -1687,17 +1701,24 @@ async function validateAndSubmit(isFromModal) {
                 if (m && m.status !== 'arrived' && m.status !== 'canceled') activeMissing[m.name] = true;
             });
 
-            // Форматируем дату последнего заказа
-            let dateStrStr = latestTime > 0 ? new Date(latestTime).toLocaleString('ru-RU', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'}) : '';
-            let titleText = dateStrStr ? `Ваш последний заказ<br><span style="font-size:14px; color:#888;">(от ${dateStrStr})</span>` : `Ваш последний заказ:`;
+            let html = "";
 
-            let html = `<div class="report-card"><div class="report-card-title">${titleText}</div>`;
-            if (Object.keys(aggregated).length === 0) {
-                 html += `<div style="text-align:center; padding:10px; font-weight:bold; color:#888;">Заказ был пуст.</div>`;
-            } else {
-                let sortedNames = Object.keys(aggregated).sort((a,b) => a.localeCompare(b));
+            const renderOrderBlock = (aggData, dateStr, title, isMain) => {
+                if (Object.keys(aggData).length === 0) {
+                    return `<div class="report-card" style="margin-bottom:15px; ${isMain ? 'border: 2px solid #7E57C2;' : 'opacity: 0.7;'}">
+                                <div class="report-card-title" style="color:${isMain?'#311b92':'#777'}; margin-bottom:5px;">${title}</div>
+                                <div style="text-align:center; color:#888; font-size:14px; margin-bottom:15px;">(от ${dateStr})</div>
+                                <div style="text-align:center; padding:10px; font-weight:bold; color:#888;">Заказ был пуст.</div>
+                            </div>`;
+                }
+
+                let blockHtml = `<div class="report-card" style="margin-bottom:15px; ${isMain ? 'border: 2px solid #7E57C2;' : 'opacity: 0.8;'}">
+                                    <div class="report-card-title" style="color:${isMain?'#311b92':'#777'}; margin-bottom:5px;">${title}</div>
+                                    <div style="text-align:center; color:#888; font-size:14px; margin-bottom:15px;">(от ${dateStr})</div>`;
+                
+                let sortedNames = Object.keys(aggData).sort((a,b) => a.localeCompare(b));
                 sortedNames.forEach(name => {
-                    let item = aggregated[name];
+                    let item = aggData[name];
                     let isError = item.is_error || activeMissing[name];
                     
                     let stHtml = "";
@@ -1709,13 +1730,22 @@ async function validateAndSubmit(isFromModal) {
                          stHtml = `<span style="color:#f57c00; font-size:13px; font-weight:900; background:#fff3e0; padding:3px 8px; border-radius:6px;">Ожидает ⏳</span>`;
                     }
 
-                    html += `<div style="display:flex; justify-content:space-between; align-items:center; padding:12px 0; border-bottom:1px solid #eee;">
+                    blockHtml += `<div style="display:flex; justify-content:space-between; align-items:center; padding:12px 0; border-bottom:1px solid #eee;">
                                 <div><b style="font-size:16px;">${name}</b> <br> <div style="margin-top:5px;">${stHtml}</div></div>
                                 <span style="font-weight:900; font-size:18px; color:#311B92;">${item.qty} шт</span>
                              </div>`;
                 });
+                blockHtml += `</div>`;
+                return blockHtml;
+            };
+
+            // Рисуем 2 блока
+            html += renderOrderBlock(currentAgg, currentOrderDate, "Текущий заказ", true);
+            if (prevAgg) {
+                html += renderOrderBlock(prevAgg, prevOrderDate, "Прошлый заказ", false);
             }
-            document.getElementById('report-content-area').innerHTML = html + "</div>";
+
+            document.getElementById('report-content-area').innerHTML = html;
         } catch(e) { 
             document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; color:red; font-weight:900;">Ошибка загрузки: ${e.message}</div></div>`; 
         }

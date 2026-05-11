@@ -1638,7 +1638,7 @@ async function validateAndSubmit(isFromModal) {
     }
 
    async function showMyLastOrder() {
-        showReportOverlay("Загружаю заказы...");
+        showReportOverlay("Считаю суммарный заказ...");
         try {
             const snap = await database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(50).once("value");
             let allOrders = [];
@@ -1655,7 +1655,7 @@ async function validateAndSubmit(isFromModal) {
                  return;
             }
 
-            // Группируем заказы по дате (чтобы объединить дополненные в течение дня)
+            // Группируем заказы по дате (чтобы склеить дополненные в течение одного дня)
             let ordersByDate = {};
             allOrders.forEach(o => {
                 let dStr = new Date(o.timestamp).toLocaleDateString('ru-RU');
@@ -1671,10 +1671,11 @@ async function validateAndSubmit(isFromModal) {
             // Сортируем даты по убыванию (сначала самые новые)
             let sortedDates = Object.keys(ordersByDate).sort((a,b) => ordersByDate[b].timestamp - ordersByDate[a].timestamp);
 
-            // Оставляем ТОЛЬКО два последних дня
+            // Берем только текущий и предыдущий дни
             let currentOrderDate = sortedDates[0];
             let prevOrderDate = sortedDates.length > 1 ? sortedDates[1] : null;
 
+            // Вспомогательная функция для агрегации заказа за один день
             const aggregateOrders = (ordersArray) => {
                 let aggregated = {};
                 ordersArray.forEach(o => {
@@ -1701,19 +1702,28 @@ async function validateAndSubmit(isFromModal) {
                 if (m && m.status !== 'arrived' && m.status !== 'canceled') activeMissing[m.name] = true;
             });
 
+            // Задаем вкладку по умолчанию, если она еще не открыта
+            if (!state.currentMyOrderTab) state.currentMyOrderTab = 'current';
+
             let html = "";
 
+            // Отрисовка переключателя вкладок
+            html += `<div style="display: flex; gap: 10px; margin-bottom: 20px; background: #fff; padding: 6px; border-radius: 14px; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
+                        <button onclick="state.currentMyOrderTab = 'current'; showMyLastOrder();" style="flex: 1; padding: 12px; border: none; border-radius: 10px; font-size: 15px; font-weight: 900; transition: 0.2s; cursor: pointer; ${state.currentMyOrderTab === 'current' ? 'background: #4A148C; color: #fff;' : 'background: transparent; color: #888;'}">Текущий заказ</button>
+                        <button onclick="state.currentMyOrderTab = 'prev'; showMyLastOrder();" style="flex: 1; padding: 12px; border: none; border-radius: 10px; font-size: 15px; font-weight: 900; transition: 0.2s; cursor: pointer; ${state.currentMyOrderTab === 'prev' ? 'background: #9C27B0; color: #fff;' : 'background: transparent; color: #888;'}">Прошлый заказ</button>
+                     </div>`;
+
+            // Функция отрисовки самой карточки с товарами
             const renderOrderBlock = (aggData, dateStr, title, isMain) => {
-                if (Object.keys(aggData).length === 0) {
-                    return `<div class="report-card" style="margin-bottom:15px; ${isMain ? 'border: 2px solid #7E57C2;' : 'opacity: 0.7;'}">
-                                <div class="report-card-title" style="color:${isMain?'#311b92':'#777'}; margin-bottom:5px;">${title}</div>
-                                <div style="text-align:center; color:#888; font-size:14px; margin-bottom:15px;">(от ${dateStr})</div>
-                                <div style="text-align:center; padding:10px; font-weight:bold; color:#888;">Заказ был пуст.</div>
+                if (!aggData || Object.keys(aggData).length === 0) {
+                    return `<div class="report-card" style="margin-bottom:15px; border: 2px solid ${isMain ? '#7E57C2' : '#9C27B0'};">
+                                <div class="report-card-title" style="color:${isMain ? '#311b92' : '#777'}; margin-bottom:5px;">${title}</div>
+                                <div style="text-align:center; padding:20px; font-weight:bold; color:#888;">Заказ отсутствует или был пуст.</div>
                             </div>`;
                 }
 
-                let blockHtml = `<div class="report-card" style="margin-bottom:15px; ${isMain ? 'border: 2px solid #7E57C2;' : 'opacity: 0.8;'}">
-                                    <div class="report-card-title" style="color:${isMain?'#311b92':'#777'}; margin-bottom:5px;">${title}</div>
+                let blockHtml = `<div class="report-card" style="margin-bottom:15px; border: 2px solid ${isMain ? '#7E57C2' : '#9C27B0'};">
+                                    <div class="report-card-title" style="color:${isMain ? '#311b92' : '#777'}; margin-bottom:5px;">${title}</div>
                                     <div style="text-align:center; color:#888; font-size:14px; margin-bottom:15px;">(от ${dateStr})</div>`;
                 
                 let sortedNames = Object.keys(aggData).sort((a,b) => a.localeCompare(b));
@@ -1731,18 +1741,19 @@ async function validateAndSubmit(isFromModal) {
                     }
 
                     blockHtml += `<div style="display:flex; justify-content:space-between; align-items:center; padding:12px 0; border-bottom:1px solid #eee;">
-                                <div><b style="font-size:16px;">${name}</b> <br> <div style="margin-top:5px;">${stHtml}</div></div>
-                                <span style="font-weight:900; font-size:18px; color:#311B92;">${item.qty} шт</span>
-                             </div>`;
+                                    <div><b style="font-size:16px;">${name}</b> <br> <div style="margin-top:5px;">${stHtml}</div></div>
+                                    <span style="font-weight:900; font-size:18px; color:#311B92;">${item.qty} шт</span>
+                                 </div>`;
                 });
                 blockHtml += `</div>`;
                 return blockHtml;
             };
 
-            // Рисуем 2 блока
-            html += renderOrderBlock(currentAgg, currentOrderDate, "Текущий заказ", true);
-            if (prevAgg) {
-                html += renderOrderBlock(prevAgg, prevOrderDate, "Прошлый заказ", false);
+            // Выводим только ту вкладку, которая выбрана
+            if (state.currentMyOrderTab === 'current') {
+                html += renderOrderBlock(currentAgg, currentOrderDate, "Текущий заказ", true);
+            } else {
+                html += renderOrderBlock(prevAgg, prevOrderDate || "---", "Прошлый заказ", false);
             }
 
             document.getElementById('report-content-area').innerHTML = html;

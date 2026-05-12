@@ -769,7 +769,7 @@
         }
     }
 
-    async function buildSvodReport() {
+   async function buildSvodReport() {
         if(!confirm("Вы уверены, что хотите СОБРАТЬ СВОД?\nЭто переведет все ожидающие заказы в статус Свода, посчитает итоги и отправит оповещение в Телеграм.")) return;
         
         showReportOverlay("Сборка закупки (Выполняю команду)...");
@@ -801,6 +801,7 @@
             let shopLentaSums = {};
             let svodByShop = {};
 
+            // Проход 1: Считаем сумму Ленты
             Object.keys(ordersSnap).forEach(key => {
                 let o = ordersSnap[key];
                 if (o && (o.mode === 'order' || o.mode === 'new_shop') && o.svod === false) {
@@ -811,7 +812,7 @@
                     itemsArr.forEach(i => {
                         if(i && i.name && i.name !== "НЕТ ЗАКАЗА") {
                             let catItem = Object.values(catalog).find(cat => cat && cat.name === i.name) || {};
-                            let vendor = (catItem.vendor || 'Лента').toLowerCase();
+                            let vendor = (i.vendor || catItem.vendor || 'Лента').toLowerCase();
                             let missingStat = activeMissing[o.shop] ? activeMissing[o.shop][i.name] : null;
                             let inTransit = missingStat === 'transit';
                             
@@ -823,6 +824,7 @@
                 }
             });
 
+            // Проход 2: Обновляем товары с учетом Авто-Купера
             Object.keys(ordersSnap).forEach(key => {
                 let o = ordersSnap[key];
                 if (o && (o.mode === 'order' || o.mode === 'new_shop') && o.svod === false) {
@@ -833,7 +835,8 @@
                     itemsArr.forEach(i => {
                         if(i && i.name && i.name !== "НЕТ ЗАКАЗА") {
                             let catItem = Object.values(catalog).find(cat => cat && cat.name === i.name) || {};
-                            let vendor = (catItem.vendor || 'Лента').toLowerCase();
+                            // Сначала берем вендора из самого товара, если нет - из каталога
+                            let vendor = (i.vendor || catItem.vendor || 'Лента').toLowerCase();
                             let missingStat = activeMissing[o.shop] ? activeMissing[o.shop][i.name] : null;
                             let inTransit = missingStat === 'transit';
                             
@@ -844,9 +847,15 @@
                             } else {
                                 let isAutoKuper = false;
                                 let isLenta = vendor.includes('лента') || vendor.includes('lenta');
+                                
                                 if (isLenta && shopLentaSums[o.shop] > 0 && shopLentaSums[o.shop] < 2000) {
                                     vendor = 'купер (авто)';
                                     isAutoKuper = true;
+                                    // 💡 ИСПРАВЛЕНИЕ: ЖЕСТКО записываем нового поставщика в товар!
+                                    if (i.vendor !== 'Купер (Авто)') {
+                                        i.vendor = 'Купер (Авто)';
+                                        changed = true;
+                                    }
                                 }
                                 
                                 let price1 = parseFloat(catItem.price) || 0;

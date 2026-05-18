@@ -1355,8 +1355,11 @@
         const box = document.getElementById('content');
         let svodActionBar = document.getElementById('svod-action-bar');
         
-        // 💡 ИСПРАВЛЕНИЕ: Объявляем переменные для подсчета итогов ДО того, как начнем их считать
-        let totalLenta = 0, totalOzon = 0, totalKuper = 0; 
+        // 💡 ИСПРАВЛЕНИЕ: Объявляем переменные до любых циклов
+        let totalLenta = 0;
+        let totalOzon = 0;
+        let totalKuper = 0;
+        let isOrdHistOpen = expandedDivs.has('history_orders_list');
         
         let resMiss = await fetch(`${FB_URL}/missing_items.json`);
         let missingData = await resMiss.json() || {}, activeMissing = {}, returnedToBasket = {};
@@ -1450,7 +1453,7 @@
                 <button onclick="triggerPcBuild('START_OZON')" class="btn-add" style="background: linear-gradient(135deg, #2196F3 0%, #1976D2 100%);">🔵 Авто-Озон</button>
                 <button onclick="triggerPcBuild('START_LENTA')" class="btn-add" style="background: linear-gradient(135deg, #FFC107 0%, #F57C00 100%);">🟡 Авто-Лента</button>
                 <button onclick="markOrdersAsPlaced()" class="btn-add" style="background: linear-gradient(135deg, #4caf50 0%, #2e7d32 100%);">✅ Заказы оформлены</button>
-                <button id="svod-btn-edit" onclick="isSvodEditMode ? saveSvodEdits() : toggleSvodEdit()" class="btn-add" style="background:${isSvodEditMode ? '#f44336' : '#0288d1'};">${isSvodEditMode ? '💾 Сохранить изменения' : '✏️ Редактировать'}</button>
+                <button id="svod-btn-edit" onclick="isSvodEditMode ? saveSvodEdits() : toggleSvodEdit()" class="btn-add" style="background:${btnEditColor};">${btnEditText}</button>
             </div>`;
             svodActionBar.style.display = 'block';
         } else { svodActionBar.style.display = 'none'; }
@@ -1490,9 +1493,19 @@
                             let missingStat = activeMissing[shop] ? activeMissing[shop][name] : null;
                             let inTransit = missingStat === 'transit';
                             let isInLastOrder = lastOrderItems[shop] && lastOrderItems[shop].has(name);
-                            if (isInLastOrder && (returnedToBasket[shop] ? returnedToBasket[shop][name] : 0) > 0 && (returnedToBasket[shop] ? returnedToBasket[shop][name] : 0) >= (lastOrderTimestamp[shop] || 0)) isInLastOrder = false;
+                            let cancelTs = returnedToBasket[shop] ? returnedToBasket[shop][name] : 0;
+                            let lastOrdTs = lastOrderTimestamp[shop] || 0;
+                            if (isInLastOrder && cancelTs > 0 && cancelTs >= lastOrdTs) isInLastOrder = false;
 
-                            let cost = ((!isAutoKuper && (actualVendor.toLowerCase().includes('купер') || actualVendor.toLowerCase().includes('kuper')) && (parseFloat(catItem.price2) || 0) > 0) ? (parseFloat(catItem.price2) || 0) : (parseFloat(catItem.price) || 0)) * (isDeleted ? 0 : actualQty);
+                            let isRepeat = isInLastOrder || missingStat === 'pending';
+                            let isOzon = actualVendor.toLowerCase().includes('озон') || actualVendor.toLowerCase().includes('ozon');
+
+                            let price1 = parseFloat(catItem.price) || 0;
+                            let price2 = parseFloat(catItem.price2) || 0;
+                            let isRegularKuper = !isAutoKuper && (actualVendor.toLowerCase().includes('купер') || actualVendor.toLowerCase().includes('kuper'));
+                            let finalPrice = (isRegularKuper && price2 > 0) ? price2 : price1;
+
+                            let cost = finalPrice * (isDeleted ? 0 : actualQty);
                             if (inTransit || itemStatus === 'error') cost = 0; 
                             if (actualVendor.toLowerCase().includes('лента')) totalLenta += cost; else if (actualVendor.toLowerCase().includes('озон') || actualVendor.toLowerCase().includes('ozon')) totalOzon += cost; else if (actualVendor.toLowerCase().includes('купер') || actualVendor.toLowerCase().includes('kuper')) totalKuper += cost;
 
@@ -1502,7 +1515,7 @@
                             let repeatBadge = "", rowBg = (itemStatus === 'error') ? `background-color: #ffebee;` : ``;
                             if (inTransit) { repeatBadge = `<span style='color:#1565c0; font-size:12px; margin-left:5px; font-weight:bold;'>(Уже в пути 🚚)</span>`; itemStatus = 'error'; } 
                             else if (itemStatus === 'from_stoplist') { repeatBadge = `<span style='color:#d32f2f; font-size:12px; margin-left:5px; font-weight:bold;'>⚠️ Из стоп-листа</span>`; rowBg = `background-color: #ffebee;`; } 
-                            else if ((actualVendor.toLowerCase().includes('озон') || actualVendor.toLowerCase().includes('ozon')) && (isInLastOrder || missingStat === 'pending')) { repeatBadge = `<span style='color:#d32f2f; font-size:12px; margin-left:5px; font-weight:bold;'>⚠️ ${(missingStat === 'pending' ? "В недовозах!" : "Был в прошлой закупке!")}</span>`; rowBg = `background-color: #fff9c4;`; }
+                            else if (isOzon && isRepeat) { repeatBadge = `<span style='color:#d32f2f; font-size:12px; margin-left:5px; font-weight:bold;'>⚠️ ${(missingStat === 'pending' ? "В недовозах!" : "Был в прошлой закупке!")}</span>`; rowBg = `background-color: #fff9c4;`; }
 
                             let statusText = "Ожидает ⏳", statusColor = "#f57c00", statusBg = "#fff3e0";
                             if (itemStatus === 'ordered') { statusText = "Заказано ✅"; statusColor = "#2e7d32"; statusBg = "#e8f5e9"; } 
@@ -1515,7 +1528,7 @@
                             if (isSvodEditMode) {
                                 html += `<tr class="svod-row svoditem_${safeShopDate} svodlvl3_of_${safeDate}" style="display:${displayShop}; color:${isDeleted ? '#aaa':'#333'}; ${rowBg}">
                                     <td style="padding-left:15px; font-size:15px; font-weight:bold;">${name} ${repeatBadge} <select class="edit-svod-shop-select" data-original-shop="${htmlShop}" data-item="${htmlName}" data-date="${dateStr}" style="margin-top: 5px; font-size: 13px; padding: 4px; border: 1px solid #ccc; border-radius: 4px; width: 100%;" onchange="markSvodShopChange('${dateStr}', '${jsShop}', '${jsName}', this.value)" ${isDeleted || inTransit ? 'disabled' : ''}>${shopListAll.map(sName => `<option value="${sName}" ${sName === actualShop ? 'selected' : ''}>${sName}</option>`).join('')}</select></td>
-                                    <td style="text-align:center;"><input type="number" class="edit-svod-input" data-date="${dateStr}" data-shop="${htmlShop}" data-item="${htmlName}" data-vendor="${actualVendor}" data-price="${(parseFloat(catItem.price) || 0)}" data-deleted="${isDeleted}" data-status="${itemStatus}" value="${actualQty}" ${isDeleted || inTransit ? 'disabled' : ''} oninput="recalcSvodTotals()" style="width: 70px; text-align: center; font-size: 15px; font-weight: bold; color: ${isDeleted ? '#aaa' : '#311b92'}; border: 2px solid ${isDeleted ? '#eee' : '#7E57C2'}; border-radius: 6px; padding: 4px;"></td>
+                                    <td style="text-align:center;"><input type="number" class="edit-svod-input" data-date="${dateStr}" data-shop="${htmlShop}" data-item="${htmlName}" data-vendor="${actualVendor}" data-price="${finalPrice}" data-deleted="${isDeleted}" data-status="${itemStatus}" value="${actualQty}" ${isDeleted || inTransit ? 'disabled' : ''} oninput="recalcSvodTotals()" style="width: 70px; text-align: center; font-size: 15px; font-weight: bold; color: ${isDeleted ? '#aaa' : '#311b92'}; border: 2px solid ${isDeleted ? '#eee' : '#7E57C2'}; border-radius: 6px; padding: 4px;"></td>
                                     <td style="text-align:center;"><button onclick="markSvodStatusChange('${dateStr}', '${jsShop}', '${jsName}', '${itemStatus}')" style="cursor:pointer; background:${statusBg}; color:${statusColor}; border:2px dashed ${statusColor}; padding:4px 8px; border-radius:8px; font-size:13px; font-weight:900; display:inline-block; box-shadow:0 2px 4px rgba(0,0,0,0.1);">${statusText} 🔄</button></td>
                                     <td style="font-size:14px; color:${isDeleted ? '#aaa' : '#333'}">${displayVendorCell}</td>
                                     <td style="text-align:center;"><button class="btn-del" ${isDeleted ? 'disabled' : ''} onclick="markSvodDelete(this, '${dateStr}', '${jsShop}', '${jsName}')">🗑</button></td>
@@ -1548,8 +1561,6 @@
                     </div>`;
         }
 
-        // 💡 ИСПРАВЛЕНИЕ ОШИБКИ: Объявляем переменную ДО того как пишем HTML
-        let isOrdHistOpen = expandedDivs.has('history_orders_list');
         html += `
             <div class="cat-group-header" style="margin-top:40px; padding: 14px 20px; border-radius: 12px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.05);" onclick="toggleCatElements('history_orders_list', 'arrow_hist_ord')">
                 <span style="font-size:16px;">🕒 История операций (Последние 150 заказов)</span><span id="arrow_hist_ord">${isOrdHistOpen ? '▲' : '▼'}</span>

@@ -10,6 +10,8 @@
     <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-database-compat.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+    <!-- Библиотека для экспорта в Excel -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 
     <style>
         /* =========================================
@@ -342,6 +344,7 @@
 
     <div class="tabs">
         <button class="tab-btn active" onclick="loadTab('orders', this)">📋 Свод и Заказы</button>
+        <button class="tab-btn" onclick="loadTab('menu', this)">☕ Меню</button> <!-- НОВАЯ ВКЛАДКА МЕНЮ -->
         <button class="tab-btn" onclick="loadTab('marketplace', this)">🛒 Маркетплейсы</button>
         <button class="tab-btn" onclick="loadTab('checks_table', this)">✅ Таблица Чек-листов</button>
         <button class="tab-btn" onclick="loadTab('stoplists', this)">🛑 Стоп-листы</button>
@@ -366,6 +369,8 @@
     // ==========================================
     const FB_URL = "https://project-lenta22-default-rtdb.firebaseio.com";
     let currentCatalog = {};
+    let currentMenu = {}; // ДЛЯ НОВОГО МЕНЮ
+    let menuPreviewShop = 'Все'; // Для проверки стоп-листа меню
     let currentPath = "";
     let currentTabType = "";
     let isNewShopCatalog = false; 
@@ -564,7 +569,22 @@
             cachedData.catalogOrder = { ...catOrd, ...catNew };
             cachedData.catalog = cachedData.catalogOrder;
 
-            if (type === 'orders') {
+            if (type === 'menu') {
+                currentPath = "catalogs/menu";
+                let [resMenu, resMiss, resStops] = await Promise.all([
+                    fetch(`${FB_URL}/catalogs/menu.json`),
+                    fetch(`${FB_URL}/missing_items.json`),
+                    fetch(`${FB_URL}/orders.json`)
+                ]);
+                if (currentTabType !== fetchId) return;
+                currentMenu = await resMenu.json() || {};
+                cachedData.missing = await resMiss.json() || {};
+                let ordersObj = await resStops.json() || {};
+                Object.keys(ordersObj).forEach(k => { if (ordersObj[k]) ordersObj[k].key = k; });
+                cachedData.orders = ordersObj;
+                renderMenuTab();
+            }
+            else if (type === 'orders') {
                 isSvodEditMode = false;
                 svodDeletions = [];
                 tempSvodQty = {};
@@ -1349,8 +1369,7 @@
             alert("❌ Ошибка объединения: " + e.message);
         }
     }
-
-   async function renderOrdersSvod() {
+    async function renderOrdersSvod() {
       try {
         const box = document.getElementById('content');
         let svodActionBar = document.getElementById('svod-action-bar');
@@ -2727,7 +2746,6 @@
         html += `</div>`;
         box.innerHTML = html;
     }
-
     // ==========================================
     // 7. СПРАВОЧНИКИ
     // ==========================================
@@ -2785,7 +2803,8 @@
         
         html += `</div></div></div>`;
         
-        html += `<table style="min-width:1400px;"><tr><th style="width:160px;">Глоб. Категория</th><th style="width:160px;">Подкатегория</th><th style="width:200px;">Наименование</th><th style="width:100px;">Поставщик</th><th style="width:80px;">Цена 1 (₽)</th><th>Ссылка 1</th><th style="width:80px;">Цена 2 (₽)</th><th>Ссылка 2</th><th style="width:60px; text-align:center;">Удалить</th></tr>`;
+        // --- ЗДЕСЬ ДОБАВЛЕНО ПОЛЕ ФОТО ---
+        html += `<table style="min-width:1500px;"><tr><th style="width:160px;">Глоб. Категория</th><th style="width:160px;">Подкатегория</th><th style="width:200px;">Наименование</th><th style="width:120px;">Фото (URL)</th><th style="width:100px;">Поставщик</th><th style="width:80px;">Цена 1 (₽)</th><th>Ссылка 1</th><th style="width:80px;">Цена 2 (₽)</th><th>Ссылка 2</th><th style="width:60px; text-align:center;">Удалить</th></tr>`;
 
         let grouped = {};
         Object.keys(currentCatalog).forEach(k => {
@@ -2799,7 +2818,7 @@
             let isGcOpen = gc.includes("!!!") || expandedDivs.has(`lvl2_${safeGc}`);
             
             html += `<tr class="cat-group-header" onclick="toggleLvl1('${safeGc}')">
-                        <td colspan="9" style="padding:18px; background:#d1c4e9; font-size:18px;">🌍 <b>${displayGc}</b> <span style="float:right;">▼</span></td>
+                        <td colspan="10" style="padding:18px; background:#d1c4e9; font-size:18px;">🌍 <b>${displayGc}</b> <span style="float:right;">▼</span></td>
                      </tr>`;
             
             Object.keys(grouped[gc]).sort((a,b) => { if(a.includes("!!!")) return -1; if(b.includes("!!!")) return 1; return a.localeCompare(b); }).forEach(sc => {
@@ -2808,7 +2827,7 @@
                 let isScOpen = gc.includes("!!!") || expandedDivs.has(`lvl3_${safeSc}`);
                 
                 html += `<tr class="cat-group-header lvl2_${safeGc}" style="display:${displayStyleL2};" onclick="toggleCatElements('lvl3_${safeSc}', 'arrow_lvl3_${safeSc}')">
-                            <td colspan="9" style="padding:15px; padding-left:30px; font-size:16px;">📂 ${displaySc} <span id="arrow_lvl3_${safeSc}" style="float:right;">${isScOpen ? '▲' : '▼'}</span></td>
+                            <td colspan="10" style="padding:15px; padding-left:30px; font-size:16px;">📂 ${displaySc} <span id="arrow_lvl3_${safeSc}" style="float:right;">${isScOpen ? '▲' : '▼'}</span></td>
                          </tr>`;
                 
                 let displayStyleL3 = (isGcOpen && isScOpen) ? "table-row" : "none";
@@ -2828,6 +2847,7 @@
                         <td><select onchange="updateVal('${k}','globalCat',this.value)" style="font-size:14px;">${gcatOptions}</select></td>
                         <td><select onchange="updateVal('${k}','cat',this.value)" style="font-size:14px;">${catOptions}</select></td>
                         <td><input type="text" style="font-weight:bold; font-size:15px; color:#311b92;" value="${item.name || ''}" onchange="updateVal('${k}','name',this.value)"></td>
+                        <td><input type="text" style="font-size:14px;" placeholder="URL фото" value="${item.photo || ''}" onchange="updateVal('${k}','photo',this.value)"></td>
                         <td><input type="text" style="font-size:14px;" placeholder="Лента/Озон" value="${item.vendor || 'Лента'}" onchange="updateVal('${k}','vendor',this.value)"></td>
                         <td><input type="number" style="font-size:14px;" value="${item.price || 0}" onchange="updateVal('${k}','price',this.value)"></td>
                         <td><input type="text" style="font-size:14px;" placeholder="URL 1" value="${item.link || ''}" onchange="updateVal('${k}','link',this.value)"></td>
@@ -2965,6 +2985,257 @@
         box.innerHTML = html + "</table>";
     }
 
+    // ==========================================
+    // 8. НОВАЯ ВКЛАДКА МЕНЮ С ЭКСПОРТОМ
+    // ==========================================
+    function renderMenuTab() {
+        const box = document.getElementById('content');
+        let globalCats = ["Основное меню", "Сезонное меню"];
+        Object.values(currentMenu).forEach(i => {
+            if(i.globalCat && !globalCats.includes(i.globalCat)) globalCats.push(i.globalCat);
+        });
+        let subCats = [...new Set(Object.values(currentMenu).map(i => i.cat).filter(Boolean))];
+
+        let isActionsOpen = expandedDivs.has('menu-actions');
+
+        let html = `
+        <h3 style="margin-top:0; margin-bottom:15px; font-size:24px; color:#4A148C;">☕ Управление Меню и Рецептами</h3>
+        
+        <div class="cat-group-header" style="padding: 12px 15px; border-radius: 12px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.05);" onclick="toggleCatElements('menu-actions', 'arrow_menu_actions')">
+            <span style="font-size:16px; color:#4A148C; font-weight:900;">⚡ Действия и Проверка Стоп-листа</span>
+            <span id="arrow_menu_actions">${isActionsOpen ? '▲' : '▼'}</span>
+        </div>
+        
+        <div class="menu-actions action-container" style="display: ${isActionsOpen ? 'flex' : 'none'}; flex-direction: column; margin-bottom: 20px;">
+            <div style="display:flex; gap:10px; flex-wrap:wrap; width:100%;">
+                <button class="btn-add" style="flex:1 1 auto;" onclick="addMenuItem()">➕ Добавить напиток</button>
+                <button class="btn-save" style="flex:1 1 auto; background: linear-gradient(135deg, #FF9800 0%, #F57C00 100%);" onclick="exportMenuToExcel()">📊 Экспорт в Excel</button>
+                <button class="btn-save" style="flex:1 1 auto; margin:0;" onclick="saveMenu()">💾 Сохранить меню</button>
+            </div>
+            <div style="margin-top:15px; background:#f3e5f5; padding:15px; border-radius:10px; border:1px solid #ce93d8;">
+                <b style="color:#4A148C;">👀 Проверить стоп-лист для адреса:</b>
+                <select style="margin-top:5px; width:100%; max-width:300px; padding:8px; border-radius:6px;" onchange="menuPreviewShop=this.value; renderMenuTab();">
+                    <option value="Все" ${menuPreviewShop === 'Все' ? 'selected' : ''}>-- Без проверки (Показать всё) --</option>
+                    ${shopListAll.map(s => `<option value="${s}" ${menuPreviewShop === s ? 'selected' : ''}>${s}</option>`).join('')}
+                </select>
+                <p style="font-size:13px; color:#666; margin-bottom:0; margin-top:5px;">Если ингредиент напитка сейчас на стопе или в недовозе по выбранному адресу, напиток будет подсвечен <b style="color:#d32f2f;">красным</b>.</p>
+            </div>
+        </div>
+        `;
+
+        // Получаем активные недовозы/стопы для выбранной точки
+        let activeMissing = {};
+        if(menuPreviewShop !== 'Все') {
+            Object.values(cachedData.missing || {}).forEach(m => {
+                if (m.shop === menuPreviewShop && m.status !== 'arrived' && m.status !== 'canceled') {
+                    activeMissing[cleanName(m.name)] = true;
+                }
+            });
+            let latestStop = null;
+            Object.values(cachedData.orders || {}).forEach(o => {
+                if (o.shop === menuPreviewShop && o.mode === 'stoplist_fill') {
+                    if (!latestStop || o.timestamp > latestStop.timestamp) latestStop = o;
+                }
+            });
+            if(latestStop && latestStop.items) {
+                 let itemsArr = Array.isArray(latestStop.items) ? latestStop.items : Object.values(latestStop.items);
+                 itemsArr.forEach(i => {
+                     if (i.qty === 'Закончилось') activeMissing[cleanName(i.name)] = true;
+                 });
+            }
+        }
+
+        let allPurchaseItems = [];
+        let catalogDict = {};
+        if (cachedData.catalogOrder) {
+            Object.values(cachedData.catalogOrder).forEach(i => {
+                if(i.name) {
+                    allPurchaseItems.push(i.name);
+                    catalogDict[i.name] = i;
+                }
+            });
+            allPurchaseItems.sort((a,b) => a.localeCompare(b));
+        }
+        let prodOptionsHtml = allPurchaseItems.map(name => `<option value="${name.replace(/"/g, '&quot;')}">${name}</option>`).join("");
+
+        html += `<table style="min-width:1200px;">
+        <tr><th style="width:160px;">Категория</th><th style="width:160px;">Подкатегория</th><th style="width:200px;">Напиток</th><th style="width:100px;">Цена (₽)</th><th>Рецептура (Ингредиенты из закупки)</th><th style="width:60px; text-align:center;">Удалить</th></tr>`;
+
+        let grouped = {};
+        Object.keys(currentMenu).forEach(k => {
+            let item = currentMenu[k]; let gc = item.globalCat || "Основное меню"; let sc = item.cat || "Прочее";
+            if (!grouped[gc]) grouped[gc] = {}; if (!grouped[gc][sc]) grouped[gc][sc] = [];
+            grouped[gc][sc].push({k: k, item: item});
+        });
+
+        Object.keys(grouped).sort((a,b) => a.localeCompare(b)).forEach(gc => {
+            let safeGc = getSafeId("menu_" + gc);
+            let isGcOpen = expandedDivs.has(`menulvl2_${safeGc}`);
+            
+            html += `<tr class="cat-group-header" onclick="toggleCatElements('menulvl2_${safeGc}', 'arrow_menulvl2_${safeGc}')">
+                        <td colspan="6" style="padding:18px; background:#d1c4e9; font-size:18px;">🌍 <b>${gc}</b> <span id="arrow_menulvl2_${safeGc}" style="float:right;">${isGcOpen?'▲':'▼'}</span></td>
+                     </tr>`;
+            
+            Object.keys(grouped[gc]).sort((a,b) => a.localeCompare(b)).forEach(sc => {
+                let safeSc = getSafeId("menu_" + gc + "_" + sc);
+                let displayStyleL2 = isGcOpen ? "table-row" : "none";
+                let isScOpen = expandedDivs.has(`menulvl3_${safeSc}`);
+                
+                html += `<tr class="cat-group-header menulvl2_${safeGc}" style="display:${displayStyleL2};" onclick="toggleCatElements('menulvl3_${safeSc}', 'arrow_menulvl3_${safeSc}')">
+                            <td colspan="6" style="padding:15px; padding-left:30px; font-size:16px; background:#ede7f6;">📂 ${sc} <span id="arrow_menulvl3_${safeSc}" style="float:right;">${isScOpen?'▲':'▼'}</span></td>
+                         </tr>`;
+                
+                let displayStyleL3 = (isGcOpen && isScOpen) ? "table-row" : "none";
+                
+                grouped[gc][sc].sort((a,b) => (a.item.name||'').localeCompare(b.item.name||'')).forEach(data => {
+                    let k = data.k; let item = data.item;
+                    
+                    let gcatOptions = `<option value="${item.globalCat || 'Основное меню'}">${item.globalCat || 'Основное меню'}</option>`;
+                    globalCats.forEach(c => { if(c !== (item.globalCat || 'Основное меню')) gcatOptions += `<option value="${c}">${c}</option>`; });
+                    gcatOptions += `<option value="НОВАЯ ГЛОБАЛЬНАЯ">-- Создать --</option>`;
+                    
+                    let catOptions = `<option value="${item.cat}">${item.cat || "Прочее"}</option>`;
+                    subCats.forEach(c => { if(c !== item.cat) catOptions += `<option value="${c}">${c}</option>`; });
+                    catOptions += `<option value="НОВАЯ КАТЕГОРИЯ">-- Создать --</option>`;
+
+                    // Рендер Рецепта и проверка Стоп-листа
+                    let isStopped = false;
+                    let recipeHtml = `<table style="width:100%; border-collapse:collapse; background:#f9fbe7; border-radius:8px; overflow:hidden;">`;
+                    if(item.recipe && item.recipe.length > 0) {
+                        item.recipe.forEach((r, idx) => {
+                            if(r.name && activeMissing[cleanName(r.name)]) isStopped = true;
+                            
+                            let prod = catalogDict[r.name] || {};
+                            let photoHtml = prod.photo ? `<img src="${prod.photo}" style="width:40px; height:40px; object-fit:cover; border-radius:4px; border:1px solid #ccc;">` : `<div style="width:40px; height:40px; background:#eee; border-radius:4px; display:flex; align-items:center; justify-content:center; font-size:10px; color:#999; text-align:center; line-height:1.2;">Нет<br>фото</div>`;
+                            
+                            let rNameOpts = `<option value="${r.name || ''}">${r.name || '--- Выберите ---'}</option>` + prodOptionsHtml;
+
+                            recipeHtml += `<tr style="border-bottom:1px solid #e0e0e0;">
+                                <td style="padding:4px; width:50px; text-align:center;">${photoHtml}</td>
+                                <td style="padding:4px;"><select style="width:100%; font-size:13px;" onchange="updateMenuRecipe('${k}', ${idx}, 'name', this.value)">${rNameOpts}</select></td>
+                                <td style="padding:4px; width:100px;"><input type="number" value="${r.qty || 0}" style="width:70px; font-size:13px; text-align:center;" onchange="updateMenuRecipe('${k}', ${idx}, 'qty', this.value)"> гр/мл</td>
+                                <td style="padding:4px; width:40px; text-align:center;"><button class="btn-del" style="padding:4px;" onclick="removeMenuRecipeItem('${k}', ${idx})">❌</button></td>
+                            </tr>`;
+                        });
+                    } else {
+                        recipeHtml += `<tr><td style="padding:10px; text-align:center; color:#888; font-size:13px;">Рецепт пуст</td></tr>`;
+                    }
+                    recipeHtml += `<tr><td colspan="4" style="padding:4px; text-align:center; background:#f1f8e9;"><button style="background:none; border:none; color:#2e7d32; font-weight:bold; cursor:pointer; font-size:13px;" onclick="addMenuRecipeItem('${k}')">+ Добавить ингредиент</button></td></tr></table>`;
+                    
+                    let rowBg = isStopped ? "#ffebee" : "#fff";
+                    let rowBorder = isStopped ? "border-left: 4px solid #d32f2f;" : "";
+                    
+                    html += `<tr class="chk-row menulvl3_${safeSc} menulvl3_of_${safeGc}" style="display:${displayStyleL3}; background:${rowBg}; ${rowBorder}">
+                        <td style="padding:10px;"><select onchange="updateMenuVal('${k}','globalCat',this.value)" style="font-size:13px;">${gcatOptions}</select></td>
+                        <td style="padding:10px;"><select onchange="updateMenuVal('${k}','cat',this.value)" style="font-size:13px;">${catOptions}</select></td>
+                        <td style="padding:10px;">
+                            <input type="text" style="font-weight:bold; font-size:15px; color:${isStopped?'#d32f2f':'#311b92'};" value="${item.name || ''}" onchange="updateMenuVal('${k}','name',this.value)">
+                            ${isStopped ? `<div style="color:#d32f2f; font-size:12px; font-weight:bold; margin-top:4px;">⚠️ Напиток на стопе!</div>` : ''}
+                        </td>
+                        <td style="padding:10px;"><input type="number" style="font-size:14px; font-weight:bold;" value="${item.price || 0}" onchange="updateMenuVal('${k}','price',this.value)"></td>
+                        <td style="padding:10px;">${recipeHtml}</td>
+                        <td style="text-align:center;"><button class="btn-del" onclick="deleteMenuItem('${k}')">🗑</button></td>
+                    </tr>`;
+                });
+            });
+        });
+        box.innerHTML = html + "</table>";
+    }
+
+    function updateMenuVal(id, field, val) {
+        if (val === "НОВАЯ ГЛОБАЛЬНАЯ" || val === "НОВАЯ КАТЕГОРИЯ") {
+            let newCat = prompt("Введите название новой категории:");
+            if (newCat) currentMenu[id][field] = newCat;
+        } else {
+            currentMenu[id][field] = val;
+        }
+        renderMenuTab();
+    }
+    
+    function addMenuItem() {
+        let id = "menu_" + Date.now();
+        currentMenu[id] = { globalCat: "Основное меню", cat: "Новая категория", name: "Новый напиток", price: 0, recipe: [] };
+        renderMenuTab();
+    }
+    
+    function deleteMenuItem(id) {
+        if(confirm("Удалить этот напиток из меню навсегда?")) {
+            fetch(`${FB_URL}/catalogs/menu/${id}.json`, { method: 'DELETE' }).catch(()=>{});
+            delete currentMenu[id];
+            renderMenuTab();
+        }
+    }
+
+    function updateMenuRecipe(id, idx, field, val) {
+        if(!currentMenu[id].recipe) currentMenu[id].recipe = [];
+        currentMenu[id].recipe[idx][field] = val;
+        if(field === 'name') renderMenuTab();
+    }
+    
+    function addMenuRecipeItem(id) {
+        if(!currentMenu[id].recipe) currentMenu[id].recipe = [];
+        currentMenu[id].recipe.push({name: "", qty: 0});
+        renderMenuTab();
+    }
+    
+    function removeMenuRecipeItem(id, idx) {
+        currentMenu[id].recipe.splice(idx, 1);
+        renderMenuTab();
+    }
+
+    async function saveMenu() {
+        try {
+            document.querySelector('.menu-actions .btn-save').innerHTML = "⌛ СОХРАНЕНИЕ...";
+            await fetch(`${FB_URL}/catalogs/menu.json`, { method: 'PUT', body: JSON.stringify(currentMenu) });
+            alert("✅ Меню успешно сохранено!");
+            loadTab('menu', document.querySelector('.tab-btn.active'));
+        } catch(e) {
+            alert("❌ Ошибка при сохранении меню: " + e.message);
+        }
+    }
+
+    function exportMenuToExcel() {
+        let data = [];
+        let catOrderLookup = Object.values(cachedData.catalogOrder || {});
+
+        Object.values(currentMenu).forEach(drink => {
+            let baseRow = {
+                "Категория": drink.globalCat || "",
+                "Подкатегория": drink.cat || "",
+                "Напиток": drink.name || "",
+                "Цена напитка (₽)": parseFloat(drink.price) || 0
+            };
+            
+            if (!drink.recipe || drink.recipe.length === 0) {
+                data.push(baseRow);
+            } else {
+                drink.recipe.forEach(r => {
+                    let prod = catOrderLookup.find(c => c.name === r.name) || {};
+                    data.push({
+                        ...baseRow,
+                        "Ингредиент": r.name || "",
+                        "Кол-во (гр/мл/шт)": parseFloat(r.qty) || 0,
+                        "Поставщик": prod.vendor || "Лента",
+                        "Цена ингредиента (за ед)": parseFloat(prod.price) || 0
+                    });
+                });
+            }
+        });
+
+        if(data.length === 0) {
+            alert("Меню пустое, нечего экспортировать!");
+            return;
+        }
+
+        const ws = XLSX.utils.json_to_sheet(data);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "Меню и Рецепты");
+        XLSX.writeFile(wb, "Coffee_Menu_Recipes.xlsx");
+    }
+
+    // ==========================================
+    // ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
+    // ==========================================
     function updateVal(id, field, val) { 
         if (val === "НОВАЯ ГЛОБАЛЬНАЯ" || val === "НОВАЯ КАТЕГОРИЯ") {
             let newCat = prompt("Введите название новой категории:");
@@ -2986,7 +3257,7 @@
     
     function addItemOrder() { 
         let id = "item_" + Date.now(); 
-        currentCatalog[id] = { globalCat: "!!! НОВОЕ", cat: "!!! НОВОЕ", name: "Новая позиция", vendor: "Лента", price: 0, price2: 0, link: "", link2: "", fallback: "" }; 
+        currentCatalog[id] = { globalCat: "!!! НОВОЕ", cat: "!!! НОВОЕ", name: "Новая позиция", photo: "", vendor: "Лента", price: 0, price2: 0, link: "", link2: "", fallback: "" }; 
         renderCatalogOrder();
     }
     

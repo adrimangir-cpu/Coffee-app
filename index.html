@@ -37,7 +37,7 @@
     input, textarea, select { -webkit-user-select: text; user-select: text; font-family: inherit; }
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: var(--bg-color); color: var(--text-color); font-size: 16px; line-height: 1.4; padding-bottom: 20px; overflow-x: hidden; scroll-behavior: smooth; -webkit-font-smoothing: antialiased; }
    
-    #step-1, #step-2, #step-stoplist, #step-panel, #step-admin-purchase, #step-3, #step-mp-month, #step-mp-vendor, #step-mp-mode, #step-mp-address, #step-mp-keypad { padding-bottom: 110px; }
+    #step-1, #step-2, #step-stoplist, #step-panel, #step-admin-purchase, #step-3, #step-mp-month, #step-mp-vendor, #step-mp-mode, #step-mp-address, #step-mp-keypad, #step-menu { padding-bottom: 110px; }
 
     @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
     @keyframes slideUp { from { transform: translateY(100%); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
@@ -202,6 +202,9 @@
       <button class="btn-mode" style="background: var(--btn-stop-grad);" onclick="showScreen('step-stoplist')">🛑 СТОП-ЛИСТ</button>
       <button class="btn-mode btn-mode-none" onclick="processNoOrder()">➖ ЗАКАЗ НЕ НУЖЕН</button>
       
+      <!-- 💡 НОВАЯ КНОПКА МЕНЮ -->
+      <button class="btn-mode" style="background: linear-gradient(135deg, #00BCD4 0%, #0288D1 100%); margin-top: 12px;" onclick="initMenuWorkflow()">☕ МЕНЮ И РЕЦЕПТЫ</button>
+
       <button class="btn-mode" style="background: var(--boss-gradient); margin-top: 12px;" onclick="showMyLastOrder()">🕒 ПОСЛЕДНИЙ ЗАКАЗ</button>
       <button class="btn-mode" style="background: var(--warning-gradient); margin-top: 12px;" onclick="showLastOrder()">🚚 ПРИЕМКА ЗАКУПКИ</button>
       
@@ -221,6 +224,15 @@
 
     <div id="step-3" style="display:none;">
       <div id="dynamic-list-container"></div>
+    </div>
+
+    <!-- 💡 НОВАЯ ВКЛАДКА: МЕНЮ И РЕЦЕПТЫ -->
+    <div id="step-menu" style="display:none;">
+      <h3 style="text-align:center; color:#311B92; margin-bottom: 20px; font-weight:900;">☕ Меню и Рецепты</h3>
+      <div id="menu-container"></div>
+      <div class="bottom-fixed-bar">
+        <button class="btn-bottom-exit" onclick="showScreen('step-2')">⬅️ Назад</button>
+      </div>
     </div>
 
     <div id="step-panel" style="display:none;">
@@ -313,6 +325,16 @@
     </div>
   </div>
 
+  <!-- 💡 МОДАЛЬНОЕ ОКНО ДЛЯ ФОТОГРАФИИ ИНГРЕДИЕНТА -->
+  <div id="photo-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.8); z-index:9999; align-items:center; justify-content:center; flex-direction:column; padding:20px;">
+     <div style="background:#fff; padding:15px; border-radius:16px; max-width:100%; width:100%; text-align:center; position:relative; box-shadow:0 10px 30px rgba(0,0,0,0.5);">
+        <div onclick="document.getElementById('photo-modal').style.display='none'" style="position:absolute; top:10px; right:15px; font-size:24px; cursor:pointer; color:#888;">✕</div>
+        <h3 id="photo-modal-title" style="margin-top:5px; margin-bottom:15px; color:#4A148C; font-weight:900; padding-right:20px; font-size:18px;"></h3>
+        <img id="photo-modal-img" style="max-width:100%; max-height:60vh; border-radius:12px; object-fit:contain; margin:0 auto;" src="" alt="Фото">
+        <div id="photo-modal-error" style="display:none; padding:40px; color:#888; font-weight:bold; background:#f5f5f5; border-radius:12px;">У этого ингредиента пока нет фото</div>
+     </div>
+  </div>
+
   <div id="nav-buttons">
     <button class="btn-nav btn-back" id="nav-back-btn" onclick="goBack()">Назад</button>
     <button id="main-action-button" class="btn-nav btn-send" onclick="validateAndSubmit(false)">ОТПРАВИТЬ</button>
@@ -360,6 +382,7 @@
       currentShop: "", 
       currentMode: "", 
       productCatalog: {}, 
+      menuCatalog: {}, // Добавлено для меню
       userBasket: {}, 
       isProcessing: false, 
       unprocessedItems: new Set(),
@@ -378,7 +401,7 @@
       isMpEditMode: false
     };
     
-   function cleanName(str) {
+    function cleanName(str) {
         if (!str) return "";
         return str.toLowerCase()
             .replace(/ё/g, 'е')
@@ -387,6 +410,7 @@
             .replace(/(брекет|коробка)/g, '') 
             .replace(/[^a-zа-я0-9]/g, ''); 
     }
+
     function triggerHaptic() { 
         try { 
             if (window.Telegram && Telegram.WebApp && Telegram.WebApp.HapticFeedback) {
@@ -403,7 +427,7 @@
     }
 
     function showScreen(screenId, recordHistory = true) {
-      const allScreens = ['step-1', 'step-2', 'step-stoplist', 'step-panel', 'step-admin-purchase', 'step-3', 'step-mp-month', 'step-mp-vendor', 'step-mp-mode', 'step-mp-address', 'step-mp-keypad'];
+      const allScreens = ['step-1', 'step-2', 'step-stoplist', 'step-panel', 'step-admin-purchase', 'step-3', 'step-mp-month', 'step-mp-vendor', 'step-mp-mode', 'step-mp-address', 'step-mp-keypad', 'step-menu'];
       
       let currentVisible = allScreens.find(id => document.getElementById(id).style.display === 'block');
       if (recordHistory && currentVisible && currentVisible !== screenId) {
@@ -436,7 +460,7 @@
         let cartFab = document.getElementById('cart-fab');
         let mainBtn = document.getElementById('main-action-button');
 
-        if (['step-3', 'step-mp-month', 'step-mp-vendor', 'step-mp-mode', 'step-mp-address', 'step-mp-keypad'].includes(screenId)) {
+        if (['step-3', 'step-mp-month', 'step-mp-vendor', 'step-mp-mode', 'step-mp-address', 'step-mp-keypad', 'step-menu'].includes(screenId)) {
             nav.style.display = 'flex';
         } else {
             nav.style.display = 'none';
@@ -445,9 +469,10 @@
         if (screenId === 'step-3' && (state.currentMode === 'checklist' || state.currentMode === 'stoplist_fill')) {
             cartFab.style.display = 'none';
             mainBtn.style.display = 'flex';
-        } else if (screenId.startsWith('step-mp')) {
-            cartFab.style.display = 'flex';
+        } else if (screenId.startsWith('step-mp') || screenId === 'step-menu') {
+            cartFab.style.display = 'none';
             mainBtn.style.display = 'none';
+            if(screenId.startsWith('step-mp')) cartFab.style.display = 'flex';
         } else {
             cartFab.style.display = 'flex';
             mainBtn.style.display = 'none';
@@ -488,7 +513,8 @@
       triggerHaptic(); 
       state.currentShop = name; 
       document.getElementById('title').innerText = name;
-      localStorage.setItem('saved_shop', name); 
+      
+      // 💡 ПАМЯТЬ АДРЕСА УБРАНА! LocalStorage больше не сохраняет кофейню.
       state.screenHistory = []; 
       
       setTimeout(async () => {
@@ -498,13 +524,143 @@
     }
 
     function clearShopAndReturn() {
-        triggerHaptic(); 
-        localStorage.removeItem('saved_shop'); 
-        state.currentShop = "";
-        document.getElementById('title').innerText = "Выбор кофейни"; 
-        state.screenHistory = [];
-        showScreen('step-1');
+      triggerHaptic(); 
+      state.currentShop = "";
+      document.getElementById('title').innerText = "Выбор кофейни"; 
+      state.screenHistory = [];
+      showScreen('step-1');
     }
+
+    // ==========================================
+    // 💡 НОВЫЙ БЛОК: МЕНЮ И РЕЦЕПТЫ В МИНИ АПП
+    // ==========================================
+    async function initMenuWorkflow() {
+        triggerHaptic();
+        
+        let isAdmin = TG_ADMIN_IDS.includes(String(globalTgUserId));
+        if (!isAdmin) {
+            showPopupError("В разработке", "Меню и рецепты пока доступны только администраторам 👨‍💻");
+            return;
+        }
+
+        state.currentMode = 'menu';
+        document.getElementById('title').innerText = "Меню и Рецепты";
+        showScreen('step-menu');
+        document.getElementById('menu-container').innerHTML = `<div class="report-card"><div class="loading-pulse">⏳ Загрузка меню...</div></div>`;
+
+        try {
+            const [menuSnap, orderSnap] = await Promise.all([
+                database.ref("catalogs/menu").once("value"),
+                database.ref("catalogs/order").once("value")
+            ]);
+            
+            state.menuCatalog = menuSnap.val() || {};
+            state.productCatalog = orderSnap.val() || {}; // Нужно для фоток ингредиентов
+            
+            renderMenuApp();
+        } catch (e) {
+            document.getElementById('menu-container').innerHTML = `<div class="report-card"><div style="color:red; font-weight:bold; text-align:center;">Ошибка: ${e.message}</div></div>`;
+        }
+    }
+
+    function renderMenuApp() {
+        let html = "";
+        let grouped = {};
+        
+        // Группируем напитки
+        Object.values(state.menuCatalog).forEach(item => {
+            let gc = item.globalCat || "Основное меню";
+            let sc = item.cat || "Прочее";
+            if (!grouped[gc]) grouped[gc] = {};
+            if (!grouped[gc][sc]) grouped[gc][sc] = [];
+            grouped[gc][sc].push(item);
+        });
+
+        Object.keys(grouped).sort().forEach(gc => {
+            let safeGc = getSafeId("app_menu_" + gc);
+            html += `<div class="category-block open" style="margin-bottom:15px; border:2px solid #D1C4E9; background:#fff;">
+                        <div class="category-header" style="background:#ede7f6; color:#311b92;" onclick="handleCategoryToggle(this)">
+                            <span>🌍 ${gc}</span> <span style="opacity:0.5; font-size:14px;">▼</span>
+                        </div>
+                        <div class="category-content" style="display:block; padding:10px;">`;
+            
+            Object.keys(grouped[gc]).sort().forEach(sc => {
+                let safeSc = getSafeId("app_menu_sc_" + sc);
+                html += `<div style="margin-bottom:10px;">
+                            <div style="font-weight:900; color:#7E57C2; padding:8px 5px; border-bottom:2px dashed #eee; margin-bottom:5px; font-size:17px;">📂 ${sc}</div>`;
+                
+                grouped[gc][sc].sort((a,b) => (a.name||'').localeCompare(b.name||'')).forEach(drink => {
+                    let safeDrink = getSafeId("app_drink_" + drink.name);
+                    
+                    let recipeHtml = `<div class="recipe_data_${safeDrink}" style="display:none; margin-top:10px; padding:12px; background:#f9fbe7; border-radius:12px; border:1px solid #c5e1a5;">
+                                        <div style="font-size:14px; font-weight:900; color:#2e7d32; margin-bottom:8px; text-transform:uppercase;">📝 Состав:</div>`;
+                    
+                    if (drink.recipe && drink.recipe.length > 0) {
+                        recipeHtml += `<table style="width:100%; font-size:14px; border-collapse:collapse;">`;
+                        drink.recipe.forEach(r => {
+                            let escName = escapeName(r.name);
+                            // Клик по строке ингредиента открывает фото
+                            recipeHtml += `<tr style="border-bottom:1px solid #e0e0e0;" onclick="showIngredientPhoto('${escName}')">
+                                            <td style="padding:10px 4px; font-weight:bold; color:#333; display:flex; align-items:center; cursor:pointer;">
+                                                <span style="margin-right:8px; font-size:16px;">🔍</span><span style="border-bottom:1px dashed #999;">${r.name}</span>
+                                            </td>
+                                            <td style="padding:10px 4px; text-align:right; font-weight:900; color:#4A148C; width:80px;">${r.qty}</td>
+                                           </tr>`;
+                        });
+                        recipeHtml += `</table>`;
+                    } else {
+                        recipeHtml += `<div style="color:#888; font-size:13px; font-style:italic;">Рецепт пока не заполнен</div>`;
+                    }
+                    
+                    // Блок для видео (пока заглушка)
+                    recipeHtml += `<div style="margin-top:15px; padding-top:10px; border-top:1px solid #e0e0e0;">
+                                     <button style="width:100%; padding:12px; background:#e3f2fd; color:#1565c0; border:none; border-radius:8px; font-weight:900; font-size:14px; cursor:pointer;" onclick="showPopupError('В разработке', 'Видео-обучения скоро появятся здесь!')">▶️ Смотреть видео-обучение</button>
+                                   </div>`;
+                    
+                    recipeHtml += `</div>`;
+
+                    html += `<div style="background:#fff; border-radius:12px; box-shadow:0 2px 8px rgba(0,0,0,0.05); margin-bottom:8px; padding:12px; border: 1px solid #f0f0f0;">
+                                <div style="display:flex; justify-content:space-between; align-items:center; cursor:pointer;" onclick="toggleElements('recipe_data_${safeDrink}', 'arr_drink_${safeDrink}')">
+                                    <span style="font-weight:900; font-size:16px; color:#311b92;">☕ ${drink.name}</span>
+                                    <span id="arr_drink_${safeDrink}" style="color:#888; font-size:13px; padding:5px;">▼</span>
+                                </div>
+                                ${recipeHtml}
+                             </div>`;
+                });
+                
+                html += `</div>`;
+            });
+            
+            html += `</div></div>`;
+        });
+        
+        document.getElementById('menu-container').innerHTML = html || "<div class='report-card' style='text-align:center; font-weight:bold; color:#888;'>Меню пусто</div>";
+    }
+
+    function showIngredientPhoto(ingName) {
+        triggerHaptic();
+        // Ищем ингредиент в каталоге закупки, чтобы подтянуть фото
+        let clean = cleanName(ingName);
+        let found = Object.values(state.productCatalog).find(c => c && cleanName(c.name) === clean);
+        let photoUrl = found && found.photo ? found.photo : null;
+        
+        document.getElementById('photo-modal-title').innerText = ingName;
+        let img = document.getElementById('photo-modal-img');
+        let err = document.getElementById('photo-modal-error');
+        
+        if (photoUrl) {
+            img.src = photoUrl;
+            img.style.display = 'block';
+            err.style.display = 'none';
+        } else {
+            img.src = "";
+            img.style.display = 'none';
+            err.style.display = 'block';
+        }
+        
+        document.getElementById('photo-modal').style.display = 'flex';
+    }
+
 
     function initMarketplace() {
         triggerHaptic();
@@ -674,7 +830,7 @@
         } catch(e) { console.log(e); }
     }
 
- // ==========================================
+    // ==========================================
     // 1. ИНИЦИАЛИЗАЦИЯ И ПРИНУДИТЕЛЬНАЯ ЧИСТКА КОРЗИНЫ
     // ==========================================
     async function initWorkflow(mode) {
@@ -683,7 +839,6 @@
       document.body.classList.add('workflow-active');
       state.userBasket = {}; 
       
-      // Сеты теперь будут хранить ОЧИЩЕННЫЕ названия
       state.transitItems = new Set();
       state.orderedItems = new Set(); 
       state.unprocessedItems = new Set();
@@ -731,35 +886,28 @@
               let transitItems = new Set();
               let pendingItems = new Set();
 
-              // 1. ПОЛУЧАЕМ НЕДОВОЗЫ (ТОЛЬКО "В пути" или "Ожидает")
               const missSnap = await database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value");
               let hasCanceledMissings = false;
 
               missSnap.forEach(c => {
                   let m = c.val();
                   if (!m || !m.name) return;
-                  let clean = cleanName(m.name); // Очищаем название
-
-                  // Если статус arrived или canceled - пропускаем (товар "свободен")
+                  let clean = cleanName(m.name);
                   if (m.status === 'transit' || m.status === 'pending') {
                       transitItems.add(clean);
                   }
               });
 
-              // 2. ИЩЕМ ЗАКАЗАННОЕ В АКТИВНЫХ ЗАКАЗАХ (с умной проверкой приемки)
               shopOrders.forEach(o => {
                   if (o.mode === 'order' || o.mode === 'new_shop') {
                       let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
                       itemsArr.forEach(i => {
                           if (i && i.name && i.name !== "НЕТ ЗАКАЗА") {
                               let clean = cleanName(i.name);
-                              
-                              // Определяем, к какому поставщику относится этот конкретный товар
                               let catItem = Object.values(state.productCatalog).find(c => c && cleanName(c.name) === clean);
                               let vendor = (i.vendor || (catItem ? catItem.vendor : 'Лента')).toLowerCase();
                               let isOzon = vendor.includes('озон') || vendor.includes('ozon');
                               
-                              // Если товар от этого поставщика УЖЕ ПРИНЯТ в этом заказе — он свободен для нового заказа
                               let isReceived = isOzon ? o.ozon_received : o.lenta_received;
                               
                               if (!isReceived) {
@@ -776,22 +924,17 @@
                   }
               });
 
-              // 3. Загружаем черновик (корзину)
               restoreFromDraft();
 
-              // 4. ПРИНУДИТЕЛЬНАЯ ОЧИСТКА КОРЗИНЫ
               for (let key in state.userBasket) {
                   if (key === "_catinfo") continue;
-                  let cleanKey = cleanName(key); // Очищаем то, что в корзине
-
-                  // Если товар заказан, в пути или уже ждет оформления - УДАЛЯЕМ из корзины жестко
+                  let cleanKey = cleanName(key); 
                   if (orderedItems.has(cleanKey) || transitItems.has(cleanKey) || pendingItems.has(cleanKey)) {
                       delete state.userBasket[key];
                       if (state.userBasket["_catinfo"]) delete state.userBasket["_catinfo"][key];
                   }
               }
 
-              // 5. Обработка отмененных недовозов -> кидаем в корзину
               missSnap.forEach(c => {
                   let m = c.val();
                   if (!m || !m.name) return;
@@ -810,21 +953,16 @@
 
               if (hasCanceledMissings) showPopupError("Внимание", "⚠️ Отмененные администратором недовозы возвращены в вашу корзину.");
 
-              // 6. УМНЫЙ СТОП-ЛИСТ
               let latestStoplist = shopOrders.slice().reverse().find(o => o.mode === 'stoplist_fill');
               if (latestStoplist && latestStoplist.items) {
                   let itemsArr = Array.isArray(latestStoplist.items) ? latestStoplist.items : Object.values(latestStoplist.items);
                   itemsArr.forEach(i => {
                       if (i && i.name && i.qty === 'Закончилось') {
-                          let cleanStopName = cleanName(i.name); // Очищенное название из стоп-листа
-
-                          // Ищем в справочнике закупки
+                          let cleanStopName = cleanName(i.name); 
                           let catItem = Object.values(state.productCatalog).find(c => c && cleanName(c.name) === cleanStopName);
 
                           if (catItem) {
-                              // Если товар НЕ заказан, НЕ в пути, НЕ ждет оформления
                               if (!orderedItems.has(cleanStopName) && !transitItems.has(cleanStopName) && !pendingItems.has(cleanStopName)) {
-                                  // Добавляем в корзину идеальное название из справочника
                                   let exactName = catItem.name;
                                   if (state.userBasket[exactName] === undefined) {
                                       state.userBasket[exactName] = 1;
@@ -837,7 +975,6 @@
                   });
               }
 
-              // Обновляем глобальные переменные для отрисовки замков в UI
               state.transitItems = transitItems;
               state.orderedItems = orderedItems;
               state.unprocessedItems = pendingItems;
@@ -854,7 +991,6 @@
       }
     }
 
-
     // ==========================================
     // 2. ОТРИСОВКА СПИСКА С БЛОКИРОВКОЙ
     // ==========================================
@@ -870,8 +1006,7 @@
           if (ia !== ib) return ia - ib;
           return a.localeCompare(b);
       });
-
-      categories.forEach(cat => {
+    categories.forEach(cat => {
         let safeCatId = getSafeId(cat);
         html += `<div class="category-block" id="block-${safeCatId}">
                     <div class="category-header" onclick="handleCategoryToggle(this)">
@@ -899,7 +1034,7 @@
           let safeId = getSafeId(itemName);
           let escName = escapeName(itemName);
           
-          let clean = cleanName(itemName); // Очищаем имя для проверки блокировок
+          let clean = cleanName(itemName); 
           
           let isPending = state.unprocessedItems && state.unprocessedItems.has(clean);
           let isTransit = state.transitItems && state.transitItems.has(clean);
@@ -1116,7 +1251,6 @@
 
         if (state.currentMode === 'marketplace') {
             document.getElementById('mp-edit-controls').style.display = 'block';
-            
             html += isPastMonthWarning;
 
             state.mpBasket.forEach((i, idx) => {
@@ -1180,7 +1314,7 @@
       setTimeout(() => { banner.style.display = 'none'; }, 6000);
     }
 
-async function validateAndSubmit(isFromModal) {
+    async function validateAndSubmit(isFromModal) {
       if (!isFromModal && (state.currentMode === 'order' || state.currentMode === 'new_shop' || state.currentMode === 'marketplace')) { toggleCartModal(true); return; }
       if (state.isProcessing) return;
 
@@ -1264,7 +1398,6 @@ async function validateAndSubmit(isFromModal) {
           let btn = document.getElementById('modal-submit-button'); if(btn) btn.innerText = "ОТПРАВЛЯЮ...";
           let mainBtn = document.getElementById('main-action-button'); if(mainBtn) mainBtn.innerText = "ОТПРАВЛЯЮ...";
 
-          // ВАЖНО: Добавлен блок обработки ошибок для чек-листа и стоп-листа!
           try {
               if (state.currentMode === 'order' || state.currentMode === 'new_shop') {
                   const existingSnap = await database.ref("orders").orderByChild("shop").equalTo(state.currentShop).once("value");
@@ -1424,7 +1557,7 @@ async function validateAndSubmit(isFromModal) {
           let btn = document.getElementById('modal-submit-button');
           let mainBtn = document.getElementById('main-action-button');
           if(btn) btn.innerText = "ПОДТВЕРДИТЬ И ОТПРАВИТЬ";
-          if(mainBtn) mainBtn.innerText = "ОТПРАВИТЬ"; // 💡 ТУТ БЫЛА ОПЕЧАТКА! ИСПРАВИЛ!
+          if(mainBtn) mainBtn.innerText = "ОТПРАВИТЬ"; 
           
           updateBadgeUI();
           state.screenHistory = [];
@@ -1488,12 +1621,6 @@ async function validateAndSubmit(isFromModal) {
       }
     }
 
-    async function triggerPcBuild(cmd) {
-        triggerHaptic(); 
-        showReportOverlay("Передача сигнала...");
-        await database.ref("bot_control/pc_command").set({ command: cmd, timestamp: Date.now() });
-        document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; color:#4caf50; font-weight:900; padding:20px;">Команда ${cmd} успешно отправлена на ПК!</div></div>`;
-    }
     // ==========================================
     // 7. ОТЧЕТЫ БОССА И АДМИНА
     // ==========================================
@@ -1506,138 +1633,7 @@ async function validateAndSubmit(isFromModal) {
         document.getElementById('report-overlay').style.display = 'none'; 
     }
 
-    async function buildSvodReport() {
-        showReportOverlay("Сборка закупки (Выполняю команду)...");
-        try {
-            const [ordersSnap, catalogSnap, missingSnap] = await Promise.all([
-               database.ref("orders").once("value"), 
-               database.ref("catalogs/order").once("value"), 
-               database.ref("missing_items").once("value")
-            ]);
-            
-            let catalog = catalogSnap.val() || {}; 
-            let missingData = missingSnap.val() || {};
-            
-            let updates = {}; 
-            let totalSvod = 0; 
-            let totalLentaAll = 0; 
-            let totalOzonAll = 0; 
-            let totalKuperAll = 0;
-
-            let activeMissing = {};
-            Object.values(missingData).forEach(m => {
-                if (m && m.status !== 'arrived' && m.status !== 'canceled') {
-                    if (!activeMissing[m.shop]) activeMissing[m.shop] = {};
-                    activeMissing[m.shop][m.name] = m.status;
-                }
-            });
-
-            let shopLentaSums = {};
-            let svodByShop = {};
-
-            ordersSnap.forEach(c => {
-                let o = c.val();
-                if (o && (o.mode === 'order' || o.mode === 'new_shop') && o.svod === false) {
-                    if(!shopLentaSums[o.shop]) shopLentaSums[o.shop] = 0;
-                    if(!svodByShop[o.shop]) svodByShop[o.shop] = 0;
-                    
-                    let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
-                    itemsArr.forEach(i => {
-                        if(i && i.name && i.name !== "НЕТ ЗАКАЗА") {
-                            let catItem = Object.values(catalog).find(cat => cat && cat.name === i.name) || {};
-                            let vendor = (catItem.vendor || 'Лента').toLowerCase();
-                            let missingStat = activeMissing[o.shop] ? activeMissing[o.shop][i.name] : null;
-                            let inTransit = missingStat === 'transit';
-                            
-                            if (!inTransit && i.status !== 'error' && (vendor.includes('лента') || vendor.includes('lenta'))) {
-                                shopLentaSums[o.shop] += (parseFloat(i.qty) * (parseFloat(catItem.price)||0));
-                            }
-                        }
-                    });
-                }
-            });
-
-            ordersSnap.forEach(c => {
-                let o = c.val();
-                if (o && (o.mode === 'order' || o.mode === 'new_shop') && o.svod === false) {
-                    updates[c.key + "/svod"] = true; 
-                    let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
-                    let changed = false;
-
-                    itemsArr.forEach(i => {
-                        if(i && i.name && i.name !== "НЕТ ЗАКАЗА") {
-                            let catItem = Object.values(catalog).find(cat => cat && cat.name === i.name) || {};
-                            let vendor = (catItem.vendor || 'Лента').toLowerCase();
-                            let price = parseFloat(catItem.price) || 0;
-                            
-                            let missingStat = activeMissing[o.shop] ? activeMissing[o.shop][i.name] : null;
-                            let inTransit = missingStat === 'transit';
-                            
-                            if (inTransit || i.status === 'error') {
-                                i.status = 'error'; 
-                                i.bot_error = true; 
-                                changed = true;
-                            } else {
-                                let cost = price * parseFloat(i.qty);
-                                totalSvod += cost;
-                                svodByShop[o.shop] += cost;
-                                
-                                let isOzon = vendor.includes('озон') || vendor.includes('ozon');
-                                if (vendor.includes('лента') || vendor.includes('lenta')) {
-                                    if (shopLentaSums[o.shop] < 2000) totalKuperAll += cost;
-                                    else totalLentaAll += cost;
-                                } else if (isOzon) {
-                                    totalOzonAll += cost;
-                                } else {
-                                    totalKuperAll += cost;
-                                }
-                            }
-                        }
-                    });
-                    if (changed) updates[c.key + "/items"] = itemsArr;
-                }
-            });
-
-            if (Object.keys(updates).length > 0) {
-                await database.ref("orders").update(updates);
-                
-                let textToBot = `📊 **СВОД ГОТОВ К СБОРКЕ!**\n\n`;
-                for(let shopName in svodByShop) {
-                    if (svodByShop[shopName] > 0) {
-                        textToBot += `📍 ${shopName}: **${Math.round(svodByShop[shopName])} ₽**\n`;
-                    }
-                }
-                textToBot += `➖➖➖➖➖➖➖➖\n💵 ИТОГО: **${Math.round(totalSvod)} ₽**`;
-                
-                await database.ref("bot_control/notifications").push({ type: "svod_ready_text", text: textToBot, timestamp: Date.now() });
-            }
-
-            let html = `<div class="report-card"><div class="report-card-title">Сводная закупка</div>`;
-            if (Object.keys(updates).length === 0) {
-                html += `<div style="padding:10px 0; text-align:center; font-weight:900;">Нет новых заказов.</div>`;
-            } else {
-                html += `<div style="padding:10px 0; font-size:15px; color:#555; margin-bottom:10px; font-weight:700;">✅ Команда выполнена. Заказы переведены в статус "Приемка". Отчет отправлен в Telegram.</div>`;
-                
-                for(let shopName in svodByShop) {
-                    if (svodByShop[shopName] > 0) {
-                        let displayName = shopName === 'Красноказарменная' ? 'МЭИ' : shopName;
-                        html += `<div class="report-card-item">
-                                    <span style="font-size:17px; color:#311B92; font-weight:900;">${displayName}</span>
-                                    <b style="font-size:17px;">${Math.round(svodByShop[shopName])} ₽</b>
-                                 </div>`;
-                    }
-                }
-                
-                html += `<div style="text-align:right; font-size:22px; color:#4caf50; margin-top:20px; font-weight:900;">ИТОГО: ${Math.round(totalSvod)} ₽</div>`;
-            }
-            html += `</div>`;
-            document.getElementById('report-content-area').innerHTML = html;
-        } catch (e) { 
-            document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="color:red; font-weight:900;">Ошибка формирования свода: ${e.message}</div></div>`; 
-        }
-    }
-
-  async function showMyLastOrder() {
+    async function showMyLastOrder() {
         showReportOverlay("Считаю суммарный заказ...");
         try {
             const snap = await database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(50).once("value");
@@ -1655,14 +1651,11 @@ async function validateAndSubmit(isFromModal) {
                  return;
             }
 
-            // Сортируем все заказы по времени: от самых новых к старым
             allOrders.sort((a,b) => (b.timestamp || 0) - (a.timestamp || 0));
 
-            // Берем строго два последних объекта заказа (Текущий и Прошлый)
             let currentOrderObj = allOrders[0];
             let prevOrderObj = allOrders.length > 1 ? allOrders[1] : null;
 
-            // Вспомогательная функция для сборки одного конкретного заказа
             const aggregateSingleOrder = (o) => {
                 let aggregated = {};
                 if (!o) return aggregated;
@@ -1673,7 +1666,6 @@ async function validateAndSubmit(isFromModal) {
                         if (!aggregated[i.name]) aggregated[i.name] = { qty: 0, status: 'pending', is_error: false };
                         aggregated[i.name].qty += parseFloat(i.qty) || 0;
                         
-                        // 💡 ИСПРАВЛЕНИЕ: Статус зависит СТРОГО от индивидуального статуса товара или глобального "Заказы оформлены"
                         if (i.status === 'ordered' || o.ordered === true) {
                             aggregated[i.name].status = 'ordered';
                         } else if (i.status === 'from_stoplist') {
@@ -1691,7 +1683,6 @@ async function validateAndSubmit(isFromModal) {
             let currentAgg = aggregateSingleOrder(currentOrderObj);
             let prevAgg = aggregateSingleOrder(prevOrderObj);
 
-            // Получаем недовозы для подсветки ошибок
             const missSnap = await database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value");
             let activeMissing = {};
             missSnap.forEach(c => {
@@ -1699,18 +1690,15 @@ async function validateAndSubmit(isFromModal) {
                 if (m && m.status !== 'arrived' && m.status !== 'canceled') activeMissing[m.name] = true;
             });
 
-            // Задаем вкладку по умолчанию
             if (!state.currentMyOrderTab) state.currentMyOrderTab = 'current';
 
             let html = "";
 
-            // Отрисовка переключателя вкладок
             html += `<div style="display: flex; gap: 10px; margin-bottom: 20px; background: #fff; padding: 6px; border-radius: 14px; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
                         <button onclick="state.currentMyOrderTab = 'current'; showMyLastOrder();" style="flex: 1; padding: 12px; border: none; border-radius: 10px; font-size: 15px; font-weight: 900; transition: 0.2s; cursor: pointer; ${state.currentMyOrderTab === 'current' ? 'background: #4A148C; color: #fff;' : 'background: transparent; color: #888;'}">Текущий заказ</button>
                         <button onclick="state.currentMyOrderTab = 'prev'; showMyLastOrder();" style="flex: 1; padding: 12px; border: none; border-radius: 10px; font-size: 15px; font-weight: 900; transition: 0.2s; cursor: pointer; ${state.currentMyOrderTab === 'prev' ? 'background: #9C27B0; color: #fff;' : 'background: transparent; color: #888;'}">Прошлый заказ</button>
                      </div>`;
 
-            // Функция отрисовки карточки
             const renderOrderBlock = (aggData, dateStr, title, isMain) => {
                 if (!aggData || Object.keys(aggData).length === 0) {
                     return `<div class="report-card" style="margin-bottom:15px; border: 2px solid ${isMain ? '#7E57C2' : '#9C27B0'};">
@@ -1751,7 +1739,6 @@ async function validateAndSubmit(isFromModal) {
             let currentOrderDateStr = currentOrderObj ? new Date(currentOrderObj.timestamp).toLocaleDateString('ru-RU') + ' ' + new Date(currentOrderObj.timestamp).toLocaleTimeString('ru-RU', {hour: '2-digit', minute:'2-digit'}) : '---';
             let prevOrderDateStr = prevOrderObj ? new Date(prevOrderObj.timestamp).toLocaleDateString('ru-RU') + ' ' + new Date(prevOrderObj.timestamp).toLocaleTimeString('ru-RU', {hour: '2-digit', minute:'2-digit'}) : '---';
 
-            // Выводим только ту вкладку, которая выбрана
             if (state.currentMyOrderTab === 'current') {
                 html += renderOrderBlock(currentAgg, currentOrderDateStr, "Текущий заказ", true);
             } else {
@@ -2053,7 +2040,6 @@ async function validateAndSubmit(isFromModal) {
         triggerHaptic();
         if (!state.receivingChoices) state.receivingChoices = {};
         
-        // Уникальный ключ, чтобы один товар из разных дат не перебивал друг друга
         state.receivingChoices[dateStr + "_" + name] = { name: name, qty: qty, vendor: vendor, status: status, date: dateStr };
         
         let btnArr = document.getElementById(btnArrId);
@@ -2125,7 +2111,6 @@ async function validateAndSubmit(isFromModal) {
 
             let orderCatalog = catSnap.val() || {};
             
-            // 1. Собираем активные недовозы и недовозы в истории
             let activeMissing = [];
             let historyMissing = [];
             missSnap.forEach(c => { 
@@ -2138,7 +2123,6 @@ async function validateAndSubmit(isFromModal) {
                 }
             });
 
-            // 2. Собираем заказы за последние 15 дней
             let fifteenDaysAgo = Date.now() - (15 * 24 * 60 * 60 * 1000); 
             let ordersArr = [];
             ordersSnap.forEach(c => { 
@@ -2194,7 +2178,6 @@ async function validateAndSubmit(isFromModal) {
                     html += `</div>`;
                 }
 
-                // 💡 НОВАЯ ЛОГИКА ГРУППИРОВКИ ПО ДАТАМ
                 let activeByDate = {}; 
                 
                 ordersArr.forEach(o => {
@@ -2462,7 +2445,6 @@ async function validateAndSubmit(isFromModal) {
 
             if (isAlreadyProcessed) {
                 showPopupError("Внимание", "Эта приемка уже была только что обработана с другого устройства. Данные обновлены.");
-                // Чистим кэш только для этой даты и поставщика
                 if (state.receivingChoices) {
                     for (let k in state.receivingChoices) {
                         if (state.receivingChoices[k].vendor === vendorKey && state.receivingChoices[k].date === dateStr) delete state.receivingChoices[k];
@@ -2687,10 +2669,7 @@ async function validateAndSubmit(isFromModal) {
       
       restoreMpDraft();
 
-      let saved = localStorage.getItem('saved_shop');
-      if(saved && saved !== 'undefined') {
-          handleShopSelection(saved);
-      }
+      // 💡 ПАМЯТЬ АДРЕСА УБРАНА! Теперь при входе всегда показывается стартовый экран выбора кофейни.
     };
   </script>
 </body>

@@ -382,7 +382,7 @@
       currentShop: "", 
       currentMode: "", 
       productCatalog: {}, 
-      menuCatalog: {}, // Добавлено для меню
+      menuCatalog: {}, 
       userBasket: {}, 
       isProcessing: false, 
       unprocessedItems: new Set(),
@@ -514,7 +514,6 @@
       state.currentShop = name; 
       document.getElementById('title').innerText = name;
       
-      // 💡 ПАМЯТЬ АДРЕСА УБРАНА! LocalStorage больше не сохраняет кофейню.
       state.screenHistory = []; 
       
       setTimeout(async () => {
@@ -532,11 +531,10 @@
     }
 
     // ==========================================
-    // 💡 НОВЫЙ БЛОК: МЕНЮ И РЕЦЕПТЫ В МИНИ АПП
+    // 💡 БЛОК: МЕНЮ И РЕЦЕПТЫ В МИНИ АПП
     // ==========================================
     async function initMenuWorkflow() {
         triggerHaptic();
-        
         let isAdmin = TG_ADMIN_IDS.includes(String(globalTgUserId));
         if (!isAdmin) {
             showPopupError("В разработке", "Меню и рецепты пока доступны только администраторам 👨‍💻");
@@ -549,13 +547,15 @@
         document.getElementById('menu-container').innerHTML = `<div class="report-card"><div class="loading-pulse">⏳ Загрузка меню...</div></div>`;
 
         try {
-            const [menuSnap, orderSnap] = await Promise.all([
+            const [menuSnap, orderSnap, chkSnap] = await Promise.all([
                 database.ref("catalogs/menu").once("value"),
-                database.ref("catalogs/order").once("value")
+                database.ref("catalogs/order").once("value"),
+                database.ref("catalogs/checklist").once("value")
             ]);
             
             state.menuCatalog = menuSnap.val() || {};
-            state.productCatalog = orderSnap.val() || {}; // Нужно для фоток ингредиентов
+            // Объединяем каталоги для поиска фоток
+            state.productCatalog = { ...(orderSnap.val() || {}), ...(chkSnap.val() || {}) };
             
             renderMenuApp();
         } catch (e) {
@@ -567,7 +567,6 @@
         let html = "";
         let grouped = {};
         
-        // Группируем напитки
         Object.values(state.menuCatalog).forEach(item => {
             let gc = item.globalCat || "Основное меню";
             let sc = item.cat || "Прочее";
@@ -582,12 +581,15 @@
                         <div class="category-header" style="background:#ede7f6; color:#311b92;" onclick="handleCategoryToggle(this)">
                             <span>🌍 ${gc}</span> <span style="opacity:0.5; font-size:14px;">▼</span>
                         </div>
-                        <div class="category-content" style="display:block; padding:10px;">`;
+                        <div class="category-content" style="padding:10px;">`;
             
             Object.keys(grouped[gc]).sort().forEach(sc => {
                 let safeSc = getSafeId("app_menu_sc_" + sc);
                 html += `<div style="margin-bottom:10px;">
-                            <div style="font-weight:900; color:#7E57C2; padding:8px 5px; border-bottom:2px dashed #eee; margin-bottom:5px; font-size:17px;">📂 ${sc}</div>`;
+                            <div style="font-weight:900; color:#7E57C2; padding:8px 5px; border-bottom:2px dashed #eee; margin-bottom:5px; font-size:17px;" onclick="toggleElements('items_${safeSc}', 'arrow_sc_${safeSc}')">
+                                📂 ${sc} <span id="arrow_sc_${safeSc}" style="float:right; opacity:0.5; font-size:14px;">▼</span>
+                            </div>
+                            <div class="items_${safeSc}" style="display:none;">`;
                 
                 grouped[gc][sc].sort((a,b) => (a.name||'').localeCompare(b.name||'')).forEach(drink => {
                     let safeDrink = getSafeId("app_drink_" + drink.name);
@@ -597,9 +599,11 @@
                     
                     if (drink.recipe && drink.recipe.length > 0) {
                         recipeHtml += `<table style="width:100%; font-size:14px; border-collapse:collapse;">`;
-                        drink.recipe.forEach(r => {
+                        drink.recipe.forEach((r, idx) => {
                             let escName = escapeName(r.name);
-                            // Клик по строке ингредиента открывает фото
+                            if (r.mix && idx > 0) {
+                                recipeHtml += `<tr><td colspan="2" style="text-align:center; color:#d32f2f; font-weight:900; font-size:24px; line-height:0.8; padding:5px 0;">+</td></tr>`;
+                            }
                             recipeHtml += `<tr style="border-bottom:1px solid #e0e0e0;" onclick="showIngredientPhoto('${escName}')">
                                             <td style="padding:10px 4px; font-weight:bold; color:#333; display:flex; align-items:center; cursor:pointer;">
                                                 <span style="margin-right:8px; font-size:16px;">🔍</span><span style="border-bottom:1px dashed #999;">${r.name}</span>
@@ -612,12 +616,15 @@
                         recipeHtml += `<div style="color:#888; font-size:13px; font-style:italic;">Рецепт пока не заполнен</div>`;
                     }
                     
-                    // Блок для видео (пока заглушка)
+                    if (drink.tech) {
+                        recipeHtml += `<div style="margin-top:15px; padding:10px; background:#e3f2fd; border-radius:8px; font-size:14px; line-height:1.4;">
+                                         <b style="color:#1565c0;">⚙️ Техника приготовления:</b><br>${drink.tech}
+                                       </div>`;
+                    }
+                    
                     recipeHtml += `<div style="margin-top:15px; padding-top:10px; border-top:1px solid #e0e0e0;">
                                      <button style="width:100%; padding:12px; background:#e3f2fd; color:#1565c0; border:none; border-radius:8px; font-weight:900; font-size:14px; cursor:pointer;" onclick="showPopupError('В разработке', 'Видео-обучения скоро появятся здесь!')">▶️ Смотреть видео-обучение</button>
-                                   </div>`;
-                    
-                    recipeHtml += `</div>`;
+                                   </div></div>`;
 
                     html += `<div style="background:#fff; border-radius:12px; box-shadow:0 2px 8px rgba(0,0,0,0.05); margin-bottom:8px; padding:12px; border: 1px solid #f0f0f0;">
                                 <div style="display:flex; justify-content:space-between; align-items:center; cursor:pointer;" onclick="toggleElements('recipe_data_${safeDrink}', 'arr_drink_${safeDrink}')">
@@ -628,9 +635,8 @@
                              </div>`;
                 });
                 
-                html += `</div>`;
+                html += `</div></div>`;
             });
-            
             html += `</div></div>`;
         });
         
@@ -639,7 +645,6 @@
 
     function showIngredientPhoto(ingName) {
         triggerHaptic();
-        // Ищем ингредиент в каталоге закупки, чтобы подтянуть фото
         let clean = cleanName(ingName);
         let found = Object.values(state.productCatalog).find(c => c && cleanName(c.name) === clean);
         let photoUrl = found && found.photo ? found.photo : null;
@@ -660,8 +665,6 @@
         
         document.getElementById('photo-modal').style.display = 'flex';
     }
-
-
     function initMarketplace() {
         triggerHaptic();
         state.currentMode = 'marketplace';
@@ -831,7 +834,7 @@
     }
 
     // ==========================================
-    // 1. ИНИЦИАЛИЗАЦИЯ И ПРИНУДИТЕЛЬНАЯ ЧИСТКА КОРЗИНЫ
+    // 💡 ИНИЦИАЛИЗАЦИЯ (ИСПРАВЛЕНА ЛОГИКА БЛОКИРОВОК)
     // ==========================================
     async function initWorkflow(mode) {
       triggerHaptic(); 
@@ -840,7 +843,6 @@
       state.userBasket = {}; 
       
       state.transitItems = new Set();
-      state.orderedItems = new Set(); 
       state.unprocessedItems = new Set();
 
       showScreen('step-3');
@@ -882,7 +884,6 @@
               let shopOrders = [];
               ordersSnap.forEach(c => { let val = c.val(); if(val && typeof val === 'object') shopOrders.push(val); });
 
-              let orderedItems = new Set();
               let transitItems = new Set();
               let pendingItems = new Set();
 
@@ -896,28 +897,32 @@
                   if (m.status === 'transit' || m.status === 'pending') {
                       transitItems.add(clean);
                   }
+                  if (m.status === 'canceled' && !m.added_to_basket) {
+                      let qtyNum = parseFloat(m.qty) || 0;
+                      state.userBasket[m.name] = (state.userBasket[m.name] || 0) + qtyNum;
+                      let foundItem = Object.values(state.productCatalog).find(catItem => catItem && catItem.name === m.name);
+                      if(!state.userBasket["_catinfo"]) state.userBasket["_catinfo"] = {};
+                      state.userBasket["_catinfo"][m.name] = foundItem ? foundItem.cat : "Прочее";
+                      database.ref("missing_items/" + c.key).update({added_to_basket: true}); 
+                      hasCanceledMissings = true;
+                  }
               });
+
+              if (hasCanceledMissings) showPopupError("Внимание", "⚠️ Отмененные администратором недовозы возвращены в вашу корзину.");
 
               shopOrders.forEach(o => {
                   if (o.mode === 'order' || o.mode === 'new_shop') {
+                      // 💡 ИГНОРИРУЕМ УЖЕ ОФОРМЛЕННЫЕ ЗАКАЗЫ (чтобы товары можно было заказать снова)
+                      if (o.ordered === true) return; 
+
                       let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
                       itemsArr.forEach(i => {
                           if (i && i.name && i.name !== "НЕТ ЗАКАЗА") {
-                              let clean = cleanName(i.name);
-                              let catItem = Object.values(state.productCatalog).find(c => c && cleanName(c.name) === clean);
-                              let vendor = (i.vendor || (catItem ? catItem.vendor : 'Лента')).toLowerCase();
-                              let isOzon = vendor.includes('озон') || vendor.includes('ozon');
+                              let isError = i.status === 'error' || i.bot_error === true;
+                              let actuallyPlaced = i.status === 'ordered'; 
                               
-                              let isReceived = isOzon ? o.ozon_received : o.lenta_received;
-                              
-                              if (!isReceived) {
-                                  let isOrdered = o.svod === true || o.ordered === true || i.status === 'ordered';
-                                  let isError = i.status === 'error' || i.bot_error === true;
-
-                                  if (!isError) {
-                                      if (isOrdered) orderedItems.add(clean);
-                                      else pendingItems.add(clean);
-                                  }
+                              if (!isError && !actuallyPlaced) {
+                                  pendingItems.add(cleanName(i.name));
                               }
                           }
                       });
@@ -929,29 +934,11 @@
               for (let key in state.userBasket) {
                   if (key === "_catinfo") continue;
                   let cleanKey = cleanName(key); 
-                  if (orderedItems.has(cleanKey) || transitItems.has(cleanKey) || pendingItems.has(cleanKey)) {
+                  if (transitItems.has(cleanKey) || pendingItems.has(cleanKey)) {
                       delete state.userBasket[key];
                       if (state.userBasket["_catinfo"]) delete state.userBasket["_catinfo"][key];
                   }
               }
-
-              missSnap.forEach(c => {
-                  let m = c.val();
-                  if (!m || !m.name) return;
-                  if (m.status === 'canceled' && !m.added_to_basket) {
-                      let qtyNum = parseFloat(m.qty) || 0;
-                      state.userBasket[m.name] = (state.userBasket[m.name] || 0) + qtyNum;
-
-                      let foundItem = Object.values(state.productCatalog).find(catItem => catItem && catItem.name === m.name);
-                      if(!state.userBasket["_catinfo"]) state.userBasket["_catinfo"] = {};
-                      state.userBasket["_catinfo"][m.name] = foundItem ? foundItem.cat : "Прочее";
-
-                      database.ref("missing_items/" + c.key).update({added_to_basket: true}); 
-                      hasCanceledMissings = true;
-                  }
-              });
-
-              if (hasCanceledMissings) showPopupError("Внимание", "⚠️ Отмененные администратором недовозы возвращены в вашу корзину.");
 
               let latestStoplist = shopOrders.slice().reverse().find(o => o.mode === 'stoplist_fill');
               if (latestStoplist && latestStoplist.items) {
@@ -962,7 +949,7 @@
                           let catItem = Object.values(state.productCatalog).find(c => c && cleanName(c.name) === cleanStopName);
 
                           if (catItem) {
-                              if (!orderedItems.has(cleanStopName) && !transitItems.has(cleanStopName) && !pendingItems.has(cleanStopName)) {
+                              if (!transitItems.has(cleanStopName) && !pendingItems.has(cleanStopName)) {
                                   let exactName = catItem.name;
                                   if (state.userBasket[exactName] === undefined) {
                                       state.userBasket[exactName] = 1;
@@ -976,7 +963,6 @@
               }
 
               state.transitItems = transitItems;
-              state.orderedItems = orderedItems;
               state.unprocessedItems = pendingItems;
 
           } else {
@@ -986,14 +972,9 @@
           persistDraft(); 
           renderProductList();
       } catch (err) {
-          console.error(err);
           document.getElementById('dynamic-list-container').innerHTML = `<div class="report-card"><div style="text-align:center; padding:20px; color:red; font-weight:bold;">Ошибка базы данных: ${err.message}</div></div>`;
       }
     }
-
-    // ==========================================
-    // 2. ОТРИСОВКА СПИСКА С БЛОКИРОВКОЙ
-    // ==========================================
     function renderProductList() {
       var html = "";
       
@@ -1006,7 +987,8 @@
           if (ia !== ib) return ia - ib;
           return a.localeCompare(b);
       });
-    categories.forEach(cat => {
+
+      categories.forEach(cat => {
         let safeCatId = getSafeId(cat);
         html += `<div class="category-block" id="block-${safeCatId}">
                     <div class="category-header" onclick="handleCategoryToggle(this)">
@@ -1038,17 +1020,12 @@
           
           let isPending = state.unprocessedItems && state.unprocessedItems.has(clean);
           let isTransit = state.transitItems && state.transitItems.has(clean);
-          let isOrdered = state.orderedItems && state.orderedItems.has(clean);
           
           let repeatClass = "";
           let repeatLabel = "";
           let borderStyle = "";
 
-          if (isOrdered) {
-              repeatClass = "repeat-item";
-              borderStyle = "border-left: 4px solid #4CAF50;";
-              repeatLabel = `<span class="repeat-item-text" style="color:#2E7D32;">Уже заказано ✅</span>`;
-          } else if (isTransit) {
+          if (isTransit) {
               repeatClass = "repeat-item";
               borderStyle = "border-left: 4px solid #1976D2;";
               repeatLabel = `<span class="repeat-item-text" style="color:#1565C0;">Уже в пути 🚚</span>`;
@@ -1059,13 +1036,15 @@
           }
 
           html += `<div class="item ${repeatClass}" style="${borderStyle}">
-                    <div style="flex:1; padding-right:15px; opacity:${(isTransit || isOrdered) ? '0.6' : '1'};">${repeatLabel}<span style="font-weight: 700; font-size: 15px; line-height: 1.3;">${itemName}</span></div>
+                    <div style="flex:1; padding-right:15px; opacity:${(isTransit || isPending) ? '0.6' : '1'};">${repeatLabel}<span style="font-weight: 700; font-size: 15px; line-height: 1.3;">${itemName}</span></div>
                     <div class="controls" id="controls-${safeId}">`;
           
-          let isLocked = (isTransit || isOrdered) && (state.currentMode === 'order' || state.currentMode === 'new_shop');
+          let isLocked = (isTransit || isPending) && (state.currentMode === 'order' || state.currentMode === 'new_shop');
 
           if (isLocked) {
-              html += `<div style="font-size:14px; font-weight:bold; color:${isOrdered ? '#2E7D32' : '#1565C0'}; padding:10px;">${isOrdered ? 'Заказано' : 'В пути'}</div>`;
+              let lockText = isTransit ? 'В пути' : 'Ожидает оформления';
+              let lockColor = isTransit ? '#1565C0' : '#E65100';
+              html += `<div style="font-size:14px; font-weight:bold; color:${lockColor}; padding:10px;">${lockText}</div>`;
           }
           else if (state.currentMode === 'stoplist_fill') {
               let isStopped = state.userBasket[itemName] === 'Закончилось';
@@ -1557,7 +1536,7 @@
           let btn = document.getElementById('modal-submit-button');
           let mainBtn = document.getElementById('main-action-button');
           if(btn) btn.innerText = "ПОДТВЕРДИТЬ И ОТПРАВИТЬ";
-          if(mainBtn) mainBtn.innerText = "ОТПРАВИТЬ"; 
+          if(mainBtn) mainBtn.innerText = "ОТПРАВИТЬ";
           
           updateBadgeUI();
           state.screenHistory = [];
@@ -2668,8 +2647,7 @@
       }
       
       restoreMpDraft();
-
-      // 💡 ПАМЯТЬ АДРЕСА УБРАНА! Теперь при входе всегда показывается стартовый экран выбора кофейни.
+      showScreen('step-1', false);
     };
   </script>
 </body>

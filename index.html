@@ -237,8 +237,12 @@
     <div id="step-schedule-name" style="display:none;">
       <h3 style="text-align:center; color:#4A148C; margin-bottom: 20px; font-weight:900;">Ваше Имя и Фамилия</h3>
       <p style="text-align:center; font-size:14px; color:#888; margin-bottom:15px;">Укажите так же, как в шапке таблицы графиков</p>
-      <input type="text" id="schedule-name-input" placeholder="Иван Иванов" style="font-size:18px; padding:15px; text-align:center; margin-bottom:20px;">
-      <button class="btn-mode" style="background: var(--btn-order-grad);" onclick="goToScheduleCalendar()">ПРОДОЛЖИТЬ ➡️</button>
+      
+      <div style="display: flex; flex-direction: column; align-items: center; justify-content: center;">
+          <input type="text" id="schedule-name-input" placeholder="Иван Иванов" style="font-size:18px; padding:15px; text-align:center; width:100%; max-width: 300px; box-sizing: border-box; margin-bottom:20px; border-radius:12px; border: 2px solid #7E57C2;">
+          <button class="btn-mode" style="background: var(--btn-order-grad); width:100%; max-width: 300px;" onclick="goToScheduleCalendar()">ПРОДОЛЖИТЬ ➡️</button>
+      </div>
+
       <div class="bottom-fixed-bar">
         <button class="btn-bottom-exit" onclick="showScreen('step-2')">⬅️ Назад</button>
       </div>
@@ -252,8 +256,9 @@
           <div style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px;">
             <button id="tool_MORNING" class="sched-tool active" onclick="setScheduleTool('MORNING')" style="background:#b4a7d6;">☀️ Утро</button>
             <button id="tool_EVENING" class="sched-tool" onclick="setScheduleTool('EVENING')" style="background:#f9cb9c;">🌙 Вечер</button>
+            <button id="tool_FULL" class="sched-tool" onclick="setScheduleTool('FULL')" style="background:#ffab91;">⚡ Полная</button>
             <button id="tool_ANY_SHOP" class="sched-tool" onclick="setScheduleTool('ANY_SHOP')" style="background:#d9ead3;">🟩 Любая</button>
-            <button id="tool_OFF" class="sched-tool" onclick="setScheduleTool('OFF')" style="background:#cfe2f3;">🔹 Выходной</button>
+            <button id="tool_OFF" class="sched-tool" onclick="setScheduleTool('OFF')" style="background:#cfe2f3;">🔹 Вых</button>
             <button id="tool_CLEAR" class="sched-tool" onclick="setScheduleTool('CLEAR')" style="background:#ffffff; border:1px solid #ddd;">❌ Ластик</button>
           </div>
           
@@ -266,8 +271,10 @@
 
       <div class="cal-grid" id="calendar-grid">
          </div>
+      
+      <textarea id="schedule-comment" placeholder="Комментарий к графику (пожелания, отпуска)..." rows="2" style="width:100%; margin-top:15px; padding:12px; border-radius:12px; border:2px solid #7E57C2; font-size:14px; font-family:inherit; resize:none; box-sizing: border-box;"></textarea>
 
-      <button class="btn-mode" style="background: var(--newshop-gradient); margin-top: 20px;" onclick="submitSchedule()">💾 ОТПРАВИТЬ ГРАФИК</button>
+      <button class="btn-mode" style="background: var(--newshop-gradient); margin-top: 15px;" onclick="submitSchedule()">💾 ОТПРАВИТЬ ГРАФИК</button>
 
       <div class="bottom-fixed-bar">
         <button class="btn-bottom-exit" onclick="showScreen('step-schedule-name')">⬅️ Назад</button>
@@ -465,6 +472,7 @@
       OFF: "#cfe2f3",
       MORNING: "#b4a7d6",
       EVENING: "#f9cb9c",
+      FULL: "#ffab91", // <--- Новый цвет для полной смены
       ANY_SHOP: "#d9ead3",
       DEFAULT: "#ffffff",
       CLEAR: "#ffffff"
@@ -648,9 +656,14 @@
         try {
             let snap = await database.ref(`schedules/${y}_${m}/${name}`).once("value");
             if (snap.exists()) {
-                state.schedule.days = snap.val() || {};
+                let data = snap.val() || {};
+                // Вытаскиваем комментарий
+                document.getElementById('schedule-comment').value = data.comment || "";
+                delete data.comment; 
+                state.schedule.days = data;
             } else {
                 state.schedule.days = {};
+                document.getElementById('schedule-comment').value = "";
             }
             renderScheduleCalendar(m, y);
             hideReportOverlay();
@@ -686,9 +699,10 @@
             if (cellData.shift === "OFF") icon = "🔹";
             else if (cellData.shift === "MORNING") icon = "☀️";
             else if (cellData.shift === "EVENING") icon = "🌙";
+            else if (cellData.shift === "FULL") icon = "⚡"; // Иконка полной смены
             else if (cellData.shift === "ANY_SHOP") icon = "🟩";
 
-            let textColor = (cellData.shift === "EVENING") ? "font-weight:900;" : "";
+            let textColor = (cellData.shift === "EVENING" || cellData.shift === "FULL") ? "font-weight:900;" : "";
             let charText = (cellData.shift !== "OFF" && cellData.shift !== "CLEAR" && cellData.shift !== "ANY_SHOP") ? cellData.text : "";
 
             html += `<div class="cal-cell" style="background:${bg};" onclick="handleDayClick(${d})">
@@ -724,9 +738,15 @@
         triggerHaptic();
         let target = getTargetDateLogic();
         
+        let payload = { ...state.schedule.days };
+        let comment = document.getElementById('schedule-comment').value.trim();
+        if (comment) {
+            payload.comment = comment; // Записываем комментарий в базу
+        }
+
         showReportOverlay("Сохранение графика...");
         try {
-            await database.ref(`schedules/${target.year}_${target.month}/${state.schedule.name}`).set(state.schedule.days);
+            await database.ref(`schedules/${target.year}_${target.month}/${state.schedule.name}`).set(payload);
             hideReportOverlay();
             
             document.getElementById('success-screen').style.display = 'flex';

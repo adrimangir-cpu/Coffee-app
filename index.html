@@ -4,7 +4,7 @@
   <base target="_top">
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>Coffee Management App v8.9</title>
+  <title>Coffee Management App v9.0</title>
   
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-app-compat.js"></script>
@@ -37,7 +37,7 @@
     input, textarea, select { -webkit-user-select: text; user-select: text; font-family: inherit; }
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: var(--bg-color); color: var(--text-color); font-size: 16px; line-height: 1.4; padding-bottom: 20px; overflow-x: hidden; scroll-behavior: smooth; -webkit-font-smoothing: antialiased; }
    
-    #step-1, #step-2, #step-stoplist, #step-panel, #step-admin-purchase, #step-3, #step-mp-month, #step-mp-vendor, #step-mp-mode, #step-mp-address, #step-mp-keypad, #step-menu { padding-bottom: 110px; }
+    #step-1, #step-2, #step-stoplist, #step-panel, #step-admin-purchase, #step-3, #step-mp-month, #step-mp-vendor, #step-mp-mode, #step-mp-address, #step-mp-keypad, #step-menu, #step-schedule-name, #step-schedule-calendar { padding-bottom: 110px; }
 
     @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
     @keyframes slideUp { from { transform: translateY(100%); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
@@ -155,6 +155,27 @@
     .mp-cart-info { flex: 1; }
     .mp-cart-val { font-size: 18px; font-weight: 900; color: #C2185B; }
     .mp-edit-input { width: 80px; text-align: right; border: 2px solid #7E57C2; border-radius: 8px; font-weight: 900; color: #C2185B; font-size: 16px; padding: 5px; }
+
+    /* НОВЫЕ СТИЛИ ДЛЯ ГРАФИКА */
+    .sched-tool {
+      flex: 1 1 30%; padding: 10px; border-radius: 10px; font-weight: 900; font-size: 13px;
+      border: 2px solid transparent; color: #333; cursor: pointer; text-align: center;
+    }
+    .sched-tool.active {
+      border: 2px solid #000; transform: scale(0.95); box-shadow: inset 0 2px 5px rgba(0,0,0,0.2);
+    }
+    .cal-grid {
+      display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; text-align: center; margin-bottom: 15px;
+    }
+    .cal-header { font-weight: 900; font-size: 12px; color: #888; padding: 5px 0; }
+    .cal-cell {
+      aspect-ratio: 1; background: #fff; border-radius: 8px; border: 1px solid #eee;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      position: relative; cursor: pointer; transition: 0.1s; overflow: hidden;
+    }
+    .cal-cell:active { transform: scale(0.9); }
+    .cal-cell-date { font-size: 12px; font-weight: bold; margin-bottom: 2px; }
+    .cal-cell-text { font-size: 14px; font-weight: 900; line-height: 1; color: #333; text-transform: uppercase; }
   </style>
 </head>
 <body>
@@ -202,8 +223,8 @@
       <button class="btn-mode" style="background: var(--btn-stop-grad);" onclick="showScreen('step-stoplist')">🛑 СТОП-ЛИСТ</button>
       <button class="btn-mode btn-mode-none" onclick="processNoOrder()">➖ ЗАКАЗ НЕ НУЖЕН</button>
       
-      <!-- 💡 НОВАЯ КНОПКА МЕНЮ -->
       <button class="btn-mode" style="background: linear-gradient(135deg, #00BCD4 0%, #0288D1 100%); margin-top: 12px;" onclick="initMenuWorkflow()">☕ МЕНЮ И РЕЦЕПТЫ</button>
+      <button class="btn-mode" style="background: linear-gradient(135deg, #4A148C 0%, #7E57C2 100%); margin-top: 12px;" onclick="initScheduleWorkflow()">📅 ГРАФИК НА СЛЕД. МЕСЯЦ</button>
 
       <button class="btn-mode" style="background: var(--boss-gradient); margin-top: 12px;" onclick="showMyLastOrder()">🕒 ПОСЛЕДНИЙ ЗАКАЗ</button>
       <button class="btn-mode" style="background: var(--warning-gradient); margin-top: 12px;" onclick="showLastOrder()">🚚 ПРИЕМКА ЗАКУПКИ</button>
@@ -213,6 +234,45 @@
       </div>
     </div>
 
+    <div id="step-schedule-name" style="display:none;">
+      <h3 style="text-align:center; color:#4A148C; margin-bottom: 20px; font-weight:900;">Ваше Имя и Фамилия</h3>
+      <p style="text-align:center; font-size:14px; color:#888; margin-bottom:15px;">Укажите так же, как в шапке таблицы графиков</p>
+      <input type="text" id="schedule-name-input" placeholder="Иван Иванов" style="font-size:18px; padding:15px; text-align:center; margin-bottom:20px;">
+      <button class="btn-mode" style="background: var(--btn-order-grad);" onclick="goToScheduleCalendar()">ПРОДОЛЖИТЬ ➡️</button>
+      <div class="bottom-fixed-bar">
+        <button class="btn-bottom-exit" onclick="showScreen('step-2')">⬅️ Назад</button>
+      </div>
+    </div>
+
+    <div id="step-schedule-calendar" style="display:none;">
+      <h3 style="text-align:center; color:#4A148C; margin-bottom: 10px; font-weight:900;" id="schedule-month-title">График</h3>
+      <p style="text-align:center; font-size:14px; color:#555; font-weight:bold; margin-bottom:15px;" id="schedule-user-title"></p>
+      
+      <div style="background:#fff; border-radius:12px; padding:10px; margin-bottom:15px; box-shadow: 0 4px 10px rgba(0,0,0,0.05);">
+          <div style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px;">
+            <button id="tool_MORNING" class="sched-tool active" onclick="setScheduleTool('MORNING')" style="background:#b4a7d6;">☀️ Утро</button>
+            <button id="tool_EVENING" class="sched-tool" onclick="setScheduleTool('EVENING')" style="background:#f9cb9c;">🌙 Вечер</button>
+            <button id="tool_ANY_SHOP" class="sched-tool" onclick="setScheduleTool('ANY_SHOP')" style="background:#d9ead3;">🟩 Любая</button>
+            <button id="tool_OFF" class="sched-tool" onclick="setScheduleTool('OFF')" style="background:#cfe2f3;">🔹 Выходной</button>
+            <button id="tool_CLEAR" class="sched-tool" onclick="setScheduleTool('CLEAR')" style="background:#ffffff; border:1px solid #ddd;">❌ Ластик</button>
+          </div>
+          
+          <div style="display:flex; align-items:center; gap:10px;">
+            <span style="font-size:14px; font-weight:bold; color:#555;">Кофейня:</span>
+            <select id="schedule-shop-select" style="padding:8px; border-radius:8px; font-weight:bold; border:2px solid #7E57C2; flex:1;" onchange="state.schedule.currentToolText = this.value;">
+                </select>
+          </div>
+      </div>
+
+      <div class="cal-grid" id="calendar-grid">
+         </div>
+
+      <button class="btn-mode" style="background: var(--newshop-gradient); margin-top: 20px;" onclick="submitSchedule()">💾 ОТПРАВИТЬ ГРАФИК</button>
+
+      <div class="bottom-fixed-bar">
+        <button class="btn-bottom-exit" onclick="showScreen('step-schedule-name')">⬅️ Назад</button>
+      </div>
+    </div>
     <div id="step-stoplist" style="display:none;">
       <h3 style="text-align:center; color:#311B92; margin-bottom: 20px; font-weight:900;">Управление Стоп-листом</h3>
       <button class="btn-mode" style="background: var(--btn-stop-grad);" onclick="initWorkflow('stoplist_fill')">📝 ЗАПОЛНИТЬ</button>
@@ -226,7 +286,6 @@
       <div id="dynamic-list-container"></div>
     </div>
 
-    <!-- 💡 НОВАЯ ВКЛАДКА: МЕНЮ И РЕЦЕПТЫ -->
     <div id="step-menu" style="display:none;">
       <h3 style="text-align:center; color:#311B92; margin-bottom: 20px; font-weight:900;">☕ Меню и Рецепты</h3>
       <div id="menu-container"></div>
@@ -325,7 +384,6 @@
     </div>
   </div>
 
-  <!-- 💡 МОДАЛЬНОЕ ОКНО ДЛЯ ФОТОГРАФИИ ИНГРЕДИЕНТА -->
   <div id="photo-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.8); z-index:9999; align-items:center; justify-content:center; flex-direction:column; padding:20px;">
      <div style="background:#fff; padding:15px; border-radius:16px; max-width:100%; width:100%; text-align:center; position:relative; box-shadow:0 10px 30px rgba(0,0,0,0.5);">
         <div onclick="document.getElementById('photo-modal').style.display='none'" style="position:absolute; top:10px; right:15px; font-size:24px; cursor:pointer; color:#888;">✕</div>
@@ -359,6 +417,7 @@
     </div>
   </div>
   <script>
+    <script>
     const firebaseConfig = {
       apiKey: "AIzaSyDQ_-YPu7gxKruOzOFy_zeNfDqF3xs3xts",
       authDomain: "project-lenta22.firebaseapp.com",
@@ -398,7 +457,18 @@
       mpAddress: "", 
       keypadValue: "0", 
       mpBasket: [], 
-      isMpEditMode: false
+      isMpEditMode: false,
+      schedule: { name: "", currentTool: "MORNING", days: {} } // Состояние для графика
+    };
+
+    // Цвета для графиков из GAS
+    const GRAPH_COLORS = {
+      OFF: "#cfe2f3",
+      MORNING: "#b4a7d6",
+      EVENING: "#f9cb9c",
+      ANY_SHOP: "#d9ead3",
+      DEFAULT: "#ffffff",
+      CLEAR: "#ffffff"
     };
     
     function cleanName(str) {
@@ -427,7 +497,7 @@
     }
 
     function showScreen(screenId, recordHistory = true) {
-      const allScreens = ['step-1', 'step-2', 'step-stoplist', 'step-panel', 'step-admin-purchase', 'step-3', 'step-mp-month', 'step-mp-vendor', 'step-mp-mode', 'step-mp-address', 'step-mp-keypad', 'step-menu'];
+      const allScreens = ['step-1', 'step-2', 'step-stoplist', 'step-panel', 'step-admin-purchase', 'step-3', 'step-mp-month', 'step-mp-vendor', 'step-mp-mode', 'step-mp-address', 'step-mp-keypad', 'step-menu', 'step-schedule-name', 'step-schedule-calendar'];
       
       let currentVisible = allScreens.find(id => document.getElementById(id).style.display === 'block');
       if (recordHistory && currentVisible && currentVisible !== screenId) {
@@ -531,6 +601,149 @@
     }
 
     // ==========================================
+    // 💡 БЛОК: ГРАФИКИ (КАЛЕНДАРЬ)
+    // ==========================================
+    function getTargetDateLogic() {
+      let now = new Date();
+      let tMonth = now.getMonth();
+      let tYear = now.getFullYear();
+      if (now.getDate() >= 4) { 
+          tMonth++; 
+          if (tMonth > 11) { tMonth = 0; tYear++; } 
+      }
+      return { month: tMonth, year: tYear };
+    }
+
+    function initScheduleWorkflow() {
+        triggerHaptic();
+        state.currentMode = 'schedule';
+        document.getElementById('title').innerText = "График работы";
+        
+        let savedName = localStorage.getItem("teiku_employee_name");
+        if (savedName) document.getElementById('schedule-name-input').value = savedName;
+        
+        showScreen('step-schedule-name');
+    }
+
+    function goToScheduleCalendar() {
+        triggerHaptic();
+        let name = document.getElementById('schedule-name-input').value.trim();
+        if (!name) return showPopupError("Внимание", "Пожалуйста, введите ваше Имя и Фамилию.");
+        
+        localStorage.setItem("teiku_employee_name", name);
+        state.schedule = { name: name, days: {}, currentTool: "MORNING" };
+        
+        let target = getTargetDateLogic();
+        let monthNames = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
+        document.getElementById('schedule-month-title').innerText = `График на ${monthNames[target.month]} ${target.year}`;
+        document.getElementById('schedule-user-title').innerText = `Сотрудник: ${name}`;
+
+        let shops = ["Бояринова", "Гагарина", "Вертолетчиков", "Липчанского", "Новокосино", "Новокосино 2", "Старое Павлино", "МЭИ", "Ухтомского ополчения"];
+        let selectHtml = shops.map(s => `<option value="${s === 'МЭИ' ? 'М' : s[0]}">${s}</option>`).join('');
+        document.getElementById('schedule-shop-select').innerHTML = selectHtml;
+
+        fetchExistingSchedule(target.month, target.year, name);
+    }
+
+    async function fetchExistingSchedule(m, y, name) {
+        showReportOverlay("Загрузка вашего графика...");
+        try {
+            let snap = await database.ref(`schedules/${y}_${m}/${name}`).once("value");
+            if (snap.exists()) {
+                state.schedule.days = snap.val() || {};
+            } else {
+                state.schedule.days = {};
+            }
+            renderScheduleCalendar(m, y);
+            hideReportOverlay();
+            showScreen('step-schedule-calendar');
+        } catch(e) {
+            hideReportOverlay();
+            showPopupError("Ошибка", "Не удалось загрузить график: " + e.message);
+        }
+    }
+
+    function setScheduleTool(tool) {
+        triggerHaptic();
+        state.schedule.currentTool = tool;
+        document.querySelectorAll('.sched-tool').forEach(b => b.classList.remove('active'));
+        document.getElementById('tool_' + tool).classList.add('active');
+    }
+
+    function renderScheduleCalendar(m, y) {
+        let daysInMonth = new Date(y, m + 1, 0).getDate();
+        let startOffset = (new Date(y, m, 1).getDay() || 7) - 1;
+        
+        let html = `<div class="cal-header">Пн</div><div class="cal-header">Вт</div><div class="cal-header">Ср</div><div class="cal-header">Чт</div><div class="cal-header">Пт</div><div class="cal-header" style="color:#e65100;">Сб</div><div class="cal-header" style="color:#e65100;">Вс</div>`;
+        
+        for (let i = 0; i < startOffset; i++) {
+            html += `<div></div>`;
+        }
+
+        for (let d = 1; d <= daysInMonth; d++) {
+            let cellData = state.schedule.days[d] || { shift: "CLEAR", text: "" };
+            let bg = GRAPH_COLORS[cellData.shift] || GRAPH_COLORS.DEFAULT;
+            
+            let icon = "";
+            if (cellData.shift === "OFF") icon = "🔹";
+            else if (cellData.shift === "MORNING") icon = "☀️";
+            else if (cellData.shift === "EVENING") icon = "🌙";
+            else if (cellData.shift === "ANY_SHOP") icon = "🟩";
+
+            let textColor = (cellData.shift === "EVENING") ? "font-weight:900;" : "";
+            let charText = (cellData.shift !== "OFF" && cellData.shift !== "CLEAR" && cellData.shift !== "ANY_SHOP") ? cellData.text : "";
+
+            html += `<div class="cal-cell" style="background:${bg};" onclick="handleDayClick(${d})">
+                <div class="cal-cell-date">${d}</div>
+                <div class="cal-cell-text" style="${textColor}">${icon} ${charText}</div>
+            </div>`;
+        }
+        document.getElementById('calendar-grid').innerHTML = html;
+    }
+
+    function handleDayClick(day) {
+        triggerHaptic();
+        let tool = state.schedule.currentTool;
+        
+        if (tool === "CLEAR") {
+            delete state.schedule.days[day];
+        } else if (tool === "OFF") {
+            state.schedule.days[day] = { shift: "OFF", text: "" };
+        } else if (tool === "ANY_SHOP") {
+            state.schedule.days[day] = { shift: "ANY_SHOP", text: "" };
+        } else {
+            let shopSelect = document.getElementById('schedule-shop-select');
+            let text = shopSelect.options[shopSelect.selectedIndex].text;
+            let char = text === "МЭИ" ? "М" : text.charAt(0).toUpperCase();
+            state.schedule.days[day] = { shift: tool, text: char };
+        }
+        
+        let target = getTargetDateLogic();
+        renderScheduleCalendar(target.month, target.year);
+    }
+
+    async function submitSchedule() {
+        triggerHaptic();
+        let target = getTargetDateLogic();
+        
+        showReportOverlay("Сохранение графика...");
+        try {
+            await database.ref(`schedules/${target.year}_${target.month}/${state.schedule.name}`).set(state.schedule.days);
+            hideReportOverlay();
+            
+            document.getElementById('success-screen').style.display = 'flex';
+            setTimeout(() => {
+                document.getElementById('success-screen').style.display = 'none';
+                showScreen('step-2', false);
+            }, 2000);
+            
+        } catch(e) {
+            hideReportOverlay();
+            showPopupError("Ошибка", "Не удалось сохранить график: " + e.message);
+        }
+    }
+
+    // ==========================================
     // 💡 БЛОК: МЕНЮ И РЕЦЕПТЫ В МИНИ АПП
     // ==========================================
     async function initMenuWorkflow() {
@@ -554,7 +767,6 @@
             ]);
             
             state.menuCatalog = menuSnap.val() || {};
-            // Объединяем каталоги для поиска фоток
             state.productCatalog = { ...(orderSnap.val() || {}), ...(chkSnap.val() || {}) };
             
             renderMenuApp();
@@ -601,8 +813,8 @@
                         recipeHtml += `<table style="width:100%; font-size:14px; border-collapse:collapse;">`;
                         drink.recipe.forEach((r, idx) => {
                             let escName = escapeName(r.name);
-                            if (r.mix && idx > 0) {
-                                recipeHtml += `<tr><td colspan="2" style="text-align:center; color:#d32f2f; font-weight:900; font-size:24px; line-height:0.8; padding:5px 0;">+</td></tr>`;
+                            if (r.isMerged && idx > 0) {
+                                recipeHtml += `<tr><td colspan="2" style="text-align:center; color:#f57c00; font-weight:900; font-size:24px; line-height:0.8; padding:5px 0;">+</td></tr>`;
                             }
                             recipeHtml += `<tr style="border-bottom:1px solid #e0e0e0;" onclick="showIngredientPhoto('${escName}')">
                                             <td style="padding:10px 4px; font-weight:bold; color:#333; display:flex; align-items:center; cursor:pointer;">
@@ -665,6 +877,10 @@
         
         document.getElementById('photo-modal').style.display = 'flex';
     }
+
+    // ==========================================
+    // 💡 БЛОК: МАРКЕТПЛЕЙСЫ
+    // ==========================================
     function initMarketplace() {
         triggerHaptic();
         state.currentMode = 'marketplace';
@@ -779,6 +995,9 @@
         }
     }
 
+    // ==========================================
+    // 💡 АВТО-УДАЛЕНИЕ ИЗ СТОП-ЛИСТА И НАСТРОЙКИ
+    // ==========================================
     async function autoRemoveFromStoplist(shop, itemNamesArray) {
         if (!itemNamesArray || itemNamesArray.length === 0) return;
         try {
@@ -834,7 +1053,7 @@
     }
 
     // ==========================================
-    // 💡 ИНИЦИАЛИЗАЦИЯ (ИСПРАВЛЕНА ЛОГИКА БЛОКИРОВОК)
+    // 💡 ИНИЦИАЛИЗАЦИЯ И РЕНДЕР КАТАЛОГОВ
     // ==========================================
     async function initWorkflow(mode) {
       triggerHaptic(); 
@@ -912,7 +1131,6 @@
 
               shopOrders.forEach(o => {
                   if (o.mode === 'order' || o.mode === 'new_shop') {
-                      // 💡 ИГНОРИРУЕМ УЖЕ ОФОРМЛЕННЫЕ ЗАКАЗЫ (чтобы товары можно было заказать снова)
                       if (o.ordered === true) return; 
 
                       let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
@@ -975,6 +1193,7 @@
           document.getElementById('dynamic-list-container').innerHTML = `<div class="report-card"><div style="text-align:center; padding:20px; color:red; font-weight:bold;">Ошибка базы данных: ${err.message}</div></div>`;
       }
     }
+
     function renderProductList() {
       var html = "";
       

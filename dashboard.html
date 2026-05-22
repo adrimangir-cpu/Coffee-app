@@ -690,16 +690,16 @@
         
         if (!window.graphDraft) {
             let draft = schedules[currentYearMonth] ? JSON.parse(JSON.stringify(schedules[currentYearMonth])) : {};
-            let allU = Object.keys(draft).filter(k => k !== 'comment');
+            let allU = Object.keys(draft).filter(k => k !== 'comment' && k !== '_pinned');
             if (allU.length === 0) {
                 // Если пустой текущий месяц, подгружаем сотрудников с прошлого (если они были)
                 let pM = target.month - 1; let pY = target.year;
                 if (pM < 0) { pM = 11; pY--; }
                 let prevMonthKey = `${pY}_${pM}`;
                 if (schedules[prevMonthKey]) {
-                    Object.keys(schedules[prevMonthKey]).filter(k => k !== 'comment').forEach(u => draft[u] = {});
+                    Object.keys(schedules[prevMonthKey]).filter(k => k !== 'comment').forEach(u => draft[u] = { _pinned: true });
                 } else {
-                    draft["Сотрудник 1"] = {};
+                    draft["Сотрудник 1"] = { _pinned: true };
                 }
             }
             window.graphDraft = draft;
@@ -714,7 +714,7 @@
         
         let actionBar = document.getElementById('dynamic-action-bar');
         actionBar.innerHTML = `
-            <div class="action-container" style="margin-bottom:0; padding:10px; display: flex; gap: 10px; align-items:center;">
+            <div class="action-container" style="margin-bottom:0; display: flex; gap: 10px; align-items:center;">
                 <button class="btn-save" onclick="saveGraphsEdits()" id="btn-save-graphs">💾 Сохранить графики</button>
                 <button class="btn-add" style="background: #9b59b6;" onclick="addUserToGraph()">➕ Добавить сотрудника</button>
                 <span style="font-size:13px; color:#555; margin-left:15px; flex:1;">💡 Вводите <b>М_у</b> (утро), <b>М_в</b> (вечер), <b>М</b> (полная смена). Система проверит, все ли 9 точек закрыты.</span>
@@ -762,9 +762,12 @@
                 <td style="border:1px solid #ccc; padding:4px; text-align:center; color:${isWeekend?'#e65100':'#555'};">${dayNames[dayOfWeek]}</td>`;
                 
             allUsers.forEach(user => {
-                if(!monthData[user]) monthData[user] = {};
+                if(!monthData[user]) monthData[user] = { _pinned: true };
                 let cellData = monthData[user][d] || { text: "", shift: "CLEAR" };
                 let val = cellData.text || "";
+                
+                // Авто-подмена утро/вечер на отображении (на всякий случай)
+                val = val.replace(/\s*утро$/i, "_У").replace(/\s*вечер$/i, "_В");
                 
                 if(val) dayShifts.push(val.trim().toUpperCase());
                 
@@ -772,7 +775,8 @@
                 let cellBg = "transparent";
                 let cellColor = "#333";
                 let vUpper = val.trim().toUpperCase();
-                if (vUpper === "В" || vUpper === "ВЫХ" || vUpper === "OFF") {
+                
+                if (vUpper === "В" || vUpper === "ВЫХ" || vUpper === "OFF" || vUpper === "ВЫХОДНОЙ") {
                     cellBg = "#bbdefb"; // Синий
                     cellColor = "#0d47a1";
                 } else if (vUpper !== "") {
@@ -814,14 +818,22 @@
     }
 
     function updateGraphCell(user, day, val) {
-        if (!window.graphDraft[user]) window.graphDraft[user] = {};
+        if (!window.graphDraft[user]) window.graphDraft[user] = { _pinned: true };
         if (!window.graphDraft[user][day]) window.graphDraft[user][day] = {};
         
         let vUpper = val.trim().toUpperCase();
+        
+        // Преобразование из "УТРО/ВЕЧЕР"
+        if (vUpper.endsWith("УТРО")) {
+            vUpper = vUpper.replace(/\s*УТРО$/, "_У");
+        } else if (vUpper.endsWith("ВЕЧЕР")) {
+            vUpper = vUpper.replace(/\s*ВЕЧЕР$/, "_В");
+        }
+
         let shift = "CLEAR";
         let formattedVal = vUpper;
         
-        if (vUpper === "В" || vUpper === "ВЫХ" || vUpper === "OFF") {
+        if (vUpper === "В" || vUpper === "ВЫХ" || vUpper === "OFF" || vUpper === "ВЫХОДНОЙ") {
             shift = "OFF";
             formattedVal = "В";
         } else if (vUpper !== "") {
@@ -864,7 +876,7 @@
             alert("Сотрудник с таким именем уже есть в графике!");
             return;
         }
-        window.graphDraft[newName] = {};
+        window.graphDraft[newName] = { _pinned: true }; // Сохраняем пустой объект для Firebase, чтобы столбец не удалялся
         renderGraphsTab();
     }
 
@@ -1215,6 +1227,7 @@
             console.error("Auto stoplist update failed:", e);
         }
     }
+    
     function toggleSvodEdit() { 
         isSvodEditMode = !isSvodEditMode; 
         svodDeletions = []; 
@@ -1591,6 +1604,10 @@
       try {
         const box = document.getElementById('content');
         let svodActionBar = document.getElementById('svod-action-bar');
+        if (!svodActionBar) {
+            // Если мы используем глобальный бар, нужно его очистить и заново собрать
+            svodActionBar = document.getElementById('dynamic-action-bar');
+        }
         
         let totalLenta = 0;
         let totalOzon = 0;

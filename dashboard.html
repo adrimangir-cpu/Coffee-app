@@ -91,7 +91,7 @@
         }
 
         /* =========================================
-           БЛОКИ С КНОПКАМИ ДЕЙСТВИЙ (Закрепленные Глобально)
+           БЛОКИ С КНОПКАМИ ДЕЙСТВИЙ (Закрепленные во всех вкладках)
         ========================================= */
         #svod-action-bar {
             display: none; 
@@ -102,16 +102,16 @@
             width: 100%;
         }
 
-        /* НОВОЕ: Закрепляем все панели действий */
+        /* Глобальное закрепление контейнеров действий во всех вкладках */
         .action-container {
             position: sticky;
-            top: 120px; /* Чтобы не наезжало на верхнее меню */
+            top: 140px; 
             z-index: 1500;
             background: rgba(255, 255, 255, 0.95);
             backdrop-filter: blur(5px);
             padding: 15px;
-            border-radius: 12px;
-            box-shadow: 0 4px 15px rgba(49, 27, 146, 0.15);
+            border-radius: 16px;
+            box-shadow: 0 10px 30px rgba(49, 27, 146, 0.1); 
             display: flex;
             gap: 10px;
             flex-wrap: wrap;
@@ -124,8 +124,14 @@
             top: calc(100% + 5px); 
             left: 5px;
             right: 5px;
+            background: #ffffff;
+            border: 2px solid #e1bee7;
+            border-radius: 16px;
+            box-shadow: 0 15px 35px rgba(49, 27, 146, 0.15); 
+            padding: 15px;
             max-height: 70vh; 
             overflow-y: auto;
+            z-index: 2010;
         }
         
         .action-container button, .action-container .tab-btn {
@@ -255,6 +261,9 @@
             border-radius: 12px; 
             margin-bottom: 20px; 
             border: 1px solid #e0e0e0; 
+            position: sticky;
+            top: 0;
+            z-index: 100;
             box-shadow: 0 4px 10px rgba(0,0,0,0.05);
         }
         
@@ -335,17 +344,23 @@
             100% { opacity: 0.4; transform: scale(0.98); } 
         }
 
-        /* НОВОЕ: Стили для рецептов */
-        .recipe-item {
-            display: flex; align-items: center; gap: 8px; margin-bottom: 5px; padding: 5px;
-            background: #fafafa; border: 1px solid #eee; border-radius: 8px;
+        /* Дополнительные новые стили для элементов тех. карт */
+        .recipe-item-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 6px;
+            padding: 6px;
+            background: #fafafa;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
         }
-        .recipe-item.merged {
-            border-left: 4px solid #F57C00;
+        .recipe-item-row.merged-block {
             border-top: none;
-            border-radius: 0 8px 8px 0;
-            margin-top: -6px;
-            background: #fff3e0;
+            border-radius: 0 0 8px 8px;
+            background-color: #fffde7;
+            border-left: 4px solid #ff9800;
+            margin-top: -7px;
         }
     </style>
 </head>
@@ -361,7 +376,8 @@
 
     <div class="tabs">
         <button class="tab-btn active" onclick="loadTab('orders', this)">📋 Свод и Заказы</button>
-        <button class="tab-btn" onclick="loadTab('menu', this)">☕ Меню и Тех карты</button>
+        <button class="tab-btn" onclick="loadTab('menu', this)">☕ Меню и тех карты</button>
+        <button class="tab-btn" onclick="loadTab('graphs', this)">📅 Графики</button>
         <button class="tab-btn" onclick="loadTab('marketplace', this)">🛒 Маркетплейсы</button>
         <button class="tab-btn" onclick="loadTab('checks_table', this)">✅ Таблица Чек-листов</button>
         <button class="tab-btn" onclick="loadTab('stoplists', this)">🛑 Стоп-листы</button>
@@ -415,6 +431,15 @@
     let expandedDivs = new Set();
     const shopListAll = ["Бояринова", "Гагарина", "Вертолетчиков", "Липчанского", "Новокосино", "Новокосино 2", "Старое Павлино", "Красноказарменная", "Ухтомского ополчения"];
 
+    // Цветовая схема для интеграции графиков
+    const GRAPH_COLORS = {
+        OFF: "#cfe2f3",      // Синий
+        MORNING: "#b4a7d6",  // Фиолетовый
+        EVENING: "#f9cb9c",  // Желтый
+        ANY_SHOP: "#d9ead3", // Зеленый
+        DEFAULT: "#ffffff"
+    };
+
     function cleanName(str) {
         if (!str) return "";
         return str.toLowerCase()
@@ -455,6 +480,7 @@
         document.getElementById('report-overlay').style.display = 'none';
     }
 
+    // Умное сворачивание/разворачивание
     function toggleCatElements(cls, arrowId) { 
         let els = document.querySelectorAll('.' + cls);
         if (els.length === 0) return;
@@ -527,10 +553,9 @@
     }
 
     async function sendChecklistPdf() {
-        if(!confirm("Сформировать PDF-отчет и отправить админу/боссу в Телеграм?")) return;
+        let bossId = prompt("Впишите Telegram ID Босса для отправки копии отчета:", "");
+        if(!confirm("Сформировать PDF-отчет и отправить админу и боссу в Телеграм?")) return;
         
-        let bossId = prompt("Введите ID босса для отправки PDF (оставьте пустым, если не нужно отправлять):", "");
-
         showReportOverlay("Формирование PDF... Подождите");
         document.querySelectorAll('.chk-row').forEach(row => { row.style.display = 'table-row'; });
 
@@ -547,6 +572,7 @@
             const pdfDataUri = await html2pdf().set(opt).from(element).outputPdf('datauristring');
             const ADMIN_CHAT_ID = "708179577"; 
             
+            // Отправка администратору
             await fetch(`${FB_URL}/bot_control/notifications.json`, {
                 method: 'POST',
                 body: JSON.stringify({ 
@@ -554,11 +580,12 @@
                     chat_id: ADMIN_CHAT_ID, 
                     file_data: pdfDataUri, 
                     filename: `Отчет_Чеклисты_${new Date().toLocaleDateString('ru-RU')}.pdf`,
-                    text: "✅ Автоматический отчет по чек-листам",
+                    text: "✅ Автоматический отчет по чек-листам для Администратора",
                     timestamp: Date.now() 
                 })
             });
 
+            // Отправка Боссу, если ID вписан
             if (bossId && bossId.trim() !== "") {
                 await fetch(`${FB_URL}/bot_control/notifications.json`, {
                     method: 'POST',
@@ -567,13 +594,14 @@
                         chat_id: bossId.trim(), 
                         file_data: pdfDataUri, 
                         filename: `Отчет_Чеклисты_${new Date().toLocaleDateString('ru-RU')}.pdf`,
-                        text: "✅ Автоматический отчет по чек-листам (Копия)",
-                        timestamp: Date.now() + 1 
+                        text: "✅ Автоматический отчет по чек-листам для Босса",
+                        timestamp: Date.now() + 50
                     })
                 });
             }
             
             hideReportOverlay();
+            // Уведомление об успешной отправке (не относится к кнопкам сохранения базы)
             alert("✅ PDF-отчет успешно сформирован и отправлен!");
         } catch (e) {
             hideReportOverlay();
@@ -581,22 +609,39 @@
         }
     }
 
-    // НОВАЯ ФУНКЦИЯ ДЛЯ ВСТАВКИ ИЗОБРАЖЕНИЙ ИЗ БУФЕРА
-    async function handleImagePaste(e, id) {
-        let items = e.clipboardData.items;
-        for(let i=0; i<items.length; i++) {
-            if(items[i].type.indexOf('image') !== -1) {
-                let blob = items[i].getAsFile();
-                let reader = new FileReader();
-                reader.onload = async function(event) {
-                    let b64 = event.target.result;
-                    currentCatalog[id].photo = b64; 
-                    if(currentTabType === 'catalog_order') renderCatalogOrder();
-                    else if(currentTabType === 'catalog_checklist') renderCatalogChecklist();
+    // ХЕНДЛЕР ЗАГРУЗКИ КАРТИНКИ ИЗ БУФЕРА ОБМЕНА
+    async function handleClipboardImagePaste(e, itemId) {
+        let clipboardItems = e.clipboardData.items;
+        for (let i = 0; i < clipboardItems.length; i++) {
+            if (clipboardItems[i].type.indexOf("image") !== -1) {
+                e.preventDefault();
+                let imageBlob = clipboardItems[i].getAsFile();
+                let fileReader = new FileReader();
+                fileReader.onload = function(evt) {
+                    let base64String = evt.target.result;
+                    currentCatalog[itemId].photo = base64String;
+                    if (currentTabType === 'catalog_order') {
+                        renderCatalogOrder();
+                    } else if (currentTabType === 'catalog_checklist') {
+                        renderCatalogChecklist();
+                    }
                 };
-                reader.readAsDataURL(blob);
+                fileReader.readAsDataURL(imageBlob);
+                break;
             }
         }
+    }
+
+    // Расчет даты по логике старого Google Script
+    function getTargetDateLogic() {
+        let now = new Date();
+        let tMonth = now.getMonth();
+        let tYear = now.getFullYear();
+        if (now.getDate() >= 4) { 
+            tMonth++; 
+            if (tMonth > 11) { tMonth = 0; tYear++; } 
+        }
+        return { month: tMonth, year: tYear };
     }
 
     async function loadTab(type, btn) {
@@ -643,6 +688,12 @@
                 Object.keys(ordersObj).forEach(k => { if (ordersObj[k]) ordersObj[k].key = k; });
                 cachedData.orders = ordersObj;
                 renderMenuTab();
+            }
+            else if (type === 'graphs') {
+                let resGraphs = await fetch(`${FB_URL}/schedules.json`);
+                if (currentTabType !== fetchId) return;
+                cachedData.schedules = await resGraphs.json() || {};
+                renderGraphsTab();
             }
             else if (type === 'orders') {
                 isSvodEditMode = false;
@@ -1409,6 +1460,7 @@
 
             if(!hasMerges) {
                 hideReportOverlay();
+                // Для информации оставим alert, он нужен как ответ на действие
                 return alert("ℹ️ Нет адресов с несколькими разрозненными заказами для объединения.");
             }
 
@@ -1420,7 +1472,6 @@
                 await fetch(`${FB_URL}/orders.json`, { method: 'PATCH', body: JSON.stringify(updates) });
             }
             
-            alert("✅ Заказы по адресам успешно объединены в один!");
             hideReportOverlay();
             loadTab('orders', document.querySelector('.tab-btn.active'));
         } catch(e) {
@@ -1676,7 +1727,8 @@
 
     async function saveSvodEdits() {
         let btn = document.getElementById('svod-btn-edit'); 
-        if(btn) btn.innerHTML = "⌛ СОХРАНЕНИЕ...";
+        let originalText = btn.innerHTML;
+        btn.innerHTML = "⌛ СОХРАНЕНИЕ...";
         preserveSvodInputs(); 
         
         try {
@@ -1844,7 +1896,6 @@
             }
 
             await Promise.all(promises);
-            alert("✅ Все изменения и новые позиции успешно сохранены!");
             isSvodEditMode = false; 
             svodDeletions = []; 
             tempSvodQty = {}; 
@@ -1853,12 +1904,14 @@
             tempSvodShop = {};
             tempSvodNewRows = [];
             
+            btn.innerHTML = "✅ СОХРАНЕНО!";
             setTimeout(() => {
+                btn.innerHTML = originalText;
                 loadTab('orders', document.querySelector('.tab-btn.active'));
-            }, 600);
+            }, 1000);
         } catch (e) { 
+            if(btn) btn.innerHTML = originalText; 
             alert("❌ Ошибка при сохранении: " + e.message); 
-            if(btn) btn.innerHTML = "💾 Сохранить изменения"; 
         }
     }
 
@@ -1885,18 +1938,173 @@
         if (Object.keys(updates).length > 0) {
             try {
                 await fetch(`${FB_URL}/orders.json`, { method: 'PATCH', body: JSON.stringify(updates) });
-                alert("✅ Свод успешно очищен и перенесен в историю!");
                 loadTab('orders', document.querySelector('.tab-btn.active'));
             } catch(e) { 
                 alert("❌ Ошибка: " + e.message); 
             }
-        } else { 
-            alert("Нет активных заказов для оформления."); 
         }
     }
 
     // ==========================================
-    // 2. ВКЛАДКА: МАРКЕТПЛЕЙСЫ
+    // НОВАЯ ВКЛАДКА: ГРАФИКИ (КАЛЕНДАРЬ СМЕН)
+    // ==========================================
+    function renderGraphsTab() {
+        const box = document.getElementById('content');
+        let schedules = cachedData.schedules || {};
+        
+        let target = getTargetDateLogic(); 
+        let currentYearMonth = `${target.year}_${target.month}`; 
+        
+        let monthData = schedules[currentYearMonth] || {}; 
+        
+        // Извлекаем все имена, которые есть в базе за этот месяц
+        let allUsers = Object.keys(monthData).sort();
+        if(allUsers.length === 0) allUsers = ["Сотрудник 1"]; // Если пусто, покажем одну колонку для старта
+        
+        let daysInMonth = new Date(target.year, target.month + 1, 0).getDate();
+        
+        let html = `
+            <h3 style="color:#1a237e; font-size:24px; margin-top:0; margin-bottom:15px;">📅 Графики (Календарь смен)</h3>
+            <div class="action-container" style="display: flex; gap: 10px; margin-bottom: 20px;">
+                <button class="btn-save" onclick="saveGraphsEdits()" id="btn-save-graphs">💾 Сохранить графики</button>
+                <button class="btn-add" style="background: #9b59b6;" onclick="addUserToGraph()">➕ Добавить сотрудника</button>
+            </div>
+            
+            <p style="font-size:14px; color:#555;"><b>Цветовая схема:</b> <span style="background:${GRAPH_COLORS.MORNING}; padding:2px 6px;">Утро</span> | <span style="background:${GRAPH_COLORS.EVENING}; padding:2px 6px;">Вечер</span> | <span style="background:${GRAPH_COLORS.ANY_SHOP}; padding:2px 6px;">Любая</span> | <span style="background:${GRAPH_COLORS.OFF}; padding:2px 6px;">Выходной</span> | <span style="border:1px solid #ccc; padding:2px 6px;">Пусто</span></p>
+            
+            <div class="card" style="padding:10px;">
+            <table style="min-width:auto;">
+                <tr>
+                    <th style="width:60px; text-align:center;">Дата</th>
+                    <th style="width:100px; text-align:center;">День</th>`;
+                    
+        allUsers.forEach(user => {
+            html += `<th style="text-align:center; min-width:120px;"><input type="text" class="graph-user-name" value="${user}" data-old-name="${user}" style="text-align:center; font-weight:bold; font-size:15px; background:transparent; border:none; border-bottom:2px solid #7E57C2; padding:4px;"></th>`;
+        });
+        html += `</tr>`;
+        
+        const dayNames = ["Вс", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб"];
+
+        for (let d = 1; d <= daysInMonth; d++) {
+            let dateObj = new Date(target.year, target.month, d);
+            let dayOfWeek = dateObj.getDay();
+            let isWeekend = (dayOfWeek === 0 || dayOfWeek === 6);
+            let rowBg = isWeekend ? "background-color:#fff3e0;" : "";
+            
+            html += `<tr style="${rowBg}">
+                <td style="text-align:center; font-weight:bold;">${d}</td>
+                <td style="text-align:center; color:${isWeekend ? '#e65100' : '#555'};">${dayNames[dayOfWeek]}</td>`;
+                
+            allUsers.forEach(user => {
+                let cellData = (monthData[user] && monthData[user][d]) ? monthData[user][d] : { text: "", shift: "CLEAR" };
+                
+                let bgColor = GRAPH_COLORS.DEFAULT;
+                if(cellData.shift === "MORNING") bgColor = GRAPH_COLORS.MORNING;
+                else if(cellData.shift === "EVENING") bgColor = GRAPH_COLORS.EVENING;
+                else if(cellData.shift === "ANY_SHOP") bgColor = GRAPH_COLORS.ANY_SHOP;
+                else if(cellData.shift === "OFF") bgColor = GRAPH_COLORS.OFF;
+
+                html += `<td style="padding:4px;">
+                    <div style="display:flex; flex-direction:column; gap:4px; background:${bgColor}; padding:6px; border-radius:6px; border:1px solid #ddd;">
+                        <input type="text" class="graph-cell-text" data-user="${user}" data-day="${d}" value="${cellData.text}" placeholder="Точка (М, Г...)" style="text-align:center; padding:4px; border:1px solid #ccc; font-size:14px; text-transform:uppercase;">
+                        <select class="graph-cell-shift" data-user="${user}" data-day="${d}" style="padding:2px; font-size:12px; text-align:center;" onchange="this.parentElement.style.background = getShiftColor(this.value);">
+                            <option value="CLEAR" ${cellData.shift==='CLEAR'?'selected':''}>- Пусто -</option>
+                            <option value="MORNING" ${cellData.shift==='MORNING'?'selected':''}>Утро</option>
+                            <option value="EVENING" ${cellData.shift==='EVENING'?'selected':''}>Вечер</option>
+                            <option value="ANY_SHOP" ${cellData.shift==='ANY_SHOP'?'selected':''}>Любая</option>
+                            <option value="OFF" ${cellData.shift==='OFF'?'selected':''}>Выходной</option>
+                        </select>
+                    </div>
+                </td>`;
+            });
+            html += `</tr>`;
+        }
+        
+        html += `</table></div>`;
+        box.innerHTML = html;
+    }
+
+    function getShiftColor(val) {
+        if(val === "MORNING") return GRAPH_COLORS.MORNING;
+        if(val === "EVENING") return GRAPH_COLORS.EVENING;
+        if(val === "ANY_SHOP") return GRAPH_COLORS.ANY_SHOP;
+        if(val === "OFF") return GRAPH_COLORS.OFF;
+        return GRAPH_COLORS.DEFAULT;
+    }
+
+    function addUserToGraph() {
+        let target = getTargetDateLogic(); 
+        let currentYearMonth = `${target.year}_${target.month}`;
+        if (!cachedData.schedules) cachedData.schedules = {};
+        if (!cachedData.schedules[currentYearMonth]) cachedData.schedules[currentYearMonth] = {};
+        
+        let newName = "Новый Сотрудник " + Math.floor(Math.random()*100);
+        cachedData.schedules[currentYearMonth][newName] = {};
+        renderGraphsTab();
+    }
+
+    async function saveGraphsEdits() {
+        let btn = document.getElementById('btn-save-graphs');
+        let origText = btn.innerHTML;
+        btn.innerHTML = "⌛ СОХРАНЕНИЕ...";
+
+        let target = getTargetDateLogic(); 
+        let currentYearMonth = `${target.year}_${target.month}`;
+        
+        let newMonthData = {};
+
+        // Собираем имена из шапки таблицы
+        let nameInputs = document.querySelectorAll('.graph-user-name');
+        let userMap = {}; // oldName -> newName
+        nameInputs.forEach(inp => {
+            let oldName = inp.getAttribute('data-old-name');
+            let newName = inp.value.trim() || oldName;
+            userMap[oldName] = newName;
+            newMonthData[newName] = {}; // Инициализируем объект для юзера
+        });
+
+        // Собираем данные ячеек
+        document.querySelectorAll('.graph-cell-text').forEach(inpText => {
+            let oldUser = inpText.getAttribute('data-user');
+            let day = inpText.getAttribute('data-day');
+            let textVal = inpText.value.trim();
+            
+            let selectEl = document.querySelector(`.graph-cell-shift[data-user="${oldUser}"][data-day="${day}"]`);
+            let shiftVal = selectEl ? selectEl.value : "CLEAR";
+
+            let newUser = userMap[oldUser];
+            if(newUser) {
+                if(textVal !== "" || shiftVal !== "CLEAR") {
+                    newMonthData[newUser][day] = {
+                        text: textVal,
+                        shift: shiftVal
+                    };
+                }
+            }
+        });
+
+        try {
+            if(!cachedData.schedules) cachedData.schedules = {};
+            cachedData.schedules[currentYearMonth] = newMonthData;
+            
+            await fetch(`${FB_URL}/schedules/${currentYearMonth}.json`, { 
+                method: 'PUT', 
+                body: JSON.stringify(newMonthData) 
+            });
+            
+            btn.innerHTML = "✅ СОХРАНЕНО!";
+            setTimeout(() => { 
+                btn.innerHTML = origText; 
+                renderGraphsTab();
+            }, 1000);
+        } catch(e) {
+            btn.innerHTML = origText;
+            alert("❌ Ошибка: " + e.message);
+        }
+    }
+
+    // ==========================================
+    // ВКЛАДКА: МАРКЕТПЛЕЙСЫ
     // ==========================================
     function renderMarketplaceTab() {
         const box = document.getElementById('content');
@@ -2124,6 +2332,7 @@
 
     async function saveMpEdits() {
         let btn = document.getElementById('mp-btn-edit'); 
+        let origText = btn.innerHTML;
         if(btn) btn.innerHTML = "⌛ СОХРАНЕНИЕ...";
         try {
             let promises = [];
@@ -2140,13 +2349,17 @@
             });
 
             await Promise.all(promises);
-            alert("✅ Изменения в маркетплейсах успешно сохранены!");
+            
             isMpEditMode = false; 
             mpDeletions.clear();
-            loadTab('marketplace', document.querySelector('.tab-btn.active'));
+            
+            if(btn) btn.innerHTML = "✅ СОХРАНЕНО!";
+            setTimeout(() => {
+                loadTab('marketplace', document.querySelector('.tab-btn.active'));
+            }, 1000);
         } catch(e) { 
+            if(btn) btn.innerHTML = origText; 
             alert("❌ Ошибка: " + e.message); 
-            if(btn) btn.innerHTML = "💾 Сохранить изменения"; 
         }
     }
 
@@ -2204,7 +2417,7 @@
     }
 
     // ==========================================
-    // 3. ВКЛАДКА: НЕДОВОЗЫ
+    // ВКЛАДКА: НЕДОВОЗЫ
     // ==========================================
     function toggleMissingEdit() { 
         isMissingEditMode = true; 
@@ -2220,6 +2433,7 @@
 
     async function saveMissingEdits() {
         const btn = document.getElementById('miss-btn-edit'); 
+        let origText = btn.innerHTML;
         if(btn) btn.innerHTML = "⌛ СОХРАНЕНИЕ...";
         try {
             let promises = [];
@@ -2239,14 +2453,17 @@
                 }
             }
             await Promise.all(promises);
-            alert("✅ Изменения недовозов успешно сохранены!");
             isMissingEditMode = false; 
             missingDeletions.clear(); 
             tempMissingStatus = {};
-            loadTab('missing', document.querySelector('.tab-btn.active'));
+
+            if(btn) btn.innerHTML = "✅ СОХРАНЕНО!";
+            setTimeout(() => {
+                loadTab('missing', document.querySelector('.tab-btn.active'));
+            }, 1000);
         } catch (e) { 
+            if(btn) btn.innerHTML = origText; 
             alert("❌ Ошибка при сохранении: " + e.message); 
-            if(btn) btn.innerHTML = "💾 Сохранить изменения"; 
         }
     }
 
@@ -2403,7 +2620,7 @@
     }
 
     // ==========================================
-    // 4. ВКЛАДКА: СТОП-ЛИСТЫ НА ТОЧКАХ
+    // ВКЛАДКА: СТОП-ЛИСТЫ НА ТОЧКАХ
     // ==========================================
     async function renderStoplists() {
         const box = document.getElementById('content');
@@ -2607,7 +2824,7 @@
     }
 
     // ==========================================
-    // 5. ВКЛАДКА: ТАБЛИЦА ЧЕК-ЛИСТОВ
+    // ВКЛАДКА: ТАБЛИЦА ЧЕК-ЛИСТОВ
     // ==========================================
     function toggleChecklistEdit() { 
         isChecklistEditMode = true; 
@@ -2653,7 +2870,7 @@
                 <span style="font-size:16px; color:#1a237e; font-weight:900;">⚡ Действия</span>
                 <span id="arrow_chk_actions">${isActionsOpen ? '▲' : '▼'}</span>
             </div>
-            <div class="chk-action-buttons action-container" style="display: ${isActionsOpen ? 'flex' : 'none'}; gap: 10px; flex-wrap: wrap; margin-bottom: 15px;">
+            <div class="chk-action-buttons action-container action-panel-dropdown" style="display: ${isActionsOpen ? 'flex' : 'none'}; gap: 10px; flex-wrap: wrap; margin-bottom: 15px;">
                 <button class="btn-add" style="flex: 1 1 auto; background: linear-gradient(135deg, #00897b 0%, #3949ab 100%);" onclick="sendChecklistPdf()">📤 Отправить отчет PDF</button>
                 <button id="chk-btn-edit" onclick="isChecklistEditMode ? saveChecklistEdits() : toggleChecklistEdit()" class="btn-add" style="flex: 1 1 auto; background:${btnEditColor};">${btnEditText}</button>
             </div>
@@ -2716,6 +2933,7 @@
 
     async function saveChecklistEdits() {
         let btn = document.getElementById('chk-btn-edit'); 
+        let origText = btn.innerHTML;
         if(btn) btn.innerHTML = "⌛ СОХРАНЕНИЕ...";
         let inputs = document.querySelectorAll('.edit-chk-input');
         let updates = {};
@@ -2743,17 +2961,20 @@
                 }
                 await fetch(`${FB_URL}/orders/${oKey}/items.json`, {method:'PUT', body: JSON.stringify(itemsArr)});
             }
-            alert("✅ Изменения в чек-листе успешно сохранены в базе!");
+            
             isChecklistEditMode = false;
-            loadTab('checks_table', document.querySelector('.tab-btn.active'));
+            if(btn) btn.innerHTML = "✅ СОХРАНЕНО!";
+            setTimeout(() => {
+                loadTab('checks_table', document.querySelector('.tab-btn.active'));
+            }, 1000);
         } catch(e) { 
+            if(btn) btn.innerHTML = origText; 
             alert("❌ Ошибка сохранения: " + e.message); 
-            if(btn) btn.innerHTML = "💾 Сохранить изменения"; 
         }
     }
 
     // ==========================================
-    // 6. РЕНДЕР: СТАТИСТИКА
+    // РЕНДЕР: СТАТИСТИКА
     // ==========================================
     function renderStats() {
         const box = document.getElementById('content');
@@ -2808,7 +3029,7 @@
     }
 
     // ==========================================
-    // 7. СПРАВОЧНИКИ
+    // СПРАВОЧНИКИ
     // ==========================================
     async function switchOrderCatalog(isNew) {
         isNewShopCatalog = isNew;
@@ -2842,7 +3063,7 @@
         <div class="cat-ord-actions action-container" style="display: ${isActionsOpen ? 'flex' : 'none'}; flex-direction: column; margin-bottom: 20px;">
             <div style="display:flex; gap:10px; flex-wrap:wrap; width:100%;">
                 <button class="btn-add" style="flex:1 1 auto;" onclick="addItemOrder()">➕ Добавить позицию</button>
-                <button class="btn-save" style="flex:1 1 auto; margin:0; padding:12px 18px;" onclick="saveCatalog()">💾 Сохранить в базу</button>
+                <button class="btn-save" style="flex:1 1 auto; margin:0; padding:12px 18px;" onclick="saveCatalog(this)">💾 Сохранить в базу</button>
             </div>
             
             <div style="display:flex; gap:10px; flex-wrap:wrap; width:100%; margin-top:5px;">
@@ -2907,7 +3128,7 @@
                         <td><select onchange="updateVal('${k}','globalCat',this.value)" style="font-size:14px;">${gcatOptions}</select></td>
                         <td><select onchange="updateVal('${k}','cat',this.value)" style="font-size:14px;">${catOptions}</select></td>
                         <td><input type="text" style="font-weight:bold; font-size:15px; color:#311b92;" value="${item.name || ''}" onchange="updateVal('${k}','name',this.value)"></td>
-                        <td><input type="text" style="font-size:14px;" placeholder="URL фото (или Ctrl+V)" value="${item.photo || ''}" onchange="updateVal('${k}','photo',this.value)" onpaste="handleImagePaste(event, '${k}')"></td>
+                        <td><input type="text" style="font-size:14px; border:2px dashed #9575cd; background:#fafafa;" placeholder="Кликните и Ctrl+V" value="${item.photo || ''}" onchange="updateVal('${k}','photo',this.value)" onpaste="handleClipboardImagePaste(event, '${k}')"></td>
                         <td><input type="text" style="font-size:14px;" placeholder="Лента/Озон" value="${item.vendor || 'Лента'}" onchange="updateVal('${k}','vendor',this.value)"></td>
                         <td><input type="number" style="font-size:14px;" value="${item.price || 0}" onchange="updateVal('${k}','price',this.value)"></td>
                         <td><input type="text" style="font-size:14px;" placeholder="URL 1" value="${item.link || ''}" onchange="updateVal('${k}','link',this.value)"></td>
@@ -2936,7 +3157,7 @@
         </div>
         <div class="cat-chk-actions action-container" style="display: ${isActionsOpen ? 'flex' : 'none'}; gap: 10px; flex-wrap: wrap; margin-bottom: 20px;">
             <button class="btn-add" style="flex:1 1 auto;" onclick="addItemChecklist()">➕ Добавить позицию</button>
-            <button class="btn-save" style="flex:1 1 auto; margin:0; padding:12px 18px;" onclick="saveCatalog()">💾 Сохранить в базу</button>
+            <button class="btn-save" style="flex:1 1 auto; margin:0; padding:12px 18px;" onclick="saveCatalog(this)">💾 Сохранить в базу</button>
         </div>
         <table style="min-width:1200px;">
             <tr><th style="width:200px;">Глоб. Категория</th><th style="width:250px;">Подкатегория</th><th style="width:300px;">Наименование</th><th style="width:150px;">Фото (URL или Ctrl+V)</th><th style="width:200px;">Формат ввода</th><th style="width:80px; text-align:center;">Удалить</th></tr>`;
@@ -2979,7 +3200,7 @@
                         <td><select onchange="updateVal('${k}','globalCat',this.value)" style="font-size:14px;">${gcatOptions}</select></td>
                         <td><select onchange="updateVal('${k}','cat',this.value)" style="font-weight:bold; font-size:14px; color:#7E57C2;">${catOptions}</select></td>
                         <td><input type="text" style="font-weight:bold; font-size:17px; color:#311b92;" value="${item.name || ''}" onchange="updateVal('${k}','name',this.value)"></td>
-                        <td><input type="text" style="font-size:14px;" placeholder="URL фото (или Ctrl+V)" value="${item.photo || ''}" onchange="updateVal('${k}','photo',this.value)" onpaste="handleImagePaste(event, '${k}')"></td>
+                        <td><input type="text" style="font-size:14px; border:2px dashed #9575cd; background:#fafafa;" placeholder="Кликните и Ctrl+V" value="${item.photo || ''}" onchange="updateVal('${k}','photo',this.value)" onpaste="handleClipboardImagePaste(event, '${k}')"></td>
                         <td><select onchange="updateVal('${k}','unit',this.value)"><option value="текст" ${!isVol?'selected':''}>Текст (Шт / Уп)</option><option value="объем" ${isVol?'selected':''}>Объем (Полная / Половина)</option></select></td>
                         <td style="text-align:center;"><button class="btn-del" onclick="deleteItem('${k}')">🗑</button></td>
                     </tr>`;
@@ -3002,7 +3223,7 @@
         </div>
         <div class="cat-stop-actions action-container" style="display: ${isActionsOpen ? 'flex' : 'none'}; gap: 10px; flex-wrap: wrap; margin-bottom: 20px;">
             <button class="btn-add" style="flex:1 1 auto; background: linear-gradient(135deg, #FF5252 0%, #D32F2F 100%);" onclick="addItemStoplist()">➕ Добавить позицию</button>
-            <button class="btn-save" style="flex:1 1 auto; margin:0; padding:12px 18px;" onclick="saveCatalog()">💾 Сохранить в базу</button>
+            <button class="btn-save" style="flex:1 1 auto; margin:0; padding:12px 18px;" onclick="saveCatalog(this)">💾 Сохранить в базу</button>
         </div>
         <table style="min-width:1000px;">
             <tr><th style="width:200px;">Категория</th><th style="width:300px;">Продукт / Ингредиент (Из Закупки)</th><th style="width:200px;">Отключает (Сезонное)</th><th style="width:200px;">Отключает (Основное)</th><th style="width:80px; text-align:center;">Удалить</th></tr>`;
@@ -3047,7 +3268,7 @@
     }
 
     // ==========================================
-    // 8. НОВАЯ ВКЛАДКА: МЕНЮ И ТЕХ КАРТЫ
+    // НОВАЯ ВКЛАДКА: МЕНЮ И ТЕХ КАРТЫ
     // ==========================================
     function renderMenuTab() {
         const box = document.getElementById('content');
@@ -3070,8 +3291,8 @@
         <div class="menu-actions action-container" style="display: ${isActionsOpen ? 'flex' : 'none'}; flex-direction: column; margin-bottom: 20px;">
             <div style="display:flex; gap:10px; flex-wrap:wrap; width:100%;">
                 <button class="btn-add" style="flex:1 1 auto;" onclick="addMenuItem()">➕ Добавить напиток</button>
-                <button class="btn-save" style="flex:1 1 auto; background: linear-gradient(135deg, #FF9800 0%, #F57C00 100%);" onclick="exportMenuToExcel()">📊 Отправить тех карты Админу</button>
-                <button class="btn-save" style="flex:1 1 auto; margin:0;" onclick="saveMenu()">💾 Сохранить меню</button>
+                <button class="btn-save" style="flex:1 1 auto; background: linear-gradient(135deg, #FF9800 0%, #F57C00 100%);" onclick="exportMenuToExcel()">📊 Экспорт в Excel</button>
+                <button class="btn-save" style="flex:1 1 auto; margin:0;" onclick="saveMenu(this)">💾 Сохранить меню</button>
             </div>
         </div>
         `;
@@ -3144,16 +3365,16 @@
                     let recipeHtml = `<div style="background:#f9fbe7; border-radius:8px; padding:10px; border:1px solid #c5e1a5;">`;
                     if(item.recipe && item.recipe.length > 0) {
                         item.recipe.forEach((r, idx) => {
-                            let mergeClass = r.isMerged ? "merged" : "";
+                            let mergeClass = r.isMerged ? "merged-block" : "";
                             let mergeIcon = r.isMerged ? "🔗 Разъединить" : "🔗 Слить";
                             
-                            recipeHtml += `<div class="recipe-item ${mergeClass}">
+                            recipeHtml += `<div class="recipe-item-row ${mergeClass}">
                                 <div style="display:flex; flex-direction:column; gap:2px;">
                                     <button onclick="moveRecipeItem('${k}', ${idx}, -1)" style="border:none; background:none; cursor:pointer; font-size:12px;">▲</button>
                                     <button onclick="moveRecipeItem('${k}', ${idx}, 1)" style="border:none; background:none; cursor:pointer; font-size:12px;">▼</button>
                                 </div>
-                                <input type="text" list="menu_ingredients_list" style="flex:1; font-size:13px; padding:6px; border:1px solid #ccc;" value="${r.name || ''}" placeholder="Ингредиент..." onchange="updateMenuRecipe('${k}', ${idx}, 'name', this.value)">
-                                <input type="number" value="${r.qty || 0}" style="width:70px; font-size:13px; text-align:center;" onchange="updateMenuRecipe('${k}', ${idx}, 'qty', this.value)"> <span style="font-size:12px; color:#555;">гр/мл</span>
+                                <input type="text" list="menu_ingredients_list" style="flex:1; font-size:13px; padding:6px; border:1px solid #ccc; border-radius:6px;" value="${r.name || ''}" placeholder="Ингредиент..." onchange="updateMenuRecipe('${k}', ${idx}, 'name', this.value)">
+                                <input type="number" value="${r.qty || 0}" style="width:70px; font-size:13px; text-align:center; padding:6px; border-radius:6px; border:1px solid #ccc;" onchange="updateMenuRecipe('${k}', ${idx}, 'qty', this.value)"> <span style="font-size:12px; color:#555;">гр/мл</span>
                                 <button onclick="toggleMergeRecipeItem('${k}', ${idx})" style="font-size:11px; padding:4px 8px; border-radius:6px; background:#fff; border:1px solid #ccc; cursor:pointer;">${mergeIcon}</button>
                                 <button class="btn-del" style="padding:4px 8px; font-size:12px;" onclick="removeMenuRecipeItem('${k}', ${idx})">❌</button>
                             </div>`;
@@ -3161,7 +3382,7 @@
                     } else {
                         recipeHtml += `<div style="text-align:center; color:#888; font-size:13px; margin-bottom:10px;">Рецепт пуст</div>`;
                     }
-                    recipeHtml += `<button style="background:none; border:none; color:#2e7d32; font-weight:bold; cursor:pointer; font-size:13px; width:100%; text-align:center;" onclick="addMenuRecipeItem('${k}')">+ Добавить ингредиент</button>
+                    recipeHtml += `<button style="background:none; border:none; color:#2e7d32; font-weight:bold; cursor:pointer; font-size:13px; width:100%; text-align:center; margin-top:5px;" onclick="addMenuRecipeItem('${k}')">+ Добавить ингредиент</button>
                     <textarea placeholder="Тех. процесс приготовления (текстом)..." style="width:100%; margin-top:10px; font-size:13px; padding:8px; border-radius:6px; border:1px solid #ccc;" rows="2" onchange="updateMenuVal('${k}', 'tech', this.value)">${item.tech || ''}</textarea>
                     </div>`;
                     
@@ -3236,15 +3457,18 @@
         currentMenu[id].recipe[idx][field] = val;
     }
 
-    async function saveMenu() {
+    async function saveMenu(btn) {
+        let origText = btn.innerHTML;
+        btn.innerHTML = "⌛ СОХРАНЕНИЕ...";
         try {
-            showReportOverlay("Сохранение меню...");
             await fetch(`${FB_URL}/catalogs/menu.json`, { method: 'PUT', body: JSON.stringify(currentMenu) });
-            hideReportOverlay();
-            alert("✅ Меню успешно сохранено!");
-            loadTab('menu', document.querySelector('.tab-btn.active'));
+            btn.innerHTML = "✅ СОХРАНЕНО!";
+            setTimeout(() => {
+                btn.innerHTML = origText;
+                loadTab('menu', document.querySelector('.tab-btn.active'));
+            }, 1000);
         } catch(e) {
-            hideReportOverlay();
+            btn.innerHTML = origText;
             alert("❌ Ошибка при сохранении меню: " + e.message);
         }
     }
@@ -3379,14 +3603,18 @@
         await fetch(`${FB_URL}/settings/hidden_categories.json`, { method: 'PUT', body: JSON.stringify(appSettings.hidden_categories) });
     }
 
-    async function saveCatalog() {
-        const btn = document.querySelector('.btn-save'); 
+    async function saveCatalog(btn) {
+        let origText = btn.innerHTML;
         btn.innerHTML = "⌛ СОХРАНЕНИЕ...";
         try { 
             await fetch(`${FB_URL}/${currentPath}.json`, { method: 'PUT', body: JSON.stringify(currentCatalog) }); 
-            alert("✅ База обновлена и мгновенно доступна сотрудникам!"); 
-            loadTab(currentTabType, document.querySelector('.tab-btn.active'));
+            btn.innerHTML = "✅ СОХРАНЕНО!";
+            setTimeout(() => {
+                btn.innerHTML = origText;
+                loadTab(currentTabType, document.querySelector('.tab-btn.active'));
+            }, 1000);
         } catch(e) { 
+            btn.innerHTML = origText;
             alert("❌ Ошибка при сохранении!"); 
         }
     }

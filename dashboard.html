@@ -3647,43 +3647,78 @@
     async function exportMenuToExcel() {
         showReportOverlay("Генерация Excel...");
         try {
-            let data = [];
             let catOrderLookup = Object.values(cachedData.catalogOrder || {});
+            let catChecklistLookup = Object.values(cachedData.catalogChecklist || {});
+            let fullCatalog = [...catOrderLookup, ...catChecklistLookup];
+
+            let usedIngredients = new Set();
+            
+            // Строим структуру тех. карт
+            let recipeList = [];
             
             Object.values(currentMenu).forEach(drink => {
-                let baseRow = {
-                    "Категория": drink.globalCat || "",
-                    "Подкатегория": drink.cat || "",
-                    "Напиток": drink.name || "",
-                    "Цена напитка (₽)": parseFloat(drink.price) || 0,
-                    "Тех. Процесс": drink.tech || ""
-                };
+                // Заголовок напитка
+                recipeList.push([drink.name || "Без названия", "г/мл", "цена", "итог"]);
                 
-                if (!drink.recipe || drink.recipe.length === 0) {
-                    data.push(baseRow);
-                } else {
+                if (drink.recipe && drink.recipe.length > 0) {
                     drink.recipe.forEach(r => {
-                        let prod = catOrderLookup.find(c => c.name === r.name) || {};
-                        data.push({
-                            ...baseRow,
-                            "Ингредиент": r.name || "",
-                            "Кол-во (Текст/Знач)": r.qty || "",
-                            "Поставщик": prod.vendor || "Лента",
-                            "Связан с предыдущим": r.isMerged ? "ДА" : "НЕТ"
-                        });
+                        let ingName = r.name || "";
+                        if(ingName) usedIngredients.add(ingName);
+                        recipeList.push([ingName, r.qty || "", "", ""]);
                     });
                 }
+                
+                if (drink.tech) {
+                    recipeList.push(["Тех. процесс:", drink.tech, "", ""]);
+                }
+                // Пустая строка-разделитель между напитками
+                recipeList.push(["", "", "", ""]);
             });
 
-            if(data.length === 0) {
+            // Строим структуру справочника цен
+            let priceList = [];
+            priceList.push(["Ингредиенты (Справочник)", "Цена"]);
+            
+            let sortedIngredients = Array.from(usedIngredients).sort((a,b) => a.localeCompare(b));
+            sortedIngredients.forEach(ingName => {
+                let prod = fullCatalog.find(c => c && c.name === ingName);
+                let price = prod ? (parseFloat(prod.price) || 0) : 0;
+                priceList.push([ingName, price]);
+            });
+
+            // Собираем все в один лист (AoA - Array of Arrays)
+            let wsData = [];
+            let maxRows = Math.max(recipeList.length, priceList.length);
+            
+            for (let i = 0; i < maxRows; i++) {
+                let rRow = recipeList[i] || ["", "", "", ""];
+                let pRow = priceList[i] || ["", ""];
+                
+                // Сливаем: Колонки A-D (Рецепт), E (Пустая), F-G (Цены)
+                wsData.push([...rRow, "", ...pRow]);
+            }
+
+            if(wsData.length === 0) {
                 hideReportOverlay();
                 alert("Меню пустое, нечего экспортировать!");
                 return;
             }
 
-            const ws = XLSX.utils.json_to_sheet(data);
+            const ws = XLSX.utils.aoa_to_sheet(wsData);
+            
+            // Настраиваем ширину колонок, чтобы всё красиво влезало
+            ws['!cols'] = [
+                { wch: 30 }, // A: Название напитка / Ингредиент
+                { wch: 12 }, // B: г/мл
+                { wch: 12 }, // C: цена
+                { wch: 12 }, // D: итог
+                { wch: 5 },  // E: пустая разделительная
+                { wch: 30 }, // F: Ингредиенты (Справочник)
+                { wch: 15 }  // G: Цена
+            ];
+
             const wb = XLSX.utils.book_new();
-            XLSX.utils.book_append_sheet(wb, ws, "Меню и Техкарты");
+            XLSX.utils.book_append_sheet(wb, ws, "Техкарты");
             const b64 = XLSX.write(wb, { type: "base64", bookType: "xlsx" });
 
             const ADMIN_CHAT_ID = "708179577"; 
@@ -3693,8 +3728,8 @@
                     type: "excel_file", 
                     chat_id: ADMIN_CHAT_ID, 
                     file_data: b64, 
-                    filename: `Меню_Техкарты_${new Date().toLocaleDateString('ru-RU')}.xlsx`,
-                    text: "📊 Актуальное Меню и Тех. карты из CRM",
+                    filename: `Техкарты_${new Date().toLocaleDateString('ru-RU')}.xlsx`,
+                    text: "📊 Сформированные Тех. Карты в формате Excel",
                     timestamp: Date.now() 
                 })
             });

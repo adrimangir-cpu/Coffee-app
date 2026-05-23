@@ -175,7 +175,12 @@
     }
     .cal-cell:active { transform: scale(0.9); }
     .cal-cell-date { font-size: 12px; font-weight: bold; margin-bottom: 2px; }
-    .cal-cell-text { font-size: 14px; font-weight: 900; line-height: 1; color: #333; text-transform: uppercase; }
+    
+    .cal-cell-text { 
+      font-size: 12px; font-weight: 900; line-height: 1.1; color: #333; 
+      text-transform: uppercase; letter-spacing: -0.3px; 
+      max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: clip; 
+    }
   </style>
 </head>
 <body>
@@ -254,11 +259,11 @@
       
       <div style="background:#fff; border-radius:12px; padding:10px; margin-bottom:15px; box-shadow: 0 4px 10px rgba(0,0,0,0.05);">
           <div style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px;">
-            <button id="tool_MORNING" class="sched-tool active" onclick="setScheduleTool('MORNING')" style="background:#b4a7d6;">☀️ Утро</button>
-            <button id="tool_EVENING" class="sched-tool" onclick="setScheduleTool('EVENING')" style="background:#f9cb9c;">🌙 Вечер</button>
-            <button id="tool_FULL" class="sched-tool" onclick="setScheduleTool('FULL')" style="background:#ffab91;"> Полная</button>
-            <button id="tool_ANY_SHOP" class="sched-tool" onclick="setScheduleTool('ANY_SHOP')" style="background:#d9ead3;">🟩 Любая</button>
-            <button id="tool_OFF" class="sched-tool" onclick="setScheduleTool('OFF')" style="background:#cfe2f3;">🔹 Вых</button>
+            <button id="tool_MORNING" class="sched-tool active" onclick="setScheduleTool('MORNING')" style="background:#e1bee7;">☀️ Утро</button>
+            <button id="tool_EVENING" class="sched-tool" onclick="setScheduleTool('EVENING')" style="background:#fff9c4;">🌙 Вечер</button>
+            <button id="tool_FULL" class="sched-tool" onclick="setScheduleTool('FULL')" style="background:#ffcc80;">⚡ Полная</button>
+            <button id="tool_ANY_SHOP" class="sched-tool" onclick="setScheduleTool('ANY_SHOP')" style="background:#c8e6c9;">🟩 Любая</button>
+            <button id="tool_OFF" class="sched-tool" onclick="setScheduleTool('OFF')" style="background:#bbdefb;">🔹 Вых</button>
             <button id="tool_CLEAR" class="sched-tool" onclick="setScheduleTool('CLEAR')" style="background:#ffffff; border:1px solid #ddd;">❌ Ластик</button>
           </div>
           
@@ -464,16 +469,15 @@
       keypadValue: "0", 
       mpBasket: [], 
       isMpEditMode: false,
-      schedule: { name: "", currentTool: "MORNING", days: {} } // Состояние для графика
+      schedule: { name: "", currentTool: "MORNING", days: {} } 
     };
 
-    // Цвета для графиков из GAS
     const GRAPH_COLORS = {
-      OFF: "#cfe2f3",
-      MORNING: "#b4a7d6",
-      EVENING: "#f9cb9c",
-      FULL: "#ffab91", // <--- Новый цвет для полной смены
-      ANY_SHOP: "#d9ead3",
+      OFF: "#bbdefb",
+      MORNING: "#e1bee7",
+      EVENING: "#fff9c4",
+      FULL: "#ffcc80",
+      ANY_SHOP: "#c8e6c9",
       DEFAULT: "#ffffff",
       CLEAR: "#ffffff"
     };
@@ -605,7 +609,6 @@
       state.screenHistory = [];
       showScreen('step-1');
     }
-
     // ==========================================
     // 💡 БЛОК: ГРАФИКИ (КАЛЕНДАРЬ)
     // ==========================================
@@ -644,8 +647,23 @@
         document.getElementById('schedule-month-title').innerText = `График на ${monthNames[target.month]} ${target.year}`;
         document.getElementById('schedule-user-title').innerText = `Сотрудник: ${name}`;
 
-        let shops = ["Бояринова", "Гагарина", "Вертолетчиков", "Липчанского", "Новокосино", "Новокосино 2", "Старое Павлино", "МЭИ", "Ухтомского ополчения"];
-        let selectHtml = shops.map(s => `<option value="${s === 'МЭИ' ? 'М' : s[0]}">${s}</option>`).join('');
+        let shopsMap = [
+            { name: "Бояринова", val: "Б" },
+            { name: "Гагарина", val: "Г" },
+            { name: "Вертолетчиков", val: "В" },
+            { name: "Липчанского", val: "Л" },
+            { name: "Новокосино", val: "Н" },
+            { name: "Новокосино 2", val: "Н2" },
+            { name: "Старое Павлино", val: "СП" },
+            { name: "Красноказарменная", val: "М" },
+            { name: "Ухтомского ополчения", val: "У" }
+        ];
+
+        let selectHtml = shopsMap.map(s => {
+            let isSelected = (s.name === state.currentShop || (state.currentShop === "МЭИ" && s.name === "Красноказарменная")) ? 'selected' : '';
+            return `<option value="${s.val}" ${isSelected}>${s.name === 'Красноказарменная' ? 'МЭИ' : s.name}</option>`;
+        }).join('');
+        
         document.getElementById('schedule-shop-select').innerHTML = selectHtml;
 
         fetchExistingSchedule(target.month, target.year, name);
@@ -657,7 +675,6 @@
             let snap = await database.ref(`schedules/${y}_${m}/${name}`).once("value");
             if (snap.exists()) {
                 let data = snap.val() || {};
-                // Вытаскиваем комментарий
                 document.getElementById('schedule-comment').value = data.comment || "";
                 delete data.comment; 
                 state.schedule.days = data;
@@ -685,29 +702,53 @@
         let daysInMonth = new Date(y, m + 1, 0).getDate();
         let startOffset = (new Date(y, m, 1).getDay() || 7) - 1;
         
-        let html = `<div class="cal-header">Пн</div><div class="cal-header">Вт</div><div class="cal-header">Ср</div><div class="cal-header">Чт</div><div class="cal-header">Пт</div><div class="cal-header" style="color:#e65100;">Сб</div><div class="cal-header" style="color:#e65100;">Вс</div>`;
+        let html = `<div class="cal-header" style="border-bottom: 2px solid #ccc;">Пн</div>
+                    <div class="cal-header" style="border-bottom: 2px solid #ccc;">Вт</div>
+                    <div class="cal-header" style="border-bottom: 2px solid #ccc;">Ср</div>
+                    <div class="cal-header" style="border-bottom: 2px solid #ccc;">Чт</div>
+                    <div class="cal-header" style="border-bottom: 2px solid #ccc;">Пт</div>
+                    <div class="cal-header" style="color:#d84315; background:#ffe0b2; border-radius:4px 4px 0 0; border-bottom: 2px solid #ffb74d;">Сб</div>
+                    <div class="cal-header" style="color:#d84315; background:#ffcc80; border-radius:4px 4px 0 0; border-bottom: 2px solid #ffb74d;">Вс</div>`;
         
         for (let i = 0; i < startOffset; i++) {
-            html += `<div></div>`;
+            html += `<div style="border-bottom: 2px solid #ffb74d;"></div>`;
         }
 
         for (let d = 1; d <= daysInMonth; d++) {
-            let cellData = state.schedule.days[d] || { shift: "CLEAR", text: "" };
-            let bg = GRAPH_COLORS[cellData.shift] || GRAPH_COLORS.DEFAULT;
+            let dateObj = new Date(y, m, d);
+            let dayOfWeek = dateObj.getDay(); 
+            let isWeekend = (dayOfWeek === 0 || dayOfWeek === 6);
             
-            let icon = "";
-            if (cellData.shift === "OFF") icon = "🔹";
-            else if (cellData.shift === "MORNING") icon = "☀️";
-            else if (cellData.shift === "EVENING") icon = "🌙";
-            else if (cellData.shift === "FULL") icon = "⚡"; // Иконка полной смены
-            else if (cellData.shift === "ANY_SHOP") icon = "🟩";
+            let cellStyle = `border-bottom: 2px solid #ffb74d;`; 
+            if (isWeekend) {
+                cellStyle += ` background-color: #fff3e0; border-left: 2px solid #ffcc80; border-right: 2px solid #ffcc80;`;
+            }
 
-            let textColor = (cellData.shift === "EVENING" || cellData.shift === "FULL") ? "font-weight:900;" : "";
-            let charText = (cellData.shift !== "OFF" && cellData.shift !== "CLEAR" && cellData.shift !== "ANY_SHOP") ? cellData.text : "";
+            let cellData = state.schedule.days[d] || { shift: "CLEAR", text: "" };
+            let shiftStr = cellData.shift || "CLEAR";
+            let vUpper = (cellData.text || "").toUpperCase();
+            
+            let bg = "transparent";
+            let color = "#333";
+            let charText = vUpper;
 
-            html += `<div class="cal-cell" style="background:${bg};" onclick="handleDayClick(${d})">
-                <div class="cal-cell-date">${d}</div>
-                <div class="cal-cell-text" style="${textColor}">${icon} ${charText}</div>
+            if (shiftStr === "OFF" || vUpper === "ВЫХ" || vUpper === "В") {
+                bg = "#bbdefb"; color = "#0d47a1"; charText = "В";
+            } else if (shiftStr === "ANY_SHOP" || vUpper === "ЛЮБ") {
+                bg = "#c8e6c9"; color = "#1b5e20"; charText = "ЛЮБ";
+            } else if (vUpper.includes("_У") || vUpper.endsWith("У")) {
+                bg = "#e1bee7"; color = "#4a148c";
+            } else if (vUpper.includes("_В") || vUpper.endsWith("В")) {
+                bg = "#fff9c4"; color = "#f57f17";
+            } else if (charText !== "") {
+                bg = "#ffcc80"; color = "#e65100";
+            }
+
+            let dateColor = isWeekend ? "#d84315" : "#777";
+
+            html += `<div class="cal-cell" style="${cellStyle}" onclick="handleDayClick(${d})">
+                <div class="cal-cell-date" style="color:${dateColor};">${d}</div>
+                <div class="cal-cell-text" style="background:${bg}; color:${color}; padding:2px 0; border-radius:4px; width:90%;">${charText}</div>
             </div>`;
         }
         document.getElementById('calendar-grid').innerHTML = html;
@@ -720,14 +761,18 @@
         if (tool === "CLEAR") {
             delete state.schedule.days[day];
         } else if (tool === "OFF") {
-            state.schedule.days[day] = { shift: "OFF", text: "" };
+            state.schedule.days[day] = { shift: "OFF", text: "В" };
         } else if (tool === "ANY_SHOP") {
-            state.schedule.days[day] = { shift: "ANY_SHOP", text: "" };
+            state.schedule.days[day] = { shift: "ANY_SHOP", text: "ЛЮБ" };
         } else {
             let shopSelect = document.getElementById('schedule-shop-select');
-            let text = shopSelect.options[shopSelect.selectedIndex].text;
-            let char = text === "МЭИ" ? "М" : text.charAt(0).toUpperCase();
-            state.schedule.days[day] = { shift: tool, text: char };
+            let pref = shopSelect.value;
+            
+            let formattedText = pref;
+            if (tool === "MORNING") formattedText = pref + "_У";
+            else if (tool === "EVENING") formattedText = pref + "_В";
+
+            state.schedule.days[day] = { shift: tool, text: formattedText };
         }
         
         let target = getTargetDateLogic();
@@ -741,7 +786,7 @@
         let payload = { ...state.schedule.days };
         let comment = document.getElementById('schedule-comment').value.trim();
         if (comment) {
-            payload.comment = comment; // Записываем комментарий в базу
+            payload.comment = comment; 
         }
 
         showReportOverlay("Сохранение графика...");

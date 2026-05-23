@@ -317,18 +317,17 @@
         /* Drag & Drop Стили для рецептов */
         .recipe-item-row {
             display: flex; align-items: center; gap: 8px; margin-bottom: 6px; padding: 6px;
-            background: #fafafa; border: 1px solid #e0e0e0; border-radius: 8px;
+            background: #fff; border: 1px solid #ccc; border-radius: 8px;
             cursor: grab;
             transition: all 0.2s ease;
         }
         .recipe-item-row:active { cursor: grabbing; }
         
         .recipe-item-row.merged-block {
-            border-top: none; border-radius: 0 0 8px 8px; background-color: #fffde7;
-            border-left: 4px solid #ff9800; margin-top: -7px;
+            border-top: none; border-radius: 0 0 8px 8px; background-color: #e8f5e9;
+            border-left: 4px solid #4caf50; margin-top: -7px;
         }
         
-        .drag-over { border-top: 3px solid #7E57C2 !important; padding-top: 15px !important; }
         .drag-merge { background-color: #fff9c4 !important; border: 2px dashed #ff9800 !important; }
         
         /* Стили для таблицы графиков и скролла */
@@ -341,7 +340,8 @@
             border: 1px solid #ccc;
         }
         
-        .graphs-wrapper table { margin-top: 0; }
+        .graphs-wrapper table { margin-top: 0; min-width: max-content; }
+        .graphs-wrapper th, .graphs-wrapper td { min-width: 60px; white-space: nowrap; }
         
         .graphs-wrapper th {
             position: sticky;
@@ -352,7 +352,7 @@
         }
         
         .graph-input {
-            width: 100%; border: none; text-align: center; font-size: 15px; 
+            width: 100%; min-width: 50px; border: none; text-align: center; font-size: 15px; 
             text-transform: uppercase; background: transparent; font-weight: 900; color: #333; outline: none;
         }
         .graph-input:focus { background: #fffde7; }
@@ -424,13 +424,8 @@
     let expandedDivs = new Set();
     const shopListAll = ["Бояринова", "Гагарина", "Вертолетчиков", "Липчанского", "Новокосино", "Новокосино 2", "Старое Павлино", "Красноказарменная", "Ухтомского ополчения"];
 
-    const GRAPH_COLORS = {
-        OFF: "#cfe2f3",      
-        MORNING: "#b4a7d6",  
-        EVENING: "#f9cb9c",  
-        ANY_SHOP: "#c8e6c9", 
-        DEFAULT: "#ffffff"
-    };
+    // Глобальные переменные для перетаскивания ингредиентов
+    let draggedRecipeItem = null;
 
     function escCss(str) {
         if (!str) return "";
@@ -572,6 +567,18 @@
             hideReportOverlay();
             alert("❌ Ошибка при создании PDF: " + e.message);
         }
+    }
+
+    async function handleFileUpload(e, itemId, type) {
+        let file = e.target.files[0];
+        if(!file) return;
+        let reader = new FileReader();
+        reader.onload = function(evt) {
+            currentCatalog[itemId].photo = evt.target.result;
+            if(type === 'order') renderCatalogOrder();
+            else renderCatalogChecklist();
+        };
+        reader.readAsDataURL(file);
     }
 
     async function handleClipboardImagePaste(e, itemId) {
@@ -724,8 +731,7 @@
             box.innerHTML = `<div style="color:red; font-weight:bold; font-size:18px;">Ошибка загрузки: ${e.message}</div>`;
         }
     }
-
-    async function compareStoplistWithOrders() {
+  async function compareStoplistWithOrders() {
         if(!confirm("Сравнить стоп-листы кофеен с текущими заказами?\n\nНедостающие товары будут добавлены со статусом 'Из стоп-листа'.")) return;
         showReportOverlay("Анализ стоп-листов...");
         
@@ -770,11 +776,12 @@
                                 if (o.svod) {
                                     if (i.status === 'error' || i.bot_error) stat = 'error';
                                     else if (i.status === 'ordered') stat = 'ordered';
+                                    else if (i.status === 'not_needed') stat = 'not_needed';
                                     else if (i.status === 'from_stoplist') stat = 'from_stoplist';
                                 }
                                 if (o.ordered && !o.svod) stat = 'ordered'; 
                                 
-                                if (stat !== 'error') {
+                                if (stat !== 'error' && stat !== 'not_needed') {
                                     activeOrdersMap[o.shop][cName] = stat;
                                 }
                             }
@@ -914,7 +921,7 @@
                             let missingStat = activeMissing[o.shop] ? activeMissing[o.shop][i.name] : null;
                             let inTransit = missingStat === 'transit';
                             
-                            if (!inTransit && i.status !== 'error' && (vendor.includes('лента') || vendor.includes('lenta'))) {
+                            if (!inTransit && i.status !== 'error' && i.status !== 'not_needed' && (vendor.includes('лента') || vendor.includes('lenta'))) {
                                 shopLentaSums[o.shop] += (parseFloat(i.qty) * (parseFloat(catItem.price)||0));
                             }
                         }
@@ -943,6 +950,8 @@
                                 i.status = 'error'; 
                                 i.bot_error = true; 
                                 changed = true;
+                            } else if (i.status === 'not_needed') {
+                                // Ничего не делаем, товар исключается из суммы
                             } else {
                                 let isAutoKuper = false;
                                 let isLenta = vendor.includes('лента') || vendor.includes('lenta');
@@ -1139,7 +1148,7 @@
             }
 
             if (!shopLentaSums[targetShop]) shopLentaSums[targetShop] = 0;
-            if (!isDeleted && !inTransit && itemStatus !== 'error' && (isLenta || isAutoKuper)) {
+            if (!isDeleted && !inTransit && itemStatus !== 'error' && itemStatus !== 'not_needed' && (isLenta || isAutoKuper)) {
                 shopLentaSums[targetShop] += (qty * price1);
             }
         });
@@ -1197,7 +1206,7 @@
             let finalPrice = (isRegularKuper && price2 > 0) ? price2 : price1;
             
             let cost = finalPrice * qty;
-            if (inTransit || itemStatus === 'error' || isDeleted) cost = 0;
+            if (inTransit || itemStatus === 'error' || itemStatus === 'not_needed' || isDeleted) cost = 0;
             
             if (vendor.includes('лента') || vendor.includes('lenta')) {
                 totalLenta += cost;
@@ -1261,7 +1270,8 @@
         
         let newStatus = 'ordered'; 
         if (currentStatus === 'pending' || currentStatus === 'from_stoplist') newStatus = 'ordered';
-        else if (currentStatus === 'ordered') newStatus = 'error';
+        else if (currentStatus === 'ordered') newStatus = 'not_needed';
+        else if (currentStatus === 'not_needed') newStatus = 'error';
         else if (currentStatus === 'error') newStatus = 'pending';
 
         tempSvodStatus[dateKey][shop][name] = newStatus;
@@ -1500,6 +1510,7 @@
                     
                     if (i.bot_error || i.not_found || i.error || i.status === 'error') { sd.items[i.name].bot_error = true; sd.items[i.name].status = 'error'; } 
                     else if (i.status === 'ordered') sd.items[i.name].status = 'ordered';
+                    else if (i.status === 'not_needed') sd.items[i.name].status = 'not_needed';
                     else if (i.status === 'from_stoplist') sd.items[i.name].status = 'from_stoplist';
                 }
             });
@@ -1516,7 +1527,7 @@
                     let actualShop = (tempSvodShop[dateStr] && tempSvodShop[dateStr][shop] && tempSvodShop[dateStr][shop][name]) ? tempSvodShop[dateStr][shop][name] : shop;
                     if (!shopLentaSums[actualShop]) shopLentaSums[actualShop] = 0;
                     let itemStatus = (tempSvodStatus[dateStr] && tempSvodStatus[dateStr][shop] && tempSvodStatus[dateStr][shop][name]) ? tempSvodStatus[dateStr][shop][name] : itemsObj[name].status;
-                    if (!svodDeletions.some(d => d.date === dateStr && d.shop === shop && d.name === name) && !(activeMissing[shop] && activeMissing[shop][name] === 'transit') && itemStatus !== 'error' && (actualVendor.toLowerCase().includes('лента') || actualVendor.toLowerCase().includes('lenta'))) {
+                    if (!svodDeletions.some(d => d.date === dateStr && d.shop === shop && d.name === name) && !(activeMissing[shop] && activeMissing[shop][name] === 'transit') && itemStatus !== 'error' && itemStatus !== 'not_needed' && (actualVendor.toLowerCase().includes('лента') || actualVendor.toLowerCase().includes('lenta'))) {
                         shopLentaSums[actualShop] += (((tempSvodQty[dateStr] && tempSvodQty[dateStr][shop] && tempSvodQty[dateStr][shop][name] !== undefined) ? tempSvodQty[dateStr][shop][name] : itemsObj[name].qty) * (parseFloat((Object.values(cachedData.catalogOrder).find(c => c && c.name === name) || {}).price) || 0));
                     }
                 });
@@ -1548,7 +1559,7 @@
         } else { svodActionBar.style.display = 'none'; }
 
         let html = `<h3 style="color:#311B92; font-size:22px; margin-top:0; margin-bottom:15px;">📊 Ожидают сборки</h3>`;
-        if (isSvodEditMode) html += `<div style="margin-bottom:15px; padding:15px; background:#fff3e0; color:#e65100; border-radius:12px; font-size:15px; font-weight:bold; border: 2px dashed #ffb74d;">💡 <b>Режим редактирования активен:</b><br>- Нажмите на статус товара 🔄, чтобы переключить: Ожидает ➡️ Заказано ➡️ Ошибка.<br>- Вы можете перенести товар на другого поставщика или на другой адрес.<br>- Внизу каждого адреса есть кнопка <b>➕ Добавить товар</b>.<br><b style="color:#d32f2f;">ВНИМАНИЕ:</b> Нажмите "Сохранить изменения", когда закончите все правки!</div>`;
+        if (isSvodEditMode) html += `<div style="margin-bottom:15px; padding:15px; background:#fff3e0; color:#e65100; border-radius:12px; font-size:15px; font-weight:bold; border: 2px dashed #ffb74d;">💡 <b>Режим редактирования активен:</b><br>- Нажмите на статус товара 🔄, чтобы переключить: Ожидает ➡️ Заказано ➡️ Не надо ➡️ Ошибка.<br>- Вы можете перенести товар на другого поставщика или на другой адрес.<br>- Внизу каждого адреса есть кнопка <b>➕ Добавить товар</b>.<br><b style="color:#d32f2f;">ВНИМАНИЕ:</b> Нажмите "Сохранить изменения", когда закончите все правки!</div>`;
         html += `<table style='margin-bottom:20px;'><tr><th>Кофейня / Товар</th><th style="text-align:center;">Кол-во</th><th style="text-align:center;">Статус</th><th>Поставщик</th><th style="text-align:center;">${isSvodEditMode ? 'Удалить' : 'Ссылка'}</th></tr>`;
         
         if (sortedDates.length === 0) html += `<tr><td colspan="5" style="text-align:center; padding:20px; font-weight:bold; font-size:16px; color:#888;">Нет заказов, ожидающих сборки</td></tr>`;
@@ -1576,7 +1587,7 @@
                             if ((actualVendor.toLowerCase().includes('лента') || actualVendor.toLowerCase().includes('lenta')) && shopLentaSums[actualShop] > 0 && shopLentaSums[actualShop] < 2000) { actualVendor = 'Купер (Авто)'; isAutoKuper = true; }
 
                             let baseStatus = shopsObj[shop].items[name].status;
-                            if (!shopsObj[shop].all_svod && baseStatus !== 'from_stoplist' && baseStatus !== 'error' && baseStatus !== 'ordered') baseStatus = 'pending';
+                            if (!shopsObj[shop].all_svod && baseStatus !== 'from_stoplist' && baseStatus !== 'error' && baseStatus !== 'not_needed' && baseStatus !== 'ordered') baseStatus = 'pending';
                             let itemStatus = (tempSvodStatus[dateStr] && tempSvodStatus[dateStr][shop] && tempSvodStatus[dateStr][shop][name]) ? tempSvodStatus[dateStr][shop][name] : baseStatus;
                             
                             let missingStat = activeMissing[shop] ? activeMissing[shop][name] : null;
@@ -1595,7 +1606,7 @@
                             let finalPrice = (isRegularKuper && price2 > 0) ? price2 : price1;
 
                             let cost = finalPrice * (isDeleted ? 0 : actualQty);
-                            if (inTransit || itemStatus === 'error') cost = 0; 
+                            if (inTransit || itemStatus === 'error' || itemStatus === 'not_needed') cost = 0; 
                             if (actualVendor.toLowerCase().includes('лента')) totalLenta += cost; else if (actualVendor.toLowerCase().includes('озон') || actualVendor.toLowerCase().includes('ozon')) totalOzon += cost; else if (actualVendor.toLowerCase().includes('купер') || actualVendor.toLowerCase().includes('kuper')) totalKuper += cost;
 
                             let linksHtml = [(catItem.link ? `<a href="${catItem.link}" target="_blank" style="color:#0288d1; font-weight:bold;">🔗 Осн</a>` : ""), (catItem.link2 ? `<a href="${catItem.link2}" target="_blank" style="color:#e53935; font-weight:bold; margin-left:8px;">🔗 Рез</a>` : "")].filter(Boolean).join(" ");
@@ -1608,6 +1619,7 @@
 
                             let statusText = "Ожидает ⏳", statusColor = "#f57c00", statusBg = "#fff3e0";
                             if (itemStatus === 'ordered') { statusText = "Заказано ✅"; statusColor = "#2e7d32"; statusBg = "#e8f5e9"; } 
+                            else if (itemStatus === 'not_needed') { statusText = "Не надо ⛔"; statusColor = "#616161"; statusBg = "#eeeeee"; }
                             else if (itemStatus === 'error') { statusText = "Ошибка ❌"; statusColor = "#c62828"; statusBg = "#ffebee"; } 
                             else if (itemStatus === 'from_stoplist') { statusText = "Из стоп-листа 🛑"; statusColor = "#c62828"; statusBg = "#ffcdd2"; }
                             let statusBadge = `<span style="background:${statusBg}; color:${statusColor}; padding:6px 10px; border-radius:8px; font-size:13px; font-weight:900; display:inline-block;">${statusText}</span>`;
@@ -1908,6 +1920,11 @@
     // ==========================================
     // 📊 БЛОК: НОВАЯ ВКЛАДКА ГРАФИКОВ (КАЛЕНДАРЬ СМЕН)
     // ==========================================
+    function updateGraphComment(user, val) {
+        if (!window.graphDraft[user]) window.graphDraft[user] = { _pinned: true };
+        window.graphDraft[user].comment = val;
+    }
+
     function renderGraphsTab() {
         const box = document.getElementById('content');
         let schedules = cachedData.schedules || {};
@@ -2000,7 +2017,7 @@
                 let cellColor = "#333";
                 let vUpper = val.trim().toUpperCase();
                 
-                if (vUpper === "В" || vUpper === "ВЫХ" || vUpper === "OFF" || vUpper === "ВЫХОДНОЙ") {
+                if (vUpper === "В" || vUpper === "ВЫХ" || vUpper === "OFF" || vUpper === "ВЫХОДНОЙ" || (vUpper === "" && isWeekend)) {
                     cellBg = "#bbdefb"; 
                     cellColor = "#0d47a1";
                 } else if (vUpper === "ЛЮБ" || vUpper === "ЛЮБАЯ" || vUpper === "ANY_SHOP") {
@@ -2013,8 +2030,8 @@
                     cellBg = "#fff9c4"; 
                     cellColor = "#f57f17";
                 } else if (vUpper !== "") {
-                    cellBg = "#ffcc80"; 
-                    cellColor = "#e65100";
+                    cellBg = "#ffffff"; 
+                    cellColor = "#333";
                 }
                 
                 rowHtml += `<td style="border:1px solid #ccc; padding:2px; background:${cellBg};">
@@ -2045,6 +2062,17 @@
                     </tr>`;
             html += rowHtml;
         }
+
+        // Строка комментариев внизу
+        let commentsRowHtml = `<tr><td colspan="2" style="border:1px solid #ccc; padding:8px; font-weight:bold; text-align:right; background:#f5f5f5;">Комментарии:</td>`;
+        allUsers.forEach(user => {
+            let commentText = monthData[user] && monthData[user].comment ? monthData[user].comment : "";
+            commentsRowHtml += `<td style="border:1px solid #ccc; padding:4px; background:#fafafa;">
+                <textarea class="graph-input" rows="2" style="width: 100%; height: 100%; border: none; font-size: 13px; text-transform: none; font-weight:normal; background: transparent; color: #333; outline: none; resize: none;" onchange="updateGraphComment('${user}', this.value)" placeholder="Комментарий...">${commentText}</textarea>
+            </td>`;
+        });
+        commentsRowHtml += `<td colspan="3" style="border:1px solid #ccc; background:#f5f5f5;"></td></tr>`;
+        html += commentsRowHtml;
         
         html += `</tbody></table></div>`;
         box.innerHTML = html;
@@ -2661,6 +2689,7 @@
             loadTab('missing', document.querySelector('.tab-btn.active'));
         }
     }
+    
     // ==========================================
     // ВКЛАДКА: СТОП-ЛИСТЫ НА ТОЧКАХ
     // ==========================================
@@ -3167,14 +3196,15 @@
                     subCats.forEach(c => { if(c !== item.cat) catOptions += `<option value="${c}">${c}</option>`; });
                     catOptions += `<option value="НОВАЯ КАТЕГОРИЯ">-- Создать --</option>`;
                     
-                    let isFileStr = item.photo && item.photo.startsWith("data:image") ? `<span style="color:#2e7d32; font-size:12px; font-weight:bold;">✅ ФАЙЛ ЗАГРУЖЕН</span><br><img src="${item.photo}" style="max-width:50px; max-height:50px; border-radius:4px; margin-top:5px;">` : '';
+                    let isFileStr = item.photo && item.photo.startsWith("data:image") ? `<img src="${item.photo}" style="max-width:50px; max-height:50px; border-radius:4px; margin-top:5px;">` : '';
 
                     html += `<tr class="chk-row lvl3_${safeSc} lvl3_of_${safeGc}" style="display:${displayStyleL3};">
                         <td><select onchange="updateVal('${k}','globalCat',this.value)" style="font-size:14px;">${gcatOptions}</select></td>
                         <td><select onchange="updateVal('${k}','cat',this.value)" style="font-size:14px;">${catOptions}</select></td>
                         <td><input type="text" style="font-weight:bold; font-size:15px; color:#311b92;" value="${item.name || ''}" onchange="updateVal('${k}','name',this.value)"></td>
                         <td style="text-align:center;">
-                            <input type="text" style="font-size:12px; border:2px dashed #9575cd; background:#fafafa; text-align:center;" placeholder="Клик сюда и Ctrl+V" value="${item.photo && !item.photo.startsWith("data:image") ? item.photo : ''}" onchange="updateVal('${k}','photo',this.value)" onpaste="handleClipboardImagePaste(event, '${k}')">
+                            <input type="file" id="file_order_${k}" style="display:none;" accept="image/*" onchange="handleFileUpload(event, '${k}', 'order')">
+                            <input type="text" style="font-size:12px; border:2px dashed #9575cd; background:#fafafa; text-align:center; cursor:pointer;" placeholder="Нажми или Ctrl+V" value="${item.photo && !item.photo.startsWith("data:image") ? item.photo : ''}" onclick="document.getElementById('file_order_${k}').click()" onpaste="handleClipboardImagePaste(event, '${k}')" onchange="updateVal('${k}','photo',this.value)">
                             ${isFileStr}
                         </td>
                         <td><input type="text" style="font-size:14px;" placeholder="Лента/Озон" value="${item.vendor || 'Лента'}" onchange="updateVal('${k}','vendor',this.value)"></td>
@@ -3244,14 +3274,15 @@
                     catOptions += `<option value="НОВАЯ КАТЕГОРИЯ">-- Создать --</option>`;
                     
                     let isVol = (item.unit && item.unit.toLowerCase().includes("объем"));
-                    let isFileStr = item.photo && item.photo.startsWith("data:image") ? `<span style="color:#2e7d32; font-size:12px; font-weight:bold;">✅ ФАЙЛ ЗАГРУЖЕН</span><br><img src="${item.photo}" style="max-width:50px; max-height:50px; border-radius:4px; margin-top:5px;">` : '';
+                    let isFileStr = item.photo && item.photo.startsWith("data:image") ? `<img src="${item.photo}" style="max-width:50px; max-height:50px; border-radius:4px; margin-top:5px;">` : '';
 
                     html += `<tr class="chk-row chitem_${safeSc} lvl3_of_chksub_${safeGc}" style="display:${displayStyleL3};">
                         <td><select onchange="updateVal('${k}','globalCat',this.value)" style="font-size:14px;">${gcatOptions}</select></td>
                         <td><select onchange="updateVal('${k}','cat',this.value)" style="font-weight:bold; font-size:14px; color:#7E57C2;">${catOptions}</select></td>
                         <td><input type="text" style="font-weight:bold; font-size:17px; color:#311b92;" value="${item.name || ''}" onchange="updateVal('${k}','name',this.value)"></td>
                         <td style="text-align:center;">
-                            <input type="text" style="font-size:12px; border:2px dashed #9575cd; background:#fafafa; text-align:center;" placeholder="Клик сюда и Ctrl+V" value="${item.photo && !item.photo.startsWith("data:image") ? item.photo : ''}" onchange="updateVal('${k}','photo',this.value)" onpaste="handleClipboardImagePaste(event, '${k}')">
+                            <input type="file" id="file_check_${k}" style="display:none;" accept="image/*" onchange="handleFileUpload(event, '${k}', 'check')">
+                            <input type="text" style="font-size:12px; border:2px dashed #9575cd; background:#fafafa; text-align:center; cursor:pointer;" placeholder="Нажми или Ctrl+V" value="${item.photo && !item.photo.startsWith("data:image") ? item.photo : ''}" onclick="document.getElementById('file_check_${k}').click()" onpaste="handleClipboardImagePaste(event, '${k}')" onchange="updateVal('${k}','photo',this.value)">
                             ${isFileStr}
                         </td>
                         <td><select onchange="updateVal('${k}','unit',this.value)"><option value="текст" ${!isVol?'selected':''}>Текст (Шт / Уп)</option><option value="объем" ${isVol?'selected':''}>Объем (Полная / Половина)</option></select></td>
@@ -3324,13 +3355,9 @@
     // НОВАЯ ВКЛАДКА: МЕНЮ И ТЕХ КАРТЫ (DRAG AND DROP)
     // ==========================================
     
-    // Глобальные переменные для перетаскивания ингредиентов
-    let draggedRecipeItem = null;
-
     function dragStartRecipe(e, drinkId, idx) {
         draggedRecipeItem = { drinkId, idx };
         e.dataTransfer.effectAllowed = "move";
-        // Задержка для визуального эффекта полупрозрачности
         setTimeout(() => {
             e.target.style.opacity = "0.5";
         }, 0);
@@ -3356,7 +3383,6 @@
         let dragIdx = draggedRecipeItem.idx;
         draggedRecipeItem = null;
         
-        // Перетаскивать можно только внутри одного напитка
         if (dragDrinkId !== dropDrinkId || dragIdx === dropIdx) {
             renderMenuTab();
             return;
@@ -3365,13 +3391,11 @@
         let arr = currentMenu[dropDrinkId].recipe;
         let itemToMove = arr.splice(dragIdx, 1)[0];
         
-        // Если перетаскиваем сверху вниз, индекс сдвинулся
         let adjustedDropIdx = dragIdx < dropIdx ? dropIdx - 1 : dropIdx;
         
-        // СЛИЯНИЕ! Устанавливаем статус isMerged = true
+        // СЛИЯНИЕ!
         itemToMove.isMerged = true;
         
-        // Вставляем сразу ПОСЛЕ элемента, на который кинули
         arr.splice(adjustedDropIdx + 1, 0, itemToMove);
         
         renderMenuTab();
@@ -3411,7 +3435,6 @@
         let allPurchaseItems = [];
         let catalogDict = {};
         
-        // Подтягиваем из Закупки
         if (cachedData.catalogOrder) {
             Object.values(cachedData.catalogOrder).forEach(i => {
                 if(i.name) {
@@ -3421,7 +3444,6 @@
             });
         }
         
-        // Подтягиваем из Чек-листа
         if (cachedData.catalogChecklist) {
             Object.values(cachedData.catalogChecklist).forEach(i => {
                 if(i.name && !catalogDict[i.name]) {
@@ -3437,7 +3459,7 @@
         html += `<datalist id="menu_ingredients_list">${prodOptionsHtml}</datalist>`;
 
         html += `<table style="min-width:1200px;">
-        <tr><th style="width:160px;">Категория</th><th style="width:160px;">Подкатегория</th><th style="width:200px;">Напиток</th><th style="width:100px;">Цена (₽)</th><th>Рецептура и Тех. Приготовление</th><th style="width:60px; text-align:center;">Удалить</th></tr>`;
+        <tr><th style="width:160px;">Категория</th><th style="width:160px;">Подкатегория</th><th style="width:200px;">Напиток</th><th style="width:100px;">Цена (₽)</th><th>Рецептура и Тех. Приготовление (Граммовки или Текст)</th><th style="width:60px; text-align:center;">Удалить</th></tr>`;
 
         let grouped = {};
         let sortedKeys = Object.keys(currentMenu).sort((a,b) => (currentMenu[b].timestamp || 0) - (currentMenu[a].timestamp || 0));
@@ -3482,21 +3504,18 @@
                     if(item.recipe && item.recipe.length > 0) {
                         item.recipe.forEach((r, idx) => {
                             let mergeClass = r.isMerged ? "merged-block" : "";
-                            let mergeIcon = r.isMerged ? "🔗 Разъединить" : "🔗 Слить";
                             
-                            // DRAG AND DROP
                             recipeHtml += `<div class="recipe-item-row ${mergeClass}" draggable="true" ondragstart="dragStartRecipe(event, '${k}', ${idx})" ondragover="dragOverRecipe(event)" ondragleave="dragLeaveRecipe(event)" ondrop="dropRecipe(event, '${k}', ${idx})" ondragend="dragEndRecipe(event)">
                                 <div style="cursor:grab; padding:0 5px; color:#999; font-size:18px;">☰</div>
                                 <input type="text" list="menu_ingredients_list" style="flex:1; font-size:13px; padding:6px; border:1px solid #ccc; border-radius:6px;" value="${r.name || ''}" placeholder="Ингредиент..." onchange="updateMenuRecipe('${k}', ${idx}, 'name', this.value)">
-                                <input type="number" value="${r.qty || 0}" style="width:70px; font-size:13px; text-align:center; padding:6px; border-radius:6px; border:1px solid #ccc;" onchange="updateMenuRecipe('${k}', ${idx}, 'qty', this.value)"> <span style="font-size:12px; color:#555;">гр/мл</span>
-                                <button onclick="toggleMergeRecipeItem('${k}', ${idx})" style="font-size:11px; padding:4px 8px; border-radius:6px; background:#fff; border:1px solid #ccc; cursor:pointer;">${mergeIcon}</button>
+                                <input type="text" value="${r.qty || ''}" style="width:120px; font-size:13px; text-align:center; padding:6px; border-radius:6px; border:1px solid #ccc;" placeholder="Грамм/Текст" onchange="updateMenuRecipe('${k}', ${idx}, 'qty', this.value)">
                                 <button class="btn-del" style="padding:4px 8px; font-size:12px;" onclick="removeMenuRecipeItem('${k}', ${idx})">❌</button>
                             </div>`;
                         });
                     } else {
                         recipeHtml += `<div style="text-align:center; color:#888; font-size:13px; margin-bottom:10px;">Рецепт пуст</div>`;
                     }
-                    recipeHtml += `<button style="background:none; border:none; color:#2e7d32; font-weight:bold; cursor:pointer; font-size:13px; width:100%; text-align:center; margin-top:5px;" onclick="addMenuRecipeItem('${k}')">+ Добавить ингредиент</button>
+                    recipeHtml += `<button style="background:none; border:none; color:#2e7d32; font-weight:bold; cursor:pointer; font-size:13px; width:100%; text-align:center; margin-top:5px;" onclick="addMenuRecipeItem('${k}')">+ Добавить ингредиент (Потяните ☰ чтобы соединить)</button>
                     <textarea placeholder="Тех. процесс приготовления (текстом)..." style="width:100%; margin-top:10px; font-size:13px; padding:8px; border-radius:6px; border:1px solid #ccc;" rows="2" onchange="updateMenuVal('${k}', 'tech', this.value)">${item.tech || ''}</textarea>
                     </div>`;
                     
@@ -3541,18 +3560,12 @@
 
     function addMenuRecipeItem(id) {
         if(!currentMenu[id].recipe) currentMenu[id].recipe = [];
-        currentMenu[id].recipe.push({name: "", qty: 0, isMerged: false});
+        currentMenu[id].recipe.push({name: "", qty: "", isMerged: false});
         renderMenuTab();
     }
     
     function removeMenuRecipeItem(id, idx) {
         currentMenu[id].recipe.splice(idx, 1);
-        renderMenuTab();
-    }
-
-    function toggleMergeRecipeItem(id, idx) {
-        if(!currentMenu[id].recipe || idx === 0) return;
-        currentMenu[id].recipe[idx].isMerged = !currentMenu[id].recipe[idx].isMerged;
         renderMenuTab();
     }
 
@@ -3600,7 +3613,7 @@
                         data.push({
                             ...baseRow,
                             "Ингредиент": r.name || "",
-                            "Кол-во (гр/мл/шт)": parseFloat(r.qty) || 0,
+                            "Кол-во (Текст/Знач)": r.qty || "",
                             "Поставщик": prod.vendor || "Лента",
                             "Связан с предыдущим": r.isMerged ? "ДА" : "НЕТ"
                         });

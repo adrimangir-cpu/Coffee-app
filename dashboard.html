@@ -314,16 +314,43 @@
             100% { opacity: 0.4; transform: scale(0.98); } 
         }
 
+        /* Drag & Drop Стили для рецептов */
         .recipe-item-row {
             display: flex; align-items: center; gap: 8px; margin-bottom: 6px; padding: 6px;
             background: #fafafa; border: 1px solid #e0e0e0; border-radius: 8px;
+            cursor: grab;
+            transition: all 0.2s ease;
         }
+        .recipe-item-row:active { cursor: grabbing; }
+        
         .recipe-item-row.merged-block {
             border-top: none; border-radius: 0 0 8px 8px; background-color: #fffde7;
             border-left: 4px solid #ff9800; margin-top: -7px;
         }
         
-        /* Стили для таблицы графиков */
+        .drag-over { border-top: 3px solid #7E57C2 !important; padding-top: 15px !important; }
+        .drag-merge { background-color: #fff9c4 !important; border: 2px dashed #ff9800 !important; }
+        
+        /* Стили для таблицы графиков и скролла */
+        .graphs-wrapper {
+            max-height: calc(100vh - 200px);
+            overflow: auto;
+            border-radius: 12px;
+            box-shadow: inset 0 0 10px rgba(0,0,0,0.05);
+            background: white;
+            border: 1px solid #ccc;
+        }
+        
+        .graphs-wrapper table { margin-top: 0; }
+        
+        .graphs-wrapper th {
+            position: sticky;
+            top: 0;
+            z-index: 10;
+            background: #e8eaf6;
+            box-shadow: 0 2px 2px -1px rgba(0, 0, 0, 0.4);
+        }
+        
         .graph-input {
             width: 100%; border: none; text-align: center; font-size: 15px; 
             text-transform: uppercase; background: transparent; font-weight: 900; color: #333; outline: none;
@@ -397,7 +424,14 @@
     let expandedDivs = new Set();
     const shopListAll = ["Бояринова", "Гагарина", "Вертолетчиков", "Липчанского", "Новокосино", "Новокосино 2", "Старое Павлино", "Красноказарменная", "Ухтомского ополчения"];
 
-    // Функция безопасного экранирования для querySelector
+    const GRAPH_COLORS = {
+        OFF: "#cfe2f3",      
+        MORNING: "#b4a7d6",  
+        EVENING: "#f9cb9c",  
+        ANY_SHOP: "#c8e6c9", 
+        DEFAULT: "#ffffff"
+    };
+
     function escCss(str) {
         if (!str) return "";
         return str.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/'/g, "\\'");
@@ -471,6 +505,18 @@
             }
         });
         if (isClosing) document.querySelectorAll('.lvl3_of_' + gcId).forEach(el => el.style.display = 'none');
+    }
+
+    function toggleSvodShopItems(safeShopDate) {
+        if(closedSvodShops.has(safeShopDate)) closedSvodShops.delete(safeShopDate);
+        else closedSvodShops.add(safeShopDate);
+        renderOrdersSvod();
+    }
+
+    function toggleSvodDate(safeDate) {
+        if(closedSvodDates.has(safeDate)) closedSvodDates.delete(safeDate);
+        else closedSvodDates.add(safeDate);
+        renderOrdersSvod();
     }
 
     async function triggerPcBuild(cmd) {
@@ -588,12 +634,13 @@
 
             if (type === 'menu') {
                 currentPath = "catalogs/menu";
-                let [resMenu, resMiss, resStops] = await Promise.all([
-                    fetch(`${FB_URL}/catalogs/menu.json`), fetch(`${FB_URL}/missing_items.json`), fetch(`${FB_URL}/orders.json`)
+                let [resMenu, resMiss, resStops, resChecklist] = await Promise.all([
+                    fetch(`${FB_URL}/catalogs/menu.json`), fetch(`${FB_URL}/missing_items.json`), fetch(`${FB_URL}/orders.json`), fetch(`${FB_URL}/catalogs/checklist.json`)
                 ]);
                 if (currentTabType !== fetchId) return;
                 currentMenu = await resMenu.json() || {};
                 cachedData.missing = await resMiss.json() || {};
+                cachedData.catalogChecklist = await resChecklist.json() || {};
                 let ordersObj = await resStops.json() || {};
                 Object.keys(ordersObj).forEach(k => { if (ordersObj[k]) ordersObj[k].key = k; });
                 cachedData.orders = ordersObj;
@@ -678,239 +725,6 @@
         }
     }
 
-    // ==========================================
-    // 📊 БЛОК: НОВАЯ ВКЛАДКА ГРАФИКОВ (КАЛЕНДАРЬ СМЕН)
-    // ==========================================
-    function renderGraphsTab() {
-        const box = document.getElementById('content');
-        let schedules = cachedData.schedules || {};
-        
-        let target = getTargetDateLogic(); 
-        let currentYearMonth = `${target.year}_${target.month}`; 
-        
-        if (!window.graphDraft) {
-            let draft = schedules[currentYearMonth] ? JSON.parse(JSON.stringify(schedules[currentYearMonth])) : {};
-            let allU = Object.keys(draft).filter(k => k !== 'comment' && k !== '_pinned');
-            if (allU.length === 0) {
-                // Если пустой текущий месяц, подгружаем сотрудников с прошлого (если они были)
-                let pM = target.month - 1; let pY = target.year;
-                if (pM < 0) { pM = 11; pY--; }
-                let prevMonthKey = `${pY}_${pM}`;
-                if (schedules[prevMonthKey]) {
-                    Object.keys(schedules[prevMonthKey]).filter(k => k !== 'comment').forEach(u => draft[u] = { _pinned: true });
-                } else {
-                    draft["Сотрудник 1"] = { _pinned: true };
-                }
-            }
-            window.graphDraft = draft;
-        }
-        let monthData = window.graphDraft;
-        
-        // Извлекаем имена и убираем служебный "comment", если есть
-        let allUsers = Object.keys(monthData).filter(k => k !== 'comment').sort();
-        if(allUsers.length === 0) allUsers = ["Сотрудник 1"]; 
-        
-        let daysInMonth = new Date(target.year, target.month + 1, 0).getDate();
-        
-        let actionBar = document.getElementById('dynamic-action-bar');
-        actionBar.innerHTML = `
-            <div class="action-container" style="margin-bottom:0; display: flex; gap: 10px; align-items:center;">
-                <button class="btn-save" onclick="saveGraphsEdits()" id="btn-save-graphs">💾 Сохранить графики</button>
-                <button class="btn-add" style="background: #9b59b6;" onclick="addUserToGraph()">➕ Добавить сотрудника</button>
-                <span style="font-size:13px; color:#555; margin-left:15px; flex:1;">💡 Вводите <b>М_у</b> (утро), <b>М_в</b> (вечер), <b>М</b> (полная смена). Система проверит, все ли 9 точек закрыты.</span>
-            </div>
-        `;
-        actionBar.style.display = 'block';
-
-        let html = `
-            <h3 style="color:#1a237e; font-size:24px; margin-top:0; margin-bottom:15px;">📅 Графики сотрудников (на следующий месяц)</h3>
-            
-            <div class="card" style="padding:0; overflow-x:auto;">
-            <table style="min-width:100%; border-collapse:collapse; font-size:14px;" id="graph-table">
-                <thead>
-                    <tr>
-                        <th style="border:1px solid #ccc; padding:8px; text-align:center; width:50px; background:#f5f5f5;">Дата</th>
-                        <th style="border:1px solid #ccc; padding:8px; text-align:center; width:60px; background:#f5f5f5;">День</th>
-        `;
-        allUsers.forEach(user => {
-            html += `<th style="border:1px solid #ccc; padding:8px; text-align:center; min-width:100px; background:#e8eaf6;">
-                        <input type="text" value="${user}" data-old-name="${user}" onchange="updateGraphUserName('${user}', this.value)" style="text-align:center; font-weight:bold; font-size:14px; background:transparent; border:none; border-bottom:1px solid #7E57C2; width:100%;">
-                        <br><button onclick="removeUserFromGraph('${user}')" style="font-size:11px; margin-top:5px; background:#ffebee; border:none; border-radius:4px; color:#c62828; padding:3px 8px; cursor:pointer;">Удалить</button>
-                     </th>`;
-        });
-        html += `       <th style="border:1px solid #ccc; padding:8px; text-align:center; width:60px; background:#f5f5f5;">День</th>
-                        <th style="border:1px solid #ccc; padding:8px; text-align:center; width:50px; background:#f5f5f5;">Дата</th>
-                        <th style="border:1px solid #ccc; padding:8px; text-align:left; width:280px; background:#fff3e0; color:#e65100;">Проверка 9 смен</th>
-                    </tr>
-                </thead>
-                <tbody>
-        `;
-        
-        const dayNames = ["вс", "пн", "вт", "ср", "чт", "пт", "сб"];
-        const expectedShops = ['Б', 'Г', 'В', 'Л', 'Н', 'Н2', 'СП', 'М', 'У'];
-        
-        for (let d = 1; d <= daysInMonth; d++) {
-            let dateObj = new Date(target.year, target.month, d);
-            let dayOfWeek = dateObj.getDay();
-            let isWeekend = (dayOfWeek === 0 || dayOfWeek === 6);
-            let rowBg = isWeekend ? "background-color:#fff8e1;" : "background-color:#ffffff;";
-            
-            let dayShifts = [];
-            
-            let rowHtml = `<tr style="${rowBg}">
-                <td style="border:1px solid #ccc; padding:4px; text-align:center; font-weight:bold;">${d}</td>
-                <td style="border:1px solid #ccc; padding:4px; text-align:center; color:${isWeekend?'#e65100':'#555'};">${dayNames[dayOfWeek]}</td>`;
-                
-            allUsers.forEach(user => {
-                if(!monthData[user]) monthData[user] = { _pinned: true };
-                let cellData = monthData[user][d] || { text: "", shift: "CLEAR" };
-                let val = cellData.text || "";
-                
-                // Авто-подмена утро/вечер на отображении (на всякий случай)
-                val = val.replace(/\s*утро$/i, "_У").replace(/\s*вечер$/i, "_В");
-                
-                if(val) dayShifts.push(val.trim().toUpperCase());
-                
-                // Цветовая заливка
-                let cellBg = "transparent";
-                let cellColor = "#333";
-                let vUpper = val.trim().toUpperCase();
-                
-                if (vUpper === "В" || vUpper === "ВЫХ" || vUpper === "OFF" || vUpper === "ВЫХОДНОЙ") {
-                    cellBg = "#bbdefb"; // Синий
-                    cellColor = "#0d47a1";
-                } else if (vUpper !== "") {
-                    cellBg = "#c8e6c9"; // Зеленый для любой кофейни
-                    cellColor = "#1b5e20";
-                }
-                
-                rowHtml += `<td style="border:1px solid #ccc; padding:2px; background:${cellBg};">
-                    <input type="text" class="graph-input" value="${val}" style="color:${cellColor}; outline:none; font-weight:bold;" onchange="updateGraphCell('${user}', ${d}, this.value)">
-                </td>`;
-            });
-            
-            let missing = [];
-            expectedShops.forEach(s => {
-                let hasFull = dayShifts.includes(s);
-                let hasMorn = dayShifts.some(shift => shift === s + "_У" || shift === s + "У" || shift === s + " У");
-                let hasEve = dayShifts.some(shift => shift === s + "_В" || shift === s + "В" || shift === s + " В");
-                
-                if (!hasFull) {
-                    if (!hasMorn && !hasEve) missing.push(s);
-                    else if (hasMorn && !hasEve) missing.push(s + "_в");
-                    else if (!hasMorn && hasEve) missing.push(s + "_у");
-                }
-            });
-            
-            let statusHtml = missing.length === 0 
-                ? `<span style="color:#2e7d32; font-weight:bold; background:#e8f5e9; padding:2px 6px; border-radius:4px;">✅ Все 9 закрыты</span>`
-                : `<span style="color:#c62828; font-weight:bold; font-size:13px;">❌ Нет: ${missing.join(', ')}</span>`;
-            
-            rowHtml += `<td style="border:1px solid #ccc; padding:4px; text-align:center; color:${isWeekend?'#e65100':'#555'};">${dayNames[dayOfWeek]}</td>
-                        <td style="border:1px solid #ccc; padding:4px; text-align:center; font-weight:bold;">${d}</td>
-                        <td style="border:1px solid #ccc; padding:8px; font-size:13px;">${statusHtml}</td>
-                    </tr>`;
-            html += rowHtml;
-        }
-        
-        html += `</tbody></table></div>`;
-        box.innerHTML = html;
-    }
-
-    function updateGraphCell(user, day, val) {
-        if (!window.graphDraft[user]) window.graphDraft[user] = { _pinned: true };
-        if (!window.graphDraft[user][day]) window.graphDraft[user][day] = {};
-        
-        let vUpper = val.trim().toUpperCase();
-        
-        // Преобразование из "УТРО/ВЕЧЕР"
-        if (vUpper.endsWith("УТРО")) {
-            vUpper = vUpper.replace(/\s*УТРО$/, "_У");
-        } else if (vUpper.endsWith("ВЕЧЕР")) {
-            vUpper = vUpper.replace(/\s*ВЕЧЕР$/, "_В");
-        }
-
-        let shift = "CLEAR";
-        let formattedVal = vUpper;
-        
-        if (vUpper === "В" || vUpper === "ВЫХ" || vUpper === "OFF" || vUpper === "ВЫХОДНОЙ") {
-            shift = "OFF";
-            formattedVal = "В";
-        } else if (vUpper !== "") {
-            shift = "FULL";
-            // Приводим утреннюю и вечернюю смену к стандарту "SHOP_У" и "SHOP_В"
-            if (vUpper.endsWith("_У") || vUpper.endsWith(" У")) {
-                let shopStr = vUpper.replace(/\s*У$/, "").replace(/_У$/, "");
-                if(shopStr !== "") formattedVal = shopStr + "_У";
-            } else if (vUpper.endsWith("_В") || vUpper.endsWith(" В")) {
-                let shopStr = vUpper.replace(/\s*В$/, "").replace(/_В$/, "");
-                if(shopStr !== "") formattedVal = shopStr + "_В";
-            }
-        }
-        
-        window.graphDraft[user][day].text = formattedVal;
-        window.graphDraft[user][day].shift = shift;
-        renderGraphsTab(); 
-    }
-
-    function updateGraphUserName(oldName, newName) {
-        let cleanNew = newName.trim();
-        if (oldName === cleanNew || !cleanNew) return;
-        window.graphDraft[cleanNew] = window.graphDraft[oldName];
-        delete window.graphDraft[oldName];
-        renderGraphsTab();
-    }
-    
-    function removeUserFromGraph(user) {
-        if(!confirm(`Удалить колонку сотрудника: ${user}?`)) return;
-        delete window.graphDraft[user];
-        renderGraphsTab();
-    }
-
-    function addUserToGraph() {
-        let newName = prompt("Введите имя нового сотрудника:", "");
-        if (!newName || newName.trim() === "") return;
-        newName = newName.trim();
-        if (!window.graphDraft) window.graphDraft = {};
-        if (window.graphDraft[newName]) {
-            alert("Сотрудник с таким именем уже есть в графике!");
-            return;
-        }
-        window.graphDraft[newName] = { _pinned: true }; // Сохраняем пустой объект для Firebase, чтобы столбец не удалялся
-        renderGraphsTab();
-    }
-
-    async function saveGraphsEdits() {
-        let btn = document.getElementById('btn-save-graphs');
-        let origText = btn.innerHTML;
-        btn.innerHTML = "⌛ СОХРАНЕНИЕ...";
-
-        let target = getTargetDateLogic(); 
-        let currentYearMonth = `${target.year}_${target.month}`;
-        
-        try {
-            if(!cachedData.schedules) cachedData.schedules = {};
-            cachedData.schedules[currentYearMonth] = window.graphDraft;
-            
-            await fetch(`${FB_URL}/schedules/${currentYearMonth}.json`, { 
-                method: 'PUT', 
-                body: JSON.stringify(window.graphDraft) 
-            });
-            
-            btn.innerHTML = "✅ СОХРАНЕНО!";
-            setTimeout(() => { 
-                btn.innerHTML = origText; 
-                renderGraphsTab();
-            }, 1000);
-        } catch(e) {
-            btn.innerHTML = origText;
-            alert("❌ Ошибка: " + e.message);
-        }
-    }
-
-    // ==========================================
-    // ФУНКЦИИ СВОДА И ЗАКУПКИ
-    // ==========================================
     async function compareStoplistWithOrders() {
         if(!confirm("Сравнить стоп-листы кофеен с текущими заказами?\n\nНедостающие товары будут добавлены со статусом 'Из стоп-листа'.")) return;
         showReportOverlay("Анализ стоп-листов...");
@@ -946,7 +760,9 @@
                 if ((o.mode === 'order' || o.mode === 'new_shop') && (!o.lenta_received && !o.ozon_received)) {
                     if (!o.ordered || o.timestamp >= sevenDaysAgo) {
                         if (!activeOrdersMap[o.shop]) activeOrdersMap[o.shop] = {};
-                        let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
+                        let itemsArr = Array.isArray(o.items) ? o.items : (typeof o.items === 'object' && o.items !== null ? Object.values(o.items) : []);
+                        itemsArr = itemsArr.filter(i => i !== null && i !== undefined);
+
                         itemsArr.forEach(i => {
                             if (i && i.name && i.name !== "НЕТ ЗАКАЗА") {
                                 let cName = cleanName(i.name);
@@ -971,12 +787,13 @@
 
             for (let shop in latestStoplistMap) {
                 let stop = latestStoplistMap[shop];
-                let itemsArr = Array.isArray(stop.items) ? stop.items : Object.values(stop.items);
+                let itemsArr = Array.isArray(stop.items) ? stop.items : (typeof stop.items === 'object' && stop.items !== null ? Object.values(stop.items) : []);
+                itemsArr = itemsArr.filter(i => i !== null && i !== undefined);
                 
                 itemsArr.forEach(i => {
                     if (i && i.name && i.qty === 'Закончилось') {
                         let cName = cleanName(i.name);
-                        let catItem = Object.values(catalog).find(c => c && cleanName(c.name) === cName);
+                        let catItem = Object.values(catalog || {}).find(c => c && cleanName(c.name) === cName);
                         
                         if (catItem) {
                             let isTransit = missingStatusMap[shop] && (missingStatusMap[shop][cName] === 'transit' || missingStatusMap[shop][cName] === 'pending');
@@ -1012,8 +829,8 @@
                 });
 
                 if (targetOrderKey) {
-                    let currentItems = Array.isArray(orders[targetOrderKey].items) ? orders[targetOrderKey].items : Object.values(orders[targetOrderKey].items || {});
-                    currentItems = currentItems.filter(i => i.name !== 'НЕТ ЗАКАЗА');
+                    let currentItems = Array.isArray(orders[targetOrderKey].items) ? orders[targetOrderKey].items : (typeof orders[targetOrderKey].items === 'object' && orders[targetOrderKey].items !== null ? Object.values(orders[targetOrderKey].items) : []);
+                    currentItems = currentItems.filter(i => i !== null && i !== undefined && i.name !== 'НЕТ ЗАКАЗА');
                     newItemsToAppend[shop].forEach(ni => currentItems.push(ni));
                     updates[targetOrderKey + "/items"] = currentItems;
                 } else {
@@ -1087,7 +904,9 @@
                     if(!shopLentaSums[o.shop]) shopLentaSums[o.shop] = 0;
                     if(!svodByShop[o.shop]) svodByShop[o.shop] = 0;
                     
-                    let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
+                    let itemsArr = Array.isArray(o.items) ? o.items : (typeof o.items === 'object' && o.items !== null ? Object.values(o.items) : []);
+                    itemsArr = itemsArr.filter(i => i !== null && i !== undefined);
+
                     itemsArr.forEach(i => {
                         if(i && i.name && i.name !== "НЕТ ЗАКАЗА") {
                             let catItem = Object.values(catalog).find(cat => cat && cat.name === i.name) || {};
@@ -1108,7 +927,9 @@
                 let o = ordersSnap[key];
                 if (o && (o.mode === 'order' || o.mode === 'new_shop') && o.svod === false) {
                     updates[key + "/svod"] = true; 
-                    let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
+                    let itemsArr = Array.isArray(o.items) ? o.items : (typeof o.items === 'object' && o.items !== null ? Object.values(o.items) : []);
+                    itemsArr = itemsArr.filter(i => i !== null && i !== undefined);
+
                     let changed = false;
 
                     itemsArr.forEach(i => {
@@ -1200,9 +1021,11 @@
             if (shopOrders.length === 0) return;
             shopOrders.sort((a,b) => b.timestamp - a.timestamp);
             let latestStoplist = shopOrders[0];
-            
             if (!latestStoplist.items) return;
-            let itemsArr = Array.isArray(latestStoplist.items) ? latestStoplist.items : Object.values(latestStoplist.items);
+            
+            let itemsArr = Array.isArray(latestStoplist.items) ? latestStoplist.items : (typeof latestStoplist.items === 'object' && latestStoplist.items !== null ? Object.values(latestStoplist.items) : []);
+            itemsArr = itemsArr.filter(i => i !== null && i !== undefined);
+
             let namesToRemove = itemNamesArray.map(n => String(n).trim().toLowerCase());
             let newItems = itemsArr.filter(i => {
                 if (!i || !i.name) return false;
@@ -1227,7 +1050,6 @@
             console.error("Auto stoplist update failed:", e);
         }
     }
-    
     function toggleSvodEdit() { 
         isSvodEditMode = !isSvodEditMode; 
         svodDeletions = []; 
@@ -1242,7 +1064,7 @@
     function preserveSvodInputs() {
         document.querySelectorAll('.edit-svod-input').forEach(inp => {
             let d = inp.getAttribute('data-date');
-            let n = inp.getAttribute('data-item').replace(/&quot;/g, '"'); 
+            let n = inp.getAttribute('data-item'); 
             let s = inp.getAttribute('data-shop');
 
             if (!tempSvodQty[d]) tempSvodQty[d] = {};
@@ -1253,7 +1075,7 @@
         document.querySelectorAll('.edit-svod-vendor-select').forEach(sel => {
             let d = sel.getAttribute('data-date');
             let s = sel.getAttribute('data-shop');
-            let n = sel.getAttribute('data-item').replace(/&quot;/g, '"');
+            let n = sel.getAttribute('data-item');
             if (!tempSvodVendor[d]) tempSvodVendor[d] = {};
             if (!tempSvodVendor[d][s]) tempSvodVendor[d][s] = {};
             tempSvodVendor[d][s][n] = sel.value;
@@ -1262,7 +1084,7 @@
         document.querySelectorAll('.edit-svod-shop-select').forEach(sel => {
             let d = sel.getAttribute('data-date');
             let s = sel.getAttribute('data-original-shop');
-            let n = sel.getAttribute('data-item').replace(/&quot;/g, '"');
+            let n = sel.getAttribute('data-item');
             if (!tempSvodShop[d]) tempSvodShop[d] = {};
             if (!tempSvodShop[d][s]) tempSvodShop[d][s] = {};
             tempSvodShop[d][s][n] = sel.value;
@@ -1275,7 +1097,8 @@
             let vendorSel = row.querySelector('.new-svod-vendor');
 
             let dateStr = nameSel.getAttribute('data-date');
-            let shop = nameSel.getAttribute('data-shop').replace(/&quot;/g, '"');
+            let shop = nameSel.getAttribute('data-shop');
+            if (shop.includes('&quot;')) shop = shop.replace(/&quot;/g, '"');
 
             tempSvodNewRows.push({
                 date: dateStr,
@@ -1287,86 +1110,6 @@
         });
     }
 
-    async function mergePendingOrders() {
-        if(!confirm("Объединить все ожидающие заказы по кофейням?\n\nДополненные в разные дни заказы сольются в один общий заказ для каждого адреса.")) return;
-        
-        showReportOverlay("Объединяю заказы...");
-        try {
-            let pendingByShop = {};
-            for(let key in cachedData.orders) {
-                let o = cachedData.orders[key];
-                if(o && (o.mode === 'order' || o.mode === 'new_shop') && !o.ordered) {
-                    if(!pendingByShop[o.shop]) pendingByShop[o.shop] = [];
-                    pendingByShop[o.shop].push(o);
-                }
-            }
-            
-            let hasMerges = false;
-            let deletes = [];
-            let updates = {};
-            
-            for(let shop in pendingByShop) {
-                let shopOrders = pendingByShop[shop];
-                if(shopOrders.length > 1) {
-                    hasMerges = true;
-                    let mergedItems = {};
-                    let comments = [];
-                    let latestTime = 0;
-                    
-                    shopOrders.forEach(o => {
-                        if(o.timestamp > latestTime) latestTime = o.timestamp;
-                        if(o.comment && o.comment.trim() !== "") comments.push(o.comment.trim());
-                        
-                        let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
-                        itemsArr.forEach(i => {
-                            if(i && i.name && i.name !== "НЕТ ЗАКАЗА") {
-                                if(!mergedItems[i.name]) {
-                                    mergedItems[i.name] = { ...i, qty: parseFloat(i.qty) || 0 };
-                                } else {
-                                    mergedItems[i.name].qty += (parseFloat(i.qty) || 0);
-                                }
-                            }
-                        });
-                        deletes.push(o.key);
-                    });
-                    
-                    let newItemsArr = Object.values(mergedItems);
-                    if(newItemsArr.length === 0) newItemsArr = [{name: "НЕТ ЗАКАЗА", qty: 0}];
-                    
-                    let randomKey = "merged_" + Date.now() + "_" + Math.floor(Math.random()*10000);
-                    updates[randomKey] = {
-                        shop: shop,
-                        mode: 'order',
-                        items: newItemsArr,
-                        comment: comments.join(" | "),
-                        timestamp: latestTime,
-                        svod: false,
-                        ordered: false,
-                        userId: "admin_merge"
-                    };
-                }
-            }
-
-            if(!hasMerges) {
-                hideReportOverlay();
-                return alert("ℹ️ Нет адресов с несколькими разрозненными заказами для объединения.");
-            }
-
-            for(let k of deletes) {
-                await fetch(`${FB_URL}/orders/${k}.json`, { method: 'DELETE' });
-            }
-            
-            if(Object.keys(updates).length > 0) {
-                await fetch(`${FB_URL}/orders.json`, { method: 'PATCH', body: JSON.stringify(updates) });
-            }
-            
-            hideReportOverlay();
-            loadTab('orders', document.querySelector('.tab-btn.active'));
-        } catch(e) {
-            hideReportOverlay();
-            alert("❌ Ошибка объединения: " + e.message);
-        }
-    }
     function recalcSvodTotals() {
         preserveSvodInputs();
         let totalLenta = 0; 
@@ -1599,13 +1342,93 @@
         
         btn.closest('tr').insertAdjacentElement('beforebegin', tr);
     }
+
+    async function mergePendingOrders() {
+        if(!confirm("Объединить все ожидающие заказы по кофейням?\n\nДополненные в разные дни заказы сольются в один общий заказ для каждого адреса.")) return;
+        
+        showReportOverlay("Объединяю заказы...");
+        try {
+            let pendingByShop = {};
+            for(let key in cachedData.orders) {
+                let o = cachedData.orders[key];
+                if(o && (o.mode === 'order' || o.mode === 'new_shop') && !o.ordered) {
+                    if(!pendingByShop[o.shop]) pendingByShop[o.shop] = [];
+                    pendingByShop[o.shop].push(o);
+                }
+            }
+            
+            let hasMerges = false;
+            let deletes = [];
+            let updates = {};
+            
+            for(let shop in pendingByShop) {
+                let shopOrders = pendingByShop[shop];
+                if(shopOrders.length > 1) {
+                    hasMerges = true;
+                    let mergedItems = {};
+                    let comments = [];
+                    let latestTime = 0;
+                    
+                    shopOrders.forEach(o => {
+                        if(o.timestamp > latestTime) latestTime = o.timestamp;
+                        if(o.comment && o.comment.trim() !== "") comments.push(o.comment.trim());
+                        
+                        let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
+                        itemsArr.forEach(i => {
+                            if(i && i.name && i.name !== "НЕТ ЗАКАЗА") {
+                                if(!mergedItems[i.name]) {
+                                    mergedItems[i.name] = { ...i, qty: parseFloat(i.qty) || 0 };
+                                } else {
+                                    mergedItems[i.name].qty += (parseFloat(i.qty) || 0);
+                                }
+                            }
+                        });
+                        deletes.push(o.key);
+                    });
+                    
+                    let newItemsArr = Object.values(mergedItems);
+                    if(newItemsArr.length === 0) newItemsArr = [{name: "НЕТ ЗАКАЗА", qty: 0}];
+                    
+                    let randomKey = "merged_" + Date.now() + "_" + Math.floor(Math.random()*10000);
+                    updates[randomKey] = {
+                        shop: shop,
+                        mode: 'order',
+                        items: newItemsArr,
+                        comment: comments.join(" | "),
+                        timestamp: latestTime,
+                        svod: false,
+                        ordered: false,
+                        userId: "admin_merge"
+                    };
+                }
+            }
+
+            if(!hasMerges) {
+                hideReportOverlay();
+                return alert("ℹ️ Нет адресов с несколькими разрозненными заказами для объединения.");
+            }
+
+            for(let k of deletes) {
+                await fetch(`${FB_URL}/orders/${k}.json`, { method: 'DELETE' });
+            }
+            
+            if(Object.keys(updates).length > 0) {
+                await fetch(`${FB_URL}/orders.json`, { method: 'PATCH', body: JSON.stringify(updates) });
+            }
+            
+            hideReportOverlay();
+            loadTab('orders', document.querySelector('.tab-btn.active'));
+        } catch(e) {
+            hideReportOverlay();
+            alert("❌ Ошибка объединения: " + e.message);
+        }
+    }
     
     async function renderOrdersSvod() {
       try {
         const box = document.getElementById('content');
         let svodActionBar = document.getElementById('svod-action-bar');
         if (!svodActionBar) {
-            // Если мы используем глобальный бар, нужно его очистить и заново собрать
             svodActionBar = document.getElementById('dynamic-action-bar');
         }
         
@@ -1624,24 +1447,36 @@
         let vendorMap = {};
         if (cachedData.catalogOrder) Object.values(cachedData.catalogOrder).forEach(c => { if (c && c.name) vendorMap[c.name] = (c.vendor || 'Лента').toLowerCase(); });
 
-        let todaysOrders = [], historyOrdersList = [], allOrders = Object.values(cachedData.orders).sort((a,b) => (b.timestamp || 0) - (a.timestamp || 0)), lastOrderItems = {}, lastOrderTimestamp = {}, cutoffMonth = Date.now() - (30 * 24 * 60 * 60 * 1000); 
+        let todaysOrders = [], historyOrdersList = [], allOrders = Object.values(cachedData.orders).sort((a,b) => (b.timestamp || 0) - (a.timestamp || 0)), lastOrderItems = {}, lastOrderTimestamp = {}; 
+        let cutoffMonth = Date.now() - (30 * 24 * 60 * 60 * 1000); 
 
         allOrders.forEach(o => {
             if (o && (o.mode === 'order' || o.mode === 'new_shop')) {
                 if (!o.ordered) todaysOrders.push(o);
                 else {
                     if ((o.timestamp || 0) >= cutoffMonth) historyOrdersList.push(o);
-                    if (!lastOrderItems[o.shop]) { lastOrderItems[o.shop] = new Set(); lastOrderTimestamp[o.shop] = o.timestamp || 0; (Array.isArray(o.items) ? o.items : Object.values(o.items || {})).forEach(i => { if(i && i.name) lastOrderItems[o.shop].add(i.name); }); }
+                    if (!lastOrderItems[o.shop]) { 
+                        lastOrderItems[o.shop] = new Set(); 
+                        lastOrderTimestamp[o.shop] = o.timestamp || 0; 
+                        let itemsArr = Array.isArray(o.items) ? o.items : (typeof o.items === 'object' && o.items !== null ? Object.values(o.items) : []); 
+                        itemsArr.forEach(i => { if(i && i.name) lastOrderItems[o.shop].add(i.name); }); 
+                    }
                 }
             }
         });
 
         historyOrdersList = historyOrdersList.slice(0, 150); 
         let keysToDelete = [], shopHasRealOrder = {};
-        todaysOrders.forEach(o => { if ((Array.isArray(o.items) ? o.items : Object.values(o.items || {})).some(i => i && i.name && i.name !== "НЕТ ЗАКАЗА")) shopHasRealOrder[o.shop] = true; });
+        todaysOrders.forEach(o => { 
+            let itemsArr = Array.isArray(o.items) ? o.items : (typeof o.items === 'object' && o.items !== null ? Object.values(o.items) : []); 
+            if (itemsArr.some(i => i && i.name && i.name !== "НЕТ ЗАКАЗА")) shopHasRealOrder[o.shop] = true; 
+        });
+        
         todaysOrders = todaysOrders.filter(o => {
-            let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
-            if ((itemsArr.length === 1 && itemsArr[0].name === "НЕТ ЗАКАЗА" && shopHasRealOrder[o.shop]) || itemsArr.length === 0) { keysToDelete.push(o.key); return false; }
+            let itemsArr = Array.isArray(o.items) ? o.items : (typeof o.items === 'object' && o.items !== null ? Object.values(o.items) : []);
+            if ((itemsArr.length === 1 && itemsArr[0].name === "НЕТ ЗАКАЗА" && shopHasRealOrder[o.shop]) || itemsArr.length === 0) { 
+                keysToDelete.push(o.key); return false; 
+            }
             return true;
         });
 
@@ -1656,7 +1491,8 @@
             if (o.comment && o.comment.trim() !== "") sd.comments.push(o.comment);
             if (!o.svod) sd.all_svod = false;
 
-            (Array.isArray(o.items) ? o.items : Object.values(o.items || {})).forEach(i => {
+            let itemsArr = Array.isArray(o.items) ? o.items : (typeof o.items === 'object' && o.items !== null ? Object.values(o.items) : []);
+            itemsArr.forEach(i => {
                 if (i && i.name) {
                     if (i.name === "НЕТ ЗАКАЗА") { sd.no_order = true; return; }
                     if (!sd.items[i.name]) sd.items[i.name] = { qty: 0, bot_error: false, status: 'pending', vendor: i.vendor };
@@ -1763,10 +1599,7 @@
                             if (actualVendor.toLowerCase().includes('лента')) totalLenta += cost; else if (actualVendor.toLowerCase().includes('озон') || actualVendor.toLowerCase().includes('ozon')) totalOzon += cost; else if (actualVendor.toLowerCase().includes('купер') || actualVendor.toLowerCase().includes('kuper')) totalKuper += cost;
 
                             let linksHtml = [(catItem.link ? `<a href="${catItem.link}" target="_blank" style="color:#0288d1; font-weight:bold;">🔗 Осн</a>` : ""), (catItem.link2 ? `<a href="${catItem.link2}" target="_blank" style="color:#e53935; font-weight:bold; margin-left:8px;">🔗 Рез</a>` : "")].filter(Boolean).join(" ");
-                            let jsName = name.replace(/'/g, "\\'").replace(/"/g, '&quot;');
-                            let jsShop = shop.replace(/'/g, "\\'").replace(/"/g, '&quot;');
-                            let htmlName = name.replace(/"/g, '&quot;');
-                            let htmlShop = shop.replace(/"/g, '&quot;');
+                            let jsName = name.replace(/'/g, "\\'").replace(/"/g, '&quot;'), jsShop = shop.replace(/'/g, "\\'").replace(/"/g, '&quot;'), htmlName = name.replace(/"/g, '&quot;'), htmlShop = shop.replace(/"/g, '&quot;');
 
                             let repeatBadge = "", rowBg = (itemStatus === 'error') ? `background-color: #ffebee;` : ``;
                             if (inTransit) { repeatBadge = `<span style='color:#1565c0; font-size:12px; margin-left:5px; font-weight:bold;'>(Уже в пути 🚚)</span>`; itemStatus = 'error'; } 
@@ -1832,7 +1665,7 @@
             html += `<tr><td colspan="6" style="text-align:center; color:#888; font-size:15px; font-weight:bold;">История пуста</td></tr>`;
         } else {
             historyOrdersList.forEach(o => {
-                let itemsStr = (Array.isArray(o.items) ? o.items : Object.values(o.items || {})).map(i => { if (!i) return ''; return `${i.name} <b>(${i.qty})</b>${(i.bot_error || i.not_found || i.error || i.status === 'error') ? ' <span style="color:#d32f2f;">⚠️</span>' : ''}`; }).join(', ');
+                let itemsStr = (Array.isArray(o.items) ? o.items : (typeof o.items === 'object' && o.items !== null ? Object.values(o.items) : [])).map(i => { if (!i) return ''; return `${i.name} <b>(${i.qty})</b>${(i.bot_error || i.not_found || i.error || i.status === 'error') ? ' <span style="color:#d32f2f;">⚠️</span>' : ''}`; }).join(', ');
                 html += `
                 <tr class="order-row">
                     <td><b style="color:#311B92; font-size:15px;">${o.shop === 'Красноказарменная' ? 'МЭИ' : o.shop}</b></td>
@@ -1910,7 +1743,7 @@
                 if (o && (o.mode === 'order' || o.mode === 'new_shop') && !o.ordered) {
                     let dKey = new Date(o.timestamp).toLocaleDateString('ru-RU');
                     let needsUpdate = false;
-                    let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
+                    let itemsArr = Array.isArray(o.items) ? o.items : (typeof o.items === 'object' && o.items !== null ? Object.values(o.items) : []);
                     let newItemsArr = [];
                     
                     for (let i = 0; i < itemsArr.length; i++) {
@@ -2005,7 +1838,7 @@
                 });
                 if (targetOrderKey) {
                     let targetOrder = cachedData.orders[targetOrderKey];
-                    let tItems = Array.isArray(targetOrder.items) ? targetOrder.items : Object.values(targetOrder.items||{});
+                    let tItems = Array.isArray(targetOrder.items) ? targetOrder.items : (typeof targetOrder.items === 'object' && targetOrder.items !== null ? Object.values(targetOrder.items) : []);
                     let existingItem = tItems.find(i => i.name === move.item.name);
                     if (existingItem) {
                         existingItem.qty = parseFloat(existingItem.qty) + parseFloat(move.item.qty);
@@ -2031,9 +1864,9 @@
             tempSvodShop = {};
             tempSvodNewRows = [];
             
-            btn.innerHTML = "✅ СОХРАНЕНО!";
+            if(btn) btn.innerHTML = "✅ СОХРАНЕНО!";
             setTimeout(() => {
-                btn.innerHTML = origText;
+                if(btn) btn.innerHTML = origText;
                 loadTab('orders', document.querySelector('.tab-btn.active'));
             }, 1000);
         } catch (e) { 
@@ -2050,7 +1883,7 @@
                 updates[o.key + "/ordered"] = true; 
                 updates[o.key + "/svod"] = true; 
                 if (o.items) {
-                    let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items);
+                    let itemsArr = Array.isArray(o.items) ? o.items : (typeof o.items === 'object' && o.items !== null ? Object.values(o.items) : []);
                     let changed = false;
                     itemsArr.forEach(i => { 
                         if (i && i.name !== "НЕТ ЗАКАЗА" && (!i.status || i.status === 'pending' || i.status === 'from_stoplist')) { 
@@ -2069,6 +1902,245 @@
             } catch(e) { 
                 alert("❌ Ошибка: " + e.message); 
             }
+        }
+    }
+
+    // ==========================================
+    // 📊 БЛОК: НОВАЯ ВКЛАДКА ГРАФИКОВ (КАЛЕНДАРЬ СМЕН)
+    // ==========================================
+    function renderGraphsTab() {
+        const box = document.getElementById('content');
+        let schedules = cachedData.schedules || {};
+        
+        let target = getTargetDateLogic(); 
+        let currentYearMonth = `${target.year}_${target.month}`; 
+        
+        if (!window.graphDraft) {
+            let draft = schedules[currentYearMonth] ? JSON.parse(JSON.stringify(schedules[currentYearMonth])) : {};
+            let allU = Object.keys(draft).filter(k => k !== 'comment' && k !== '_pinned');
+            if (allU.length === 0) {
+                let pM = target.month - 1; let pY = target.year;
+                if (pM < 0) { pM = 11; pY--; }
+                let prevMonthKey = `${pY}_${pM}`;
+                if (schedules[prevMonthKey]) {
+                    Object.keys(schedules[prevMonthKey]).filter(k => k !== 'comment').forEach(u => draft[u] = { _pinned: true });
+                } else {
+                    draft["Сотрудник 1"] = { _pinned: true };
+                }
+            }
+            window.graphDraft = draft;
+        }
+        let monthData = window.graphDraft;
+        
+        let allUsers = Object.keys(monthData).filter(k => k !== 'comment' && k !== '_pinned').sort();
+        if(allUsers.length === 0) allUsers = ["Сотрудник 1"]; 
+        
+        let daysInMonth = new Date(target.year, target.month + 1, 0).getDate();
+        
+        let actionBar = document.getElementById('dynamic-action-bar');
+        actionBar.innerHTML = `
+            <div class="action-container" style="margin-bottom:0; display: flex; gap: 10px; align-items:center;">
+                <button class="btn-save" onclick="saveGraphsEdits()" id="btn-save-graphs">💾 Сохранить графики</button>
+                <button class="btn-add" style="background: #9b59b6;" onclick="addUserToGraph()">➕ Добавить сотрудника</button>
+                <span style="font-size:13px; color:#555; margin-left:15px; flex:1;">💡 Вводите <b>М_у</b> (утро), <b>М_в</b> (вечер), <b>М</b> (полная смена). Система проверит, все ли 9 точек закрыты.</span>
+            </div>
+        `;
+        actionBar.style.display = 'block';
+
+        let html = `
+            <h3 style="color:#1a237e; font-size:24px; margin-top:0; margin-bottom:15px;">📅 Графики сотрудников (на следующий месяц)</h3>
+            
+            <div class="graphs-wrapper">
+            <table style="min-width:100%; border-collapse:collapse; font-size:14px;" id="graph-table">
+                <thead>
+                    <tr>
+                        <th style="border:1px solid #ccc; padding:8px; text-align:center; width:50px;">Дата</th>
+                        <th style="border:1px solid #ccc; padding:8px; text-align:center; width:60px;">День</th>
+        `;
+        allUsers.forEach(user => {
+            html += `<th style="border:1px solid #ccc; padding:8px; text-align:center; min-width:100px;">
+                        <textarea rows="2" data-old-name="${user}" onchange="updateGraphUserName('${user}', this.value)" style="width:100%; text-align:center; font-weight:bold; font-size:14px; background:transparent; border:none; border-bottom:1px solid #7E57C2; resize:none;">${user}</textarea>
+                        <br><button onclick="removeUserFromGraph('${user}')" style="font-size:11px; margin-top:5px; background:#ffebee; border:none; border-radius:4px; color:#c62828; padding:3px 8px; cursor:pointer;">Удалить</button>
+                     </th>`;
+        });
+        html += `       <th style="border:1px solid #ccc; padding:8px; text-align:center; width:60px;">День</th>
+                        <th style="border:1px solid #ccc; padding:8px; text-align:center; width:50px;">Дата</th>
+                        <th style="border:1px solid #ccc; padding:8px; text-align:left; width:280px; color:#e65100;">Проверка 9 смен</th>
+                    </tr>
+                </thead>
+                <tbody>
+        `;
+        
+        const dayNames = ["вс", "пн", "вт", "ср", "чт", "пт", "сб"];
+        const expectedShops = ['Б', 'Г', 'В', 'Л', 'Н', 'Н2', 'СП', 'М', 'У'];
+        
+        for (let d = 1; d <= daysInMonth; d++) {
+            let dateObj = new Date(target.year, target.month, d);
+            let dayOfWeek = dateObj.getDay();
+            let isWeekend = (dayOfWeek === 0 || dayOfWeek === 6);
+            let rowBg = isWeekend ? "background-color:#fff3e0;" : "background-color:#ffffff;"; 
+            let borderBottom = (dayOfWeek === 0) ? "border-bottom: 3px solid #ffb74d;" : "border-bottom: 1px solid #eee;";
+            
+            let dayShifts = [];
+            
+            let rowHtml = `<tr style="${rowBg} ${borderBottom}">
+                <td style="border:1px solid #ccc; padding:4px; text-align:center; font-weight:bold; background-color:${isWeekend?'#ffcc80':'#f5f5f5'}; color:${isWeekend?'#d84315':'#333'};">${d}</td>
+                <td style="border:1px solid #ccc; padding:4px; text-align:center; font-weight:bold; text-transform:uppercase; background-color:${isWeekend?'#ffcc80':'#f5f5f5'}; color:${isWeekend?'#d84315':'#555'};">${dayNames[dayOfWeek]}</td>`;
+                
+            allUsers.forEach(user => {
+                if(!monthData[user]) monthData[user] = { _pinned: true };
+                let cellData = monthData[user][d] || { text: "", shift: "CLEAR" };
+                let val = cellData.text || "";
+                
+                val = val.replace(/\s*утро$/i, "_У").replace(/\s*вечер$/i, "_В");
+                
+                if(val) dayShifts.push(val.trim().toUpperCase());
+                
+                let cellBg = "transparent";
+                let cellColor = "#333";
+                let vUpper = val.trim().toUpperCase();
+                
+                if (vUpper === "В" || vUpper === "ВЫХ" || vUpper === "OFF" || vUpper === "ВЫХОДНОЙ") {
+                    cellBg = "#bbdefb"; 
+                    cellColor = "#0d47a1";
+                } else if (vUpper === "ЛЮБ" || vUpper === "ЛЮБАЯ" || vUpper === "ANY_SHOP") {
+                    cellBg = "#c8e6c9"; 
+                    cellColor = "#1b5e20";
+                } else if (vUpper.includes("_У") || vUpper.endsWith("У")) {
+                    cellBg = "#e1bee7"; 
+                    cellColor = "#4a148c";
+                } else if (vUpper.includes("_В") || vUpper.endsWith("В")) {
+                    cellBg = "#fff9c4"; 
+                    cellColor = "#f57f17";
+                } else if (vUpper !== "") {
+                    cellBg = "#ffcc80"; 
+                    cellColor = "#e65100";
+                }
+                
+                rowHtml += `<td style="border:1px solid #ccc; padding:2px; background:${cellBg};">
+                    <textarea class="graph-input" rows="2" style="width: 100%; height: 100%; border: none; text-align: center; font-size: 14px; text-transform: uppercase; background: transparent; font-weight: 900; color: ${cellColor}; outline: none; resize: none; overflow: hidden;" onchange="updateGraphCell('${user}', ${d}, this.value)">${val}</textarea>
+                </td>`;
+            });
+            
+            let missing = [];
+            expectedShops.forEach(s => {
+                let hasFull = dayShifts.includes(s);
+                let hasMorn = dayShifts.some(shift => shift === s + "_У" || shift === s + "У" || shift === s + " У");
+                let hasEve = dayShifts.some(shift => shift === s + "_В" || shift === s + "В" || shift === s + " В");
+                
+                if (!hasFull) {
+                    if (!hasMorn && !hasEve) missing.push(s);
+                    else if (hasMorn && !hasEve) missing.push(s + "_в");
+                    else if (!hasMorn && hasEve) missing.push(s + "_у");
+                }
+            });
+            
+            let statusHtml = missing.length === 0 
+                ? `<span style="color:#2e7d32; font-weight:bold; background:#e8f5e9; padding:2px 6px; border-radius:4px;">✅ Все 9 закрыты</span>`
+                : `<span style="color:#c62828; font-weight:bold; font-size:13px;">❌ Нет: ${missing.join(', ')}</span>`;
+            
+            rowHtml += `<td style="border:1px solid #ccc; padding:4px; text-align:center; font-weight:bold; text-transform:uppercase; background-color:${isWeekend?'#ffcc80':'#f5f5f5'}; color:${isWeekend?'#d84315':'#555'};">${dayNames[dayOfWeek]}</td>
+                        <td style="border:1px solid #ccc; padding:4px; text-align:center; font-weight:bold; background-color:${isWeekend?'#ffcc80':'#f5f5f5'}; color:${isWeekend?'#d84315':'#333'};">${d}</td>
+                        <td style="border:1px solid #ccc; padding:8px; font-size:13px;">${statusHtml}</td>
+                    </tr>`;
+            html += rowHtml;
+        }
+        
+        html += `</tbody></table></div>`;
+        box.innerHTML = html;
+    }
+
+    function updateGraphCell(user, day, val) {
+        if (!window.graphDraft[user]) window.graphDraft[user] = { _pinned: true };
+        if (!window.graphDraft[user][day]) window.graphDraft[user][day] = {};
+        
+        let vUpper = val.trim().toUpperCase();
+        
+        if (vUpper.endsWith("УТРО")) {
+            vUpper = vUpper.replace(/\s*УТРО$/, "_У");
+        } else if (vUpper.endsWith("ВЕЧЕР")) {
+            vUpper = vUpper.replace(/\s*ВЕЧЕР$/, "_В");
+        }
+
+        let shift = "CLEAR";
+        let formattedVal = vUpper;
+        
+        if (vUpper === "В" || vUpper === "ВЫХ" || vUpper === "OFF" || vUpper === "ВЫХОДНОЙ") {
+            shift = "OFF";
+            formattedVal = "В";
+        } else if (vUpper !== "") {
+            shift = "FULL";
+            if (vUpper.endsWith("_У") || vUpper.endsWith(" У")) {
+                let shopStr = vUpper.replace(/\s*У$/, "").replace(/_У$/, "");
+                if(shopStr !== "") formattedVal = shopStr + "_У";
+                shift = "MORNING";
+            } else if (vUpper.endsWith("_В") || vUpper.endsWith(" В")) {
+                let shopStr = vUpper.replace(/\s*В$/, "").replace(/_В$/, "");
+                if(shopStr !== "") formattedVal = shopStr + "_В";
+                shift = "EVENING";
+            } else if (vUpper === "ЛЮБ" || vUpper === "ЛЮБАЯ" || vUpper === "ANY_SHOP") {
+                shift = "ANY_SHOP";
+                formattedVal = "ЛЮБ";
+            }
+        }
+        
+        window.graphDraft[user][day].text = formattedVal;
+        window.graphDraft[user][day].shift = shift;
+        renderGraphsTab(); 
+    }
+
+    function updateGraphUserName(oldName, newName) {
+        let cleanNew = newName.trim();
+        if (oldName === cleanNew || !cleanNew) return;
+        window.graphDraft[cleanNew] = window.graphDraft[oldName];
+        delete window.graphDraft[oldName];
+        renderGraphsTab();
+    }
+    
+    function removeUserFromGraph(user) {
+        if(!confirm(`Удалить колонку сотрудника: ${user}?`)) return;
+        delete window.graphDraft[user];
+        renderGraphsTab();
+    }
+
+    function addUserToGraph() {
+        let newName = prompt("Введите имя нового сотрудника:", "");
+        if (!newName || newName.trim() === "") return;
+        newName = newName.trim();
+        if (!window.graphDraft) window.graphDraft = {};
+        if (window.graphDraft[newName]) {
+            alert("Сотрудник с таким именем уже есть в графике!");
+            return;
+        }
+        window.graphDraft[newName] = { _pinned: true }; 
+        renderGraphsTab();
+    }
+
+    async function saveGraphsEdits() {
+        let btn = document.getElementById('btn-save-graphs');
+        let origText = btn.innerHTML;
+        btn.innerHTML = "⌛ СОХРАНЕНИЕ...";
+
+        let target = getTargetDateLogic(); 
+        let currentYearMonth = `${target.year}_${target.month}`;
+        
+        try {
+            if(!cachedData.schedules) cachedData.schedules = {};
+            cachedData.schedules[currentYearMonth] = window.graphDraft;
+            
+            await fetch(`${FB_URL}/schedules/${currentYearMonth}.json`, { 
+                method: 'PUT', 
+                body: JSON.stringify(window.graphDraft) 
+            });
+            
+            btn.innerHTML = "✅ СОХРАНЕНО!";
+            setTimeout(() => { 
+                if(btn) btn.innerHTML = origText; 
+                renderGraphsTab();
+            }, 1000);
+        } catch(e) {
+            if(btn) btn.innerHTML = origText;
+            alert("❌ Ошибка: " + e.message);
         }
     }
 
@@ -2324,6 +2396,7 @@
             
             if(btn) btn.innerHTML = "✅ СОХРАНЕНО!";
             setTimeout(() => {
+                if(btn) btn.innerHTML = origText;
                 loadTab('marketplace', document.querySelector('.tab-btn.active'));
             }, 1000);
         } catch(e) { 
@@ -2428,6 +2501,7 @@
 
             if(btn) btn.innerHTML = "✅ СОХРАНЕНО!";
             setTimeout(() => {
+                if(btn) btn.innerHTML = origText;
                 loadTab('missing', document.querySelector('.tab-btn.active'));
             }, 1000);
         } catch (e) { 
@@ -2445,7 +2519,7 @@
         Object.values(cachedData.orders).forEach(o => {
             if (o && (o.mode === 'order' || o.mode === 'new_shop')) {
                 if (!latestOrderMap[o.shop]) latestOrderMap[o.shop] = {};
-                let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
+                let itemsArr = Array.isArray(o.items) ? o.items : (typeof o.items === 'object' && o.items !== null ? Object.values(o.items) : []);
                 itemsArr.forEach(i => {
                     if (i && i.name && parseFloat(i.qty) > 0 && i.status !== 'error' && i.bot_error !== true) {
                         if (!latestOrderMap[o.shop][i.name] || o.timestamp > latestOrderMap[o.shop][i.name]) {
@@ -2587,7 +2661,6 @@
             loadTab('missing', document.querySelector('.tab-btn.active'));
         }
     }
-
     // ==========================================
     // ВКЛАДКА: СТОП-ЛИСТЫ НА ТОЧКАХ
     // ==========================================
@@ -2631,7 +2704,7 @@
                 let isRecent = o.timestamp >= sevenDaysAgo;
                 if (!o.ordered || isRecent) {
                     if (!recentOrdersMap[o.shop]) recentOrdersMap[o.shop] = {};
-                    let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
+                    let itemsArr = Array.isArray(o.items) ? o.items : (typeof o.items === 'object' && o.items !== null ? Object.values(o.items) : []);
                     itemsArr.forEach(i => {
                         if (i && i.name && i.name !== "НЕТ ЗАКАЗА") {
                             let qty = parseFloat(i.qty) || 0;
@@ -2671,7 +2744,7 @@
                 let allSyrups = []; 
                 let otherItems = []; 
                 let foundItems = false;
-                let itemsArr = Array.isArray(stop.items) ? stop.items : Object.values(stop.items);
+                let itemsArr = Array.isArray(stop.items) ? stop.items : (typeof stop.items === 'object' && stop.items !== null ? Object.values(stop.items) : []);
                 
                 itemsArr.forEach(i => {
                     if (!i || !i.name || i.qty !== 'Закончилось' || i.name === 'Всё в наличии') return;
@@ -2757,7 +2830,7 @@
             stopHistoryArr.forEach(o => {
                 let d = new Date(o.timestamp);
                 let dateStr = d.toLocaleDateString('ru-RU') + " " + d.toLocaleTimeString('ru-RU', {hour: '2-digit', minute:'2-digit'});
-                let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
+                let itemsArr = Array.isArray(o.items) ? o.items : (typeof o.items === 'object' && o.items !== null ? Object.values(o.items) : []);
                 let productsStr = itemsArr
                     .filter(i => i && i.name && i.qty === 'Закончилось' && i.name !== "Всё в наличии")
                     .map(i => i.name)
@@ -2874,7 +2947,7 @@
                     let val = "-"; 
                     let orderKey = latestChecklists[s] ? latestChecklists[s].key : "";
                     if (latestChecklists[s] && latestChecklists[s].items) {
-                        let itemsArr = Array.isArray(latestChecklists[s].items) ? latestChecklists[s].items : Object.values(latestChecklists[s].items);
+                        let itemsArr = Array.isArray(latestChecklists[s].items) ? latestChecklists[s].items : (typeof latestChecklists[s].items === 'object' && latestChecklists[s].items !== null ? Object.values(latestChecklists[s].items) : []);
                         let found = itemsArr.find(i => i && i.name === itemName);
                         if (found && found.qty !== undefined && found.qty !== null && String(found.qty).trim() !== "") { 
                             val = String(found.qty); 
@@ -2909,7 +2982,7 @@
         
         inputs.forEach(input => {
             let oKey = input.getAttribute('data-order'); 
-            let item = input.getAttribute('data-item').replace(/&quot;/g, '"'); 
+            let item = input.getAttribute('data-item'); 
             let val = input.value.trim();
             if(!updates[oKey]) updates[oKey] = {}; 
             updates[oKey][item] = val;
@@ -2919,7 +2992,7 @@
             for(let oKey in updates) {
                 let order = cachedData.orders[oKey]; 
                 if(!order) continue;
-                let itemsArr = Array.isArray(order.items) ? order.items : Object.values(order.items||{});
+                let itemsArr = Array.isArray(order.items) ? order.items : (typeof order.items === 'object' && order.items !== null ? Object.values(order.items) : []);
                 for(let item in updates[oKey]) {
                     let found = itemsArr.find(i => i && i.name === item);
                     if(found) { 
@@ -2934,6 +3007,7 @@
             isChecklistEditMode = false;
             if(btn) btn.innerHTML = "✅ СОХРАНЕНО!";
             setTimeout(() => {
+                if(btn) btn.innerHTML = origText;
                 loadTab('checks_table', document.querySelector('.tab-btn.active'));
             }, 1000);
         } catch(e) { 
@@ -2953,7 +3027,7 @@
 
         Object.values(cachedData.orders).forEach(o => {
             if (!o || !stats[o.shop] || !o.items) return;
-            let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items);
+            let itemsArr = Array.isArray(o.items) ? o.items : (typeof o.items === 'object' && o.items !== null ? Object.values(o.items) : []);
             if (o.mode === 'checklist') {
                 itemsArr.forEach(i => {
                     let val = String(i.qty).trim();
@@ -3054,7 +3128,7 @@
         
         html += `</div></div></div>`;
         
-        html += `<table style="min-width:1500px;"><tr><th style="width:160px;">Глоб. Категория</th><th style="width:160px;">Подкатегория</th><th style="width:200px;">Наименование</th><th style="width:120px;">Фото (URL или Ctrl+V)</th><th style="width:100px;">Поставщик</th><th style="width:80px;">Цена 1 (₽)</th><th>Ссылка 1</th><th style="width:80px;">Цена 2 (₽)</th><th>Ссылка 2</th><th style="width:60px; text-align:center;">Удалить</th></tr>`;
+        html += `<table style="min-width:1500px;"><tr><th style="width:160px;">Глоб. Категория</th><th style="width:160px;">Подкатегория</th><th style="width:200px;">Наименование</th><th style="width:150px;">Фото (Вставь Ctrl+V)</th><th style="width:100px;">Поставщик</th><th style="width:80px;">Цена 1 (₽)</th><th>Ссылка 1</th><th style="width:80px;">Цена 2 (₽)</th><th>Ссылка 2</th><th style="width:60px; text-align:center;">Удалить</th></tr>`;
 
         let grouped = {};
         Object.keys(currentCatalog).forEach(k => {
@@ -3093,11 +3167,16 @@
                     subCats.forEach(c => { if(c !== item.cat) catOptions += `<option value="${c}">${c}</option>`; });
                     catOptions += `<option value="НОВАЯ КАТЕГОРИЯ">-- Создать --</option>`;
                     
+                    let isFileStr = item.photo && item.photo.startsWith("data:image") ? `<span style="color:#2e7d32; font-size:12px; font-weight:bold;">✅ ФАЙЛ ЗАГРУЖЕН</span><br><img src="${item.photo}" style="max-width:50px; max-height:50px; border-radius:4px; margin-top:5px;">` : '';
+
                     html += `<tr class="chk-row lvl3_${safeSc} lvl3_of_${safeGc}" style="display:${displayStyleL3};">
                         <td><select onchange="updateVal('${k}','globalCat',this.value)" style="font-size:14px;">${gcatOptions}</select></td>
                         <td><select onchange="updateVal('${k}','cat',this.value)" style="font-size:14px;">${catOptions}</select></td>
                         <td><input type="text" style="font-weight:bold; font-size:15px; color:#311b92;" value="${item.name || ''}" onchange="updateVal('${k}','name',this.value)"></td>
-                        <td><input type="text" style="font-size:14px; border:2px dashed #9575cd; background:#fafafa;" placeholder="Кликните и Ctrl+V" value="${item.photo || ''}" onchange="updateVal('${k}','photo',this.value)" onpaste="handleClipboardImagePaste(event, '${k}')"></td>
+                        <td style="text-align:center;">
+                            <input type="text" style="font-size:12px; border:2px dashed #9575cd; background:#fafafa; text-align:center;" placeholder="Клик сюда и Ctrl+V" value="${item.photo && !item.photo.startsWith("data:image") ? item.photo : ''}" onchange="updateVal('${k}','photo',this.value)" onpaste="handleClipboardImagePaste(event, '${k}')">
+                            ${isFileStr}
+                        </td>
                         <td><input type="text" style="font-size:14px;" placeholder="Лента/Озон" value="${item.vendor || 'Лента'}" onchange="updateVal('${k}','vendor',this.value)"></td>
                         <td><input type="number" style="font-size:14px;" value="${item.price || 0}" onchange="updateVal('${k}','price',this.value)"></td>
                         <td><input type="text" style="font-size:14px;" placeholder="URL 1" value="${item.link || ''}" onchange="updateVal('${k}','link',this.value)"></td>
@@ -3129,7 +3208,7 @@
             <button class="btn-save" style="flex:1 1 auto; margin:0; padding:12px 18px;" onclick="saveCatalog(this)">💾 Сохранить в базу</button>
         </div>
         <table style="min-width:1200px;">
-            <tr><th style="width:200px;">Глоб. Категория</th><th style="width:250px;">Подкатегория</th><th style="width:300px;">Наименование</th><th style="width:150px;">Фото (URL или Ctrl+V)</th><th style="width:200px;">Формат ввода</th><th style="width:80px; text-align:center;">Удалить</th></tr>`;
+            <tr><th style="width:200px;">Глоб. Категория</th><th style="width:250px;">Подкатегория</th><th style="width:300px;">Наименование</th><th style="width:150px;">Фото (Вставь Ctrl+V)</th><th style="width:200px;">Формат ввода</th><th style="width:80px; text-align:center;">Удалить</th></tr>`;
             
         let grouped = {};
         Object.keys(currentCatalog).forEach(k => {
@@ -3165,11 +3244,16 @@
                     catOptions += `<option value="НОВАЯ КАТЕГОРИЯ">-- Создать --</option>`;
                     
                     let isVol = (item.unit && item.unit.toLowerCase().includes("объем"));
+                    let isFileStr = item.photo && item.photo.startsWith("data:image") ? `<span style="color:#2e7d32; font-size:12px; font-weight:bold;">✅ ФАЙЛ ЗАГРУЖЕН</span><br><img src="${item.photo}" style="max-width:50px; max-height:50px; border-radius:4px; margin-top:5px;">` : '';
+
                     html += `<tr class="chk-row chitem_${safeSc} lvl3_of_chksub_${safeGc}" style="display:${displayStyleL3};">
                         <td><select onchange="updateVal('${k}','globalCat',this.value)" style="font-size:14px;">${gcatOptions}</select></td>
                         <td><select onchange="updateVal('${k}','cat',this.value)" style="font-weight:bold; font-size:14px; color:#7E57C2;">${catOptions}</select></td>
                         <td><input type="text" style="font-weight:bold; font-size:17px; color:#311b92;" value="${item.name || ''}" onchange="updateVal('${k}','name',this.value)"></td>
-                        <td><input type="text" style="font-size:14px; border:2px dashed #9575cd; background:#fafafa;" placeholder="Кликните и Ctrl+V" value="${item.photo || ''}" onchange="updateVal('${k}','photo',this.value)" onpaste="handleClipboardImagePaste(event, '${k}')"></td>
+                        <td style="text-align:center;">
+                            <input type="text" style="font-size:12px; border:2px dashed #9575cd; background:#fafafa; text-align:center;" placeholder="Клик сюда и Ctrl+V" value="${item.photo && !item.photo.startsWith("data:image") ? item.photo : ''}" onchange="updateVal('${k}','photo',this.value)" onpaste="handleClipboardImagePaste(event, '${k}')">
+                            ${isFileStr}
+                        </td>
                         <td><select onchange="updateVal('${k}','unit',this.value)"><option value="текст" ${!isVol?'selected':''}>Текст (Шт / Уп)</option><option value="объем" ${isVol?'selected':''}>Объем (Полная / Половина)</option></select></td>
                         <td style="text-align:center;"><button class="btn-del" onclick="deleteItem('${k}')">🗑</button></td>
                     </tr>`;
@@ -3237,8 +3321,66 @@
     }
 
     // ==========================================
-    // НОВАЯ ВКЛАДКА: МЕНЮ И ТЕХ КАРТЫ
+    // НОВАЯ ВКЛАДКА: МЕНЮ И ТЕХ КАРТЫ (DRAG AND DROP)
     // ==========================================
+    
+    // Глобальные переменные для перетаскивания ингредиентов
+    let draggedRecipeItem = null;
+
+    function dragStartRecipe(e, drinkId, idx) {
+        draggedRecipeItem = { drinkId, idx };
+        e.dataTransfer.effectAllowed = "move";
+        // Задержка для визуального эффекта полупрозрачности
+        setTimeout(() => {
+            e.target.style.opacity = "0.5";
+        }, 0);
+    }
+
+    function dragOverRecipe(e) {
+        e.preventDefault();
+        e.currentTarget.classList.add('drag-merge');
+    }
+
+    function dragLeaveRecipe(e) {
+        e.currentTarget.classList.remove('drag-merge');
+    }
+
+    function dropRecipe(e, dropDrinkId, dropIdx) {
+        e.preventDefault();
+        e.currentTarget.style.opacity = "1";
+        e.currentTarget.classList.remove('drag-merge');
+        
+        if (!draggedRecipeItem) return;
+        
+        let dragDrinkId = draggedRecipeItem.drinkId;
+        let dragIdx = draggedRecipeItem.idx;
+        draggedRecipeItem = null;
+        
+        // Перетаскивать можно только внутри одного напитка
+        if (dragDrinkId !== dropDrinkId || dragIdx === dropIdx) {
+            renderMenuTab();
+            return;
+        }
+
+        let arr = currentMenu[dropDrinkId].recipe;
+        let itemToMove = arr.splice(dragIdx, 1)[0];
+        
+        // Если перетаскиваем сверху вниз, индекс сдвинулся
+        let adjustedDropIdx = dragIdx < dropIdx ? dropIdx - 1 : dropIdx;
+        
+        // СЛИЯНИЕ! Устанавливаем статус isMerged = true
+        itemToMove.isMerged = true;
+        
+        // Вставляем сразу ПОСЛЕ элемента, на который кинули
+        arr.splice(adjustedDropIdx + 1, 0, itemToMove);
+        
+        renderMenuTab();
+    }
+    
+    function dragEndRecipe(e) {
+        e.target.style.opacity = "1";
+    }
+
     function renderMenuTab() {
         const box = document.getElementById('content');
         let globalCats = ["Основное меню", "Сезонное меню"];
@@ -3268,6 +3410,8 @@
 
         let allPurchaseItems = [];
         let catalogDict = {};
+        
+        // Подтягиваем из Закупки
         if (cachedData.catalogOrder) {
             Object.values(cachedData.catalogOrder).forEach(i => {
                 if(i.name) {
@@ -3276,14 +3420,17 @@
                 }
             });
         }
-        if (cachedData.catalog) {
-            Object.values(cachedData.catalog).forEach(i => {
+        
+        // Подтягиваем из Чек-листа
+        if (cachedData.catalogChecklist) {
+            Object.values(cachedData.catalogChecklist).forEach(i => {
                 if(i.name && !catalogDict[i.name]) {
                     allPurchaseItems.push(i.name);
                     catalogDict[i.name] = i;
                 }
             });
         }
+
         allPurchaseItems.sort((a,b) => a.localeCompare(b));
         let prodOptionsHtml = allPurchaseItems.map(name => `<option value="${name.replace(/"/g, '&quot;')}">${name}</option>`).join("");
         
@@ -3337,11 +3484,9 @@
                             let mergeClass = r.isMerged ? "merged-block" : "";
                             let mergeIcon = r.isMerged ? "🔗 Разъединить" : "🔗 Слить";
                             
-                            recipeHtml += `<div class="recipe-item-row ${mergeClass}">
-                                <div style="display:flex; flex-direction:column; gap:2px;">
-                                    <button onclick="moveRecipeItem('${k}', ${idx}, -1)" style="border:none; background:none; cursor:pointer; font-size:12px;">▲</button>
-                                    <button onclick="moveRecipeItem('${k}', ${idx}, 1)" style="border:none; background:none; cursor:pointer; font-size:12px;">▼</button>
-                                </div>
+                            // DRAG AND DROP
+                            recipeHtml += `<div class="recipe-item-row ${mergeClass}" draggable="true" ondragstart="dragStartRecipe(event, '${k}', ${idx})" ondragover="dragOverRecipe(event)" ondragleave="dragLeaveRecipe(event)" ondrop="dropRecipe(event, '${k}', ${idx})" ondragend="dragEndRecipe(event)">
+                                <div style="cursor:grab; padding:0 5px; color:#999; font-size:18px;">☰</div>
                                 <input type="text" list="menu_ingredients_list" style="flex:1; font-size:13px; padding:6px; border:1px solid #ccc; border-radius:6px;" value="${r.name || ''}" placeholder="Ингредиент..." onchange="updateMenuRecipe('${k}', ${idx}, 'name', this.value)">
                                 <input type="number" value="${r.qty || 0}" style="width:70px; font-size:13px; text-align:center; padding:6px; border-radius:6px; border:1px solid #ccc;" onchange="updateMenuRecipe('${k}', ${idx}, 'qty', this.value)"> <span style="font-size:12px; color:#555;">гр/мл</span>
                                 <button onclick="toggleMergeRecipeItem('${k}', ${idx})" style="font-size:11px; padding:4px 8px; border-radius:6px; background:#fff; border:1px solid #ccc; cursor:pointer;">${mergeIcon}</button>
@@ -3405,16 +3550,6 @@
         renderMenuTab();
     }
 
-    function moveRecipeItem(id, idx, direction) {
-        if(!currentMenu[id].recipe) return;
-        let arr = currentMenu[id].recipe;
-        if(idx + direction < 0 || idx + direction >= arr.length) return;
-        let temp = arr[idx];
-        arr[idx] = arr[idx + direction];
-        arr[idx + direction] = temp;
-        renderMenuTab();
-    }
-
     function toggleMergeRecipeItem(id, idx) {
         if(!currentMenu[id].recipe || idx === 0) return;
         currentMenu[id].recipe[idx].isMerged = !currentMenu[id].recipe[idx].isMerged;
@@ -3433,11 +3568,11 @@
             await fetch(`${FB_URL}/catalogs/menu.json`, { method: 'PUT', body: JSON.stringify(currentMenu) });
             btn.innerHTML = "✅ СОХРАНЕНО!";
             setTimeout(() => {
-                btn.innerHTML = origText;
+                if(btn) btn.innerHTML = origText;
                 loadTab('menu', document.querySelector('.tab-btn.active'));
             }, 1000);
         } catch(e) {
-            btn.innerHTML = origText;
+            if(btn) btn.innerHTML = origText;
             alert("❌ Ошибка при сохранении меню: " + e.message);
         }
     }
@@ -3579,11 +3714,11 @@
             await fetch(`${FB_URL}/${currentPath}.json`, { method: 'PUT', body: JSON.stringify(currentCatalog) }); 
             btn.innerHTML = "✅ СОХРАНЕНО!";
             setTimeout(() => {
-                btn.innerHTML = origText;
+                if(btn) btn.innerHTML = origText;
                 loadTab(currentTabType, document.querySelector('.tab-btn.active'));
             }, 1000);
         } catch(e) { 
-            btn.innerHTML = origText;
+            if(btn) btn.innerHTML = origText;
             alert("❌ Ошибка при сохранении!"); 
         }
     }

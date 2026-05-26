@@ -4,7 +4,7 @@
   <base target="_top">
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>Coffee Management App v9.0</title>
+  <title>Coffee Management App v9.1</title>
   
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-app-compat.js"></script>
@@ -156,7 +156,6 @@
     .mp-cart-val { font-size: 18px; font-weight: 900; color: #C2185B; }
     .mp-edit-input { width: 80px; text-align: right; border: 2px solid #7E57C2; border-radius: 8px; font-weight: 900; color: #C2185B; font-size: 16px; padding: 5px; }
 
-    /* НОВЫЕ СТИЛИ ДЛЯ ГРАФИКА */
     .sched-tool {
       flex: 1 1 30%; padding: 10px; border-radius: 10px; font-weight: 900; font-size: 13px;
       border: 2px solid transparent; color: #333; cursor: pointer; text-align: center;
@@ -229,7 +228,7 @@
       <button class="btn-mode btn-mode-none" onclick="processNoOrder()">➖ ЗАКАЗ НЕ НУЖЕН</button>
       
       <button class="btn-mode" style="background: linear-gradient(135deg, #00BCD4 0%, #0288D1 100%); margin-top: 12px;" onclick="initMenuWorkflow()">☕ МЕНЮ И РЕЦЕПТЫ</button>
-      <button class="btn-mode" style="background: linear-gradient(135deg, #4A148C 0%, #7E57C2 100%); margin-top: 12px;" onclick="initScheduleWorkflow()">📅 ГРАФИК НА СЛЕД. МЕСЯЦ</button>
+      <button class="btn-mode" style="background: linear-gradient(135deg, #4A148C 0%, #7E57C2 100%); margin-top: 12px;" onclick="initScheduleWorkflow()">📅 ГРАФИК РАБОТЫ</button>
 
       <button class="btn-mode" style="background: var(--boss-gradient); margin-top: 12px;" onclick="showMyLastOrder()">🕒 ПОСЛЕДНИЙ ЗАКАЗ</button>
       <button class="btn-mode" style="background: var(--warning-gradient); margin-top: 12px;" onclick="showLastOrder()">🚚 ПРИЕМКА ЗАКУПКИ</button>
@@ -256,6 +255,11 @@
     <div id="step-schedule-calendar" style="display:none;">
       <h3 style="text-align:center; color:#4A148C; margin-bottom: 10px; font-weight:900;" id="schedule-month-title">График</h3>
       <p style="text-align:center; font-size:14px; color:#555; font-weight:bold; margin-bottom:15px;" id="schedule-user-title"></p>
+
+      <div style="display:flex; gap:10px; margin-bottom:15px;">
+          <button id="btn-month-0" class="btn-mode" style="padding:10px!important; font-size:14px!important; margin:0; flex:1; background:var(--admin-gradient);" onclick="changeScheduleMonth(0)">Текущий месяц</button>
+          <button id="btn-month-1" class="btn-mode" style="padding:10px!important; font-size:14px!important; margin:0; flex:1; background:#ccc; color:#333!important;" onclick="changeScheduleMonth(1)">Следующий месяц</button>
+      </div>
       
       <div style="background:#fff; border-radius:12px; padding:10px; margin-bottom:15px; box-shadow: 0 4px 10px rgba(0,0,0,0.05);">
           <div style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px;">
@@ -285,6 +289,7 @@
         <button class="btn-bottom-exit" onclick="showScreen('step-schedule-name')">⬅️ Назад</button>
       </div>
     </div>
+
     <div id="step-stoplist" style="display:none;">
       <h3 style="text-align:center; color:#311B92; margin-bottom: 20px; font-weight:900;">Управление Стоп-листом</h3>
       <button class="btn-mode" style="background: var(--btn-stop-grad);" onclick="initWorkflow('stoplist_fill')">📝 ЗАПОЛНИТЬ</button>
@@ -299,7 +304,7 @@
     </div>
 
     <div id="step-menu" style="display:none;">
-      <h3 style="text-align:center; color:#311B92; margin-bottom: 20px; font-weight:900;">☕ Меню и Рецепты</h3>
+      <h3 style="text-align:center; color:#311B92; margin-bottom: 20px; font-weight:900;">☕ Меню и Тех карты</h3>
       <div id="menu-container"></div>
       <div class="bottom-fixed-bar">
         <button class="btn-bottom-exit" onclick="showScreen('step-2')">⬅️ Назад</button>
@@ -428,6 +433,7 @@
       <button id="modal-submit-button" class="btn-nav btn-send" style="width:100%;" onclick="validateAndSubmit(true)">ПОДТВЕРДИТЬ И ОТПРАВИТЬ</button>
     </div>
   </div>
+
   <script>
     const firebaseConfig = {
       apiKey: "AIzaSyDQ_-YPu7gxKruOzOFy_zeNfDqF3xs3xts",
@@ -462,6 +468,7 @@
       missingChoices: {}, 
       screenHistory: [],
       currentReceivingTab: 'active',
+      currentMyOrderTab: 'current',
       mpMonthOption: "current", 
       mpVendor: "", 
       mpType: "", 
@@ -469,19 +476,11 @@
       keypadValue: "0", 
       mpBasket: [], 
       isMpEditMode: false,
+      scheduleMonthOffset: 0,
+      outOfStockItems: {},
       schedule: { name: "", currentTool: "MORNING", days: {} } 
     };
 
-    const GRAPH_COLORS = {
-      OFF: "#bbdefb",
-      MORNING: "#e1bee7",
-      EVENING: "#fff9c4",
-      FULL: "#ffcc80",
-      ANY_SHOP: "#c8e6c9",
-      DEFAULT: "#ffffff",
-      CLEAR: "#ffffff"
-    };
-    
     function cleanName(str) {
         if (!str) return "";
         return str.toLowerCase()
@@ -575,14 +574,30 @@
         if (els.length === 0) return;
 
         let isOpening = els[0].style.display === 'none' || els[0].style.display === '';
-
-        els.forEach(el => {
-            el.style.display = isOpening ? 'block' : 'none';
-        });
+        els.forEach(el => { el.style.display = isOpening ? 'block' : 'none'; });
 
         if (arrowId) {
             let arrowEl = document.getElementById(arrowId);
             if (arrowEl) arrowEl.innerText = isOpening ? "▲" : "▼";
+        }
+    }
+
+    function toggleRecipeAndScroll(contentId, arrowId, headerEl) {
+        triggerHaptic();
+        let els = document.querySelectorAll('.' + contentId);
+        if (els.length === 0) return;
+        
+        let isOpening = els[0].style.display === 'none' || els[0].style.display === '';
+        els.forEach(el => { el.style.display = isOpening ? 'block' : 'none'; });
+        
+        let arrowEl = document.getElementById(arrowId);
+        if (arrowEl) arrowEl.innerText = isOpening ? "▲" : "▼";
+        
+        if (isOpening) {
+            setTimeout(() => {
+                const y = headerEl.getBoundingClientRect().top + window.scrollY - 80;
+                window.scrollTo({ top: y, behavior: 'smooth' });
+            }, 150);
         }
     }
     
@@ -594,11 +609,8 @@
       triggerHaptic(); 
       state.currentShop = name; 
       document.getElementById('title').innerText = name;
-      
       state.screenHistory = []; 
-      
       showScreen('step-2');
-      
       loadSettings();
     }
 
@@ -609,24 +621,43 @@
       state.screenHistory = [];
       showScreen('step-1');
     }
+
     // ==========================================
-    // 💡 БЛОК: ГРАФИКИ (КАЛЕНДАРЬ)
+    // ГРАФИКИ С ПЕРЕКЛЮЧЕНИЕМ МЕСЯЦА
     // ==========================================
     function getTargetDateLogic() {
       let now = new Date();
       let tMonth = now.getMonth();
       let tYear = now.getFullYear();
-      if (now.getDate() >= 4) { 
+      if (state.scheduleMonthOffset === 1) { 
           tMonth++; 
           if (tMonth > 11) { tMonth = 0; tYear++; } 
       }
       return { month: tMonth, year: tYear };
     }
 
+    function changeScheduleMonth(offset) {
+        triggerHaptic();
+        state.scheduleMonthOffset = offset;
+        document.getElementById('btn-month-0').style.background = offset === 0 ? 'var(--admin-gradient)' : '#ccc';
+        document.getElementById('btn-month-0').style.color = offset === 0 ? '#fff' : '#333';
+        document.getElementById('btn-month-1').style.background = offset === 1 ? 'var(--newshop-gradient)' : '#ccc';
+        document.getElementById('btn-month-1').style.color = offset === 1 ? '#fff' : '#333';
+        
+        let target = getTargetDateLogic();
+        fetchExistingSchedule(target.month, target.year, state.schedule.name);
+    }
+
     function initScheduleWorkflow() {
         triggerHaptic();
         state.currentMode = 'schedule';
         document.getElementById('title').innerText = "График работы";
+        state.scheduleMonthOffset = 0; // Сбрасываем на текущий месяц по умолчанию
+        
+        document.getElementById('btn-month-0').style.background = 'var(--admin-gradient)';
+        document.getElementById('btn-month-0').style.color = '#fff';
+        document.getElementById('btn-month-1').style.background = '#ccc';
+        document.getElementById('btn-month-1').style.color = '#333';
         
         let savedName = localStorage.getItem("teiku_employee_name");
         if (savedName) document.getElementById('schedule-name-input').value = savedName;
@@ -643,19 +674,11 @@
         state.schedule = { name: name, days: {}, currentTool: "MORNING" };
         
         let target = getTargetDateLogic();
-        let monthNames = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
-        document.getElementById('schedule-month-title').innerText = `График на ${monthNames[target.month]} ${target.year}`;
-        document.getElementById('schedule-user-title').innerText = `Сотрудник: ${name}`;
-
         let shopsMap = [
-            { name: "Бояринова", val: "Б" },
-            { name: "Гагарина", val: "Г" },
-            { name: "Вертолетчиков", val: "В" },
-            { name: "Липчанского", val: "Л" },
-            { name: "Новокосино", val: "НК" },
-            { name: "Новокосино 2", val: "НК2" },
-            { name: "Старое Павлино", val: "СП" },
-            { name: "Красноказарменная", val: "МЭИ" },
+            { name: "Бояринова", val: "Б" }, { name: "Гагарина", val: "Г" },
+            { name: "Вертолетчиков", val: "В" }, { name: "Липчанского", val: "Л" },
+            { name: "Новокосино", val: "НК" }, { name: "Новокосино 2", val: "НК2" },
+            { name: "Старое Павлино", val: "СП" }, { name: "Красноказарменная", val: "МЭИ" },
             { name: "Ухтомского ополчения", val: "ЛЯ" }
         ];
 
@@ -672,6 +695,10 @@
     async function fetchExistingSchedule(m, y, name) {
         showReportOverlay("Загрузка вашего графика...");
         try {
+            let monthNames = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
+            document.getElementById('schedule-month-title').innerText = `График на ${monthNames[m]} ${y}`;
+            document.getElementById('schedule-user-title').innerText = `Сотрудник: ${name}`;
+
             let snap = await database.ref(`schedules/${y}_${m}/${name}`).once("value");
             if (snap.exists()) {
                 let data = snap.val() || {};
@@ -805,30 +832,205 @@
     }
 
     // ==========================================
-    // 💡 БЛОК: МЕНЮ И РЕЦЕПТЫ В МИНИ АПП
+    // СБОР СВОДА АДМИНОМ ИЗ МИНИ-АПП
+    // ==========================================
+    async function buildSvodReport() {
+        if(!confirm("Вы уверены, что хотите СОБРАТЬ СВОД?\nЭто переведет все ожидающие заказы в статус Свода, посчитает итоги и отправит оповещение в Телеграм.")) return;
+        
+        showReportOverlay("Сборка закупки (Выполняю команду)...");
+        try {
+            const [resOrders, resCatalog, resMissing] = await Promise.all([
+               database.ref("orders").once("value"), 
+               database.ref("catalogs/order").once("value"), 
+               database.ref("missing_items").once("value")
+            ]);
+            
+            let ordersSnap = resOrders.val() || {};
+            let catalog = resCatalog.val() || {}; 
+            let missingData = resMissing.val() || {};
+            
+            let updates = {}; 
+            let totalSvod = 0; 
+            let totalLentaAll = 0; 
+            let totalOzonAll = 0; 
+            let totalKuperAll = 0;
+
+            let activeMissing = {};
+            Object.values(missingData).forEach(m => {
+                if (m && m.status !== 'arrived' && m.status !== 'canceled') {
+                    if (!activeMissing[m.shop]) activeMissing[m.shop] = {};
+                    activeMissing[m.shop][m.name] = m.status;
+                }
+            });
+
+            let shopLentaSums = {};
+            let svodByShop = {};
+
+            Object.keys(ordersSnap).forEach(key => {
+                let o = ordersSnap[key];
+                if (o && (o.mode === 'order' || o.mode === 'new_shop') && o.svod === false) {
+                    if(!shopLentaSums[o.shop]) shopLentaSums[o.shop] = 0;
+                    if(!svodByShop[o.shop]) svodByShop[o.shop] = 0;
+                    
+                    let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
+                    itemsArr = itemsArr.filter(i => i !== null && i !== undefined);
+
+                    itemsArr.forEach(i => {
+                        if(i && i.name && i.name !== "НЕТ ЗАКАЗА") {
+                            let catItem = Object.values(catalog).find(cat => cat && cat.name === i.name) || {};
+                            let vendor = (i.vendor || catItem.vendor || 'Лента').toLowerCase();
+                            let missingStat = activeMissing[o.shop] ? activeMissing[o.shop][i.name] : null;
+                            let inTransit = missingStat === 'transit';
+                            
+                            if (!inTransit && i.status !== 'error' && i.status !== 'not_needed' && (vendor.includes('лента') || vendor.includes('lenta'))) {
+                                shopLentaSums[o.shop] += (parseFloat(i.qty) * (parseFloat(catItem.price)||0));
+                            }
+                        }
+                    });
+                }
+            });
+
+            Object.keys(ordersSnap).forEach(key => {
+                let o = ordersSnap[key];
+                if (o && (o.mode === 'order' || o.mode === 'new_shop') && o.svod === false) {
+                    updates[key + "/svod"] = true; 
+                    let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
+                    itemsArr = itemsArr.filter(i => i !== null && i !== undefined);
+
+                    let changed = false;
+
+                    itemsArr.forEach(i => {
+                        if(i && i.name && i.name !== "НЕТ ЗАКАЗА") {
+                            let catItem = Object.values(catalog).find(cat => cat && cat.name === i.name) || {};
+                            let vendor = (i.vendor || catItem.vendor || 'Лента').toLowerCase();
+                            let missingStat = activeMissing[o.shop] ? activeMissing[o.shop][i.name] : null;
+                            let inTransit = missingStat === 'transit';
+                            
+                            if (inTransit || i.status === 'error') {
+                                i.status = 'error'; 
+                                i.bot_error = true; 
+                                changed = true;
+                            } else if (i.status === 'not_needed') {
+                                // Игнорируем
+                            } else {
+                                let isAutoKuper = false;
+                                let isLenta = vendor.includes('лента') || vendor.includes('lenta');
+                                
+                                if (isLenta && shopLentaSums[o.shop] > 0 && shopLentaSums[o.shop] < 2000) {
+                                    vendor = 'купер (авто)';
+                                    isAutoKuper = true;
+                                    if (i.vendor !== 'Купер (Авто)') {
+                                        i.vendor = 'Купер (Авто)';
+                                        changed = true;
+                                    }
+                                }
+                                
+                                let price1 = parseFloat(catItem.price) || 0;
+                                let price2 = parseFloat(catItem.price2) || 0;
+                                let isRegularKuper = !isAutoKuper && (vendor.includes('купер') || vendor.includes('kuper'));
+                                let finalPrice = (isRegularKuper && price2 > 0) ? price2 : price1;
+
+                                let cost = finalPrice * parseFloat(i.qty);
+                                totalSvod += cost;
+                                svodByShop[o.shop] += cost;
+                                
+                                if (vendor.includes('лента') || vendor.includes('lenta')) {
+                                    totalLentaAll += cost;
+                                } else if (vendor.includes('озон') || vendor.includes('ozon')) {
+                                    totalOzonAll += cost;
+                                } else {
+                                    totalKuperAll += cost;
+                                }
+                            }
+                        }
+                    });
+                    if (changed) updates[key + "/items"] = itemsArr;
+                }
+            });
+
+            if (Object.keys(updates).length > 0) {
+                await database.ref("orders").update(updates);
+                
+                let textToBot = `📊 **СВОД ГОТОВ К СБОРКЕ!**\n\n`;
+                for(let shopName in svodByShop) {
+                    if (svodByShop[shopName] > 0) {
+                        textToBot += `📍 ${shopName}: **${Math.round(svodByShop[shopName])} ₽**\n`;
+                    }
+                }
+                textToBot += `➖➖➖➖➖➖➖➖\n💵 ИТОГО: **${Math.round(totalSvod)} ₽**`;
+                
+                await database.ref("bot_control/notifications").push({ 
+                    type: "svod_ready_text", 
+                    text: textToBot, 
+                    timestamp: firebase.database.ServerValue.TIMESTAMP 
+                });
+                
+                hideReportOverlay();
+                alert("✅ Свод успешно собран и отправлен в Телеграм!");
+            } else {
+                hideReportOverlay();
+                alert("ℹ️ Нет новых заказов для сборки свода.");
+            }
+            
+        } catch (e) { 
+            hideReportOverlay();
+            alert("❌ Ошибка формирования свода: " + e.message); 
+        }
+    }
+    async function triggerPcBuild(cmd) {
+        if (!confirm(`Отправить команду ${cmd} на ПК?`)) return;
+        try {
+            await database.ref("bot_control/pc_command").set({
+                command: cmd,
+                timestamp: firebase.database.ServerValue.TIMESTAMP
+            });
+            alert(`✅ Команда ${cmd} успешно отправлена боту-снайперу!`);
+        } catch (e) { 
+            alert(`❌ Ошибка: ` + e.message); 
+        }
+    }
+
+    // ==========================================
+    // 💡 БЛОК: МЕНЮ И ТЕХ КАРТЫ С АВТОСКРОЛЛОМ И СТОП-ЛИСТОМ
     // ==========================================
     async function initMenuWorkflow() {
         triggerHaptic();
-        let isAdmin = TG_ADMIN_IDS.includes(String(globalTgUserId));
-        if (!isAdmin) {
-            showPopupError("В разработке", "Меню и рецепты пока доступны только администраторам 👨‍💻");
-            return;
-        }
-
         state.currentMode = 'menu';
-        document.getElementById('title').innerText = "Меню и Рецепты";
+        document.getElementById('title').innerText = "Меню и Тех карты";
         showScreen('step-menu');
-        document.getElementById('menu-container').innerHTML = `<div class="report-card"><div class="loading-pulse">⏳ Загрузка меню...</div></div>`;
+        document.getElementById('menu-container').innerHTML = `<div class="report-card"><div class="loading-pulse">⏳ Загрузка меню и стоп-листов...</div></div>`;
 
         try {
-            const [menuSnap, orderSnap, chkSnap] = await Promise.all([
+            const [menuSnap, orderSnap, chkSnap, ordersSnap] = await Promise.all([
                 database.ref("catalogs/menu").once("value"),
                 database.ref("catalogs/order").once("value"),
-                database.ref("catalogs/checklist").once("value")
+                database.ref("catalogs/checklist").once("value"),
+                database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(50).once("value")
             ]);
             
             state.menuCatalog = menuSnap.val() || {};
             state.productCatalog = { ...(orderSnap.val() || {}), ...(chkSnap.val() || {}) };
+            
+            // Собираем актуальный стоп-лист для выбранной кофейни
+            let shopOrders = [];
+            ordersSnap.forEach(c => {
+                let val = c.val();
+                if(val && val.mode === 'stoplist_fill') {
+                    shopOrders.push(val);
+                }
+            });
+            shopOrders.sort((a,b) => b.timestamp - a.timestamp);
+            
+            state.outOfStockItems = {};
+            if (shopOrders.length > 0) {
+                let latestStoplist = shopOrders[0];
+                let itemsArr = Array.isArray(latestStoplist.items) ? latestStoplist.items : Object.values(latestStoplist.items || {});
+                itemsArr.forEach(i => {
+                    if (i && i.name && i.qty === 'Закончилось') {
+                        state.outOfStockItems[cleanName(i.name)] = latestStoplist.timestamp;
+                    }
+                });
+            }
             
             renderMenuApp();
         } catch (e) {
@@ -870,39 +1072,57 @@
                     let recipeHtml = `<div class="recipe_data_${safeDrink}" style="display:none; margin-top:10px; padding:12px; background:#f9fbe7; border-radius:12px; border:1px solid #c5e1a5;">
                                         <div style="font-size:14px; font-weight:900; color:#2e7d32; margin-bottom:8px; text-transform:uppercase;">📝 Состав:</div>`;
                     
-                    if (drink.recipe && drink.recipe.length > 0) {
+                    let blocks = drink.blocks || [drink.recipe || []];
+                    
+                    if (blocks.length > 0 && blocks.some(b => b.length > 0)) {
                         recipeHtml += `<table style="width:100%; font-size:14px; border-collapse:collapse;">`;
-                        drink.recipe.forEach((r, idx) => {
-                            let escName = escapeName(r.name);
-                            if (r.isMerged && idx > 0) {
-                                recipeHtml += `<tr><td colspan="2" style="text-align:center; color:#f57c00; font-weight:900; font-size:24px; line-height:0.8; padding:5px 0;">+</td></tr>`;
+                        
+                        blocks.forEach((block, bIdx) => {
+                            if (block.length > 0) {
+                                if (bIdx > 0) {
+                                    recipeHtml += `<tr><td colspan="2" style="text-align:center; color:#f57c00; font-weight:900; font-size:24px; line-height:0.8; padding:5px 0;">+</td></tr>`;
+                                }
+                                block.forEach(r => {
+                                    let escName = escapeName(r.name);
+                                    let cleanIng = cleanName(r.name);
+                                    let isStopped = !!state.outOfStockItems[cleanIng];
+                                    let stopBadge = "";
+                                    
+                                    if (isStopped) {
+                                        let stopDateStr = new Date(state.outOfStockItems[cleanIng]).toLocaleDateString('ru-RU');
+                                        stopBadge = `<div style="color:#c62828; font-size:11px; font-weight:bold; margin-top:4px;">🛑 На стопе с ${stopDateStr}</div>`;
+                                    }
+
+                                    recipeHtml += `<tr style="border-bottom:1px solid #e0e0e0;" onclick="showIngredientPhoto('${escName}')">
+                                                    <td style="padding:10px 4px; font-weight:bold; color:#333; cursor:pointer; vertical-align:top;">
+                                                        <div style="display:flex; align-items:center;">
+                                                            <span style="margin-right:8px; font-size:16px;">🔍</span>
+                                                            <span style="border-bottom:1px dashed #999; line-height: 1.2;">${r.name}</span>
+                                                        </div>
+                                                        ${stopBadge}
+                                                    </td>
+                                                    <td style="padding:10px 4px; text-align:right; font-weight:900; color:#4A148C; width:80px; vertical-align:top;">${r.qty}</td>
+                                                   </tr>`;
+                                });
                             }
-                            recipeHtml += `<tr style="border-bottom:1px solid #e0e0e0;" onclick="showIngredientPhoto('${escName}')">
-                                            <td style="padding:10px 4px; font-weight:bold; color:#333; display:flex; align-items:center; cursor:pointer;">
-                                                <span style="margin-right:8px; font-size:16px;">🔍</span><span style="border-bottom:1px dashed #999;">${r.name}</span>
-                                            </td>
-                                            <td style="padding:10px 4px; text-align:right; font-weight:900; color:#4A148C; width:80px;">${r.qty}</td>
-                                           </tr>`;
                         });
                         recipeHtml += `</table>`;
                     } else {
                         recipeHtml += `<div style="color:#888; font-size:13px; font-style:italic;">Рецепт пока не заполнен</div>`;
                     }
                     
-                    if (drink.tech) {
-                        recipeHtml += `<div style="margin-top:15px; padding:10px; background:#e3f2fd; border-radius:8px; font-size:14px; line-height:1.4;">
-                                         <b style="color:#1565c0;">⚙️ Техника приготовления:</b><br>${drink.tech}
+                    if (drink.techPrep) {
+                        recipeHtml += `<div style="margin-top:15px; padding:10px; background:#fff3e0; border-radius:8px; font-size:14px; line-height:1.5; color:#e65100; border: 1px solid #ffb74d;">
+                                         <b style="color:#d84315;">⚙️ Тех. приготовление:</b><br>${drink.techPrep.replace(/\n/g, '<br>')}
                                        </div>`;
                     }
                     
-                    recipeHtml += `<div style="margin-top:15px; padding-top:10px; border-top:1px solid #e0e0e0;">
-                                     <button style="width:100%; padding:12px; background:#e3f2fd; color:#1565c0; border:none; border-radius:8px; font-weight:900; font-size:14px; cursor:pointer;" onclick="showPopupError('В разработке', 'Видео-обучения скоро появятся здесь!')">▶️ Смотреть видео-обучение</button>
-                                   </div></div>`;
+                    recipeHtml += `</div>`;
 
                     html += `<div style="background:#fff; border-radius:12px; box-shadow:0 2px 8px rgba(0,0,0,0.05); margin-bottom:8px; padding:12px; border: 1px solid #f0f0f0;">
-                                <div style="display:flex; justify-content:space-between; align-items:center; cursor:pointer;" onclick="toggleElements('recipe_data_${safeDrink}', 'arr_drink_${safeDrink}')">
+                                <div style="display:flex; justify-content:space-between; align-items:center; cursor:pointer;" onclick="toggleRecipeAndScroll('recipe_data_${safeDrink}', 'arr_drink_${safeDrink}', this)">
                                     <span style="font-weight:900; font-size:16px; color:#311b92;">☕ ${drink.name}</span>
-                                    <span id="arr_drink_${safeDrink}" style="color:#888; font-size:13px; padding:5px;">▼</span>
+                                    <span id="arr_drink_${safeDrink}" style="color:#888; font-size:13px; padding:5px; transition:0.2s;">▼</span>
                                 </div>
                                 ${recipeHtml}
                              </div>`;
@@ -938,6 +1158,7 @@
         
         document.getElementById('photo-modal').style.display = 'flex';
     }
+
     // ==========================================
     // 💡 БЛОК: МАРКЕТПЛЕЙСЫ
     // ==========================================
@@ -1056,47 +1277,8 @@
     }
 
     // ==========================================
-    // 💡 АВТО-УДАЛЕНИЕ ИЗ СТОП-ЛИСТА И НАСТРОЙКИ
+    // 💡 БЛОК: ИНИЦИАЛИЗАЦИЯ И РЕНДЕР КАТАЛОГОВ
     // ==========================================
-    async function autoRemoveFromStoplist(shop, itemNamesArray) {
-        if (!itemNamesArray || itemNamesArray.length === 0) return;
-        try {
-            let snap = await database.ref("orders").orderByChild("shop").equalTo(shop).limitToLast(50).once("value");
-            let shopOrders = [];
-            snap.forEach(c => {
-                let val = c.val();
-                if (val && val.mode === 'stoplist_fill') {
-                    val.key = c.key;
-                    shopOrders.push(val);
-                }
-            });
-            
-            if (shopOrders.length === 0) return;
-            shopOrders.sort((a,b) => b.timestamp - a.timestamp);
-            let latestStoplist = shopOrders[0];
-            
-            if (!latestStoplist.items) return;
-            let itemsArr = Array.isArray(latestStoplist.items) ? latestStoplist.items : Object.values(latestStoplist.items);
-            
-            let namesToRemove = itemNamesArray.map(n => String(n).trim().toLowerCase());
-            let newItems = itemsArr.filter(i => {
-                if (!i || !i.name) return false;
-                let iName = String(i.name).trim().toLowerCase();
-                return !namesToRemove.includes(iName);
-            });
-            
-            if (newItems.length !== itemsArr.length) {
-                if (newItems.length === 0) {
-                    await database.ref("orders/" + latestStoplist.key + "/items").set([{name: "Всё в наличии", qty: "В наличии"}]);
-                } else {
-                    await database.ref("orders/" + latestStoplist.key + "/items").set(newItems);
-                }
-            }
-        } catch(e) {
-            console.error("Auto stoplist update failed:", e);
-        }
-    }
-
     async function loadSettings() {
         try {
             let snap = await database.ref("settings").once("value");
@@ -1112,9 +1294,6 @@
         } catch(e) { console.log(e); }
     }
 
-    // ==========================================
-    // 💡 ИНИЦИАЛИЗАЦИЯ И РЕНДЕР КАТАЛОГОВ
-    // ==========================================
     async function initWorkflow(mode) {
       triggerHaptic(); 
       state.currentMode = mode; 
@@ -1879,9 +2058,6 @@
       }
     }
 
-    // ==========================================
-    // 7. ОТЧЕТЫ БОССА И АДМИНА
-    // ==========================================
     function showReportOverlay(msg) { 
         document.getElementById('report-overlay').style.display = 'flex'; 
         document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div class="loading-pulse">${msg}</div></div>`; 

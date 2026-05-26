@@ -404,7 +404,7 @@
 
     <div class="tabs">
         <button class="tab-btn active" onclick="loadTab('orders', this)">📋 Свод и Заказы</button>
-        <button class="tab-btn" onclick="loadTab('menu', this)">☕ Мею и тех карты</button>
+        <button class="tab-btn" onclick="loadTab('menu', this)">☕ Меню и тех карты</button>
         <button class="tab-btn" onclick="loadTab('graphs', this)">📅 Графики</button>
         <button class="tab-btn" onclick="loadTab('marketplace', this)">🛒 Маркетплейсы</button>
         <button class="tab-btn" onclick="loadTab('checks_table', this)">✅ Таблица Чек-листов</button>
@@ -424,11 +424,15 @@
 <div id="report-overlay">
     <div class="loading-pulse" id="overlay-text">⌛ Обработка...</div>
 </div>
+
 <script>
     // ==========================================
     // ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ И ПОДКЛЮЧЕНИЕ
     // ==========================================
     const FB_URL = "https://project-lenta22-default-rtdb.firebaseio.com";
+    const ADMIN_CHAT_ID = "708179577"; // Telegram ID Администратора
+    const BOSS_CHAT_ID = "634812312";   // ПРАВКА 1: Фиксированный Telegram ID Босса для чек-листов
+    
     let currentCatalog = {};
     let currentMenu = {}; 
     let currentPath = "";
@@ -454,9 +458,11 @@
     let isMpEditMode = false;
     let mpDeletions = new Set();
     let mpViewMonth = 'current';
+    let graphViewMonth = 'next'; // ПРАВКА 2: Хранение выбранного периода графиков ('current' или 'next')
 
     let expandedDivs = new Set();
     const shopListAll = ["Бояринова", "Гагарина", "Вертолетчиков", "Липчанского", "Новокосино", "Новокосино 2", "Старое Павлино", "Красноказарменная", "Ухтомского ополчения"];
+    let draggedRecipeItem = null;
 
     function escCss(str) {
         if (!str) return "";
@@ -533,18 +539,6 @@
         if (isClosing) document.querySelectorAll('.lvl3_of_' + gcId).forEach(el => el.style.display = 'none');
     }
 
-    function toggleSvodShopItems(safeShopDate) {
-        if(closedSvodShops.has(safeShopDate)) closedSvodShops.delete(safeShopDate);
-        else closedSvodShops.add(safeShopDate);
-        renderOrdersSvod();
-    }
-
-    function toggleSvodDate(safeDate) {
-        if(closedSvodDates.has(safeDate)) closedSvodDates.delete(safeDate);
-        else closedSvodDates.add(safeDate);
-        renderOrdersSvod();
-    }
-
     async function triggerPcBuild(cmd) {
         if (!confirm(`Отправить команду ${cmd} на ПК?`)) return;
         try {
@@ -553,10 +547,10 @@
         } catch (e) { alert(`❌ Ошибка: ` + e.message); }
     }
 
+    // ==========================================
+    // ПРАВКА 1: ЧЕК-ЛИСТЫ АВТО-ОТПРАВКА АДМИНУ И БОССУ
+    // ==========================================
     async function sendChecklistPdf() {
-        let bossId = prompt("Впишите Telegram ID Босса для отправки копии отчета:", "");
-        if(bossId === null) return; 
-        
         showReportOverlay("Формирование PDF... Подождите");
         document.querySelectorAll('.chk-row').forEach(row => { row.style.display = 'table-row'; });
 
@@ -571,35 +565,141 @@
 
         try {
             const pdfDataUri = await html2pdf().set(opt).from(element).outputPdf('datauristring');
-            const ADMIN_CHAT_ID = "708179577"; 
             
+            // Отправка Администратору
             await fetch(`${FB_URL}/bot_control/notifications.json`, {
                 method: 'POST',
                 body: JSON.stringify({ 
-                    type: "checklist_pdf", chat_id: ADMIN_CHAT_ID, file_data: pdfDataUri, 
+                    type: "checklist_pdf", chat_id: ADMIN_CHAT_ID.trim(), file_data: pdfDataUri, 
                     filename: `Отчет_Чеклисты_${new Date().toLocaleDateString('ru-RU')}.pdf`,
                     text: "✅ Автоматический отчет по чек-листам для Администратора", timestamp: Date.now() 
                 })
             });
 
-            if (bossId.trim() !== "") {
-                await fetch(`${FB_URL}/bot_control/notifications.json`, {
-                    method: 'POST',
-                    body: JSON.stringify({ 
-                        type: "checklist_pdf", chat_id: bossId.trim(), file_data: pdfDataUri, 
-                        filename: `Отчет_Чеклисты_${new Date().toLocaleDateString('ru-RU')}.pdf`,
-                        text: "✅ Автоматический отчет по чек-листам для Босса", timestamp: Date.now() + 50
-                    })
-                });
-            }
+            // Отправка Боссу
+            await fetch(`${FB_URL}/bot_control/notifications.json`, {
+                method: 'POST',
+                body: JSON.stringify({ 
+                    type: "checklist_pdf", chat_id: BOSS_CHAT_ID.trim(), file_data: pdfDataUri, 
+                    filename: `Отчет_Чеклисты_${new Date().toLocaleDateString('ru-RU')}.pdf`,
+                    text: "✅ Автоматический отчет по чек-листам для Босса", timestamp: Date.now() + 50
+                })
+            });
+
             hideReportOverlay();
-            alert("✅ PDF-отчет успешно сформирован и отправлен!");
+            alert("✅ PDF-отчет успешно сформирован и отправлен Администратору и Боссу!");
         } catch (e) {
             hideReportOverlay();
             alert("❌ Ошибка при создании PDF: " + e.message);
         }
     }
 
+    // ==========================================
+    // ПРАВКА 2: ЛОГИКА ТЕКУЩЕГО И СЛЕДУЮЩЕГО МЕСЯЦА ДЛЯ ГРАФИКОВ
+    // ==========================================
+    function getTargetDateLogic() {
+        let now = new Date();
+        let tMonth = now.getMonth();
+        let tYear = now.getFullYear();
+        
+        // Если переключатель стоит на 'next' (следующий месяц)
+        if (graphViewMonth === 'next') {
+            tMonth++; 
+            if (tMonth > 11) { tMonth = 0; tYear++; } 
+        }
+        return { month: tMonth, year: tYear };
+    }
+
+    function updateGraphComment(user, val) {
+        if (!window.graphDraft[user]) window.graphDraft[user] = { _pinned: true };
+        window.graphDraft[user].comment = val;
+    }
+
+    function changeGraphMonth(targetMonth) {
+        graphViewMonth = targetMonth;
+        window.graphDraft = null; // сбрасываем кэш черновика для загрузки верных данных
+        renderGraphsTab();
+    }
+
+    // ==========================================
+    // ПРАВКА 3: АВТО-СИНХРОНИЗАЦИЯ СТОП-ЛИСТА С ТЕХ. КАРТАМИ
+    // ==========================================
+    async function syncStoplistWithMenu() {
+        let seasonChoice = prompt("Введите название глобальной категории меню для синхронизации (например: Сезонное меню):", "Сезонное меню");
+        if (seasonChoice === null) return;
+        seasonChoice = seasonChoice.trim();
+
+        showReportOverlay("Синхронизация стоп-листов с тех. картами...");
+        try {
+            // Загружаем актуальные тех карты и справочник стоп-листа
+            let resMenu = await fetch(`${FB_URL}/catalogs/menu.json`).then(r => r.json()) || {};
+            let resStop = await fetch(`${FB_URL}/catalogs/stoplist.json`).then(r => r.json()) || {};
+            
+            let updatedStoplist = { ...resStop };
+            
+            // Карта соответствия: продукт закупки -> списки напитков
+            let productMapping = {};
+
+            Object.values(resMenu).forEach(drink => {
+                if (!drink || !drink.name) return;
+                
+                let isTargetSeason = drink.globalCat && drink.globalCat.toLowerCase() === seasonChoice.toLowerCase();
+                let blocks = drink.blocks || [drink.recipe || []];
+                
+                blocks.forEach(block => {
+                    if (!block) return;
+                    block.forEach(ingredient => {
+                        if (!ingredient || !ingredient.name) return;
+                        
+                        let ingName = ingredient.name.trim();
+                        if (!productMapping[ingName]) {
+                            productMapping[ingName] = { seasonDrinks: new Set(), mainDrinks: new Set() };
+                        }
+                        
+                        if (isTargetSeason) {
+                            productMapping[ingName].seasonDrinks.add(drink.name);
+                        } else {
+                            productMapping[ingName].mainDrinks.add(drink.name);
+                        }
+                    });
+                });
+            });
+
+            // Обновляем существующие записи или создаем новые в справочнике стоп-листа
+            for (let prodName in productMapping) {
+                let seasonStr = Array.from(productMapping[prodName].seasonDrinks).join(", ");
+                let mainStr = Array.from(productMapping[prodName].mainDrinks).join(", ");
+                
+                // Ищем позицию в текущем справочнике стоп-листа по совпадению имени
+                let existingKey = Object.keys(updatedStoplist).find(k => updatedStoplist[k] && updatedStoplist[k].name === prodName);
+                
+                if (existingKey) {
+                    updatedStoplist[existingKey].sez = seasonStr;
+                    updatedStoplist[existingKey].main = mainStr;
+                } else {
+                    // Если продукта нет в справочнике стоп-листа, добавляем автоматически в условную категорию
+                    let newId = "stop_auto_" + Date.now() + Math.floor(Math.random() * 1000);
+                    updatedStoplist[newId] = {
+                        cat: "Автоматические",
+                        name: prodName,
+                        sez: seasonStr,
+                        main: mainStr
+                    };
+                }
+            }
+
+            // Записываем обновленный справочник обратно на Firebase
+            await fetch(`${FB_URL}/catalogs/stoplist.json`, { method: 'PUT', body: JSON.stringify(updatedStoplist) });
+            currentCatalog = updatedStoplist;
+            
+            hideReportOverlay();
+            alert(`✅ Справочник стоп-листа успешно синхронизирован!\nВыбранный сезон: "${seasonChoice}"`);
+            renderCatalogStoplist();
+        } catch (e) {
+            hideReportOverlay();
+            alert("❌ Ошибка при синхронизации: " + e.message);
+        }
+    }
     async function handleFileUpload(e, itemId, type) {
         let file = e.target.files[0];
         if(!file) return;
@@ -628,17 +728,6 @@
                 break;
             }
         }
-    }
-
-    function getTargetDateLogic() {
-        let now = new Date();
-        let tMonth = now.getMonth();
-        let tYear = now.getFullYear();
-        if (now.getDate() >= 4) { 
-            tMonth++; 
-            if (tMonth > 11) { tMonth = 0; tYear++; } 
-        }
-        return { month: tMonth, year: tYear };
     }
 
     async function loadTab(type, btn) {
@@ -762,6 +851,7 @@
             box.innerHTML = `<div style="color:red; font-weight:bold; font-size:18px;">Ошибка загрузки: ${e.message}</div>`;
         }
     }
+
     async function compareStoplistWithOrders() {
         if(!confirm("Сравнить стоп-листы кофеен с текущими заказами?\n\nНедостающие товары будут добавлены со статусом 'Из стоп-листа'.")) return;
         showReportOverlay("Анализ стоп-листов...");
@@ -1947,14 +2037,6 @@
         }
     }
 
-    // ==========================================
-    // 📊 БЛОК: НОВАЯ ВКЛАДКА ГРАФИКОВ (КАЛЕНДАРЬ СМЕН)
-    // ==========================================
-    function updateGraphComment(user, val) {
-        if (!window.graphDraft[user]) window.graphDraft[user] = { _pinned: true };
-        window.graphDraft[user].comment = val;
-    }
-
     function renderGraphsTab() {
         const box = document.getElementById('content');
         let schedules = cachedData.schedules || {};
@@ -1982,7 +2064,6 @@
         let rawUsers = Object.keys(monthData).filter(k => k !== 'comment' && k !== '_pinned').sort();
         if(rawUsers.length === 0) rawUsers = ["Сотрудник 1"]; 
         
-        // Авто-сортировка сотрудников по совпадению смен
         let allUsers = [];
         if (rawUsers.length > 1) {
             let sortedUsers = [rawUsers.shift()];
@@ -2017,14 +2098,21 @@
             <div class="action-container" style="margin-bottom:0; display: flex; gap: 10px; align-items:center;">
                 <button class="btn-save" onclick="saveGraphsEdits()" id="btn-save-graphs">💾 Сохранить графики</button>
                 <button class="btn-add" style="background: #9b59b6;" onclick="addUserToGraph()">➕ Добавить сотрудника</button>
-                <span style="font-size:13px; color:#555; margin-left:15px; flex:1;">💡 Вводите <b>МЭИ_у</b> (утро), <b>НК_в</b> (вечер), <b>Г</b> (полная смена). Система проверит все точки.</span>
+                <span style="font-size:13px; color:#555; margin-left:15px; flex:1;">💡 Вводите <b>МЭИ_у</b> (утро), <b>НК_в</b> (вечер), <b>Г</b> (полная смена). Выходной: <b>ВЫХ</b>, Любая: <b>ЛЮБ</b>.</span>
             </div>
         `;
         actionBar.style.display = 'block';
 
+        let monthNames = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
+
         let html = `
-            <h3 style="color:#1a237e; font-size:24px; margin-top:0; margin-bottom:15px;">📅 Графики сотрудников (на следующий месяц)</h3>
+            <h3 style="color:#1a237e; font-size:24px; margin-top:0; margin-bottom:15px;">📅 Графики сотрудников (${monthNames[target.month]} ${target.year})</h3>
             
+            <div style="display:flex; gap:10px; margin-bottom: 15px;">
+                <button class="tab-btn ${graphViewMonth === 'current' ? 'active' : ''}" style="padding:10px 20px;" onclick="changeGraphMonth('current')">Текущий месяц</button>
+                <button class="tab-btn ${graphViewMonth === 'next' ? 'active' : ''}" style="padding:10px 20px;" onclick="changeGraphMonth('next')">Следующий месяц</button>
+            </div>
+
             <div class="graphs-wrapper">
             <table style="min-width:100%; border-collapse:collapse; font-size:14px;" id="graph-table">
                 <thead>
@@ -2074,9 +2162,13 @@
                     shiftType = "OFF";
                     val = "";
                     window.graphDraft[user][d] = { text: "", shift: "OFF" };
+                } else if (shiftType === "ANY_SHOP" || vUpper === "ЛЮБ" || vUpper === "ЛЮБАЯ") {
+                    shiftType = "ANY_SHOP";
+                    val = ""; // Очищаем текст
+                    window.graphDraft[user][d] = { text: "", shift: "ANY_SHOP" };
                 }
                 
-                if (val !== "" && shiftType !== "OFF") {
+                if (val !== "" && shiftType !== "OFF" && shiftType !== "ANY_SHOP") {
                     dayShifts.push(val.trim().toUpperCase());
                 }
                 
@@ -2085,9 +2177,9 @@
                 
                 if (shiftType === "OFF") {
                     cellBg = "#bbdefb"; 
-                } else if (shiftType === "ANY_SHOP" || vUpper === "ЛЮБ" || vUpper === "ЛЮБАЯ") {
+                } else if (shiftType === "ANY_SHOP") {
                     cellBg = "#c8e6c9"; 
-                    cellColor = "#1b5e20";
+                    cellColor = "transparent"; 
                 } else if (shiftType === "MORNING" || vUpper.includes("_У") || vUpper.endsWith("У")) {
                     cellBg = "#e1bee7"; 
                     cellColor = "#4a148c";
@@ -2160,6 +2252,9 @@
         if (vUpper === "ВЫХ" || vUpper === "OFF" || vUpper === "ВЫХОДНОЙ" || vUpper === "ОТП") {
             shift = "OFF";
             formattedVal = ""; 
+        } else if (vUpper === "ЛЮБ" || vUpper === "ЛЮБАЯ" || vUpper === "ANY_SHOP") {
+            shift = "ANY_SHOP";
+            formattedVal = ""; // Закрашиваем, без текста
         } else if (vUpper !== "") {
             shift = "FULL";
             if (vUpper.endsWith("_У") || vUpper.endsWith(" У")) {
@@ -2170,9 +2265,6 @@
                 let shopStr = vUpper.replace(/\s*В$/, "").replace(/_В$/, "");
                 if(shopStr !== "") formattedVal = shopStr + "_В";
                 shift = "EVENING";
-            } else if (vUpper === "ЛЮБ" || vUpper === "ЛЮБАЯ" || vUpper === "ANY_SHOP") {
-                shift = "ANY_SHOP";
-                formattedVal = "ЛЮБ";
             }
         }
         
@@ -2186,7 +2278,7 @@
             tdEl.style.backgroundColor = "#bbdefb";
         } else if (shift === "ANY_SHOP") {
             tdEl.style.backgroundColor = "#c8e6c9";
-            el.style.color = "#1b5e20";
+            el.style.color = "transparent";
         } else if (shift === "MORNING") {
             tdEl.style.backgroundColor = "#e1bee7";
             el.style.color = "#4a148c";
@@ -2255,6 +2347,7 @@
             alert("❌ Ошибка: " + e.message);
         }
     }
+
     function renderMarketplaceTab() {
         const box = document.getElementById('content');
         let records = cachedData.marketplace || {};
@@ -2566,9 +2659,6 @@
         }
     }
 
-    // ==========================================
-    // ВКЛАДКА: НЕДОВОЗЫ
-    // ==========================================
     function toggleMissingEdit() { 
         isMissingEditMode = true; 
         missingDeletions.clear(); 
@@ -2769,10 +2859,7 @@
             loadTab('missing', document.querySelector('.tab-btn.active'));
         }
     }
-    
-    // ==========================================
-    // ВКЛАДКА: СТОП-ЛИСТЫ НА ТОЧКАХ
-    // ==========================================
+
     async function renderStoplists() {
         const box = document.getElementById('content');
         let shops = ["Бояринова", "Гагарина", "Вертолетчиков", "Липчанского", "Новокосино", "Новокосино 2", "Старое Павлино", "Красноказарменная", "Ухтомского ополчения"];
@@ -2974,9 +3061,6 @@
         box.innerHTML = html;
     }
 
-    // ==========================================
-    // ВКЛАДКА: ТАБЛИЦА ЧЕК-ЛИСТОВ
-    // ==========================================
     function toggleChecklistEdit() { 
         isChecklistEditMode = true; 
         renderChecksTable(); 
@@ -3125,9 +3209,6 @@
         }
     }
 
-    // ==========================================
-    // РЕНДЕР: СТАТИСТИКА
-    // ==========================================
     function renderStats() {
         const box = document.getElementById('content');
         let shops = ["Бояринова", "Гагарина", "Вертолетчиков", "Липчанского", "Новокосино", "Новокосино 2", "Старое Павлино", "Красноказарменная", "Ухтомского ополчения"];
@@ -3180,9 +3261,6 @@
         box.innerHTML = html;
     }
 
-    // ==========================================
-    // СПРАВОЧНИКИ
-    // ==========================================
     async function switchOrderCatalog(isNew) {
         isNewShopCatalog = isNew;
         currentPath = isNew ? "catalogs/newshop" : "catalogs/order";
@@ -3387,6 +3465,7 @@
         </div>
         <div class="cat-stop-actions action-container" style="display: ${isActionsOpen ? 'flex' : 'none'}; gap: 10px; flex-wrap: wrap; margin-bottom: 20px;">
             <button class="btn-add" style="flex:1 1 auto; background: linear-gradient(135deg, #FF5252 0%, #D32F2F 100%);" onclick="addItemStoplist()">➕ Добавить позицию</button>
+            <button class="btn-add" style="flex:1 1 auto; background: linear-gradient(135deg, #00BCD4 0%, #0097A7 100%);" onclick="syncStoplistWithMenu()">🔄 Синхр. с Тех Картами</button>
             <button class="btn-save" style="flex:1 1 auto; margin:0; padding:12px 18px;" onclick="saveCatalog(this)">💾 Сохранить в базу</button>
         </div>
         <div style="overflow-x:auto;"><table style="min-width:1000px;">
@@ -3431,10 +3510,6 @@
         box.innerHTML = html + "</table></div>";
     }
 
-    // ==========================================
-    // НОВАЯ ВКЛАДКА: МЕНЮ И ТЕХ КАРТЫ (DRAG AND DROP)
-    // ==========================================
-    
     function dragStartRecipe(e, drinkId, bIdx, iIdx) {
         draggedRecipeItem = { drinkId, bIdx, iIdx };
         e.dataTransfer.effectAllowed = "move";
@@ -3487,7 +3562,6 @@
         Object.values(currentMenu).forEach(i => {
             if(i.globalCat && !globalCats.includes(i.globalCat)) globalCats.push(i.globalCat);
             
-            // Миграция старых данных в новую структуру блоков
             if (!i.blocks) {
                 if (i.recipe && i.recipe.length > 0) {
                     i.blocks = [i.recipe];
@@ -3714,7 +3788,6 @@
             let usedIngredients = new Set();
             let fullAOA = [];
             
-            // 1. Собираем уникальные ингредиенты и формируем справочник
             Object.values(currentMenu).forEach(drink => {
                 let blocks = drink.blocks || [drink.recipe || []];
                 blocks.forEach(b => {
@@ -3732,16 +3805,13 @@
                 let r = index + 2; 
                 let prod = fullCatalog.find(c => c && c.name === ing);
                 let price = prod ? (parseFloat(prod.price) || 0) : 0;
-                // Объем по умолчанию ставим 1000, чтобы не было деления на ноль. Формула H/G.
                 priceRows.push([ing, 1000, price, {t:'n', f:`IFERROR(H${r}/G${r},0)`}]);
             });
 
-            // 2. Формируем левую часть и склеиваем со справочником
             let rIdx = 0; 
             Object.values(currentMenu).forEach(drink => {
-                let startRow = rIdx + 2; // Строка первого ингредиента (1-based)
+                let startRow = rIdx + 2; 
                 
-                // Заголовок напитка
                 let pRowHeader = priceRows[rIdx] || ["","","",""];
                 fullAOA.push([`=== ${drink.name ? drink.name.toUpperCase() : "БЕЗ НАЗВАНИЯ"} ===`, "г/мл", "цена", "итог", "", ...pRowHeader]);
                 rIdx++;
@@ -3749,7 +3819,7 @@
                 let blocks = drink.blocks || [drink.recipe || []];
                 blocks.forEach(b => {
                     b.forEach(item => {
-                        let xlRow = rIdx + 1; // 1-based
+                        let xlRow = rIdx + 1; 
                         let pR = priceRows[rIdx] || ["","","",""];
                         fullAOA.push([
                             item.name || "", 
@@ -3761,25 +3831,21 @@
                     });
                 });
                 
-                // Строка Доп расход
                 let xlRowExtra = rIdx + 1;
                 let pR1 = priceRows[rIdx] || ["","","",""];
                 fullAOA.push(["Доп расход", "", "", parseFloat(drink.extraCost) || 0, "", ...pR1]);
                 rIdx++;
 
-                // Строка ИТОГО
                 let pR2 = priceRows[rIdx] || ["","","",""];
                 let sumRange = `D${startRow}:D${xlRowExtra}`; 
                 fullAOA.push(["ИТОГО", "", "", {t:'n', f:`SUM(${sumRange})`}, "", ...pR2]);
                 rIdx++;
 
-                // Пустая строка-разделитель
                 let pR3 = priceRows[rIdx] || ["","","",""];
                 fullAOA.push(["", "", "", "", "", ...pR3]);
                 rIdx++;
             });
 
-            // Если справочник длиннее, чем рецепты, дописываем оставшиеся строки
             while(rIdx < priceRows.length) {
                 fullAOA.push(["", "", "", "", "", ...priceRows[rIdx]]);
                 rIdx++;
@@ -3794,15 +3860,15 @@
             const ws = XLSX.utils.aoa_to_sheet(fullAOA);
             
             ws['!cols'] = [
-                { wch: 30 }, // A: Название напитка / Ингредиент
-                { wch: 12 }, // B: г/мл
-                { wch: 12 }, // C: цена
-                { wch: 12 }, // D: итог
-                { wch: 5 },  // E: пустая разделительная
-                { wch: 35 }, // F: Ингредиенты (Справочник)
-                { wch: 10 }, // G: Объем
-                { wch: 12 }, // H: Цена
-                { wch: 12 }  // I: За единицу
+                { wch: 30 }, 
+                { wch: 12 }, 
+                { wch: 12 }, 
+                { wch: 12 }, 
+                { wch: 5 },  
+                { wch: 35 }, 
+                { wch: 10 }, 
+                { wch: 12 }, 
+                { wch: 12 }  
             ];
 
             const wb = XLSX.utils.book_new();
@@ -3815,7 +3881,7 @@
             await fetch(`${FB_URL}/bot_control/notifications.json`, {
                 method: 'POST',
                 body: JSON.stringify({ 
-                    type: "checklist_pdf", // Отправляем как документ
+                    type: "checklist_pdf",
                     chat_id: ADMIN_CHAT_ID, 
                     file_data: excelDataUri, 
                     filename: `Техкарты_Себестоимость_${new Date().toLocaleDateString('ru-RU')}.xlsx`,
@@ -3832,9 +3898,6 @@
         }
     }
 
-    // ==========================================
-    // ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
-    // ==========================================
     function updateVal(id, field, val) { 
         if (val === "НОВАЯ ГЛОБАЛЬНАЯ" || val === "НОВАЯ КАТЕГОРИЯ") {
             let newCat = prompt("Введите название новой категории:");
@@ -3915,9 +3978,6 @@
         }
     }
 
-    // ==========================================
-    // ФОНОВОЕ ОБНОВЛЕНИЕ ДАННЫХ (Тихое)
-    // ==========================================
     async function quietRefreshOrders() {
         if (currentTabType !== 'orders' || isSvodEditMode) return;
         try {
@@ -3929,9 +3989,8 @@
         } catch(e) {}
     }
     
-    setInterval(quietRefreshOrders, 15000); // 15 секунд
+    setInterval(quietRefreshOrders, 15000);
 
-    // Загрузка нужной вкладки при старте
     window.onload = () => {
         loadUIState();
         let savedTab = localStorage.getItem('activeTab') || 'orders';

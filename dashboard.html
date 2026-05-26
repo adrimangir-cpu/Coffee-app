@@ -2097,6 +2097,7 @@
         actionBar.innerHTML = `
             <div class="action-container" style="margin-bottom:0; display: flex; gap: 10px; align-items:center;">
                 <button class="btn-save" onclick="saveGraphsEdits()" id="btn-save-graphs">💾 Сохранить графики</button>
+                <button class="btn-save" style="background: linear-gradient(135deg, #0288D1 0%, #01579B 100%);" onclick="exportGraphsToExcel()">📊 Экспорт в Excel</button>
                 <button class="btn-add" style="background: #9b59b6;" onclick="addUserToGraph()">➕ Добавить сотрудника</button>
                 <span style="font-size:13px; color:#555; margin-left:15px; flex:1;">💡 Вводите <b>МЭИ_у</b> (утро), <b>НК_в</b> (вечер), <b>Г</b> (полная смена). Выходной: <b>ВЫХ</b>, Любая: <b>ЛЮБ</b>.</span>
             </div>
@@ -3378,7 +3379,7 @@
         box.innerHTML = html + "</table></div>";
     }
 
-    function renderCatalogChecklist() {
+   function renderCatalogChecklist() {
         const box = document.getElementById('content');
         let globalCats = ["Основное меню"];
         Object.values(currentCatalog).forEach(i => { if(i.globalCat && !globalCats.includes(i.globalCat) && !i.globalCat.includes("!!!")) globalCats.push(i.globalCat); });
@@ -3386,7 +3387,7 @@
         
         let isActionsOpen = expandedDivs.has('cat-chk-actions');
         let html = `
-        <h3 style="margin-top:0; margin-bottom:15px; font-size:24px; color:#4A148C;">📝 Справочник Чек-листа</h3>
+        <h3 style="margin-top:0; margin-bottom:15px; font-size:24px; color:#4A148C;">🛒 Справочник Чек-листа</h3>
         <div class="cat-group-header" style="padding: 12px 15px; border-radius: 12px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.05);" onclick="toggleCatElements('cat-chk-actions', 'arrow_catchk_actions')">
             <span style="font-size:16px; color:#4A148C; font-weight:900;">⚡ Действия</span>
             <span id="arrow_catchk_actions">${isActionsOpen ? '▲' : '▼'}</span>
@@ -3394,9 +3395,21 @@
         <div class="cat-chk-actions action-container" style="display: ${isActionsOpen ? 'flex' : 'none'}; gap: 10px; flex-wrap: wrap; margin-bottom: 20px;">
             <button class="btn-add" style="flex:1 1 auto;" onclick="addItemChecklist()">➕ Добавить позицию</button>
             <button class="btn-save" style="flex:1 1 auto; margin:0; padding:12px 18px;" onclick="saveCatalog(this)">💾 Сохранить в базу</button>
-        </div>
-        <div style="overflow-x:auto;"><table style="min-width:1200px;">
-            <tr><th style="width:200px;">Глоб. Категория</th><th style="width:250px;">Подкатегория</th><th style="width:300px;">Наименование</th><th style="width:150px;">Фото (Вставь Ctrl+V)</th><th style="width:200px;">Формат ввода</th><th style="width:80px; text-align:center;">Удалить</th></tr>`;
+        </div>`;
+
+        // Собираем уникальные имена товаров из закупки для автоподтягивания
+        let allPurchaseItems = [];
+        if (cachedData.catalogOrder) {
+            let names = Object.values(cachedData.catalogOrder).map(i => i.name).filter(Boolean);
+            allPurchaseItems = [...new Set(names)].sort((a,b) => a.localeCompare(b));
+        }
+        let optionsHtml = allPurchaseItems.map(name => `<option value="${name.replace(/"/g, '&quot;')}">${name}</option>`).join("");
+        
+        // Создаем datalist для выбора
+        html += `<datalist id="checklist_items_list">${optionsHtml}</datalist>`;
+
+        html += `<div style="overflow-x:auto;"><table style="min-width:1200px;">
+            <tr><th style="width:200px;">Глоб. Категория</th><th style="width:250px;">Подкатегория</th><th style="width:300px;">Наименование (из Закупки)</th><th style="width:150px;">Фото (Вставь Ctrl+V)</th><th style="width:200px;">Формат ввода</th><th style="width:80px; text-align:center;">Удалить</th></tr>`;
             
         let grouped = {};
         Object.keys(currentCatalog).forEach(k => {
@@ -3434,10 +3447,11 @@
                     let isVol = (item.unit && item.unit.toLowerCase().includes("объем"));
                     let isFileStr = item.photo && item.photo.startsWith("data:image") ? `<img src="${item.photo}" style="max-width:50px; max-height:50px; border-radius:4px; margin-top:5px;">` : '';
 
+                    // Добавлен атрибут list="checklist_items_list" к инпуту наименования
                     html += `<tr class="chk-row chitem_${safeSc} lvl3_of_chksub_${safeGc}" style="display:${displayStyleL3};">
                         <td><select onchange="updateVal('${k}','globalCat',this.value)" style="font-size:14px; width:100%; box-sizing:border-box;">${gcatOptions}</select></td>
                         <td><select onchange="updateVal('${k}','cat',this.value)" style="font-weight:bold; font-size:14px; color:#7E57C2; width:100%; box-sizing:border-box;">${catOptions}</select></td>
-                        <td><input type="text" style="font-weight:bold; font-size:17px; color:#311b92; width:100%; box-sizing:border-box;" value="${item.name || ''}" onchange="updateVal('${k}','name',this.value)"></td>
+                        <td><input type="text" list="checklist_items_list" style="font-weight:bold; font-size:17px; color:#311b92; width:100%; box-sizing:border-box;" value="${item.name || ''}" onchange="updateVal('${k}','name',this.value)"></td>
                         <td style="text-align:center;">
                             <input type="file" id="file_check_${k}" style="display:none;" accept="image/*" onchange="handleFileUpload(event, '${k}', 'check')">
                             <input type="text" style="font-size:12px; border:2px dashed #9575cd; background:#fafafa; text-align:center; cursor:pointer; width:100%; box-sizing:border-box;" placeholder="Нажми или Ctrl+V" value="${item.photo && !item.photo.startsWith("data:image") ? item.photo : ''}" onclick="document.getElementById('file_check_${k}').click()" onpaste="handleClipboardImagePaste(event, '${k}')" onchange="updateVal('${k}','photo',this.value)">
@@ -3897,7 +3911,112 @@
             alert("❌ Ошибка при отправке Excel: " + e.message);
         }
     }
+async function exportGraphsToExcel() {
+        showReportOverlay("Генерация Excel для Графика...");
+        try {
+            let target = getTargetDateLogic();
+            let monthNames = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
+            let daysInMonth = new Date(target.year, target.month + 1, 0).getDate();
+            const dayNames = ["вс", "пн", "вт", "ср", "чт", "пт", "сб"];
+            const expectedShops = ['Б', 'Г', 'В', 'Л', 'НК', 'НК2', 'СП', 'МЭИ', 'ЛЯ'];
 
+            let monthData = window.graphDraft || {};
+            let allUsers = Object.keys(monthData).filter(k => k !== 'comment' && k !== '_pinned').sort();
+
+            let aoa = [];
+            // Формируем шапку таблицы
+            let header = ["Дата", "День", ...allUsers, "День", "Дата", "Проверка смен"];
+            aoa.push(header);
+
+            // Формируем строки по дням
+            for (let d = 1; d <= daysInMonth; d++) {
+                let dateObj = new Date(target.year, target.month, d);
+                let dayOfWeek = dateObj.getDay();
+                let dayName = dayNames[dayOfWeek];
+                
+                let row = [d, dayName];
+                let dayShifts = [];
+
+                allUsers.forEach(user => {
+                    let cellData = monthData[user] && monthData[user][d] ? monthData[user][d] : { text: "", shift: "CLEAR" };
+                    let val = cellData.text || "";
+                    let shiftType = cellData.shift || "CLEAR";
+                    
+                    if (shiftType === "OFF" || val.toUpperCase() === "ВЫХ" || val.toUpperCase() === "OFF" || val.toUpperCase() === "ОТП") {
+                        val = "ВЫХ";
+                    } else if (shiftType === "ANY_SHOP" || val.toUpperCase() === "ЛЮБ" || val.toUpperCase() === "ЛЮБАЯ") {
+                        val = "ЛЮБ";
+                    }
+
+                    row.push(val);
+                    if (val !== "" && val !== "ВЫХ" && val !== "ЛЮБ") dayShifts.push(val.toUpperCase());
+                });
+
+                row.push(dayName);
+                row.push(d);
+
+                // Считаем недовозы/незакрытые точки
+                let missing = [];
+                expectedShops.forEach(s => {
+                    let hasFull = dayShifts.includes(s);
+                    let hasMorn = dayShifts.some(shift => shift === s + "_У" || shift === s + "У" || shift === s + " У");
+                    let hasEve = dayShifts.some(shift => shift === s + "_В" || shift === s + "В" || shift === s + " В");
+                    
+                    if (!hasFull) {
+                        if (!hasMorn && !hasEve) missing.push(s);
+                        else if (hasMorn && !hasEve) missing.push(s + "_в");
+                        else if (!hasMorn && hasEve) missing.push(s + "_у");
+                    }
+                });
+                
+                let status = missing.length === 0 ? "✅ Все закрыты" : "❌ Нет: " + missing.join(", ");
+                row.push(status);
+                aoa.push(row);
+            }
+
+            // Строка с комментариями в самом конце
+            let commentRow = ["Комментарии:", ""];
+            allUsers.forEach(user => {
+                commentRow.push((monthData[user] && monthData[user].comment) ? monthData[user].comment : "");
+            });
+            aoa.push(commentRow);
+
+            const ws = XLSX.utils.aoa_to_sheet(aoa);
+            
+            // Настройка ширины колонок
+            let wscols = [{wch: 6}, {wch: 6}];
+            allUsers.forEach(() => wscols.push({wch: 15}));
+            wscols.push({wch: 6}, {wch: 6}, {wch: 35});
+            ws['!cols'] = wscols;
+
+            const wb = XLSX.utils.book_new();
+            let sheetName = `${monthNames[target.month]} ${target.year}`;
+            XLSX.utils.book_append_sheet(wb, ws, sheetName.substring(0,31));
+            
+            const b64 = XLSX.write(wb, { type: "base64", bookType: "xlsx" });
+            const excelDataUri = "data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64," + b64;
+            
+            // Отправка в бот администратору
+            await fetch(`${FB_URL}/bot_control/notifications.json`, {
+                method: 'POST',
+                body: JSON.stringify({ 
+                    type: "checklist_pdf", 
+                    chat_id: ADMIN_CHAT_ID.trim(), 
+                    file_data: excelDataUri, 
+                    filename: `График_${sheetName}.xlsx`,
+                    text: `📊 Сгенерированный график сотрудников на ${sheetName}`,
+                    timestamp: Date.now() 
+                })
+            });
+
+            hideReportOverlay();
+            alert("✅ График успешно экспортирован и отправлен в Telegram!");
+        } catch (e) {
+            hideReportOverlay();
+            alert("❌ Ошибка при экспорте Excel: " + e.message);
+        }
+    }
+    
     function updateVal(id, field, val) { 
         if (val === "НОВАЯ ГЛОБАЛЬНАЯ" || val === "НОВАЯ КАТЕГОРИЯ") {
             let newCat = prompt("Введите название новой категории:");

@@ -1283,7 +1283,9 @@
         try {
             let snap = await database.ref("settings").once("value");
             let s = snap.val() || {};
-            state.appSettings.hidden_categories = s.hidden_categories || {};
+            // Читаем новые раздельные списки (если их нет, берем старый общий как резерв)
+            state.appSettings.hidden_categories_order = s.hidden_categories_order || s.hidden_categories || {};
+            state.appSettings.hidden_categories_checklist = s.hidden_categories_checklist || s.hidden_categories || {};
             state.appSettings.new_shop_order_active = s.new_shop_order_active || false;
             
             if (state.appSettings.new_shop_order_active) {
@@ -1330,10 +1332,13 @@
           const catalogSnap = await database.ref(path).once("value");
           state.productCatalog = catalogSnap.val() || {};
 
-          // Выносим удаление скрытых категорий сюда, чтобы оно работало для ВСЕХ режимов (и закупки, и чек-листов)
+          // Определяем, какой список скрытых категорий использовать
+          let hiddenList = (mode === 'checklist') ? state.appSettings.hidden_categories_checklist : state.appSettings.hidden_categories_order;
+
+          // Удаляем скрытые категории в зависимости от режима
           for(let k in state.productCatalog) {
               let item = state.productCatalog[k];
-              if(item && item.globalCat && state.appSettings.hidden_categories[item.globalCat]) {
+              if(item && item.globalCat && hiddenList[item.globalCat]) {
                   delete state.productCatalog[k];
               }
           }

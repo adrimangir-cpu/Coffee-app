@@ -4,7 +4,7 @@
   <base target="_top">
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>Coffee Management App v9.1</title>
+  <title>Coffee Management App v9.2</title>
   
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-app-compat.js"></script>
@@ -652,7 +652,7 @@
         triggerHaptic();
         state.currentMode = 'schedule';
         document.getElementById('title').innerText = "График на следующий месяц";
-        state.scheduleMonthOffset = 0; // Сбрасываем на текущий месяц по умолчанию
+        state.scheduleMonthOffset = 0; 
         
         document.getElementById('btn-month-0').style.background = 'var(--admin-gradient)';
         document.getElementById('btn-month-0').style.color = '#fff';
@@ -977,21 +977,9 @@
             alert("❌ Ошибка формирования свода: " + e.message); 
         }
     }
-    async function triggerPcBuild(cmd) {
-        if (!confirm(`Отправить команду ${cmd} на ПК?`)) return;
-        try {
-            await database.ref("bot_control/pc_command").set({
-                command: cmd,
-                timestamp: firebase.database.ServerValue.TIMESTAMP
-            });
-            alert(`✅ Команда ${cmd} успешно отправлена боту-снайперу!`);
-        } catch (e) { 
-            alert(`❌ Ошибка: ` + e.message); 
-        }
-    }
 
     // ==========================================
-    // 💡 БЛОК: МЕНЮ И ТЕХ КАРТЫ С АВТОСКРОЛЛОМ И СТОП-ЛИСТОМ
+    // 💡 БЛОК: МЕНЮ И ТЕХ КАРТЫ С ВИДЕО
     // ==========================================
     async function initMenuWorkflow() {
         triggerHaptic();
@@ -1011,7 +999,6 @@
             state.menuCatalog = menuSnap.val() || {};
             state.productCatalog = { ...(orderSnap.val() || {}), ...(chkSnap.val() || {}) };
             
-            // Собираем актуальный стоп-лист для выбранной кофейни
             let shopOrders = [];
             ordersSnap.forEach(c => {
                 let val = c.val();
@@ -1038,6 +1025,18 @@
         }
     }
 
+    function loadVideo(safeDrink, videoUrl) {
+        let container = document.getElementById('video-container-' + safeDrink);
+        if (container) {
+            container.innerHTML = `
+                <video controls autoplay preload="metadata" style="width:100%; border-radius:12px; box-shadow:0 4px 10px rgba(0,0,0,0.1);">
+                    <source src="${videoUrl}" type="video/mp4">
+                    Ваш браузер не поддерживает встроенное видео.
+                </video>
+            `;
+        }
+    }
+
     function renderMenuApp() {
         let html = "";
         let grouped = {};
@@ -1056,7 +1055,7 @@
                         <div class="category-header" style="background:#ede7f6; color:#311b92;" onclick="handleCategoryToggle(this)">
                             <span>🌍 ${gc}</span> <span style="opacity:0.5; font-size:14px;">▼</span>
                         </div>
-                        <div class="category-content" style="padding:10px;">`;
+                        <div class="category-content" style="display:block; padding:10px;">`;
             
             Object.keys(grouped[gc]).sort().forEach(sc => {
                 let safeSc = getSafeId("app_menu_sc_" + sc);
@@ -1069,18 +1068,8 @@
                 grouped[gc][sc].sort((a,b) => (a.name||'').localeCompare(b.name||'')).forEach(drink => {
                     let safeDrink = getSafeId("app_drink_" + drink.name);
                     
-                    let recipeHtml = `<div class="recipe_data_${safeDrink}" style="display:none; margin-top:10px; padding:12px; background:#f9fbe7; border-radius:12px; border:1px solid #c5e1a5;">`;
-                    
-                    // 1. ФОТО НАПИТКА (Аккуратная миниатюра)
-                    if (drink.photo && drink.photo.startsWith("data:image")) {
-                        recipeHtml += `<div style="text-align:center; margin-bottom:15px;" onclick="showDrinkPhoto('${escapeName(drink.name)}')">
-                                         <img src="${drink.photo}" style="width:100px; height:100px; object-fit:cover; border-radius:16px; border:2px solid #D1C4E9; box-shadow: 0 4px 10px rgba(0,0,0,0.1); cursor:pointer;" alt="Фото напитка">
-                                         <div style="font-size:12px; color:#7E57C2; font-weight:bold; margin-top:6px;">🔍 Нажми, чтобы увеличить</div>
-                                       </div>`;
-                    }
-                    
-                    // 2. СОСТАВ И ИНГРЕДИЕНТЫ
-                    recipeHtml += `<div style="font-size:14px; font-weight:900; color:#2e7d32; margin-bottom:8px; text-transform:uppercase;">📝 Состав:</div>`;
+                    let recipeHtml = `<div class="recipe_data_${safeDrink}" style="display:none; margin-top:10px; padding:12px; background:#f9fbe7; border-radius:12px; border:1px solid #c5e1a5;">
+                                        <div style="font-size:14px; font-weight:900; color:#2e7d32; margin-bottom:8px; text-transform:uppercase;">📝 Состав:</div>`;
                     
                     let blocks = drink.blocks || [drink.recipe || []];
                     
@@ -1121,17 +1110,17 @@
                         recipeHtml += `<div style="color:#888; font-size:13px; font-style:italic;">Рецепт пока не заполнен</div>`;
                     }
                     
-                    // 3. ТЕХНИЧЕСКОЕ ПРИГОТОВЛЕНИЕ
-                    if (drink.techPrep) {
+                    if (drink.techPrep && drink.techPrep.trim() !== "") {
                         recipeHtml += `<div style="margin-top:15px; padding:10px; background:#fff3e0; border-radius:8px; font-size:14px; line-height:1.5; color:#e65100; border: 1px solid #ffb74d;">
-                                         <b style="color:#d84315;">⚙️ Тех. приготовление:</b><br>${drink.techPrep.replace(/\n/g, '<br>')}
+                                        <b style="color:#d84315;">⚙️ Тех. приготовление:</b><br>${drink.techPrep.replace(/\n/g, '<br>')}
                                        </div>`;
                     }
                     
-                    // 4. КНОПКА ВИДЕО ОБУЧЕНИЕ
+                    // 💡 Кнопка-заглушка для ленивой загрузки видео!
                     if (drink.video && drink.video.trim() !== "") {
-                        recipeHtml += `<div style="margin-top:15px; padding-top:10px; border-top:1px dashed #c5e1a5;">
-                                         <button style="width:100%; padding:12px; background:#e3f2fd; color:#1565c0; border:none; border-radius:8px; font-weight:900; font-size:14px; cursor:pointer; box-shadow:0 2px 4px rgba(0,0,0,0.1);" onclick="window.open('${drink.video.trim()}', '_blank')">▶️ Видео обучение</button>
+                        let safeVideoUrl = escapeName(drink.video.trim());
+                        recipeHtml += `<div id="video-container-${safeDrink}" style="margin-top:15px; padding-top:10px; border-top:1px solid #e0e0e0; text-align:center;">
+                                         <button style="width:100%; padding:12px; background:#e3f2fd; color:#1565c0; border:none; border-radius:8px; font-weight:900; font-size:14px; cursor:pointer; box-shadow:0 2px 5px rgba(0,0,0,0.1);" onclick="loadVideo('${safeDrink}', '${safeVideoUrl}')">▶️ Смотреть видео-обучение</button>
                                        </div>`;
                     }
                     
@@ -1148,6 +1137,7 @@
                 
                 html += `</div></div>`;
             });
+            
             html += `</div></div>`;
         });
         
@@ -1185,7 +1175,6 @@
         let photoUrl = drink && drink.photo ? drink.photo : null;
         openPhotoModal(drinkName, photoUrl);
     }
-
     // ==========================================
     // 💡 БЛОК: МАРКЕТПЛЕЙСЫ
     // ==========================================
@@ -1304,15 +1293,404 @@
     }
 
     // ==========================================
-    // 💡 БЛОК: ИНИЦИАЛИЗАЦИЯ И РЕНДЕР КАТАЛОГОВ
+    // ГРАФИКИ С ПЕРЕКЛЮЧЕНИЕМ МЕСЯЦА
     // ==========================================
+    function getTargetDateLogic() {
+      let now = new Date();
+      let tMonth = now.getMonth();
+      let tYear = now.getFullYear();
+      if (state.scheduleMonthOffset === 1) { 
+          tMonth++; 
+          if (tMonth > 11) { tMonth = 0; tYear++; } 
+      }
+      return { month: tMonth, year: tYear };
+    }
+
+    function changeScheduleMonth(offset) {
+        triggerHaptic();
+        state.scheduleMonthOffset = offset;
+        document.getElementById('btn-month-0').style.background = offset === 0 ? 'var(--admin-gradient)' : '#ccc';
+        document.getElementById('btn-month-0').style.color = offset === 0 ? '#fff' : '#333';
+        document.getElementById('btn-month-1').style.background = offset === 1 ? 'var(--newshop-gradient)' : '#ccc';
+        document.getElementById('btn-month-1').style.color = offset === 1 ? '#fff' : '#333';
+        
+        let target = getTargetDateLogic();
+        fetchExistingSchedule(target.month, target.year, state.schedule.name);
+    }
+
+    function initScheduleWorkflow() {
+        triggerHaptic();
+        state.currentMode = 'schedule';
+        document.getElementById('title').innerText = "График на следующий месяц";
+        state.scheduleMonthOffset = 0; 
+        
+        document.getElementById('btn-month-0').style.background = 'var(--admin-gradient)';
+        document.getElementById('btn-month-0').style.color = '#fff';
+        document.getElementById('btn-month-1').style.background = '#ccc';
+        document.getElementById('btn-month-1').style.color = '#333';
+        
+        let savedName = localStorage.getItem("teiku_employee_name");
+        if (savedName) document.getElementById('schedule-name-input').value = savedName;
+        
+        showScreen('step-schedule-name');
+    }
+
+    function goToScheduleCalendar() {
+        triggerHaptic();
+        let name = document.getElementById('schedule-name-input').value.trim();
+        if (!name) return showPopupError("Внимание", "Пожалуйста, введите ваше Имя и Фамилию.");
+        
+        localStorage.setItem("teiku_employee_name", name);
+        state.schedule = { name: name, days: {}, currentTool: "MORNING" };
+        
+        let target = getTargetDateLogic();
+        let shopsMap = [
+            { name: "Бояринова", val: "Б" }, { name: "Гагарина", val: "Г" },
+            { name: "Вертолетчиков", val: "В" }, { name: "Липчанского", val: "Л" },
+            { name: "Новокосино", val: "НК" }, { name: "Новокосино 2", val: "НК2" },
+            { name: "Старое Павлино", val: "СП" }, { name: "Красноказарменная", val: "МЭИ" },
+            { name: "Ухтомского ополчения", val: "ЛЯ" }
+        ];
+
+        let selectHtml = shopsMap.map(s => {
+            let isSelected = (s.name === state.currentShop || (state.currentShop === "МЭИ" && s.name === "Красноказарменная")) ? 'selected' : '';
+            return `<option value="${s.val}" ${isSelected}>${s.name === 'Красноказарменная' ? 'МЭИ' : s.name}</option>`;
+        }).join('');
+        
+        document.getElementById('schedule-shop-select').innerHTML = selectHtml;
+        fetchExistingSchedule(target.month, target.year, name);
+    }
+
+    async function fetchExistingSchedule(m, y, name) {
+        showReportOverlay("Загрузка вашего графика...");
+        try {
+            let monthNames = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
+            document.getElementById('schedule-month-title').innerText = `График на ${monthNames[m]} ${y}`;
+            document.getElementById('schedule-user-title').innerText = `Сотрудник: ${name}`;
+
+            let snap = await database.ref(`schedules/${y}_${m}/${name}`).once("value");
+            if (snap.exists()) {
+                let data = snap.val() || {};
+                document.getElementById('schedule-comment').value = data.comment || "";
+                delete data.comment; 
+                state.schedule.days = data;
+            } else {
+                state.schedule.days = {};
+                document.getElementById('schedule-comment').value = "";
+            }
+            renderScheduleCalendar(m, y);
+            hideReportOverlay();
+            showScreen('step-schedule-calendar');
+        } catch(e) {
+            hideReportOverlay();
+            showPopupError("Ошибка", "Не удалось загрузить график: " + e.message);
+        }
+    }
+
+    function setScheduleTool(tool) {
+        triggerHaptic();
+        state.schedule.currentTool = tool;
+        document.querySelectorAll('.sched-tool').forEach(b => b.classList.remove('active'));
+        document.getElementById('tool_' + tool).classList.add('active');
+    }
+
+    function renderScheduleCalendar(m, y) {
+        let daysInMonth = new Date(y, m + 1, 0).getDate();
+        let startOffset = (new Date(y, m, 1).getDay() || 7) - 1;
+        
+        let html = `<div class="cal-header" style="border-bottom: 2px solid #ccc;">Пн</div>
+                    <div class="cal-header" style="border-bottom: 2px solid #ccc;">Вт</div>
+                    <div class="cal-header" style="border-bottom: 2px solid #ccc;">Ср</div>
+                    <div class="cal-header" style="border-bottom: 2px solid #ccc;">Чт</div>
+                    <div class="cal-header" style="border-bottom: 2px solid #ccc;">Пт</div>
+                    <div class="cal-header" style="color:#d84315; background:#ffe0b2; border-radius:4px 4px 0 0; border-bottom: 2px solid #ffb74d;">Сб</div>
+                    <div class="cal-header" style="color:#d84315; background:#ffcc80; border-radius:4px 4px 0 0; border-bottom: 2px solid #ffb74d;">Вс</div>`;
+        
+        for (let i = 0; i < startOffset; i++) {
+            html += `<div style="border-bottom: 2px solid #ffb74d;"></div>`;
+        }
+
+        for (let d = 1; d <= daysInMonth; d++) {
+            let dateObj = new Date(y, m, d);
+            let dayOfWeek = dateObj.getDay(); 
+            let isWeekend = (dayOfWeek === 0 || dayOfWeek === 6);
+            
+            let cellStyle = `border-bottom: 2px solid #ffb74d;`; 
+            if (isWeekend) {
+                cellStyle += ` background-color: #fff3e0; border-left: 2px solid #ffcc80; border-right: 2px solid #ffcc80;`;
+            }
+
+            let cellData = state.schedule.days[d] || { shift: "CLEAR", text: "" };
+            let shiftStr = cellData.shift || "CLEAR";
+            let vUpper = (cellData.text || "").toUpperCase();
+            
+            let bg = "transparent";
+            let color = "#333";
+            let charText = vUpper;
+
+            if (shiftStr === "OFF" || vUpper === "ВЫХ") {
+                bg = "#bbdefb"; color = "transparent"; charText = "";
+            } else if (shiftStr === "ANY_SHOP" || vUpper === "ЛЮБ") {
+                bg = "#c8e6c9"; color = "transparent"; charText = "";
+            } else if (charText !== "" && shiftStr !== "CLEAR") {
+                bg = "transparent"; color = "#333"; charText = vUpper;
+            } else {
+                charText = "";
+            }
+
+            let dateColor = isWeekend ? "#d84315" : "#777";
+
+            html += `<div class="cal-cell" style="${cellStyle}" onclick="handleDayClick(${d})">
+                <div class="cal-cell-date" style="color:${dateColor};">${d}</div>
+                <div class="cal-cell-text" style="background:${bg}; color:${color}; padding:2px 0; border-radius:4px; width:90%;">${charText}</div>
+            </div>`;
+        }
+        document.getElementById('calendar-grid').innerHTML = html;
+    }
+
+    function handleDayClick(day) {
+        triggerHaptic();
+        let tool = state.schedule.currentTool;
+        
+        if (tool === "CLEAR") {
+            delete state.schedule.days[day];
+        } else if (tool === "OFF") {
+            state.schedule.days[day] = { shift: "OFF", text: "ВЫХ" };
+        } else if (tool === "ANY_SHOP") {
+            state.schedule.days[day] = { shift: "ANY_SHOP", text: "ЛЮБ" };
+        } else {
+            let shopSelect = document.getElementById('schedule-shop-select');
+            let pref = shopSelect.value;
+            
+            let formattedText = pref;
+            if (tool === "MORNING") formattedText = pref + "_У";
+            else if (tool === "EVENING") formattedText = pref + "_В";
+
+            state.schedule.days[day] = { shift: tool, text: formattedText };
+        }
+        
+        let target = getTargetDateLogic();
+        renderScheduleCalendar(target.month, target.year);
+    }
+
+    async function submitSchedule() {
+        triggerHaptic();
+        let target = getTargetDateLogic();
+        
+        let payload = { ...state.schedule.days };
+        let comment = document.getElementById('schedule-comment').value.trim();
+        if (comment) {
+            payload.comment = comment; 
+        }
+
+        showReportOverlay("Сохранение графика...");
+        try {
+            await database.ref(`schedules/${target.year}_${target.month}/${state.schedule.name}`).set(payload);
+            hideReportOverlay();
+            
+            document.getElementById('success-screen').style.display = 'flex';
+            setTimeout(() => {
+                document.getElementById('success-screen').style.display = 'none';
+                showScreen('step-2', false);
+            }, 2000);
+            
+        } catch(e) {
+            hideReportOverlay();
+            showPopupError("Ошибка", "Не удалось сохранить график: " + e.message);
+        }
+    }
+
+    // ==========================================
+    // СБОР СВОДА АДМИНОМ ИЗ МИНИ-АПП
+    // ==========================================
+    async function buildSvodReport() {
+        if(!confirm("Вы уверены, что хотите СОБРАТЬ СВОД?\nЭто переведет все ожидающие заказы в статус Свода, посчитает итоги и отправит оповещение в Телеграм.")) return;
+        
+        showReportOverlay("Сборка закупки (Выполняю команду)...");
+        try {
+            const [resOrders, resCatalog, resMissing] = await Promise.all([
+               database.ref("orders").once("value"), 
+               database.ref("catalogs/order").once("value"), 
+               database.ref("missing_items").once("value")
+            ]);
+            
+            let ordersSnap = resOrders.val() || {};
+            let catalog = resCatalog.val() || {}; 
+            let missingData = resMissing.val() || {};
+            
+            let updates = {}; 
+            let totalSvod = 0; 
+            let totalLentaAll = 0; 
+            let totalOzonAll = 0; 
+            let totalKuperAll = 0;
+
+            let activeMissing = {};
+            Object.values(missingData).forEach(m => {
+                if (m && m.status !== 'arrived' && m.status !== 'canceled') {
+                    if (!activeMissing[m.shop]) activeMissing[m.shop] = {};
+                    activeMissing[m.shop][m.name] = m.status;
+                }
+            });
+
+            let shopLentaSums = {};
+            let svodByShop = {};
+
+            Object.keys(ordersSnap).forEach(key => {
+                let o = ordersSnap[key];
+                if (o && (o.mode === 'order' || o.mode === 'new_shop') && o.svod === false) {
+                    if(!shopLentaSums[o.shop]) shopLentaSums[o.shop] = 0;
+                    if(!svodByShop[o.shop]) svodByShop[o.shop] = 0;
+                    
+                    let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
+                    itemsArr = itemsArr.filter(i => i !== null && i !== undefined);
+
+                    itemsArr.forEach(i => {
+                        if(i && i.name && i.name !== "НЕТ ЗАКАЗА") {
+                            let catItem = Object.values(catalog).find(cat => cat && cat.name === i.name) || {};
+                            let vendor = (i.vendor || catItem.vendor || 'Лента').toLowerCase();
+                            let missingStat = activeMissing[o.shop] ? activeMissing[o.shop][i.name] : null;
+                            let inTransit = missingStat === 'transit';
+                            
+                            if (!inTransit && i.status !== 'error' && i.status !== 'not_needed' && (vendor.includes('лента') || vendor.includes('lenta'))) {
+                                shopLentaSums[o.shop] += (parseFloat(i.qty) * (parseFloat(catItem.price)||0));
+                            }
+                        }
+                    });
+                }
+            });
+
+            Object.keys(ordersSnap).forEach(key => {
+                let o = ordersSnap[key];
+                if (o && (o.mode === 'order' || o.mode === 'new_shop') && o.svod === false) {
+                    updates[key + "/svod"] = true; 
+                    let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
+                    itemsArr = itemsArr.filter(i => i !== null && i !== undefined);
+
+                    let changed = false;
+
+                    itemsArr.forEach(i => {
+                        if(i && i.name && i.name !== "НЕТ ЗАКАЗА") {
+                            let catItem = Object.values(catalog).find(cat => cat && cat.name === i.name) || {};
+                            let vendor = (i.vendor || catItem.vendor || 'Лента').toLowerCase();
+                            let missingStat = activeMissing[o.shop] ? activeMissing[o.shop][i.name] : null;
+                            let inTransit = missingStat === 'transit';
+                            
+                            if (inTransit || i.status === 'error') {
+                                i.status = 'error'; 
+                                i.bot_error = true; 
+                                changed = true;
+                            } else if (i.status === 'not_needed') {
+                                // Игнорируем стоимость, если не нужно
+                            } else {
+                                let isAutoKuper = false;
+                                let isLenta = vendor.includes('лента') || vendor.includes('lenta');
+                                
+                                if (isLenta && shopLentaSums[o.shop] > 0 && shopLentaSums[o.shop] < 2000) {
+                                    vendor = 'купер (авто)';
+                                    isAutoKuper = true;
+                                    if (i.vendor !== 'Купер (Авто)') {
+                                        i.vendor = 'Купер (Авто)';
+                                        changed = true;
+                                    }
+                                }
+                                
+                                let price1 = parseFloat(catItem.price) || 0;
+                                let price2 = parseFloat(catItem.price2) || 0;
+                                let isRegularKuper = !isAutoKuper && (vendor.includes('купер') || vendor.includes('kuper'));
+                                let finalPrice = (isRegularKuper && price2 > 0) ? price2 : price1;
+
+                                let cost = finalPrice * parseFloat(i.qty);
+                                totalSvod += cost;
+                                svodByShop[o.shop] += cost;
+                                
+                                if (vendor.includes('лента') || vendor.includes('lenta')) {
+                                    totalLentaAll += cost;
+                                } else if (vendor.includes('озон') || vendor.includes('ozon')) {
+                                    totalOzonAll += cost;
+                                } else {
+                                    totalKuperAll += cost;
+                                }
+                            }
+                        }
+                    });
+                    if (changed) updates[key + "/items"] = itemsArr;
+                }
+            });
+
+            if (Object.keys(updates).length > 0) {
+                await database.ref("orders").update(updates);
+                
+                let textToBot = `📊 **СВОД ГОТОВ К СБОРКЕ!**\n\n`;
+                for(let shopName in svodByShop) {
+                    if (svodByShop[shopName] > 0) {
+                        textToBot += `📍 ${shopName}: **${Math.round(svodByShop[shopName])} ₽**\n`;
+                    }
+                }
+                textToBot += `➖➖➖➖➖➖➖➖\n💵 ИТОГО: **${Math.round(totalSvod)} ₽**`;
+                
+                await database.ref("bot_control/notifications").push({ 
+                    type: "svod_ready_text", 
+                    text: textToBot, 
+                    timestamp: firebase.database.ServerValue.TIMESTAMP 
+                });
+                
+                hideReportOverlay();
+                alert("✅ Свод успешно собран и отправлен в Телеграм!");
+            } else {
+                hideReportOverlay();
+                alert("ℹ️ Нет новых заказов для сборки свода.");
+            }
+            
+        } catch (e) { 
+            hideReportOverlay();
+            alert("❌ Ошибка формирования свода: " + e.message); 
+        }
+    }
+
+    async function autoRemoveFromStoplist(shop, itemNamesArray) {
+        if (!itemNamesArray || itemNamesArray.length === 0) return;
+        try {
+            let snap = await database.ref("orders").orderByChild("shop").equalTo(shop).limitToLast(50).once("value");
+            let shopOrders = [];
+            snap.forEach(c => {
+                let val = c.val();
+                if (val && val.mode === 'stoplist_fill') {
+                    val.key = c.key;
+                    shopOrders.push(val);
+                }
+            });
+            
+            if (shopOrders.length === 0) return;
+            shopOrders.sort((a,b) => b.timestamp - a.timestamp);
+            let latestStoplist = shopOrders[0];
+            
+            if (!latestStoplist.items) return;
+            let itemsArr = Array.isArray(latestStoplist.items) ? latestStoplist.items : Object.values(latestStoplist.items);
+            
+            let namesToRemove = itemNamesArray.map(n => String(n).trim().toLowerCase());
+            let newItems = itemsArr.filter(i => {
+                if (!i || !i.name) return false;
+                let iName = String(i.name).trim().toLowerCase();
+                return !namesToRemove.includes(iName);
+            });
+            
+            if (newItems.length !== itemsArr.length) {
+                if (newItems.length === 0) {
+                    await database.ref("orders/" + latestStoplist.key + "/items").set([{name: "Всё в наличии", qty: "В наличии"}]);
+                } else {
+                    await database.ref("orders/" + latestStoplist.key + "/items").set(newItems);
+                }
+            }
+        } catch(e) {
+            console.error("Auto stoplist update failed:", e);
+        }
+    }
+
     async function loadSettings() {
         try {
             let snap = await database.ref("settings").once("value");
             let s = snap.val() || {};
-            // Читаем новые раздельные списки (если их нет, берем старый общий как резерв)
-            state.appSettings.hidden_categories_order = s.hidden_categories_order || s.hidden_categories || {};
-            state.appSettings.hidden_categories_checklist = s.hidden_categories_checklist || s.hidden_categories || {};
+            state.appSettings.hidden_categories = s.hidden_categories || {};
             state.appSettings.new_shop_order_active = s.new_shop_order_active || false;
             
             if (state.appSettings.new_shop_order_active) {
@@ -1323,6 +1701,9 @@
         } catch(e) { console.log(e); }
     }
 
+    // ==========================================
+    // ИНИЦИАЛИЗАЦИЯ И РЕНДЕР КАТАЛОГОВ
+    // ==========================================
     async function initWorkflow(mode) {
       triggerHaptic(); 
       state.currentMode = mode; 
@@ -1330,6 +1711,7 @@
       state.userBasket = {}; 
       
       state.transitItems = new Set();
+      state.orderedItems = new Set(); 
       state.unprocessedItems = new Set();
 
       showScreen('step-3');
@@ -1359,22 +1741,19 @@
           const catalogSnap = await database.ref(path).once("value");
           state.productCatalog = catalogSnap.val() || {};
 
-          // Определяем, какой список скрытых категорий использовать
-          let hiddenList = (mode === 'checklist') ? state.appSettings.hidden_categories_checklist : state.appSettings.hidden_categories_order;
-
-          // Удаляем скрытые категории в зависимости от режима
-          for(let k in state.productCatalog) {
-              let item = state.productCatalog[k];
-              if(item && item.globalCat && hiddenList[item.globalCat]) {
-                  delete state.productCatalog[k];
-              }
-          }
-
           if (mode === 'order' || mode === 'new_shop') {
+              for(let k in state.productCatalog) {
+                  let item = state.productCatalog[k];
+                  if(item && item.globalCat && state.appSettings.hidden_categories[item.globalCat]) {
+                      delete state.productCatalog[k];
+                  }
+              }
+
               const ordersSnap = await database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(100).once("value");
               let shopOrders = [];
               ordersSnap.forEach(c => { let val = c.val(); if(val && typeof val === 'object') shopOrders.push(val); });
 
+              let orderedItems = new Set();
               let transitItems = new Set();
               let pendingItems = new Set();
 
@@ -1388,31 +1767,29 @@
                   if (m.status === 'transit' || m.status === 'pending') {
                       transitItems.add(clean);
                   }
-                  if (m.status === 'canceled' && !m.added_to_basket) {
-                      let qtyNum = parseFloat(m.qty) || 0;
-                      state.userBasket[m.name] = (state.userBasket[m.name] || 0) + qtyNum;
-                      let foundItem = Object.values(state.productCatalog).find(catItem => catItem && catItem.name === m.name);
-                      if(!state.userBasket["_catinfo"]) state.userBasket["_catinfo"] = {};
-                      state.userBasket["_catinfo"][m.name] = foundItem ? foundItem.cat : "Прочее";
-                      database.ref("missing_items/" + c.key).update({added_to_basket: true}); 
-                      hasCanceledMissings = true;
-                  }
               });
-
-              if (hasCanceledMissings) showPopupError("Внимание", "⚠️ Отмененные администратором недовозы возвращены в вашу корзину.");
 
               shopOrders.forEach(o => {
                   if (o.mode === 'order' || o.mode === 'new_shop') {
-                      if (o.ordered === true) return; 
-
                       let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
                       itemsArr.forEach(i => {
                           if (i && i.name && i.name !== "НЕТ ЗАКАЗА") {
-                              let isError = i.status === 'error' || i.bot_error === true;
-                              let actuallyPlaced = i.status === 'ordered'; 
+                              let clean = cleanName(i.name);
+                              let catItem = Object.values(state.productCatalog).find(c => c && cleanName(c.name) === clean);
+                              let vendor = (i.vendor || (catItem ? catItem.vendor : 'Лента')).toLowerCase();
+                              let isOzon = vendor.includes('озон') || vendor.includes('ozon');
                               
-                              if (!isError && !actuallyPlaced) {
-                                  pendingItems.add(cleanName(i.name));
+                              let isReceived = isOzon ? o.ozon_received : o.lenta_received;
+                              
+                              if (!isReceived) {
+                                  let isOrdered = o.svod === true || o.ordered === true || i.status === 'ordered';
+                                  let isError = i.status === 'error' || i.bot_error === true;
+                                  let isNotNeeded = i.status === 'not_needed';
+
+                                  if (!isError && !isNotNeeded) {
+                                      if (isOrdered) orderedItems.add(clean);
+                                      else pendingItems.add(clean);
+                                  }
                               }
                           }
                       });
@@ -1424,11 +1801,29 @@
               for (let key in state.userBasket) {
                   if (key === "_catinfo") continue;
                   let cleanKey = cleanName(key); 
-                  if (transitItems.has(cleanKey) || pendingItems.has(cleanKey)) {
+                  if (orderedItems.has(cleanKey) || transitItems.has(cleanKey) || pendingItems.has(cleanKey)) {
                       delete state.userBasket[key];
                       if (state.userBasket["_catinfo"]) delete state.userBasket["_catinfo"][key];
                   }
               }
+
+              missSnap.forEach(c => {
+                  let m = c.val();
+                  if (!m || !m.name) return;
+                  if (m.status === 'canceled' && !m.added_to_basket) {
+                      let qtyNum = parseFloat(m.qty) || 0;
+                      state.userBasket[m.name] = (state.userBasket[m.name] || 0) + qtyNum;
+
+                      let foundItem = Object.values(state.productCatalog).find(catItem => catItem && catItem.name === m.name);
+                      if(!state.userBasket["_catinfo"]) state.userBasket["_catinfo"] = {};
+                      state.userBasket["_catinfo"][m.name] = foundItem ? foundItem.cat : "Прочее";
+
+                      database.ref("missing_items/" + c.key).update({added_to_basket: true}); 
+                      hasCanceledMissings = true;
+                  }
+              });
+
+              if (hasCanceledMissings) showPopupError("Внимание", "⚠️ Отмененные администратором недовозы возвращены в вашу корзину.");
 
               let latestStoplist = shopOrders.slice().reverse().find(o => o.mode === 'stoplist_fill');
               if (latestStoplist && latestStoplist.items) {
@@ -1439,7 +1834,7 @@
                           let catItem = Object.values(state.productCatalog).find(c => c && cleanName(c.name) === cleanStopName);
 
                           if (catItem) {
-                              if (!transitItems.has(cleanStopName) && !pendingItems.has(cleanStopName)) {
+                              if (!orderedItems.has(cleanStopName) && !transitItems.has(cleanStopName) && !pendingItems.has(cleanStopName)) {
                                   let exactName = catItem.name;
                                   if (state.userBasket[exactName] === undefined) {
                                       state.userBasket[exactName] = 1;
@@ -1453,6 +1848,7 @@
               }
 
               state.transitItems = transitItems;
+              state.orderedItems = orderedItems;
               state.unprocessedItems = pendingItems;
 
           } else {
@@ -1462,6 +1858,7 @@
           persistDraft(); 
           renderProductList();
       } catch (err) {
+          console.error(err);
           document.getElementById('dynamic-list-container').innerHTML = `<div class="report-card"><div style="text-align:center; padding:20px; color:red; font-weight:bold;">Ошибка базы данных: ${err.message}</div></div>`;
       }
     }
@@ -1511,12 +1908,17 @@
           
           let isPending = state.unprocessedItems && state.unprocessedItems.has(clean);
           let isTransit = state.transitItems && state.transitItems.has(clean);
+          let isOrdered = state.orderedItems && state.orderedItems.has(clean);
           
           let repeatClass = "";
           let repeatLabel = "";
           let borderStyle = "";
 
-          if (isTransit) {
+          if (isOrdered) {
+              repeatClass = "repeat-item";
+              borderStyle = "border-left: 4px solid #4CAF50;";
+              repeatLabel = `<span class="repeat-item-text" style="color:#2E7D32;">Уже заказано ✅</span>`;
+          } else if (isTransit) {
               repeatClass = "repeat-item";
               borderStyle = "border-left: 4px solid #1976D2;";
               repeatLabel = `<span class="repeat-item-text" style="color:#1565C0;">Уже в пути 🚚</span>`;
@@ -1527,14 +1929,14 @@
           }
 
           html += `<div class="item ${repeatClass}" style="${borderStyle}">
-                    <div style="flex:1; padding-right:15px; opacity:${(isTransit || isPending) ? '0.6' : '1'};">${repeatLabel}<span style="font-weight: 700; font-size: 15px; line-height: 1.3;">${itemName}</span></div>
+                    <div style="flex:1; padding-right:15px; opacity:${(isTransit || isOrdered) ? '0.6' : '1'};">${repeatLabel}<span style="font-weight: 700; font-size: 15px; line-height: 1.3;">${itemName}</span></div>
                     <div class="controls" id="controls-${safeId}">`;
           
-          let isLocked = (isTransit || isPending) && (state.currentMode === 'order' || state.currentMode === 'new_shop');
+          let isLocked = (isTransit || isOrdered) && (state.currentMode === 'order' || state.currentMode === 'new_shop');
 
           if (isLocked) {
-              let lockText = isTransit ? 'В пути' : 'Ожидает оформления';
-              let lockColor = isTransit ? '#1565C0' : '#E65100';
+              let lockText = isTransit ? 'В пути' : 'Заказано';
+              let lockColor = isTransit ? '#1565C0' : '#2E7D32';
               html += `<div style="font-size:14px; font-weight:bold; color:${lockColor}; padding:10px;">${lockText}</div>`;
           }
           else if (state.currentMode === 'stoplist_fill') {
@@ -1578,12 +1980,10 @@
     }
 
     function handleInputFocus(input) {
-        input.select(); // автоматически выделяем текст для быстрого ввода
-        
-        // Даем 300 миллисекунд, чтобы клавиатура успела полностью выехать наверх
+        input.select();
         setTimeout(() => {
-            // Плавно прокручиваем экран так, чтобы поле ввода оказалось ровно по центру видимой области
-            input.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            const y = input.getBoundingClientRect().top + window.scrollY - 150; 
+            window.scrollTo({ top: y, behavior: 'smooth' });
         }, 300);
     }
 
@@ -1973,7 +2373,7 @@
                       if (o && (o.mode === 'order' || o.mode === 'new_shop') && !o.received) {
                           let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
                           itemsArr.forEach(i => {
-                              if (i && i.name && i.status !== 'error') {
+                              if (i && i.name && i.status !== 'error' && i.status !== 'not_needed') {
                                   activeItems.add(String(i.name).trim().toLowerCase());
                               }
                           });
@@ -2029,7 +2429,7 @@
           let btn = document.getElementById('modal-submit-button');
           let mainBtn = document.getElementById('main-action-button');
           if(btn) btn.innerText = "ПОДТВЕРДИТЬ И ОТПРАВИТЬ";
-          if(mainBtn) mainBtn.innerText = "ОТПРАВИТЬ";
+          if(mainBtn) mainBtn.innerText = "ОТПРАВИТЬ"; 
           
           updateBadgeUI();
           state.screenHistory = [];
@@ -2093,6 +2493,9 @@
       }
     }
 
+    // ==========================================
+    // 7. ОТЧЕТЫ БОССА И АДМИНА
+    // ==========================================
     function showReportOverlay(msg) { 
         document.getElementById('report-overlay').style.display = 'flex'; 
         document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div class="loading-pulse">${msg}</div></div>`; 
@@ -2137,6 +2540,8 @@
                         
                         if (i.status === 'ordered' || o.ordered === true) {
                             aggregated[i.name].status = 'ordered';
+                        } else if (i.status === 'not_needed') {
+                            aggregated[i.name].status = 'not_needed';
                         } else if (i.status === 'from_stoplist') {
                             aggregated[i.name].status = 'from_stoplist';
                         }
@@ -2186,8 +2591,12 @@
                     let isError = item.is_error || activeMissing[name];
                     
                     let stHtml = "";
+                    let lineOpacity = "1";
                     if (isError) {
                          stHtml = `<span style="color:#c62828; font-size:13px; font-weight:900; background:#ffebee; padding:3px 8px; border-radius:6px;">Нет в наличии ❌</span>`;
+                    } else if (item.status === 'not_needed') {
+                         stHtml = `<span style="color:#757575; font-size:13px; font-weight:900; background:#f5f5f5; padding:3px 8px; border-radius:6px;">Не нужно 🚫</span>`;
+                         lineOpacity = "0.6";
                     } else if (item.status === 'from_stoplist') {
                          stHtml = `<span style="color:#c62828; font-size:13px; font-weight:900; background:#ffcdd2; padding:3px 8px; border-radius:6px;">Из стоп-листа 🛑</span>`;
                     } else if (item.status === 'ordered') {
@@ -2196,7 +2605,7 @@
                          stHtml = `<span style="color:#f57c00; font-size:13px; font-weight:900; background:#fff3e0; padding:3px 8px; border-radius:6px;">Ожидает ⏳</span>`;
                     }
 
-                    blockHtml += `<div style="display:flex; justify-content:space-between; align-items:center; padding:12px 0; border-bottom:1px solid #eee;">
+                    blockHtml += `<div style="display:flex; justify-content:space-between; align-items:center; padding:12px 0; border-bottom:1px solid #eee; opacity:${lineOpacity};">
                                     <div><b style="font-size:16px;">${name}</b> <br> <div style="margin-top:5px;">${stHtml}</div></div>
                                     <span style="font-weight:900; font-size:18px; color:#311B92;">${item.qty} шт</span>
                                  </div>`;
@@ -2415,6 +2824,7 @@
                                     let stat = 'pending';
                                     if (val.svod) {
                                         if (i.status === 'error' || i.bot_error) stat = 'error';
+                                        else if (i.status === 'not_needed') stat = 'not_needed';
                                         else if (i.status === 'ordered') stat = 'ordered';
                                     }
                                     if (val.ordered && !val.svod) stat = 'ordered'; 
@@ -2450,23 +2860,27 @@
             let itemsArr = Array.isArray(latest.items) ? latest.items : Object.values(latest.items);
             
             itemsArr.forEach(i => {
-                if(!i || !i.name) return;
+                if(!i || !i.name || i.qty !== 'Закончилось' || i.name === 'Всё в наличии') return;
+                
                 let iNameLow = String(i.name).trim().toLowerCase();
+                let cleanedItemName = cleanName(i.name); 
                 
                 let info = Object.values(stopCatalog).find(c => c && c.name && String(c.name).trim().toLowerCase() === iNameLow) || {};
-                let inOrderCat = Object.values(orderCatalog).find(c => c && c.name && String(c.name).trim().toLowerCase() === iNameLow);
+                let inOrderCat = Object.values(orderCatalog).find(c => c && c.name && cleanName(c.name) === cleanedItemName);
                 
                 let isSyrup = (info.cat && String(info.cat).toLowerCase().includes("сироп")) || (inOrderCat && inOrderCat.cat && String(inOrderCat.cat).toLowerCase().includes("сироп")) || iNameLow.includes("сироп");
                 
                 let statHtml = "";
                 
                 if (inOrderCat) {
-                    if (missingStatusMap[iNameLow] === 'transit') {
+                    if (missingStatusMap[cleanedItemName] === 'transit') {
                         statHtml = `<span style="background:#e3f2fd; color:#1565c0; padding:2px 5px; border-radius:4px; font-size:11px; font-weight:900; margin-left:5px;">В пути 🚚</span>`;
                     } else {
                         let itemStatus = recentOrdersMap[i.name] || null;
                         if (itemStatus === 'ordered') {
                             statHtml = `<span style="background:#e8f5e9; color:#2e7d32; padding:2px 5px; border-radius:4px; font-size:11px; font-weight:900; margin-left:5px;">Оформлено ✅</span>`;
+                        } else if (itemStatus === 'not_needed') {
+                            statHtml = `<span style="background:#f5f5f5; color:#757575; padding:2px 5px; border-radius:4px; font-size:11px; font-weight:900; margin-left:5px;">Не нужно 🚫</span>`;
                         } else if (itemStatus === 'pending') {
                             statHtml = `<span style="background:#fff3e0; color:#f57c00; padding:2px 5px; border-radius:4px; font-size:11px; font-weight:900; margin-left:5px;">В корзине ⏳</span>`;
                         } else if (itemStatus === 'error') {
@@ -2569,7 +2983,7 @@
         }
     }
 
-   async function showLastOrder() {
+    async function showLastOrder() {
         showReportOverlay("Загружаю приемку...");
         try {
             const [ordersSnap, missSnap, catSnap] = await Promise.all([

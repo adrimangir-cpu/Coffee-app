@@ -647,7 +647,7 @@
     // ПРАВКА 3: АВТО-СИНХРОНИЗАЦИЯ СТОП-ЛИСТА С ТЕХ. КАРТАМИ
     // ==========================================
     async function syncStoplistWithMenu() {
-        let seasonChoice = prompt("Введите название глобальной категории меню для синхронизации (например: Сезонное меню):", "Сезонное меню");
+        let seasonChoice = prompt("Введите название сезонной категории меню (например: Сезонное меню):", "Сезонное меню");
         if (seasonChoice === null) return;
         seasonChoice = seasonChoice.trim();
 
@@ -658,10 +658,9 @@
             let resStop = await fetch(`${FB_URL}/catalogs/stoplist.json`).then(r => r.json()) || {};
             
             let updatedStoplist = { ...resStop };
-            
-            // Карта соответствия: продукт закупки -> списки напитков
             let productMapping = {};
 
+            // Сканируем все напитки
             Object.values(resMenu).forEach(drink => {
                 if (!drink || !drink.name) return;
                 
@@ -678,6 +677,7 @@
                             productMapping[ingName] = { seasonDrinks: new Set(), mainDrinks: new Set() };
                         }
                         
+                        // Если напиток сезонный — в сезон. Если нет — в основу.
                         if (isTargetSeason) {
                             productMapping[ingName].seasonDrinks.add(drink.name);
                         } else {
@@ -687,21 +687,20 @@
                 });
             });
 
-            // Обновляем существующие записи или создаем новые в справочнике стоп-листа
+            // Обновляем справочник стоп-листа
             for (let prodName in productMapping) {
                 let seasonStr = Array.from(productMapping[prodName].seasonDrinks).join(", ");
                 let mainStr = Array.from(productMapping[prodName].mainDrinks).join(", ");
                 
-                // Ищем позицию в текущем справочнике стоп-листа по совпадению имени
                 let existingKey = Object.keys(updatedStoplist).find(k => updatedStoplist[k] && updatedStoplist[k].name === prodName);
                 
                 if (existingKey) {
                     updatedStoplist[existingKey].sez = seasonStr;
                     updatedStoplist[existingKey].main = mainStr;
                 } else {
-                    // Если продукта нет в справочнике стоп-листа, добавляем автоматически в условную категорию
                     let newId = "stop_auto_" + Date.now() + Math.floor(Math.random() * 1000);
                     updatedStoplist[newId] = {
+                        globalCat: "Основное меню", // Для новых авто-позиций
                         cat: "Автоматические",
                         name: prodName,
                         sez: seasonStr,
@@ -710,7 +709,6 @@
                 }
             }
 
-            // Записываем обновленный справочник обратно на Firebase
             await fetch(`${FB_URL}/catalogs/stoplist.json`, { method: 'PUT', body: JSON.stringify(updatedStoplist) });
             currentCatalog = updatedStoplist;
             
@@ -722,6 +720,7 @@
             alert("❌ Ошибка при синхронизации: " + e.message);
         }
     }
+    
     async function handleFileUpload(e, itemId, type) {
         let file = e.target.files[0];
         if(!file) return;
@@ -878,11 +877,14 @@
             }
             else if (type === 'catalog_stoplist') {
                 currentPath = "catalogs/stoplist";
-                let res = await fetch(`${FB_URL}/${currentPath}.json`);
+                let [res, setRes] = await Promise.all([fetch(`${FB_URL}/${currentPath}.json`), fetch(`${FB_URL}/settings.json`)]);
                 if (currentTabType !== fetchId) return;
                 currentCatalog = await res.json() || {};
+                appSettings = await setRes.json() || {};
+                if (!appSettings.hidden_categories_stoplist) appSettings.hidden_categories_stoplist = {};
                 renderCatalogStoplist();
             }
+    
             else if (type === 'stats') {
                 let resOrders = await fetch(`${FB_URL}/orders.json`);
                 if (currentTabType !== fetchId) return;
@@ -3653,27 +3655,50 @@ function renderGraphsTab() {
 
     function renderCatalogStoplist() {
         const box = document.getElementById('content');
+        let globalCats = ["Основное меню"];
+        Object.values(currentCatalog).forEach(i => {
+            if(i.globalCat && !globalCats.includes(i.globalCat) && !i.globalCat.includes("!!!")) globalCats.push(i.globalCat);
+        });
         let subCats = [...new Set(Object.values(currentCatalog).map(i => i.cat).filter(c => c && !c.includes("!!!")))];
         
         let isActionsOpen = expandedDivs.has('cat-stop-actions');
         let html = `
         <h3 style="margin-top:0; margin-bottom:15px; font-size:24px; color:#D50000;">🛑 Справочник Стоп-листа</h3>
         <div class="cat-group-header" style="padding: 12px 15px; border-radius: 12px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.05);" onclick="toggleCatElements('cat-stop-actions', 'arrow_catstop_actions')">
-            <span style="font-size:16px; color:#D50000; font-weight:900;">⚡ Действия</span>
+            <span style="font-size:16px; color:#D50000; font-weight:900;">⚡ Действия и Настройки</span>
             <span id="arrow_catstop_actions">${isActionsOpen ? '▲' : '▼'}</span>
         </div>
-        <div class="cat-stop-actions action-container" style="display: ${isActionsOpen ? 'flex' : 'none'}; gap: 10px; flex-wrap: wrap; margin-bottom: 20px;">
-            <button class="btn-add" style="flex:1 1 auto; background: linear-gradient(135deg, #FF5252 0%, #D32F2F 100%);" onclick="addItemStoplist()">➕ Добавить позицию</button>
-            <button class="btn-add" style="flex:1 1 auto; background: linear-gradient(135deg, #00BCD4 0%, #0097A7 100%);" onclick="syncStoplistWithMenu()">🔄 Синхр. с Тех Картами</button>
-            <button class="btn-save" style="flex:1 1 auto; margin:0; padding:12px 18px;" onclick="saveCatalog(this)">💾 Сохранить в базу</button>
-        </div>
-        <div style="overflow-x:auto;"><table style="min-width:1000px;">
-            <tr><th style="width:200px;">Категория</th><th style="width:300px;">Продукт / Ингредиент (Из Закупки)</th><th style="width:200px;">Отключает (Сезонное)</th><th style="width:200px;">Отключает (Основное)</th><th style="width:80px; text-align:center;">Удалить</th></tr>`;
+        <div class="cat-stop-actions action-container sticky-action-panel action-panel-dropdown" style="display: ${isActionsOpen ? 'flex' : 'none'}; flex-direction: column; margin-bottom: 20px;">
+            <div style="display:flex; gap:10px; flex-wrap:wrap; width:100%;">
+                <button class="btn-add" style="flex:1 1 auto; background: linear-gradient(135deg, #FF5252 0%, #D32F2F 100%);" onclick="addItemStoplist()">➕ Добавить позицию</button>
+                <button class="btn-add" style="flex:1 1 auto; background: linear-gradient(135deg, #00BCD4 0%, #0097A7 100%);" onclick="syncStoplistWithMenu()">🔄 Синхр. с Тех Картами</button>
+                <button class="btn-save" style="flex:1 1 auto; margin:0; padding:12px 18px;" onclick="saveCatalog(this)">💾 Сохранить в базу</button>
+            </div>
+            
+            <div class="settings-panel" style="width:100%; margin-bottom:0; margin-top:5px; box-sizing:border-box;">
+                <h4 style="margin-top:0; margin-bottom:0; font-size:16px; color:#d32f2f; cursor:pointer; display:flex; justify-content:space-between; align-items:center;" onclick="toggleCatElements('stop-settings-content', 'arrow_stop_settings')">
+                    <span>⚙️ Скрывать категории в приложении</span><span id="arrow_stop_settings">${expandedDivs.has('stop-settings-content') ? '▲' : '▼'}</span>
+                </h4>
+                <div class="stop-settings-content action-container" style="display:${expandedDivs.has('stop-settings-content') ? 'flex' : 'none'}; flex-wrap:wrap; gap:15px; margin-top:15px; margin-bottom:0; position:static;">`;
+        
+        globalCats.forEach(gc => {
+            if(gc.includes("!!!")) return; 
+            html += `<label class="toggle-label" style="font-size:15px;"><input type="checkbox" onchange="toggleHiddenCategory('${gc}', this.checked, 'stoplist')" ${appSettings.hidden_categories_stoplist && appSettings.hidden_categories_stoplist[gc] ? 'checked' : ''}> Скрыть "${gc}"</label>`;
+        });
+        
+        html += `</div></div></div>`;
+
+        html += `<div style="overflow-x:auto;"><table style="min-width:1100px;">
+            <tr><th style="width:180px;">Глоб. Категория</th><th style="width:180px;">Категория</th><th style="width:250px;">Продукт (Из Закупки)</th><th style="width:200px;">Отключает (Сезон)</th><th style="width:200px;">Отключает (Осн)</th><th style="width:80px; text-align:center;">Удалить</th></tr>`;
             
         let grouped = {};
         Object.keys(currentCatalog).forEach(k => {
-            let item = currentCatalog[k]; let sc = item.cat || "Прочее";
-            if (!grouped[sc]) grouped[sc] = []; grouped[sc].push({k: k, item: item});
+            let item = currentCatalog[k]; 
+            let gc = item.globalCat || "Основное меню"; 
+            let sc = item.cat || "Прочее";
+            if (!grouped[gc]) grouped[gc] = {}; 
+            if (!grouped[gc][sc]) grouped[gc][sc] = [];
+            grouped[gc][sc].push({k: k, item: item});
         });
         
         let allPurchaseItems = [];
@@ -3683,27 +3708,43 @@ function renderGraphsTab() {
         }
         let optionsHtml = allPurchaseItems.map(name => `<option value="${name.replace(/"/g, '&quot;')}">${name}</option>`).join("");
         
-        Object.keys(grouped).sort((a,b) => { if(a.includes("!!!")) return -1; if(b.includes("!!!")) return 1; return a.localeCompare(b); }).forEach(sc => {
-            let safeSc = getSafeId(sc); let displaySc = sc.replace("!!! НОВОЕ", "Новая добавленная позиция"); 
-            let isScOpen = sc.includes("!!!") || expandedDivs.has(`stop_${safeSc}`);
-            let displayStyle = isScOpen ? "table-row" : "none";
+        Object.keys(grouped).sort((a,b) => { if(a.includes("!!!")) return -1; if(b.includes("!!!")) return 1; return a.localeCompare(b); }).forEach(gc => {
+            let safeGc = getSafeId("stop_" + gc); 
+            let displayGc = gc.replace("!!! НОВОЕ", "Новая добавленная позиция");
+            let isGcOpen = gc.includes("!!!") || expandedDivs.has(`lvl2_stopsub_${safeGc}`);
 
-            html += `<tr class="cat-group-header" onclick="toggleCatElements('stop_${safeSc}', 'arrow_stop_${safeSc}')"><td colspan="5" style="padding:15px; background:#d1c4e9; font-size:18px;">📂 <b>${displaySc}</b> <span id="arrow_stop_${safeSc}" style="float:right;">${isScOpen ? '▲' : '▼'}</span></td></tr>`;
+            html += `<tr class="cat-group-header" onclick="toggleLvl1('stopsub_${safeGc}')"><td colspan="6" style="padding:18px; background:#d1c4e9; font-size:20px;">🌍 <b>${displayGc}</b> <span style="float:right;">▼</span></td></tr>`;
             
-            grouped[sc].sort((a,b) => (a.item.name||'').localeCompare(b.item.name||'')).forEach(data => {
-                let k = data.k; let item = data.item;
+            Object.keys(grouped[gc]).sort((a,b) => { if(a.includes("!!!")) return -1; if(b.includes("!!!")) return 1; return a.localeCompare(b); }).forEach(sc => {
+                let safeSc = getSafeId("stop_" + gc + "_" + sc); 
+                let displaySc = sc.replace("!!! НОВОЕ", "Заполните данные"); 
+                let displayStyleL2 = isGcOpen ? "table-row" : "none";
+                let isScOpen = gc.includes("!!!") || expandedDivs.has(`stopitem_${safeSc}`);
+
+                html += `<tr class="cat-group-header lvl2_stopsub_${safeGc}" style="display:${displayStyleL2};" onclick="toggleCatElements('stopitem_${safeSc}', 'arrow_stopitem_${safeSc}')"><td colspan="6" style="padding:15px; padding-left:30px; font-size:18px;">📂 ${displaySc} <span id="arrow_stopitem_${safeSc}" style="float:right;">${isScOpen ? '▲' : '▼'}</span></td></tr>`;
                 
-                let catOptions = `<option value="${item.cat}">${(item.cat || "Прочее").replace("!!! НОВОЕ", "Выберите...")}</option>`;
-                subCats.forEach(c => { if(c !== item.cat) catOptions += `<option value="${c}">${c}</option>`; });
-                catOptions += `<option value="НОВАЯ КАТЕГОРИЯ">-- Создать --</option>`;
-                
-                html += `<tr class="chk-row stop_${safeSc}" style="display:${displayStyle};">
-                    <td><select onchange="updateVal('${k}','cat',this.value)" style="width:100%; box-sizing:border-box;">${catOptions}</select></td>
-                    <td><select style="font-weight:bold; color:#311b92; width:100%; box-sizing:border-box;" onchange="updateVal('${k}','name',this.value)"><option value="${item.name || ''}">${item.name || '--- Выберите из закупки ---'}</option>${optionsHtml}</select></td>
-                    <td><input type="text" placeholder="Укажите напитки..." value="${item.sez || ''}" style="width:100%; box-sizing:border-box;" onchange="updateVal('${k}','sez',this.value)"></td>
-                    <td><input type="text" placeholder="Укажите напитки..." value="${item.main || ''}" style="width:100%; box-sizing:border-box;" onchange="updateVal('${k}','main',this.value)"></td>
-                    <td style="text-align:center;"><button class="btn-del" onclick="deleteItem('${k}')">🗑</button></td>
-                </tr>`;
+                let displayStyleL3 = (isGcOpen && isScOpen) ? "table-row" : "none";
+
+                grouped[gc][sc].sort((a,b) => (a.item.name||'').localeCompare(b.item.name||'')).forEach(data => {
+                    let k = data.k; let item = data.item;
+                    
+                    let gcatOptions = `<option value="${item.globalCat || 'Основное меню'}">${(item.globalCat || 'Основное меню').replace("!!! НОВОЕ", "Выберите...")}</option>`;
+                    globalCats.forEach(c => { if(c !== (item.globalCat || 'Основное меню')) gcatOptions += `<option value="${c}">${c}</option>`; });
+                    gcatOptions += `<option value="НОВАЯ ГЛОБАЛЬНАЯ">-- Создать --</option>`;
+                    
+                    let catOptions = `<option value="${item.cat}">${(item.cat || "Прочее").replace("!!! НОВОЕ", "Выберите...")}</option>`;
+                    subCats.forEach(c => { if(c !== item.cat) catOptions += `<option value="${c}">${c}</option>`; });
+                    catOptions += `<option value="НОВАЯ КАТЕГОРИЯ">-- Создать --</option>`;
+                    
+                    html += `<tr class="chk-row stopitem_${safeSc} lvl3_of_stopsub_${safeGc}" style="display:${displayStyleL3};">
+                        <td><select onchange="updateVal('${k}','globalCat',this.value)" style="font-size:14px; width:100%; box-sizing:border-box;">${gcatOptions}</select></td>
+                        <td><select onchange="updateVal('${k}','cat',this.value)" style="font-size:14px; width:100%; box-sizing:border-box;">${catOptions}</select></td>
+                        <td><select style="font-weight:bold; color:#311b92; width:100%; box-sizing:border-box; font-size:15px;" onchange="updateVal('${k}','name',this.value)"><option value="${item.name || ''}">${item.name || '--- Выберите из закупки ---'}</option>${optionsHtml}</select></td>
+                        <td><input type="text" placeholder="Укажите напитки..." value="${item.sez || ''}" style="width:100%; box-sizing:border-box; font-size:14px;" onchange="updateVal('${k}','sez',this.value)"></td>
+                        <td><input type="text" placeholder="Укажите напитки..." value="${item.main || ''}" style="width:100%; box-sizing:border-box; font-size:14px;" onchange="updateVal('${k}','main',this.value)"></td>
+                        <td style="text-align:center;"><button class="btn-del" onclick="deleteItem('${k}')">🗑</button></td>
+                    </tr>`;
+                });
             });
         });
         box.innerHTML = html + "</table></div>";
@@ -4240,7 +4281,7 @@ async function exportGraphsToExcel() {
 
     function addItemStoplist() { 
         let id = "stop_" + Date.now(); 
-        currentCatalog[id] = { cat: "Новая", name: "", sez: "", main: "" }; 
+        currentCatalog[id] = { globalCat: "Основное меню", cat: "Новая", name: "", sez: "", main: "" }; 
         renderCatalogStoplist();
     }
     
@@ -4267,7 +4308,7 @@ async function exportGraphsToExcel() {
     }
 
     async function toggleHiddenCategory(cat, isHidden, type) {
-        let key = type === 'checklist' ? 'hidden_categories_checklist' : 'hidden_categories_order';
+        let key = type === 'checklist' ? 'hidden_categories_checklist' : (type === 'stoplist' ? 'hidden_categories_stoplist' : 'hidden_categories_order');
         if (!appSettings[key]) appSettings[key] = {};
         appSettings[key][cat] = isHidden;
         await fetch(`${FB_URL}/settings/${key}.json`, { method: 'PUT', body: JSON.stringify(appSettings[key]) });

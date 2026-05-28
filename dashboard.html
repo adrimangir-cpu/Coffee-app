@@ -2100,7 +2100,6 @@ function renderGraphsTab() {
                 }
             }
             window.graphDraft = draft;
-            // Сохраняем "чистый" вариант для сравнения
             originalGraphDraft = JSON.parse(JSON.stringify(draft)); 
         }
         let monthData = window.graphDraft;
@@ -2138,18 +2137,17 @@ function renderGraphsTab() {
         let daysInMonth = new Date(target.year, target.month + 1, 0).getDate();
         let isActionsOpen = expandedDivs.has('graph-action-buttons');
         
-        // ВЫПАДАЮЩЕЕ МЕНЮ И ЗАКРЕПЛЕНИЕ ПАНЕЛИ
         setupUniversalActionBar(`
             <div class="cat-group-header" style="padding: 10px 15px; border-radius: 12px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 8px rgba(0,0,0,0.05);" onclick="toggleCatElements('graph-action-buttons', 'arrow_graph_actions')">
                 <span style="font-size:16px; color:#311B92; font-weight:900;">⚡ Действия с Графиком</span>
                 <span id="arrow_graph_actions">${isActionsOpen ? '▲' : '▼'}</span>
             </div>
-            <div class="graph-action-buttons action-container sticky-action-panel action-panel-dropdown" style="display: ${isActionsOpen ? 'flex' : 'none'}; gap: 10px; flex-wrap: wrap;">
+            <div class="graph-action-buttons action-container action-panel-dropdown" style="display: ${isActionsOpen ? 'flex' : 'none'}; gap: 10px; flex-wrap: wrap;">
                 <button class="btn-save" onclick="saveGraphsEdits()" id="btn-save-graphs" style="flex: 1 1 auto;">💾 Сохранить график</button>
                 <button class="btn-add" style="background: #E53935; flex: 1 1 auto;" onclick="toggleGraphCompare()">${isGraphCompareMode ? '❌ Скрыть изменения' : '🔍 Сравнить с черновиками'}</button>
                 <button class="btn-save" style="background: linear-gradient(135deg, #0288D1 0%, #01579B 100%); flex: 1 1 auto;" onclick="exportGraphsToExcel()">📊 Экспорт в Excel</button>
                 <button class="btn-add" style="background: #9b59b6; flex: 1 1 auto;" onclick="addUserToGraph()">➕ Добавить сотрудника</button>
-                <div style="font-size:13px; color:#555; width:100%; margin-top:5px;">💡 Вводите <b>МЭИ_У</b> (утро), <b>НК_В</b> (вечер), <b>В</b> (Вертолетчики). Выходной: <b>ВЫХ</b>, Любая: <b>ЛЮБ</b>.</div>
+                <div style="font-size:13px; color:#555; width:100%; margin-top:5px;">💡 Вводите <b>МЭИ_у</b> (утро), <b>НК_в</b> (вечер), <b>В</b> (Вертолетчики). Выходной: <b>ВЫХ</b>, Любая: <b>ЛЮБ</b>.</div>
             </div>
         `, isActionsOpen, 'arrow_graph_actions');
 
@@ -2178,7 +2176,7 @@ function renderGraphsTab() {
         });
         html += `       <th class="meta-cell" style="border:1px solid #ccc; padding:8px; text-align:center;">День</th>
                         <th class="meta-cell" style="border:1px solid #ccc; padding:8px; text-align:center;">Дата</th>
-                        <th class="check-cell" style="border:1px solid #ccc; padding:8px; text-align:left; color:#e65100;">Проверка 9 смен</th>
+                        <th class="check-cell" style="border:1px solid #ccc; padding:8px; text-align:left; color:#e65100;">Проверка смен</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -2208,7 +2206,6 @@ function renderGraphsTab() {
                 let shiftType = cellData.shift || "CLEAR";
                 let vUpper = val.trim().toUpperCase();
                 
-                // Рендер ячейки
                 let cellBg = "transparent";
                 let cellColor = "#333";
                 let compareMark = "";
@@ -2216,7 +2213,6 @@ function renderGraphsTab() {
                 if (isGraphCompareMode && originalGraphDraft && originalGraphDraft[user] && originalGraphDraft[user][d]) {
                     let origVal = (originalGraphDraft[user][d].text || "").toUpperCase();
                     if (origVal !== vUpper && !(origVal === "" && vUpper === "")) {
-                        // Убедись, что тут есть class="compare-mark" !
                         compareMark = `<div class="compare-mark" style="position:absolute; top:2px; right:2px; z-index:5; font-size:10px; background:#D32F2F; color:white; border-radius:4px; padding:2px 4px; box-shadow:0 1px 3px rgba(0,0,0,0.3); pointer-events:none;">БЫЛО: ${origVal||'ПУСТО'}</div>`;
                     }
                 }
@@ -2244,25 +2240,36 @@ function renderGraphsTab() {
             });
             
             let missing = [];
+            let duplicates = [];
+            
             expectedShops.forEach(s => {
-                let hasFull = dayShifts.includes(s);
-                let hasMorn = dayShifts.some(shift => shift === s + "_У" || shift === s + "У" || shift === s + " У");
-                let hasEve = dayShifts.some(shift => shift === s + "_В" || shift === s + "В" || shift === s + " В");
+                let sFull = dayShifts.filter(sh => sh === s).length;
+                let sMorn = dayShifts.filter(sh => sh === s + "_У").length;
+                let sEve  = dayShifts.filter(sh => sh === s + "_В").length;
                 
-                if (!hasFull) {
-                    if (!hasMorn && !hasEve) missing.push(s);
-                    else if (hasMorn && !hasEve) missing.push(s + "_В");
-                    else if (!hasMorn && hasEve) missing.push(s + "_У");
+                if (sFull === 0) {
+                    if (sMorn === 0 && sEve === 0) missing.push(s);
+                    else if (sMorn >= 1 && sEve === 0) missing.push(s + "_В");
+                    else if (sMorn === 0 && sEve >= 1) missing.push(s + "_У");
                 }
+                
+                if (sFull > 1) duplicates.push(s);
+                if (sMorn > 1) duplicates.push(s + "_У");
+                if (sEve > 1)  duplicates.push(s + "_В");
+                if (sFull >= 1 && (sMorn >= 1 || sEve >= 1)) duplicates.push(s + " (накладка)");
             });
             
-            let statusHtml = missing.length === 0 
-                ? `<span style="color:#2e7d32; font-weight:bold; background:#e8f5e9; padding:2px 6px; border-radius:4px;">✅ Все закрыты</span>`
-                : `<span style="color:#c62828; font-weight:bold; font-size:13px;">❌ Нет: ${missing.join(', ')}</span>`;
+            let statusHtml = "";
+            if (missing.length === 0 && duplicates.length === 0) {
+                statusHtml = `<span style="color:#2e7d32; font-weight:bold; background:#e8f5e9; padding:2px 6px; border-radius:4px;">✅ Все закрыты</span>`;
+            } else {
+                if (missing.length > 0) statusHtml += `<div style="color:#c62828; font-weight:bold; font-size:12px; line-height:1.2; margin-bottom:4px;">❌ Нет: ${missing.join(', ')}</div>`;
+                if (duplicates.length > 0) statusHtml += `<div style="color:#e65100; font-weight:bold; font-size:12px; line-height:1.2;">⚠️ Повтор: ${duplicates.join(', ')}</div>`;
+            }
             
             rowHtml += `<td class="meta-cell" style="border:1px solid #ccc; padding:4px; text-align:center; font-weight:bold; text-transform:uppercase; background-color:${isWeekend?'#ffcc80':'#f5f5f5'}; color:${isWeekend?'#d84315':'#555'};">${dayNames[dayOfWeek]}</td>
                         <td class="meta-cell" style="border:1px solid #ccc; padding:4px; text-align:center; font-weight:bold; background-color:${isWeekend?'#ffcc80':'#f5f5f5'}; color:${isWeekend?'#d84315':'#333'};">${d}</td>
-                        <td class="check-cell" style="border:1px solid #ccc; padding:8px; font-size:13px;">${statusHtml}</td>
+                        <td class="check-cell" style="border:1px solid #ccc; padding:8px; font-size:13px; vertical-align:middle;">${statusHtml}</td>
                     </tr>`;
             html += rowHtml;
         }
@@ -2342,6 +2349,9 @@ function renderGraphsTab() {
         
         if (isGraphCompareMode && originalGraphDraft && originalGraphDraft[user] && originalGraphDraft[user][day]) {
             let origVal = (originalGraphDraft[user][day].text || "").toUpperCase();
+            if (origVal === "OFF") origVal = "ВЫХ";
+            if (origVal === "ANY_SHOP") origVal = "ЛЮБ";
+
             if (origVal !== formattedVal && !(origVal === "" && formattedVal === "")) {
                 let mark = document.createElement('div');
                 mark.className = 'compare-mark';
@@ -2351,7 +2361,7 @@ function renderGraphsTab() {
             }
         }
 
-        // --- ТОЧНАЯ ПРОВЕРКА 9 СМЕН ---
+        // --- ТОЧНАЯ ПРОВЕРКА 9 СМЕН И ПОВТОРОВ ДЛЯ СТРОКИ ---
         let trEl = tdEl.parentElement;
         let allInputs = trEl.querySelectorAll('.graph-input');
         let dayShifts = [];
@@ -2365,26 +2375,35 @@ function renderGraphsTab() {
         
         const expectedShops = ['Б', 'Г', 'В', 'Л', 'НК', 'НК2', 'СП', 'МЭИ', 'ЛЯ'];
         let missing = [];
+        let duplicates = [];
         
         expectedShops.forEach(s => {
-            let hasFull = dayShifts.includes(s); 
-            let hasMorn = dayShifts.includes(s + "_У");
-            let hasEve = dayShifts.includes(s + "_В");
+            let sFull = dayShifts.filter(sh => sh === s).length; 
+            let sMorn = dayShifts.filter(sh => sh === s + "_У").length;
+            let sEve  = dayShifts.filter(sh => sh === s + "_В").length;
             
-            if (!hasFull) {
-                if (!hasMorn && !hasEve) missing.push(s);
-                else if (hasMorn && !hasEve) missing.push(s + "_В");
-                else if (!hasMorn && hasEve) missing.push(s + "_У");
+            if (sFull === 0) {
+                if (sMorn === 0 && sEve === 0) missing.push(s);
+                else if (sMorn >= 1 && sEve === 0) missing.push(s + "_В");
+                else if (sMorn === 0 && sEve >= 1) missing.push(s + "_У");
             }
+            
+            if (sFull > 1) duplicates.push(s);
+            if (sMorn > 1) duplicates.push(s + "_У");
+            if (sEve > 1)  duplicates.push(s + "_В");
+            if (sFull >= 1 && (sMorn >= 1 || sEve >= 1)) duplicates.push(s + " (накладка)");
         });
         
         let checkCell = trEl.querySelector('.check-cell');
         if (checkCell) {
-            if (missing.length === 0) {
-                checkCell.innerHTML = `<span style="color:#2e7d32; font-weight:bold; background:#e8f5e9; padding:2px 6px; border-radius:4px;">✅ Все закрыты</span>`;
+            let statusHtml = "";
+            if (missing.length === 0 && duplicates.length === 0) {
+                statusHtml = `<span style="color:#2e7d32; font-weight:bold; background:#e8f5e9; padding:2px 6px; border-radius:4px;">✅ Все закрыты</span>`;
             } else {
-                checkCell.innerHTML = `<span style="color:#c62828; font-weight:bold; font-size:13px;">❌ Нет: ${missing.join(', ')}</span>`;
+                if (missing.length > 0) statusHtml += `<div style="color:#c62828; font-weight:bold; font-size:12px; line-height:1.2; margin-bottom:4px;">❌ Нет: ${missing.join(', ')}</div>`;
+                if (duplicates.length > 0) statusHtml += `<div style="color:#e65100; font-weight:bold; font-size:12px; line-height:1.2;">⚠️ Повтор: ${duplicates.join(', ')}</div>`;
             }
+            checkCell.innerHTML = statusHtml;
         }
     }
 

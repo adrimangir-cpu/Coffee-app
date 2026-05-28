@@ -1310,9 +1310,12 @@
         try {
             let snap = await database.ref("settings").once("value");
             let s = snap.val() || {};
-            // Читаем новые раздельные списки (если их нет, берем старый общий как резерв)
+            
+            // Читаем все три списка скрытых категорий
             state.appSettings.hidden_categories_order = s.hidden_categories_order || s.hidden_categories || {};
             state.appSettings.hidden_categories_checklist = s.hidden_categories_checklist || s.hidden_categories || {};
+            state.appSettings.hidden_categories_stoplist = s.hidden_categories_stoplist || s.hidden_categories || {}; // ДОБАВИЛИ СТОП-ЛИСТ
+            
             state.appSettings.new_shop_order_active = s.new_shop_order_active || false;
             
             if (state.appSettings.new_shop_order_active) {
@@ -1359,10 +1362,13 @@
           const catalogSnap = await database.ref(path).once("value");
           state.productCatalog = catalogSnap.val() || {};
 
-          // Определяем, какой список скрытых категорий использовать
-          let hiddenList = (mode === 'checklist') ? state.appSettings.hidden_categories_checklist : state.appSettings.hidden_categories_order;
+          // ИСПРАВЛЕНИЕ: Выбираем правильный список скрытых категорий в зависимости от режима
+          let hiddenList = {};
+          if (mode === 'checklist') hiddenList = state.appSettings.hidden_categories_checklist;
+          else if (mode === 'stoplist_fill') hiddenList = state.appSettings.hidden_categories_stoplist;
+          else hiddenList = state.appSettings.hidden_categories_order;
 
-          // Удаляем скрытые категории в зависимости от режима
+          // Удаляем скрытые категории для всех режимов
           for(let k in state.productCatalog) {
               let item = state.productCatalog[k];
               if(item && item.globalCat && hiddenList[item.globalCat]) {

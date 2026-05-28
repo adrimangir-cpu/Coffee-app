@@ -458,8 +458,11 @@
     let isMpEditMode = false;
     let mpDeletions = new Set();
     let mpViewMonth = 'current';
-    let graphViewMonth = 'next'; // ПРАВКА 2: Хранение выбранного периода графиков ('current' или 'next')
 
+    let graphViewMonth = 'next'; // По умолчанию показываем следующий месяц
+    let isGraphCompareMode = false;
+    let originalGraphDraft = null;
+    
     let expandedDivs = new Set();
     const shopListAll = ["Бояринова", "Гагарина", "Вертолетчиков", "Липчанского", "Новокосино", "Новокосино 2", "Старое Павлино", "Красноказарменная", "Ухтомского ополчения"];
     let draggedRecipeItem = null;
@@ -617,7 +620,14 @@
 
     function changeGraphMonth(targetMonth) {
         graphViewMonth = targetMonth;
-        window.graphDraft = null; // сбрасываем кэш черновика для загрузки верных данных
+        window.graphDraft = null; 
+        originalGraphDraft = null;
+        isGraphCompareMode = false;
+        renderGraphsTab();
+    }
+    
+    function toggleGraphCompare() {
+        isGraphCompareMode = !isGraphCompareMode;
         renderGraphsTab();
     }
 
@@ -783,12 +793,20 @@
                 cachedData.orders = ordersObj;
                 renderMenuTab();
             }
+
             else if (type === 'graphs') {
                 let resGraphs = await fetch(`${FB_URL}/schedules.json`);
                 if (currentTabType !== fetchId) return;
                 cachedData.schedules = await resGraphs.json() || {};
+                
+                // При загрузке вкладки сбрасываем черновик и выключаем режим сравнения
+                window.graphDraft = null; 
+                originalGraphDraft = null;
+                isGraphCompareMode = false;
+                
                 renderGraphsTab();
             }
+        
             else if (type === 'orders') {
                 isSvodEditMode = false; svodDeletions = []; tempSvodQty = {}; tempSvodStatus = {}; tempSvodVendor = {}; tempSvodShop = {}; tempSvodNewRows = [];
                 let resOrders = await fetch(`${FB_URL}/orders.json`);
@@ -2049,7 +2067,7 @@
         }
     }
 
-    function renderGraphsTab() {
+function renderGraphsTab() {
         const box = document.getElementById('content');
         let schedules = cachedData.schedules || {};
         
@@ -2070,6 +2088,8 @@
                 }
             }
             window.graphDraft = draft;
+            // Сохраняем "чистый" вариант для сравнения
+            originalGraphDraft = JSON.parse(JSON.stringify(draft)); 
         }
         let monthData = window.graphDraft;
         
@@ -2104,17 +2124,22 @@
         }
         
         let daysInMonth = new Date(target.year, target.month + 1, 0).getDate();
+        let isActionsOpen = expandedDivs.has('graph-action-buttons');
         
-        let actionBar = document.getElementById('dynamic-action-bar');
-        actionBar.innerHTML = `
-            <div class="action-container" style="margin-bottom:0; display: flex; gap: 10px; align-items:center;">
-                <button class="btn-save" onclick="saveGraphsEdits()" id="btn-save-graphs">💾 Сохранить графики</button>
-                <button class="btn-save" style="background: linear-gradient(135deg, #0288D1 0%, #01579B 100%);" onclick="exportGraphsToExcel()">📊 Экспорт в Excel</button>
-                <button class="btn-add" style="background: #9b59b6;" onclick="addUserToGraph()">➕ Добавить сотрудника</button>
-                <span style="font-size:13px; color:#555; margin-left:15px; flex:1;">💡 Вводите <b>МЭИ_у</b> (утро), <b>НК_в</b> (вечер), <b>Г</b> (полная смена). Выходной: <b>ВЫХ</b>, Любая: <b>ЛЮБ</b>.</span>
+        // ВЫПАДАЮЩЕЕ МЕНЮ И ЗАКРЕПЛЕНИЕ ПАНЕЛИ
+        setupUniversalActionBar(`
+            <div class="cat-group-header" style="padding: 10px 15px; border-radius: 12px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 8px rgba(0,0,0,0.05);" onclick="toggleCatElements('graph-action-buttons', 'arrow_graph_actions')">
+                <span style="font-size:16px; color:#311B92; font-weight:900;">⚡ Действия с Графиком</span>
+                <span id="arrow_graph_actions">${isActionsOpen ? '▲' : '▼'}</span>
             </div>
-        `;
-        actionBar.style.display = 'block';
+            <div class="graph-action-buttons action-container sticky-action-panel action-panel-dropdown" style="display: ${isActionsOpen ? 'flex' : 'none'}; gap: 10px; flex-wrap: wrap;">
+                <button class="btn-save" onclick="saveGraphsEdits()" id="btn-save-graphs" style="flex: 1 1 auto;">💾 Сохранить график</button>
+                <button class="btn-add" style="background: #E53935; flex: 1 1 auto;" onclick="toggleGraphCompare()">${isGraphCompareMode ? '❌ Скрыть изменения' : '🔍 Сравнить с черновиками'}</button>
+                <button class="btn-save" style="background: linear-gradient(135deg, #0288D1 0%, #01579B 100%); flex: 1 1 auto;" onclick="exportGraphsToExcel()">📊 Экспорт в Excel</button>
+                <button class="btn-add" style="background: #9b59b6; flex: 1 1 auto;" onclick="addUserToGraph()">➕ Добавить сотрудника</button>
+                <div style="font-size:13px; color:#555; width:100%; margin-top:5px;">💡 Вводите <b>МЭИ_у</b> (утро), <b>НК_в</b> (вечер), <b>В</b> (Вертолетчики). Выходной: <b>ВЫХ</b>, Любая: <b>ЛЮБ</b>.</div>
+            </div>
+        `, isActionsOpen, 'arrow_graph_actions');
 
         let monthNames = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
 
@@ -2169,42 +2194,38 @@
                 
                 let val = cellData.text || "";
                 let shiftType = cellData.shift || "CLEAR";
-                
                 let vUpper = val.trim().toUpperCase();
-                if (shiftType === "OFF" || vUpper === "ВЫХ" || vUpper === "OFF" || vUpper === "ОТП") {
-                    shiftType = "OFF";
-                    val = "";
-                    window.graphDraft[user][d] = { text: "", shift: "OFF" };
-                } else if (shiftType === "ANY_SHOP" || vUpper === "ЛЮБ" || vUpper === "ЛЮБАЯ") {
-                    shiftType = "ANY_SHOP";
-                    val = ""; // Очищаем текст
-                    window.graphDraft[user][d] = { text: "", shift: "ANY_SHOP" };
+                
+                // Рендер ячейки
+                let cellBg = "transparent";
+                let cellColor = "#333";
+                let compareMark = "";
+
+                if (isGraphCompareMode && originalGraphDraft && originalGraphDraft[user] && originalGraphDraft[user][d]) {
+                    let origVal = (originalGraphDraft[user][d].text || "").toUpperCase();
+                    if (origVal !== vUpper && !(origVal === "" && vUpper === "")) {
+                        compareMark = `<div style="position:absolute; top:2px; right:2px; z-index:5; font-size:10px; background:#D32F2F; color:white; border-radius:4px; padding:2px 4px; box-shadow:0 1px 3px rgba(0,0,0,0.3); pointer-events:none;">БЫЛО: ${origVal||'ПУСТО'}</div>`;
+                    }
+                }
+                
+                if (shiftType === "OFF") {
+                    cellBg = "#bbdefb"; cellColor = "#0d47a1"; 
+                } else if (shiftType === "ANY_SHOP") {
+                    cellBg = "#c8e6c9"; cellColor = "#1b5e20"; 
+                } else if (shiftType === "MORNING" || vUpper.endsWith("_У") || vUpper.endsWith(" У")) {
+                    cellBg = "#e1bee7"; cellColor = "#4a148c";
+                } else if (shiftType === "EVENING" || vUpper.endsWith("_В") || vUpper.endsWith(" В")) {
+                    cellBg = "#fff9c4"; cellColor = "#f57f17";
+                } else if (val !== "") {
+                    cellBg = "#ffffff"; cellColor = "#333";
                 }
                 
                 if (val !== "" && shiftType !== "OFF" && shiftType !== "ANY_SHOP") {
                     dayShifts.push(val.trim().toUpperCase());
                 }
                 
-                let cellBg = "transparent";
-                let cellColor = "#333";
-                
-                if (shiftType === "OFF") {
-                    cellBg = "#bbdefb"; 
-                } else if (shiftType === "ANY_SHOP") {
-                    cellBg = "#c8e6c9"; 
-                    cellColor = "transparent"; 
-                } else if (shiftType === "MORNING" || vUpper.includes("_У") || vUpper.endsWith("У")) {
-                    cellBg = "#e1bee7"; 
-                    cellColor = "#4a148c";
-                } else if (shiftType === "EVENING" || vUpper.includes("_В") || vUpper.endsWith("В")) {
-                    cellBg = "#fff9c4"; 
-                    cellColor = "#f57f17";
-                } else if (val !== "") {
-                    cellBg = "#ffffff"; 
-                    cellColor = "#333";
-                }
-                
-                rowHtml += `<td class="user-data-cell" style="border:1px solid #ccc; padding:2px; background-color:${cellBg};">
+                rowHtml += `<td class="user-data-cell" style="position:relative; border:1px solid #ccc; padding:2px; background-color:${cellBg};">
+                    ${compareMark}
                     <textarea class="graph-input" rows="2" style="width: 100%; height: 100%; border: none; text-align: center; font-size: 14px; text-transform: uppercase; background: transparent; font-weight: 900; color: ${cellColor}; outline: none; resize: none; overflow: hidden;" onchange="updateGraphCell(this, '${user}', ${d}, this.value)">${val}</textarea>
                 </td>`;
             });
@@ -2253,23 +2274,21 @@
         
         let vUpper = val.trim().toUpperCase();
         
-        if (vUpper.endsWith("УТРО")) {
-            vUpper = vUpper.replace(/\s*УТРО$/, "_У");
-        } else if (vUpper.endsWith("ВЕЧЕР")) {
-            vUpper = vUpper.replace(/\s*ВЕЧЕР$/, "_В");
-        }
+        if (vUpper.endsWith("УТРО")) vUpper = vUpper.replace(/\s*УТРО$/, "_У");
+        else if (vUpper.endsWith("ВЕЧЕР")) vUpper = vUpper.replace(/\s*ВЕЧЕР$/, "_В");
 
         let shift = "CLEAR";
         let formattedVal = vUpper;
         
         if (vUpper === "ВЫХ" || vUpper === "OFF" || vUpper === "ВЫХОДНОЙ" || vUpper === "ОТП") {
             shift = "OFF";
-            formattedVal = ""; 
+            formattedVal = "ВЫХ"; 
         } else if (vUpper === "ЛЮБ" || vUpper === "ЛЮБАЯ" || vUpper === "ANY_SHOP") {
             shift = "ANY_SHOP";
-            formattedVal = ""; // Закрашиваем, без текста
+            formattedVal = "ЛЮБ"; 
         } else if (vUpper !== "") {
             shift = "FULL";
+            // Теперь просто "В" (Вертолетчики) считается FULL сменой, а _В - вечерней
             if (vUpper.endsWith("_У") || vUpper.endsWith(" У")) {
                 let shopStr = vUpper.replace(/\s*У$/, "").replace(/_У$/, "");
                 if(shopStr !== "") formattedVal = shopStr + "_У";
@@ -2284,26 +2303,8 @@
         window.graphDraft[user][day].text = formattedVal;
         window.graphDraft[user][day].shift = shift;
         
-        el.value = formattedVal;
-        let tdEl = el.parentElement;
-        
-        if (shift === "OFF") {
-            tdEl.style.backgroundColor = "#bbdefb";
-        } else if (shift === "ANY_SHOP") {
-            tdEl.style.backgroundColor = "#c8e6c9";
-            el.style.color = "transparent";
-        } else if (shift === "MORNING") {
-            tdEl.style.backgroundColor = "#e1bee7";
-            el.style.color = "#4a148c";
-        } else if (shift === "EVENING") {
-            tdEl.style.backgroundColor = "#fff9c4";
-            el.style.color = "#f57f17";
-        } else if (formattedVal !== "") {
-            tdEl.style.backgroundColor = "#ffffff";
-            el.style.color = "#333";
-        } else {
-            tdEl.style.backgroundColor = "transparent";
-        }
+        // Вызываем рендер заново, чтобы перекрасить ячейку и показать метку Сравнения (если нужно)
+        renderGraphsTab();
     }
 
     function updateGraphUserName(oldName, newName) {

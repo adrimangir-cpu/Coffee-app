@@ -627,6 +627,7 @@
     function updateGraphComment(user, val) {
         if (!window.graphDraft[user]) window.graphDraft[user] = { _pinned: true };
         window.graphDraft[user].comment = val;
+        // Здесь мы больше НЕ вызываем renderGraphsTab(). Текст и так уже в окошке, перегружать интерфейс не нужно!
     }
 
     function changeGraphMonth(targetMonth) {
@@ -2215,7 +2216,8 @@ function renderGraphsTab() {
                 if (isGraphCompareMode && originalGraphDraft && originalGraphDraft[user] && originalGraphDraft[user][d]) {
                     let origVal = (originalGraphDraft[user][d].text || "").toUpperCase();
                     if (origVal !== vUpper && !(origVal === "" && vUpper === "")) {
-                        compareMark = `<div style="position:absolute; top:2px; right:2px; z-index:5; font-size:10px; background:#D32F2F; color:white; border-radius:4px; padding:2px 4px; box-shadow:0 1px 3px rgba(0,0,0,0.3); pointer-events:none;">БЫЛО: ${origVal||'ПУСТО'}</div>`;
+                        // Убедись, что тут есть class="compare-mark" !
+                        compareMark = `<div class="compare-mark" style="position:absolute; top:2px; right:2px; z-index:5; font-size:10px; background:#D32F2F; color:white; border-radius:4px; padding:2px 4px; box-shadow:0 1px 3px rgba(0,0,0,0.3); pointer-events:none;">БЫЛО: ${origVal||'ПУСТО'}</div>`;
                     }
                 }
                 
@@ -2299,7 +2301,6 @@ function renderGraphsTab() {
             formattedVal = "ЛЮБ"; 
         } else if (vUpper !== "") {
             shift = "FULL";
-            // Теперь просто "В" (Вертолетчики) считается FULL сменой, а _В - вечерней
             if (vUpper.endsWith("_У") || vUpper.endsWith(" У")) {
                 let shopStr = vUpper.replace(/\s*У$/, "").replace(/_У$/, "");
                 if(shopStr !== "") formattedVal = shopStr + "_У";
@@ -2314,8 +2315,77 @@ function renderGraphsTab() {
         window.graphDraft[user][day].text = formattedVal;
         window.graphDraft[user][day].shift = shift;
         
-        // Вызываем рендер заново, чтобы перекрасить ячейку и показать метку Сравнения (если нужно)
-        renderGraphsTab();
+        // --- 1. ТОЧЕЧНО ОБНОВЛЯЕМ ЦВЕТ ЯЧЕЙКИ (Без перезагрузки) ---
+        el.value = formattedVal;
+        let tdEl = el.parentElement;
+        
+        let cellBg = "transparent";
+        let cellColor = "#333";
+        
+        if (shift === "OFF") {
+            cellBg = "#bbdefb"; cellColor = "#0d47a1"; 
+        } else if (shift === "ANY_SHOP") {
+            cellBg = "#c8e6c9"; cellColor = "#1b5e20"; 
+        } else if (shift === "MORNING") {
+            cellBg = "#e1bee7"; cellColor = "#4a148c";
+        } else if (shift === "EVENING") {
+            cellBg = "#fff9c4"; cellColor = "#f57f17";
+        } else if (formattedVal !== "") {
+            cellBg = "#ffffff"; cellColor = "#333";
+        }
+        
+        tdEl.style.backgroundColor = cellBg;
+        el.style.color = cellColor;
+
+        // --- 2. ОБНОВЛЯЕМ МЕТКУ СРАВНЕНИЯ (Красный стикер "БЫЛО:") ---
+        let existingMark = tdEl.querySelector('.compare-mark');
+        if (existingMark) existingMark.remove(); // Удаляем старую метку, если была
+        
+        if (isGraphCompareMode && originalGraphDraft && originalGraphDraft[user] && originalGraphDraft[user][day]) {
+            let origVal = (originalGraphDraft[user][day].text || "").toUpperCase();
+            if (origVal !== formattedVal && !(origVal === "" && formattedVal === "")) {
+                let mark = document.createElement('div');
+                mark.className = 'compare-mark';
+                mark.style.cssText = "position:absolute; top:2px; right:2px; z-index:5; font-size:10px; background:#D32F2F; color:white; border-radius:4px; padding:2px 4px; box-shadow:0 1px 3px rgba(0,0,0,0.3); pointer-events:none;";
+                mark.innerText = "БЫЛО: " + (origVal || "ПУСТО");
+                tdEl.appendChild(mark);
+            }
+        }
+
+        // --- 3. ПЕРЕСЧИТЫВАЕМ ОШИБКИ "9 СМЕН" ТОЛЬКО ДЛЯ ЭТОЙ СТРОКИ ---
+        let trEl = tdEl.parentElement;
+        let allInputs = trEl.querySelectorAll('.graph-input');
+        let dayShifts = [];
+        
+        allInputs.forEach(inp => {
+            let v = inp.value.trim().toUpperCase();
+            if (v !== "" && v !== "ВЫХ" && v !== "ЛЮБ") {
+                dayShifts.push(v);
+            }
+        });
+        
+        const expectedShops = ['Б', 'Г', 'В', 'Л', 'НК', 'НК2', 'СП', 'МЭИ', 'ЛЯ'];
+        let missing = [];
+        expectedShops.forEach(s => {
+            let hasFull = dayShifts.includes(s);
+            let hasMorn = dayShifts.some(sh => sh === s + "_У" || sh === s + "У" || sh === s + " У");
+            let hasEve = dayShifts.some(sh => sh === s + "_В" || sh === s + "В" || sh === s + " В");
+            
+            if (!hasFull) {
+                if (!hasMorn && !hasEve) missing.push(s);
+                else if (hasMorn && !hasEve) missing.push(s + "_в");
+                else if (!hasMorn && hasEve) missing.push(s + "_у");
+            }
+        });
+        
+        let checkCell = trEl.querySelector('.check-cell');
+        if (checkCell) {
+            if (missing.length === 0) {
+                checkCell.innerHTML = `<span style="color:#2e7d32; font-weight:bold; background:#e8f5e9; padding:2px 6px; border-radius:4px;">✅ Все закрыты</span>`;
+            } else {
+                checkCell.innerHTML = `<span style="color:#c62828; font-weight:bold; font-size:13px;">❌ Нет: ${missing.join(', ')}</span>`;
+            }
+        }
     }
 
     function updateGraphUserName(oldName, newName) {

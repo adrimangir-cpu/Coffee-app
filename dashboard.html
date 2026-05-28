@@ -2142,7 +2142,7 @@ function renderGraphsTab() {
                 <span style="font-size:16px; color:#311B92; font-weight:900;">⚡ Действия с Графиком</span>
                 <span id="arrow_graph_actions">${isActionsOpen ? '▲' : '▼'}</span>
             </div>
-            <div class="graph-action-buttons action-container action-panel-dropdown" style="display: ${isActionsOpen ? 'flex' : 'none'}; gap: 10px; flex-wrap: wrap;">
+            <div class="graph-action-buttons action-container sticky-action-panel action-panel-dropdown" style="display: ${isActionsOpen ? 'flex' : 'none'}; gap: 10px; flex-wrap: wrap;">
                 <button class="btn-save" onclick="saveGraphsEdits()" id="btn-save-graphs" style="flex: 1 1 auto;">💾 Сохранить график</button>
                 <button class="btn-add" style="background: #E53935; flex: 1 1 auto;" onclick="toggleGraphCompare()">${isGraphCompareMode ? '❌ Скрыть изменения' : '🔍 Сравнить с черновиками'}</button>
                 <button class="btn-save" style="background: linear-gradient(135deg, #0288D1 0%, #01579B 100%); flex: 1 1 auto;" onclick="exportGraphsToExcel()">📊 Экспорт в Excel</button>
@@ -2230,7 +2230,23 @@ function renderGraphsTab() {
                 }
                 
                 if (val !== "" && shiftType !== "OFF" && shiftType !== "ANY_SHOP") {
-                    dayShifts.push(val.trim().toUpperCase());
+                    // Жесткая нормализация, даже если база хранит кривой ввод
+                    let normVal = val.trim().toUpperCase()
+                        .replace(/B/g, 'В').replace(/Y/g, 'У').replace(/E/g, 'Е').replace(/C/g, 'С')
+                        .replace(/K/g, 'К').replace(/M/g, 'М').replace(/H/g, 'Н').replace(/O/g, 'О')
+                        .replace(/P/g, 'Р').replace(/A/g, 'А').replace(/T/g, 'Т').replace(/X/g, 'Х');
+                    
+                    if (normVal.endsWith("УТРО")) normVal = normVal.replace(/\s*УТРО$/, "_У");
+                    else if (normVal.endsWith("ВЕЧЕР")) normVal = normVal.replace(/\s*ВЕЧЕР$/, "_В");
+
+                    if (normVal.match(/_У$|\sУ$/) || (normVal.endsWith("У") && normVal !== "У")) {
+                        let shopStr = normVal.replace(/_У$|\sУ$|У$/, "").trim();
+                        if(shopStr !== "") normVal = shopStr + "_У";
+                    } else if (normVal.match(/_В$|\sВ$/) || (normVal.endsWith("В") && normVal !== "В")) {
+                        let shopStr = normVal.replace(/_В$|\sВ$|В$/, "").trim();
+                        if(shopStr !== "") normVal = shopStr + "_В";
+                    }
+                    dayShifts.push(normVal);
                 }
                 
                 rowHtml += `<td class="user-data-cell" style="position:relative; border:1px solid #ccc; padding:2px; background-color:${cellBg};">
@@ -2239,24 +2255,37 @@ function renderGraphsTab() {
                 </td>`;
             });
             
+            // --- УМНЫЙ СБОР И СЛИЯНИЕ УТРА+ВЕЧЕРА ---
             let missing = [];
             let duplicates = [];
+            let shopCounts = {};
+            expectedShops.forEach(s => shopCounts[s] = { full: 0, morn: 0, eve: 0 });
+
+            dayShifts.forEach(sh => {
+                if (expectedShops.includes(sh)) {
+                    shopCounts[sh].full++;
+                } else if (sh.endsWith("_У")) {
+                    let s = sh.replace("_У", "");
+                    if (shopCounts[s]) shopCounts[s].morn++;
+                } else if (sh.endsWith("_В")) {
+                    let s = sh.replace("_В", "");
+                    if (shopCounts[s]) shopCounts[s].eve++;
+                }
+            });
             
             expectedShops.forEach(s => {
-                let sFull = dayShifts.filter(sh => sh === s).length;
-                let sMorn = dayShifts.filter(sh => sh === s + "_У").length;
-                let sEve  = dayShifts.filter(sh => sh === s + "_В").length;
-                
-                if (sFull === 0) {
-                    if (sMorn === 0 && sEve === 0) missing.push(s);
-                    else if (sMorn >= 1 && sEve === 0) missing.push(s + "_В");
-                    else if (sMorn === 0 && sEve >= 1) missing.push(s + "_У");
+                let counts = shopCounts[s];
+                if (counts.full === 0) {
+                    if (counts.morn === 0 && counts.eve === 0) missing.push(s);
+                    else if (counts.morn >= 1 && counts.eve === 0) missing.push(s + "_В");
+                    else if (counts.morn === 0 && counts.eve >= 1) missing.push(s + "_У");
                 }
                 
-                if (sFull > 1) duplicates.push(s);
-                if (sMorn > 1) duplicates.push(s + "_У");
-                if (sEve > 1)  duplicates.push(s + "_В");
-                if (sFull >= 1 && (sMorn >= 1 || sEve >= 1)) duplicates.push(s + " (накладка)");
+                // Проверка накладок
+                if (counts.full > 1) duplicates.push(s);
+                if (counts.morn > 1) duplicates.push(s + "_У");
+                if (counts.eve > 1) duplicates.push(s + "_В");
+                if (counts.full >= 1 && (counts.morn >= 1 || counts.eve >= 1)) duplicates.push(s + " (накладка)");
             });
             
             let statusHtml = "";
@@ -2292,7 +2321,10 @@ function renderGraphsTab() {
         if (!window.graphDraft[user]) window.graphDraft[user] = { _pinned: true };
         if (!window.graphDraft[user][day]) window.graphDraft[user][day] = {};
         
-        let vUpper = val.trim().toUpperCase();
+        let vUpper = val.trim().toUpperCase()
+                      .replace(/B/g, 'В').replace(/Y/g, 'У').replace(/E/g, 'Е').replace(/C/g, 'С')
+                      .replace(/K/g, 'К').replace(/M/g, 'М').replace(/H/g, 'Н').replace(/O/g, 'О')
+                      .replace(/P/g, 'Р').replace(/A/g, 'А').replace(/T/g, 'Т').replace(/X/g, 'Х');
         
         if (vUpper.endsWith("УТРО")) vUpper = vUpper.replace(/\s*УТРО$/, "_У");
         else if (vUpper.endsWith("ВЕЧЕР")) vUpper = vUpper.replace(/\s*ВЕЧЕР$/, "_В");
@@ -2308,12 +2340,13 @@ function renderGraphsTab() {
             formattedVal = "ЛЮБ"; 
         } else if (vUpper !== "") {
             shift = "FULL";
-            if (vUpper.endsWith("_У") || vUpper.endsWith(" У")) {
-                let shopStr = vUpper.replace(/\s*У$/, "").replace(/_У$/, "");
+            if (vUpper.match(/_У$|\sУ$/) || (vUpper.endsWith("У") && vUpper !== "У")) {
+                let shopStr = vUpper.replace(/_У$|\sУ$|У$/, "").trim();
                 if(shopStr !== "") formattedVal = shopStr + "_У";
                 shift = "MORNING";
-            } else if (vUpper.endsWith("_В") || vUpper.endsWith(" В")) {
-                let shopStr = vUpper.replace(/\s*В$/, "").replace(/_В$/, "");
+            } 
+            else if (vUpper.match(/_В$|\sВ$/) || (vUpper.endsWith("В") && vUpper !== "В")) {
+                let shopStr = vUpper.replace(/_В$|\sВ$|В$/, "").trim();
                 if(shopStr !== "") formattedVal = shopStr + "_В";
                 shift = "EVENING";
             }
@@ -2351,7 +2384,7 @@ function renderGraphsTab() {
             let origVal = (originalGraphDraft[user][day].text || "").toUpperCase();
             if (origVal === "OFF") origVal = "ВЫХ";
             if (origVal === "ANY_SHOP") origVal = "ЛЮБ";
-
+            
             if (origVal !== formattedVal && !(origVal === "" && formattedVal === "")) {
                 let mark = document.createElement('div');
                 mark.className = 'compare-mark';
@@ -2367,8 +2400,22 @@ function renderGraphsTab() {
         let dayShifts = [];
         
         allInputs.forEach(inp => {
-            let v = inp.value.trim().toUpperCase();
+            let v = inp.value.trim().toUpperCase()
+                .replace(/B/g, 'В').replace(/Y/g, 'У').replace(/E/g, 'Е').replace(/C/g, 'С')
+                .replace(/K/g, 'К').replace(/M/g, 'М').replace(/H/g, 'Н').replace(/O/g, 'О')
+                .replace(/P/g, 'Р').replace(/A/g, 'А').replace(/T/g, 'Т').replace(/X/g, 'Х');
+            
+            if (v.endsWith("УТРО")) v = v.replace(/\s*УТРО$/, "_У");
+            else if (v.endsWith("ВЕЧЕР")) v = v.replace(/\s*ВЕЧЕР$/, "_В");
+
             if (v !== "" && v !== "ВЫХ" && v !== "ЛЮБ") {
+                if (v.match(/_У$|\sУ$/) || (v.endsWith("У") && v !== "У")) {
+                    let shopStr = v.replace(/_У$|\sУ$|У$/, "").trim();
+                    if (shopStr) v = shopStr + "_У";
+                } else if (v.match(/_В$|\sВ$/) || (v.endsWith("В") && v !== "В")) {
+                    let shopStr = v.replace(/_В$|\sВ$|В$/, "").trim();
+                    if (shopStr) v = shopStr + "_В";
+                }
                 dayShifts.push(v);
             }
         });
@@ -2376,22 +2423,33 @@ function renderGraphsTab() {
         const expectedShops = ['Б', 'Г', 'В', 'Л', 'НК', 'НК2', 'СП', 'МЭИ', 'ЛЯ'];
         let missing = [];
         let duplicates = [];
-        
+        let shopCounts = {};
+        expectedShops.forEach(s => shopCounts[s] = { full: 0, morn: 0, eve: 0 });
+
+        dayShifts.forEach(sh => {
+            if (expectedShops.includes(sh)) {
+                shopCounts[sh].full++;
+            } else if (sh.endsWith("_У")) {
+                let s = sh.replace("_У", "");
+                if (shopCounts[s]) shopCounts[s].morn++;
+            } else if (sh.endsWith("_В")) {
+                let s = sh.replace("_В", "");
+                if (shopCounts[s]) shopCounts[s].eve++;
+            }
+        });
+
         expectedShops.forEach(s => {
-            let sFull = dayShifts.filter(sh => sh === s).length; 
-            let sMorn = dayShifts.filter(sh => sh === s + "_У").length;
-            let sEve  = dayShifts.filter(sh => sh === s + "_В").length;
-            
-            if (sFull === 0) {
-                if (sMorn === 0 && sEve === 0) missing.push(s);
-                else if (sMorn >= 1 && sEve === 0) missing.push(s + "_В");
-                else if (sMorn === 0 && sEve >= 1) missing.push(s + "_У");
+            let counts = shopCounts[s];
+            if (counts.full === 0) {
+                if (counts.morn === 0 && counts.eve === 0) missing.push(s);
+                else if (counts.morn >= 1 && counts.eve === 0) missing.push(s + "_В");
+                else if (counts.morn === 0 && counts.eve >= 1) missing.push(s + "_У");
             }
             
-            if (sFull > 1) duplicates.push(s);
-            if (sMorn > 1) duplicates.push(s + "_У");
-            if (sEve > 1)  duplicates.push(s + "_В");
-            if (sFull >= 1 && (sMorn >= 1 || sEve >= 1)) duplicates.push(s + " (накладка)");
+            if (counts.full > 1) duplicates.push(s);
+            if (counts.morn > 1) duplicates.push(s + "_У");
+            if (counts.eve > 1)  duplicates.push(s + "_В");
+            if (counts.full >= 1 && (counts.morn >= 1 || counts.eve >= 1)) duplicates.push(s + " (накладка)");
         });
         
         let checkCell = trEl.querySelector('.check-cell');

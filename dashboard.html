@@ -653,18 +653,19 @@
 
         showReportOverlay("Синхронизация стоп-листов с тех. картами...");
         try {
-            // Загружаем актуальные тех карты и справочник стоп-листа
             let resMenu = await fetch(`${FB_URL}/catalogs/menu.json`).then(r => r.json()) || {};
             let resStop = await fetch(`${FB_URL}/catalogs/stoplist.json`).then(r => r.json()) || {};
             
             let updatedStoplist = { ...resStop };
             let productMapping = {};
 
-            // Сканируем все напитки
+            // 1. Ищем все ингредиенты в Меню
             Object.values(resMenu).forEach(drink => {
                 if (!drink || !drink.name) return;
                 
                 let isTargetSeason = drink.globalCat && drink.globalCat.toLowerCase() === seasonChoice.toLowerCase();
+                let isMainMenu = drink.globalCat && drink.globalCat.toLowerCase() === "основное меню";
+                
                 let blocks = drink.blocks || [drink.recipe || []];
                 
                 blocks.forEach(block => {
@@ -677,17 +678,25 @@
                             productMapping[ingName] = { seasonDrinks: new Set(), mainDrinks: new Set() };
                         }
                         
-                        // Если напиток сезонный — в сезон. Если нет — в основу.
                         if (isTargetSeason) {
                             productMapping[ingName].seasonDrinks.add(drink.name);
-                        } else {
+                        } 
+                        else if (isMainMenu) {
                             productMapping[ingName].mainDrinks.add(drink.name);
                         }
                     });
                 });
             });
 
-            // Обновляем справочник стоп-листа
+            // 2. Сбрасываем старые данные у всех продуктов (чтобы очистить неактуальные сезоны)
+            for (let key in updatedStoplist) {
+                if (updatedStoplist[key]) {
+                    updatedStoplist[key].sez = "";
+                    updatedStoplist[key].main = "";
+                }
+            }
+
+            // 3. Заполняем актуальным взаимозаполнением
             for (let prodName in productMapping) {
                 let seasonStr = Array.from(productMapping[prodName].seasonDrinks).join(", ");
                 let mainStr = Array.from(productMapping[prodName].mainDrinks).join(", ");
@@ -700,7 +709,7 @@
                 } else {
                     let newId = "stop_auto_" + Date.now() + Math.floor(Math.random() * 1000);
                     updatedStoplist[newId] = {
-                        globalCat: "Основное меню", // Для новых авто-позиций
+                        globalCat: "Основное меню", 
                         cat: "Автоматические",
                         name: prodName,
                         sez: seasonStr,
@@ -713,13 +722,14 @@
             currentCatalog = updatedStoplist;
             
             hideReportOverlay();
-            alert(`✅ Справочник стоп-листа успешно синхронизирован!\nВыбранный сезон: "${seasonChoice}"`);
+            alert(`✅ Справочник стоп-листа успешно синхронизирован!\nВыбранный сезон: "${seasonChoice}".\nОсновное меню и сезонка взаимозаполнены.`);
             renderCatalogStoplist();
         } catch (e) {
             hideReportOverlay();
             alert("❌ Ошибка при синхронизации: " + e.message);
         }
     }
+    
     
     async function handleFileUpload(e, itemId, type) {
         let file = e.target.files[0];
@@ -875,6 +885,7 @@
                 if (!appSettings.hidden_categories_checklist) appSettings.hidden_categories_checklist = {};
                 renderCatalogChecklist();
             }
+
             else if (type === 'catalog_stoplist') {
                 currentPath = "catalogs/stoplist";
                 let [res, setRes] = await Promise.all([fetch(`${FB_URL}/${currentPath}.json`), fetch(`${FB_URL}/settings.json`)]);
@@ -884,6 +895,7 @@
                 if (!appSettings.hidden_categories_stoplist) appSettings.hidden_categories_stoplist = {};
                 renderCatalogStoplist();
             }
+                
     
             else if (type === 'stats') {
                 let resOrders = await fetch(`${FB_URL}/orders.json`);
@@ -3655,6 +3667,7 @@ function renderGraphsTab() {
 
     function renderCatalogStoplist() {
         const box = document.getElementById('content');
+        
         let globalCats = ["Основное меню"];
         Object.values(currentCatalog).forEach(i => {
             if(i.globalCat && !globalCats.includes(i.globalCat) && !i.globalCat.includes("!!!")) globalCats.push(i.globalCat);
@@ -3662,31 +3675,39 @@ function renderGraphsTab() {
         let subCats = [...new Set(Object.values(currentCatalog).map(i => i.cat).filter(c => c && !c.includes("!!!")))];
         
         let isActionsOpen = expandedDivs.has('cat-stop-actions');
-        let html = `
-        <h3 style="margin-top:0; margin-bottom:15px; font-size:24px; color:#D50000;">🛑 Справочник Стоп-листа</h3>
-        <div class="cat-group-header" style="padding: 12px 15px; border-radius: 12px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.05);" onclick="toggleCatElements('cat-stop-actions', 'arrow_catstop_actions')">
-            <span style="font-size:16px; color:#D50000; font-weight:900;">⚡ Действия и Настройки</span>
-            <span id="arrow_catstop_actions">${isActionsOpen ? '▲' : '▼'}</span>
-        </div>
-        <div class="cat-stop-actions action-container sticky-action-panel action-panel-dropdown" style="display: ${isActionsOpen ? 'flex' : 'none'}; flex-direction: column; margin-bottom: 20px;">
-            <div style="display:flex; gap:10px; flex-wrap:wrap; width:100%;">
-                <button class="btn-add" style="flex:1 1 auto; background: linear-gradient(135deg, #FF5252 0%, #D32F2F 100%);" onclick="addItemStoplist()">➕ Добавить позицию</button>
-                <button class="btn-add" style="flex:1 1 auto; background: linear-gradient(135deg, #00BCD4 0%, #0097A7 100%);" onclick="syncStoplistWithMenu()">🔄 Синхр. с Тех Картами</button>
-                <button class="btn-save" style="flex:1 1 auto; margin:0; padding:12px 18px;" onclick="saveCatalog(this)">💾 Сохранить в базу</button>
-            </div>
-            
-            <div class="settings-panel" style="width:100%; margin-bottom:0; margin-top:5px; box-sizing:border-box;">
-                <h4 style="margin-top:0; margin-bottom:0; font-size:16px; color:#d32f2f; cursor:pointer; display:flex; justify-content:space-between; align-items:center;" onclick="toggleCatElements('stop-settings-content', 'arrow_stop_settings')">
-                    <span>⚙️ Скрывать категории в приложении</span><span id="arrow_stop_settings">${expandedDivs.has('stop-settings-content') ? '▲' : '▼'}</span>
-                </h4>
-                <div class="stop-settings-content action-container" style="display:${expandedDivs.has('stop-settings-content') ? 'flex' : 'none'}; flex-wrap:wrap; gap:15px; margin-top:15px; margin-bottom:0; position:static;">`;
         
+        // Формируем чекбоксы для скрытия категорий
+        let settingsHtml = '';
         globalCats.forEach(gc => {
             if(gc.includes("!!!")) return; 
-            html += `<label class="toggle-label" style="font-size:15px;"><input type="checkbox" onchange="toggleHiddenCategory('${gc}', this.checked, 'stoplist')" ${appSettings.hidden_categories_stoplist && appSettings.hidden_categories_stoplist[gc] ? 'checked' : ''}> Скрыть "${gc}"</label>`;
+            settingsHtml += `<label class="toggle-label" style="font-size:15px;"><input type="checkbox" onchange="toggleHiddenCategory('${gc}', this.checked, 'stoplist')" ${appSettings.hidden_categories_stoplist && appSettings.hidden_categories_stoplist[gc] ? 'checked' : ''}> Скрыть "${gc}"</label>`;
         });
-        
-        html += `</div></div></div>`;
+
+        // 1. ЗАКРЕПЛЕННАЯ ПАНЕЛЬ ДЕЙСТВИЙ (Sticky)
+        setupUniversalActionBar(`
+            <div class="cat-group-header" style="padding: 10px 15px; border-radius: 12px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 8px rgba(0,0,0,0.05);" onclick="toggleCatElements('cat-stop-actions', 'arrow_catstop_actions')">
+                <span style="font-size:16px; color:#D50000; font-weight:900;">⚡ Действия и Настройки</span>
+                <span id="arrow_catstop_actions">${isActionsOpen ? '▲' : '▼'}</span>
+            </div>
+            <div class="cat-stop-actions action-container sticky-action-panel action-panel-dropdown" style="display: ${isActionsOpen ? 'flex' : 'none'}; flex-direction: column; margin-bottom: 5px;">
+                <div style="display:flex; gap:10px; flex-wrap:wrap; width:100%;">
+                    <button class="btn-add" style="flex:1 1 auto; background: linear-gradient(135deg, #FF5252 0%, #D32F2F 100%);" onclick="addItemStoplist()">➕ Добавить позицию</button>
+                    <button class="btn-add" style="flex:1 1 auto; background: linear-gradient(135deg, #00BCD4 0%, #0097A7 100%);" onclick="syncStoplistWithMenu()">🔄 Синхр. с Тех Картами</button>
+                    <button class="btn-save" style="flex:1 1 auto; margin:0; padding:12px 18px;" onclick="saveCatalog(this)">💾 Сохранить в базу</button>
+                </div>
+                
+                <div class="settings-panel" style="width:100%; margin-bottom:0; margin-top:5px; box-sizing:border-box;">
+                    <h4 style="margin-top:0; margin-bottom:0; font-size:16px; color:#d32f2f; cursor:pointer; display:flex; justify-content:space-between; align-items:center;" onclick="toggleCatElements('stop-settings-content', 'arrow_stop_settings')">
+                        <span>⚙️ Скрывать категории в приложении</span><span id="arrow_stop_settings">${expandedDivs.has('stop-settings-content') ? '▲' : '▼'}</span>
+                    </h4>
+                    <div class="stop-settings-content action-container" style="display:${expandedDivs.has('stop-settings-content') ? 'flex' : 'none'}; flex-wrap:wrap; gap:15px; margin-top:15px; margin-bottom:0; position:static;">
+                        ${settingsHtml}
+                    </div>
+                </div>
+            </div>
+        `, isActionsOpen, 'arrow_catstop_actions');
+
+        let html = `<h3 style="margin-top:0; margin-bottom:15px; font-size:24px; color:#D50000;">🛑 Справочник Стоп-листа</h3>`;
 
         html += `<div style="overflow-x:auto;"><table style="min-width:1100px;">
             <tr><th style="width:180px;">Глоб. Категория</th><th style="width:180px;">Категория</th><th style="width:250px;">Продукт (Из Закупки)</th><th style="width:200px;">Отключает (Сезон)</th><th style="width:200px;">Отключает (Осн)</th><th style="width:80px; text-align:center;">Удалить</th></tr>`;

@@ -693,33 +693,62 @@
                 });
             });
 
-            // 2. Сбрасываем старые данные у всех продуктов (чтобы очистить неактуальные сезоны)
-            for (let key in updatedStoplist) {
-                if (updatedStoplist[key]) {
-                    updatedStoplist[key].sez = "";
-                    updatedStoplist[key].main = "";
-                }
-            }
-
-            // 3. Заполняем актуальным взаимозаполнением
+            // 2. Заполняем актуальными данными
             for (let prodName in productMapping) {
-                let seasonStr = Array.from(productMapping[prodName].seasonDrinks).join(", ");
-                let mainStr = Array.from(productMapping[prodName].mainDrinks).join(", ");
+                let seasonStr = Array.from(productMapping[prodName].seasonDrinks).sort().join(", ");
+                let mainStr = Array.from(productMapping[prodName].mainDrinks).sort().join(", ");
                 
-                let existingKey = Object.keys(updatedStoplist).find(k => updatedStoplist[k] && updatedStoplist[k].name === prodName);
+                // ИЩЕМ КАТЕГОРИЮ В ЗАКУПКЕ ИЛИ АВТО-ОПРЕДЕЛЯЕМ СИРОПЫ
+                let catName = "Прочее";
+                if (cachedData.catalogOrder) {
+                    let foundInOrder = Object.values(cachedData.catalogOrder).find(c => c && cleanName(c.name) === cleanName(prodName));
+                    if (foundInOrder && foundInOrder.cat) {
+                        catName = foundInOrder.cat;
+                    }
+                }
+                if (prodName.toLowerCase().includes("сироп")) {
+                    catName = "Сиропы";
+                }
+
+                // Найти все строки с этим продуктом
+                let rowsForProd = Object.keys(updatedStoplist).filter(k => updatedStoplist[k] && cleanName(updatedStoplist[k].name) === cleanName(prodName));
                 
-                if (existingKey) {
-                    updatedStoplist[existingKey].sez = seasonStr;
-                    updatedStoplist[existingKey].main = mainStr;
-                } else {
-                    let newId = "stop_auto_" + Date.now() + Math.floor(Math.random() * 1000);
-                    updatedStoplist[newId] = {
-                        globalCat: "Основное меню", 
-                        cat: "Автоматические",
-                        name: prodName,
-                        sez: seasonStr,
-                        main: mainStr
-                    };
+                let mainRow = rowsForProd.find(k => (updatedStoplist[k].globalCat || "Основное меню").toLowerCase() === "основное меню");
+                let sezRow = rowsForProd.find(k => (updatedStoplist[k].globalCat || "").toLowerCase() === seasonChoice.toLowerCase());
+
+                // Обновляем или создаем Основное меню (только столбец main)
+                if (mainStr) {
+                    if (mainRow) {
+                        updatedStoplist[mainRow].main = mainStr;
+                        // Также корректируем категорию, если она была пустая
+                        if(catName === "Сиропы" && updatedStoplist[mainRow].cat !== "Сиропы") updatedStoplist[mainRow].cat = "Сиропы";
+                    } else {
+                        let newId = "stop_auto_m_" + Date.now() + Math.floor(Math.random() * 1000);
+                        updatedStoplist[newId] = {
+                            globalCat: "Основное меню", 
+                            cat: catName,
+                            name: prodName,
+                            sez: "",
+                            main: mainStr
+                        };
+                    }
+                }
+
+                // Обновляем или создаем Сезонное меню (только столбец sez)
+                if (seasonStr) {
+                    if (sezRow) {
+                        updatedStoplist[sezRow].sez = seasonStr;
+                        if(catName === "Сиропы" && updatedStoplist[sezRow].cat !== "Сиропы") updatedStoplist[sezRow].cat = "Сиропы";
+                    } else {
+                        let newId = "stop_auto_s_" + Date.now() + Math.floor(Math.random() * 1000);
+                        updatedStoplist[newId] = {
+                            globalCat: seasonChoice, // Создается в сезоне!
+                            cat: catName,
+                            name: prodName,
+                            sez: seasonStr,
+                            main: "" 
+                        };
+                    }
                 }
             }
 
@@ -727,7 +756,7 @@
             currentCatalog = updatedStoplist;
             
             hideReportOverlay();
-            alert(`✅ Справочник стоп-листа успешно синхронизирован!\nВыбранный сезон: "${seasonChoice}".\nОсновное меню и сезонка взаимозаполнены.`);
+            alert(`✅ Справочник стоп-листа успешно синхронизирован с техкартами!\nТеперь нажмите "Взаимозаполнить напитки".`);
             renderCatalogStoplist();
         } catch (e) {
             hideReportOverlay();
@@ -742,7 +771,7 @@
 
         let changesCount = 0;
 
-        // 1. ОЧИСТКА: Удаляем все сезонные позиции из Основного меню
+        // 1. ОЧИСТКА: Удаляем сезонные позиции СТРОГО ТОЛЬКО в Основном меню
         Object.keys(currentCatalog).forEach(k => {
             let item = currentCatalog[k];
             let gc = item.globalCat || "Основное меню";
@@ -759,17 +788,17 @@
             let item = currentCatalog[k];
             if (!item || !item.name) return;
             
-            let nameKey = item.name.trim().toLowerCase();
+            let nameKey = cleanName(item.name);
             if (!itemsByName[nameKey]) {
-                itemsByName[nameKey] = { mainKeys: [], seasonKeys: [] };
+                itemsByName[nameKey] = { mainRowKey: null, seasonRowKey: null };
             }
             
             let gc = item.globalCat || "Основное меню";
             
             if (gc.toLowerCase() === "основное меню") {
-                itemsByName[nameKey].mainKeys.push(k);
+                itemsByName[nameKey].mainRowKey = k;
             } else if (gc.toLowerCase() === seasonChoice.toLowerCase()) {
-                itemsByName[nameKey].seasonKeys.push(k);
+                itemsByName[nameKey].seasonRowKey = k;
             }
         });
 
@@ -777,46 +806,29 @@
         Object.keys(itemsByName).forEach(nameKey => {
             let group = itemsByName[nameKey];
             
-            // Если продукт есть И в Основном меню, И в выбранном сезоне
-            if (group.mainKeys.length > 0 && group.seasonKeys.length > 0) {
-                
-                // Собираем напитки из Основного меню
-                let collectedMain = new Set();
-                group.mainKeys.forEach(k => {
-                    if (currentCatalog[k].main) {
-                        currentCatalog[k].main.split(',').forEach(d => {
-                            if (d.trim()) collectedMain.add(d.trim());
-                        });
-                    }
-                });
-                let mergedMain = Array.from(collectedMain).sort().join(", ");
+            let mainDrinks = "";
+            let sezDrinks = "";
 
-                // Собираем сезонные напитки из выбранной категории
-                let collectedSez = new Set();
-                group.seasonKeys.forEach(k => {
-                    if (currentCatalog[k].sez) {
-                        currentCatalog[k].sez.split(',').forEach(d => {
-                            if (d.trim()) collectedSez.add(d.trim());
-                        });
-                    }
-                });
-                let mergedSez = Array.from(collectedSez).sort().join(", ");
+            // Берем эталон Основного меню (если строка существует)
+            if (group.mainRowKey) {
+                mainDrinks = currentCatalog[group.mainRowKey].main || "";
+            }
+            
+            // Берем эталон Сезонного меню (если строка существует)
+            if (group.seasonRowKey) {
+                sezDrinks = currentCatalog[group.seasonRowKey].sez || "";
+            }
 
-                // Записываем новые сезонные напитки в Основное меню
-                group.mainKeys.forEach(k => {
-                    if (currentCatalog[k].sez !== mergedSez) {
-                        currentCatalog[k].sez = mergedSez;
-                        changesCount++;
-                    }
-                });
+            // Обновляем Основное меню (записываем туда сезонные напитки)
+            if (group.mainRowKey && currentCatalog[group.mainRowKey].sez !== sezDrinks) {
+                currentCatalog[group.mainRowKey].sez = sezDrinks;
+                changesCount++;
+            }
 
-                // Записываем основные напитки в Сезонное меню
-                group.seasonKeys.forEach(k => {
-                    if (currentCatalog[k].main !== mergedMain) {
-                        currentCatalog[k].main = mergedMain;
-                        changesCount++;
-                    }
-                });
+            // Обновляем Сезонное меню (записываем туда основные напитки)
+            if (group.seasonRowKey && currentCatalog[group.seasonRowKey].main !== mainDrinks) {
+                currentCatalog[group.seasonRowKey].main = mainDrinks;
+                changesCount++;
             }
         });
 

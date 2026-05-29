@@ -734,6 +734,63 @@
         }
     }
     
+    function crossFillDrinks() {
+        let itemsByName = {};
+        
+        // 1. Собираем все напитки (main и sez) для каждого продукта по всему справочнику
+        Object.keys(currentCatalog).forEach(k => {
+            let item = currentCatalog[k];
+            if (!item || !item.name) return;
+            
+            let nameKey = item.name.trim().toLowerCase();
+            if (!itemsByName[nameKey]) {
+                itemsByName[nameKey] = {
+                    keys: [],
+                    allMain: new Set(),
+                    allSez: new Set()
+                };
+            }
+            
+            itemsByName[nameKey].keys.push(k);
+            
+            if (item.main) {
+                item.main.split(',').forEach(d => {
+                    let dName = d.trim();
+                    if (dName) itemsByName[nameKey].allMain.add(dName);
+                });
+            }
+            if (item.sez) {
+                item.sez.split(',').forEach(d => {
+                    let dName = d.trim();
+                    if (dName) itemsByName[nameKey].allSez.add(dName);
+                });
+            }
+        });
+
+        // 2. Раздаем собранные списки (без дубликатов) обратно всем позициям с таким же именем
+        let changesCount = 0;
+        Object.keys(itemsByName).forEach(nameKey => {
+            let group = itemsByName[nameKey];
+            
+            let mergedMain = Array.from(group.allMain).sort().join(", ");
+            let mergedSez = Array.from(group.allSez).sort().join(", ");
+            
+            group.keys.forEach(k => {
+                if (currentCatalog[k].main !== mergedMain || currentCatalog[k].sez !== mergedSez) {
+                    currentCatalog[k].main = mergedMain;
+                    currentCatalog[k].sez = mergedSez;
+                    changesCount++;
+                }
+            });
+        });
+
+        if (changesCount > 0) {
+            alert(`✅ Напитки успешно взаимозаполнены!\nОбновлено записей: ${changesCount}.\nНе забудьте нажать "Сохранить в базу".`);
+            renderCatalogStoplist();
+        } else {
+            alert("ℹ️ Взаимозаполнение не требуется: все напитки уже синхронизированы и не имеют дубликатов.");
+        }
+    }
     
     async function handleFileUpload(e, itemId, type) {
         let file = e.target.files[0];
@@ -3686,7 +3743,7 @@ function renderGraphsTab() {
             settingsHtml += `<label class="toggle-label" style="font-size:15px;"><input type="checkbox" onchange="toggleHiddenCategory('${gc}', this.checked, 'stoplist')" ${appSettings.hidden_categories_stoplist && appSettings.hidden_categories_stoplist[gc] ? 'checked' : ''}> Скрыть "${gc}"</label>`;
         });
 
-        // 1. ЗАКРЕПЛЕННАЯ ПАНЕЛЬ ДЕЙСТВИЙ (Sticky)
+        // 1. ЗАКРЕПЛЕННАЯ ПАНЕЛЬ ДЕЙСТВИЙ (Sticky) с новой кнопкой
         setupUniversalActionBar(`
             <div class="cat-group-header" style="padding: 10px 15px; border-radius: 12px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 8px rgba(0,0,0,0.05);" onclick="toggleCatElements('cat-stop-actions', 'arrow_catstop_actions')">
                 <span style="font-size:16px; color:#D50000; font-weight:900;">⚡ Действия и Настройки</span>
@@ -3696,6 +3753,7 @@ function renderGraphsTab() {
                 <div style="display:flex; gap:10px; flex-wrap:wrap; width:100%;">
                     <button class="btn-add" style="flex:1 1 auto; background: linear-gradient(135deg, #FF5252 0%, #D32F2F 100%);" onclick="addItemStoplist()">➕ Добавить позицию</button>
                     <button class="btn-add" style="flex:1 1 auto; background: linear-gradient(135deg, #00BCD4 0%, #0097A7 100%);" onclick="syncStoplistWithMenu()">🔄 Синхр. с Тех Картами</button>
+                    <button class="btn-add" style="flex:1 1 auto; background: linear-gradient(135deg, #8E24AA 0%, #512DA8 100%);" onclick="crossFillDrinks()">🥤 Взаимозаполнить напитки</button>
                     <button class="btn-save" style="flex:1 1 auto; margin:0; padding:12px 18px;" onclick="saveCatalog(this)">💾 Сохранить в базу</button>
                 </div>
                 

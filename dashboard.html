@@ -740,87 +740,91 @@
         if (!seasonChoice) return;
         seasonChoice = seasonChoice.trim();
 
+        let changesCount = 0;
+
+        // 1. ОЧИСТКА: Удаляем все сезонные позиции из Основного меню
+        Object.keys(currentCatalog).forEach(k => {
+            let item = currentCatalog[k];
+            let gc = item.globalCat || "Основное меню";
+            if (gc.toLowerCase() === "основное меню" && item.sez && item.sez.trim() !== "") {
+                item.sez = "";
+                changesCount++;
+            }
+        });
+
         let itemsByName = {};
         
-        // 1. Группируем элементы справочника по имени продукта
+        // 2. Группируем элементы по имени продукта
         Object.keys(currentCatalog).forEach(k => {
             let item = currentCatalog[k];
             if (!item || !item.name) return;
             
             let nameKey = item.name.trim().toLowerCase();
             if (!itemsByName[nameKey]) {
-                itemsByName[nameKey] = {
-                    mainMenuKey: null,
-                    seasonMenuKey: null,
-                    allMainDrinks: new Set(),
-                    allSezDrinks: new Set()
-                };
+                itemsByName[nameKey] = { mainKeys: [], seasonKeys: [] };
             }
             
             let gc = item.globalCat || "Основное меню";
             
-            // Ищем ключи строк для Основного меню и Выбранного сезона
             if (gc.toLowerCase() === "основное меню") {
-                itemsByName[nameKey].mainMenuKey = k;
+                itemsByName[nameKey].mainKeys.push(k);
             } else if (gc.toLowerCase() === seasonChoice.toLowerCase()) {
-                itemsByName[nameKey].seasonMenuKey = k;
-            }
-            
-            // Если строка относится к одной из этих двух категорий, забираем из неё напитки
-            if (gc.toLowerCase() === "основное меню" || gc.toLowerCase() === seasonChoice.toLowerCase()) {
-                if (item.main) {
-                    item.main.split(',').forEach(d => {
-                        let dName = d.trim();
-                        if (dName) itemsByName[nameKey].allMainDrinks.add(dName);
-                    });
-                }
-                if (item.sez) {
-                    item.sez.split(',').forEach(d => {
-                        let dName = d.trim();
-                        if (dName) itemsByName[nameKey].allSezDrinks.add(dName);
-                    });
-                }
+                itemsByName[nameKey].seasonKeys.push(k);
             }
         });
 
-        let changesCount = 0;
-
-        // 2. Раздаем объединенные списки обратно в Основное меню и в Сезон
+        // 3. ВЗАИМОЗАПОЛНЕНИЕ: Обмен напитками при совпадении
         Object.keys(itemsByName).forEach(nameKey => {
             let group = itemsByName[nameKey];
             
-            // Делаем взаимозаполнение только если продукт есть хотя бы в одной из двух категорий
-            if (group.mainMenuKey || group.seasonMenuKey) {
-                let mergedMain = Array.from(group.allMainDrinks).sort().join(", ");
-                let mergedSez = Array.from(group.allSezDrinks).sort().join(", ");
+            // Если продукт есть И в Основном меню, И в выбранном сезоне
+            if (group.mainKeys.length > 0 && group.seasonKeys.length > 0) {
                 
-                // Обновляем строку в Основном меню
-                if (group.mainMenuKey) {
-                    let k = group.mainMenuKey;
-                    if (currentCatalog[k].main !== mergedMain || currentCatalog[k].sez !== mergedSez) {
-                        currentCatalog[k].main = mergedMain;
+                // Собираем напитки из Основного меню
+                let collectedMain = new Set();
+                group.mainKeys.forEach(k => {
+                    if (currentCatalog[k].main) {
+                        currentCatalog[k].main.split(',').forEach(d => {
+                            if (d.trim()) collectedMain.add(d.trim());
+                        });
+                    }
+                });
+                let mergedMain = Array.from(collectedMain).sort().join(", ");
+
+                // Собираем сезонные напитки из выбранной категории
+                let collectedSez = new Set();
+                group.seasonKeys.forEach(k => {
+                    if (currentCatalog[k].sez) {
+                        currentCatalog[k].sez.split(',').forEach(d => {
+                            if (d.trim()) collectedSez.add(d.trim());
+                        });
+                    }
+                });
+                let mergedSez = Array.from(collectedSez).sort().join(", ");
+
+                // Записываем новые сезонные напитки в Основное меню
+                group.mainKeys.forEach(k => {
+                    if (currentCatalog[k].sez !== mergedSez) {
                         currentCatalog[k].sez = mergedSez;
                         changesCount++;
                     }
-                }
-                
-                // Обновляем строку в Сезонном меню
-                if (group.seasonMenuKey) {
-                    let k = group.seasonMenuKey;
-                    if (currentCatalog[k].main !== mergedMain || currentCatalog[k].sez !== mergedSez) {
+                });
+
+                // Записываем основные напитки в Сезонное меню
+                group.seasonKeys.forEach(k => {
+                    if (currentCatalog[k].main !== mergedMain) {
                         currentCatalog[k].main = mergedMain;
-                        currentCatalog[k].sez = mergedSez;
                         changesCount++;
                     }
-                }
+                });
             }
         });
 
         if (changesCount > 0) {
-            alert(`✅ Напитки успешно взаимозаполнены между "Основное меню" и "${seasonChoice}"!\nОбновлено записей: ${changesCount}.\nНе забудьте нажать "Сохранить в базу".`);
+            alert(`✅ Напитки успешно взаимозаполнены!\nСписки обновлены.\nНе забудьте нажать "💾 Сохранить в базу".`);
             renderCatalogStoplist();
         } else {
-            alert(`ℹ️ Взаимозаполнение не потребовалось:\nСписки "Основное меню" и "${seasonChoice}" уже идентичны, либо нет общих продуктов.`);
+            alert(`ℹ️ Изменений не произошло.\nВозможно, в "${seasonChoice}" и Основном меню нет общих продуктов.`);
         }
     }
     

@@ -641,22 +641,26 @@
     // Умный кэш (Берет данные из памяти моментально)
     async function getCatalog(name) {
         if (!state.cachedCatalogs) state.cachedCatalogs = {};
+        
+        // Если данные уже есть в кэше — отдаем мгновенно
         if (state.cachedCatalogs[name]) return state.cachedCatalogs[name];
         
+        // Если они прямо сейчас грузятся — ждем
         if (state.catalogPromises && state.catalogPromises[name]) {
             state.cachedCatalogs[name] = await state.catalogPromises[name];
             return state.cachedCatalogs[name];
         }
         
+        // Если ничего нет — грузим с сервера
         let snap = await database.ref(`catalogs/${name}`).once("value");
         state.cachedCatalogs[name] = snap.val() || {};
         return state.cachedCatalogs[name];
     }
 
-    // 2. Общий кэш (для Закупки и Чек-листа)
     async function getCatalogs() {
         let catsToLoad = ['order', 'menu', 'checklist', 'stoplist', 'newshop'];
         let results = {};
+        // Грузим последовательно, чтобы не забить канал
         for (let cat of catsToLoad) {
             results[cat] = await getCatalog(cat);
         }
@@ -2439,10 +2443,11 @@
     async function viewStopList() {
         showReportOverlay("Загрузка актуального стоп-листа...");
         try {
-            // Грузим точечно
-            const [stopCatalog, orderCatalog, ordersSnap, missSnap] = await Promise.all([
-                getCatalog('stoplist'),
-                getCatalog('order'),
+            // Забираем каталоги (уже легкие)
+            let stopCatalog = await getCatalog('stoplist');
+            let orderCatalog = await getCatalog('order'); // Если фото нет, загрузится быстро
+
+            const [ordersSnap, missSnap] = await Promise.all([
                 database.ref("orders").orderByChild("shop").equalTo(state.currentShop).once("value"),
                 database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value")
             ]);
@@ -2615,12 +2620,15 @@
    async function showLastOrder() {
         showReportOverlay("Загружаю приемку...");
         try {
-            let orderCatalog = await getCatalog('order');
-
-            const [ordersSnap, missSnap] = await Promise.all([
+            // НЕ качаем всю базу Закупки в кэш! 
+            // Берем только нужные поля (без тяжелых фото) для быстроты:
+            const [ordersSnap, missSnap, catSnap] = await Promise.all([
                 database.ref("orders").orderByChild("shop").equalTo(state.currentShop).once("value"),
-                database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value")
+                database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value"),
+                database.ref("catalogs/order").once("value") // Легкий запрос мимо кэша
             ]);
+
+            let orderCatalog = catSnap.val() || {};
 
             let activeMissing = [];
             let historyMissing = [];
@@ -3179,12 +3187,12 @@
       state.cachedCatalogs = {};
       state.catalogPromises = {};
       
-      // Запускаем плавную загрузку частями, чтобы не вешать телефон
+      // Отложенная загрузка ТОЛЬКО самых легких и частых справочников
       setTimeout(() => {
-          ['order', 'menu', 'checklist', 'stoplist', 'newshop'].forEach(cat => {
+          ['stoplist', 'checklist'].forEach(cat => {
               state.catalogPromises[cat] = database.ref(`catalogs/${cat}`).once("value").then(s => s.val() || {});
           });
-      }, 50);
+      }, 500);
 
       restoreMpDraft();
       showScreen('step-1', false);

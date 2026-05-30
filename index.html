@@ -1380,132 +1380,166 @@
         cartFab.style.display = 'flex'; 
       }
       
-      document.getElementById('dynamic-list-container').innerHTML = `<div class="report-card"><div class="loading-pulse">⏳ Подключение к базе данных...</div></div>`;
+      document.getElementById('dynamic-list-container').innerHTML = `<div class="report-card"><div class="loading-pulse">⏳ Запуск...</div></div>`;
       
       try {
           await loadSettings();
-          const catalogs = await getCatalogs(); 
 
           let pathKey = mode === 'checklist' ? 'checklist' : (mode === 'stoplist_fill' ? 'stoplist' : (mode === 'new_shop' ? 'newshop' : 'order'));
           
-          let sourceCatalog = catalogs[pathKey] || {};
-          state.productCatalog = {};
-
-          let hiddenList = {};
-          if (mode === 'checklist') hiddenList = state.appSettings.hidden_categories_checklist || {};
-          else if (mode === 'stoplist_fill') hiddenList = state.appSettings.hidden_categories_stoplist || {};
-          else hiddenList = state.appSettings.hidden_categories_order || {};
-
-          let uniqueProducts = new Set();
-
-          for(let k in sourceCatalog) {
-              let item = sourceCatalog[k];
-              if (!item || !item.name) continue;
-
-              let exactCat = item.globalCat || "Основное меню";
-              let trimmedCat = exactCat.trim();
-              
-              if (hiddenList[exactCat] || hiddenList[trimmedCat]) continue;
-
-              let clean = cleanName(item.name);
-              if (!uniqueProducts.has(clean)) {
-                  uniqueProducts.add(clean);
-                  state.productCatalog[k] = item;
-              }
+          // ==========================================
+          // ЛЕНИВАЯ ЗАГРУЗКА: Сначала мгновенно берем из кэша
+          // ==========================================
+          let sourceCatalog = {};
+          let cachedData = await loadFromCache(pathKey); // Берем из IndexedDB без интернета
+          
+          if (cachedData && Object.keys(cachedData).length > 0) {
+              sourceCatalog = cachedData;
+              state.cachedCatalogs[pathKey] = sourceCatalog;
           }
 
-          if (mode === 'order' || mode === 'new_shop') {
-              const ordersSnap = await database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(100).once("value");
-              let shopOrders = [];
-              ordersSnap.forEach(c => { let val = c.val(); if(val && typeof val === 'object') shopOrders.push(val); });
+          // Функция для отрисовки интерфейса (вызываем её сразу, если есть кэш)
+          const processAndRender = async (catalogData, isSilentUpdate = false) => {
+              state.productCatalog = {};
 
-              let transitItems = new Set();
-              let pendingItems = new Set();
+              let hiddenList = {};
+              if (mode === 'checklist') hiddenList = state.appSettings.hidden_categories_checklist || {};
+              else if (mode === 'stoplist_fill') hiddenList = state.appSettings.hidden_categories_stoplist || {};
+              else hiddenList = state.appSettings.hidden_categories_order || {};
 
-              const missSnap = await database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value");
-              let hasCanceledMissings = false;
+              let uniqueProducts = new Set();
 
-              missSnap.forEach(c => {
-                  let m = c.val();
-                  if (!m || !m.name) return;
-                  let clean = cleanName(m.name);
-                  if (m.status === 'transit' || m.status === 'pending') {
-                      transitItems.add(clean);
+              for(let k in catalogData) {
+                  let item = catalogData[k];
+                  if (!item || !item.name) continue;
+
+                  let exactCat = item.globalCat || "Основное меню";
+                  let trimmedCat = exactCat.trim();
+                  
+                  if (hiddenList[exactCat] || hiddenList[trimmedCat]) continue;
+
+                  let clean = cleanName(item.name);
+                  if (!uniqueProducts.has(clean)) {
+                      uniqueProducts.add(clean);
+                      state.productCatalog[k] = item;
                   }
-                  if (m.status === 'canceled' && !m.added_to_basket) {
-                      let qtyNum = parseFloat(m.qty) || 0;
-                      state.userBasket[m.name] = (state.userBasket[m.name] || 0) + qtyNum;
-                      let foundItem = Object.values(state.productCatalog).find(catItem => catItem && catItem.name === m.name);
-                      if(!state.userBasket["_catinfo"]) state.userBasket["_catinfo"] = {};
-                      state.userBasket["_catinfo"][m.name] = foundItem ? foundItem.cat : "Прочее";
-                      database.ref("missing_items/" + c.key).update({added_to_basket: true}); 
-                      hasCanceledMissings = true;
+              }
+
+              if (mode === 'order' || mode === 'new_shop') {
+                  // Фоновые запросы по недовозам (идут параллельно)
+                  const [ordersSnap, missSnap] = await Promise.all([
+                      database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(100).once("value"),
+                      database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value")
+                  ]);
+                  
+                  let shopOrders = [];
+                  ordersSnap.forEach(c => { let val = c.val(); if(val && typeof val === 'object') shopOrders.push(val); });
+
+                  let transitItems = new Set();
+                  let pendingItems = new Set();
+                  let hasCanceledMissings = false;
+
+                  missSnap.forEach(c => {
+                      let m = c.val();
+                      if (!m || !m.name) return;
+                      let clean = cleanName(m.name);
+                      if (m.status === 'transit' || m.status === 'pending') {
+                          transitItems.add(clean);
+                      }
+                      if (m.status === 'canceled' && !m.added_to_basket) {
+                          let qtyNum = parseFloat(m.qty) || 0;
+                          state.userBasket[m.name] = (state.userBasket[m.name] || 0) + qtyNum;
+                          let foundItem = Object.values(state.productCatalog).find(catItem => catItem && catItem.name === m.name);
+                          if(!state.userBasket["_catinfo"]) state.userBasket["_catinfo"] = {};
+                          state.userBasket["_catinfo"][m.name] = foundItem ? foundItem.cat : "Прочее";
+                          database.ref("missing_items/" + c.key).update({added_to_basket: true}); 
+                          hasCanceledMissings = true;
+                      }
+                  });
+
+                  if (hasCanceledMissings && !isSilentUpdate) showPopupError("Внимание", "⚠️ Отмененные администратором недовозы возвращены в вашу корзину.");
+
+                  shopOrders.forEach(o => {
+                      if (o.mode === 'order' || o.mode === 'new_shop') {
+                          if (o.ordered === true) return; 
+
+                          let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
+                          itemsArr.forEach(i => {
+                              if (i && i.name && i.name !== "НЕТ ЗАКАЗА") {
+                                  let isError = i.status === 'error' || i.bot_error === true;
+                                  let actuallyPlaced = i.status === 'ordered'; 
+                                  if (!isError && !actuallyPlaced) {
+                                      pendingItems.add(cleanName(i.name));
+                                  }
+                              }
+                          });
+                      }
+                  });
+
+                  restoreFromDraft();
+
+                  for (let key in state.userBasket) {
+                      if (key === "_catinfo") continue;
+                      let cleanKey = cleanName(key); 
+                      if (transitItems.has(cleanKey) || pendingItems.has(cleanKey)) {
+                          delete state.userBasket[key];
+                          if (state.userBasket["_catinfo"]) delete state.userBasket["_catinfo"][key];
+                      }
                   }
-              });
 
-              if (hasCanceledMissings) showPopupError("Внимание", "⚠️ Отмененные администратором недовозы возвращены в вашу корзину.");
-
-              shopOrders.forEach(o => {
-                  if (o.mode === 'order' || o.mode === 'new_shop') {
-                      if (o.ordered === true) return; 
-
-                      let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
+                  let latestStoplist = shopOrders.slice().reverse().find(o => o.mode === 'stoplist_fill');
+                  if (latestStoplist && latestStoplist.items) {
+                      let itemsArr = Array.isArray(latestStoplist.items) ? latestStoplist.items : Object.values(latestStoplist.items);
                       itemsArr.forEach(i => {
-                          if (i && i.name && i.name !== "НЕТ ЗАКАЗА") {
-                              let isError = i.status === 'error' || i.bot_error === true;
-                              let actuallyPlaced = i.status === 'ordered'; 
-                              
-                              if (!isError && !actuallyPlaced) {
-                                  pendingItems.add(cleanName(i.name));
+                          if (i && i.name && i.qty === 'Закончилось') {
+                              let cleanStopName = cleanName(i.name); 
+                              let catItem = Object.values(state.productCatalog).find(c => c && cleanName(c.name) === cleanStopName);
+
+                              if (catItem) {
+                                  if (!transitItems.has(cleanStopName) && !pendingItems.has(cleanStopName)) {
+                                      let exactName = catItem.name;
+                                      if (state.userBasket[exactName] === undefined) {
+                                          state.userBasket[exactName] = 1;
+                                          if (!state.userBasket["_catinfo"]) state.userBasket["_catinfo"] = {};
+                                          state.userBasket["_catinfo"][exactName] = catItem.cat || "Прочее";
+                                      }
+                                  }
                               }
                           }
                       });
                   }
-              });
+                  state.transitItems = transitItems;
+                  state.unprocessedItems = pendingItems;
 
-              restoreFromDraft();
-
-              for (let key in state.userBasket) {
-                  if (key === "_catinfo") continue;
-                  let cleanKey = cleanName(key); 
-                  if (transitItems.has(cleanKey) || pendingItems.has(cleanKey)) {
-                      delete state.userBasket[key];
-                      if (state.userBasket["_catinfo"]) delete state.userBasket["_catinfo"][key];
-                  }
+              } else {
+                  restoreFromDraft();
               }
+              
+              persistDraft(); 
+              renderProductList();
+          };
 
-              let latestStoplist = shopOrders.slice().reverse().find(o => o.mode === 'stoplist_fill');
-              if (latestStoplist && latestStoplist.items) {
-                  let itemsArr = Array.isArray(latestStoplist.items) ? latestStoplist.items : Object.values(latestStoplist.items);
-                  itemsArr.forEach(i => {
-                      if (i && i.name && i.qty === 'Закончилось') {
-                          let cleanStopName = cleanName(i.name); 
-                          let catItem = Object.values(state.productCatalog).find(c => c && cleanName(c.name) === cleanStopName);
-
-                          if (catItem) {
-                              if (!transitItems.has(cleanStopName) && !pendingItems.has(cleanStopName)) {
-                                  let exactName = catItem.name;
-                                  if (state.userBasket[exactName] === undefined) {
-                                      state.userBasket[exactName] = 1;
-                                      if (!state.userBasket["_catinfo"]) state.userBasket["_catinfo"] = {};
-                                      state.userBasket["_catinfo"][exactName] = catItem.cat || "Прочее";
-                                  }
-                              }
-                          }
-                      }
-                  });
-              }
-              state.transitItems = transitItems;
-              state.unprocessedItems = pendingItems;
-
-          } else {
-              restoreFromDraft();
+          // 1. Мгновенно рисуем из кэша (если он есть)
+          if (Object.keys(sourceCatalog).length > 0) {
+              await processAndRender(sourceCatalog, false);
           }
-          
-          persistDraft(); 
-          renderProductList();
+
+          // 2. Фоновая тихая загрузка свежих данных (НЕ БЛОКИРУЕТ ЭКРАН)
+          database.ref(`catalogs/${pathKey}`).once("value").then(snap => {
+              let freshData = snap.val() || {};
+              // Если кэша не было вообще, рисуем первый раз
+              if (Object.keys(sourceCatalog).length === 0) {
+                  processAndRender(freshData, false);
+              } else {
+                  // Если кэш был, просто обновляем словари в фоне
+                  state.cachedCatalogs[pathKey] = freshData;
+                  state.productCatalog = freshData; // Фотографии догрузились
+              }
+              saveToCache(pathKey, freshData); // Сохраняем свежие тяжелые фото в память телефона
+          }).catch(e => console.log("Фоновая сеть недоступна", e));
+
       } catch (err) {
-          document.getElementById('dynamic-list-container').innerHTML = `<div class="report-card"><div style="text-align:center; padding:20px; color:red; font-weight:bold;">Ошибка базы данных: ${err.message}</div></div>`;
+          document.getElementById('dynamic-list-container').innerHTML = `<div class="report-card"><div style="text-align:center; padding:20px; color:red; font-weight:bold;">Ошибка: ${err.message}</div></div>`;
       }
     }
 

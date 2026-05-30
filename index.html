@@ -1057,6 +1057,24 @@
             state.menuCatalog = Object.assign({}, menuCat || {});
             state.productCatalog = { ...(orderCat || {}), ...(checkCat || {}) };
             
+            // --- УМНАЯ СИНХРОНИЗАЦИЯ ФОТОГРАФИЙ ИНГРЕДИЕНТОВ ---
+            let globalPhotoDict = {};
+            Object.values(state.productCatalog).forEach(c => {
+                if (c && c.name && c.photo && c.photo.trim() !== "") {
+                    globalPhotoDict[cleanName(c.name)] = c.photo;
+                }
+            });
+
+            // Если у продукта нет фото, но оно есть в другом справочнике - копируем!
+            Object.keys(state.productCatalog).forEach(k => {
+                let item = state.productCatalog[k];
+                if (item && item.name && (!item.photo || item.photo.trim() === "")) {
+                    let sharedPhoto = globalPhotoDict[cleanName(item.name)];
+                    if (sharedPhoto) item.photo = sharedPhoto;
+                }
+            });
+            // ----------------------------------------------------
+
             let shopOrders = [];
             ordersSnap.forEach(c => {
                 let val = c.val();
@@ -1080,7 +1098,7 @@
             document.getElementById('menu-container').innerHTML = `<div class="report-card"><div style="color:red; font-weight:bold; text-align:center;">Ошибка: ${e.message}</div></div>`;
         }
     }
-
+    
     function renderMenuApp() {
         let html = "";
         let grouped = {};
@@ -1218,14 +1236,16 @@
 
     function showIngredientPhoto(ingName) {
         let clean = cleanName(ingName);
-        let found = Object.values(state.productCatalog).find(c => c && cleanName(c.name) === clean);
-        let photoUrl = found && found.photo ? found.photo : null;
+        // Ищем ингредиент, у которого ГАРАНТИРОВАННО есть фото
+        let found = Object.values(state.productCatalog).find(c => c && cleanName(c.name) === clean && c.photo && c.photo.trim() !== "");
+        let photoUrl = found ? found.photo : null;
         openPhotoModal(ingName, photoUrl);
     }
-
+    
     function showDrinkPhoto(drinkName) {
-        let drink = Object.values(state.menuCatalog).find(d => d.name === drinkName);
-        let photoUrl = drink && drink.photo ? drink.photo : null;
+        // Ищем сам напиток с фото
+        let found = Object.values(state.menuCatalog).find(d => d && d.name === drinkName && d.photo && d.photo.trim() !== "");
+        let photoUrl = found ? found.photo : null;
         openPhotoModal(drinkName, photoUrl);
     }
 

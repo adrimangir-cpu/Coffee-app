@@ -1074,7 +1074,7 @@
                     // 1. ФОТО НАПИТКА (Аккуратная миниатюра)
                     if (drink.photo && drink.photo.startsWith("data:image")) {
                         recipeHtml += `<div style="text-align:center; margin-bottom:15px;" onclick="showDrinkPhoto('${escapeName(drink.name)}')">
-                                         <img src="${drink.photo}" style="width:100px; height:100px; object-fit:cover; border-radius:16px; border:2px solid #D1C4E9; box-shadow: 0 4px 10px rgba(0,0,0,0.1); cursor:pointer;" alt="Фото напитка">
+                                         <img loading="lazy" src="${drink.photo}" style="width:100px; height:100px; object-fit:cover; border-radius:16px; border:2px solid #D1C4E9; box-shadow: 0 4px 10px rgba(0,0,0,0.1); cursor:pointer;" alt="Фото напитка">
                                          <div style="font-size:12px; color:#7E57C2; font-weight:bold; margin-top:6px;">🔍 Нажми, чтобы увеличить</div>
                                        </div>`;
                     }
@@ -2451,14 +2451,14 @@
                         <div style='font-size: 14px; color: #888; text-align:center; margin-bottom:15px; font-weight:700;'>(от ${new Date(latest.timestamp).toLocaleString()})</div>`;
             
             let allSyrups = [];
-            let otherItems = [];
+            let mainListItems = [];
 
             let itemsArr = Array.isArray(latest.items) ? latest.items : Object.values(latest.items);
             
             itemsArr.forEach(i => {
-                if(!i || !i.name) return;
-                let iNameLow = String(i.name).trim().toLowerCase();
+                if(!i || !i.name || i.qty !== 'Закончилось' || i.name === 'Всё в наличии') return;
                 
+                let iNameLow = String(i.name).trim().toLowerCase();
                 let info = Object.values(stopCatalog).find(c => c && c.name && String(c.name).trim().toLowerCase() === iNameLow) || {};
                 let inOrderCat = Object.values(orderCatalog).find(c => c && c.name && String(c.name).trim().toLowerCase() === iNameLow);
                 
@@ -2467,7 +2467,8 @@
                 let statHtml = "";
                 
                 if (inOrderCat) {
-                    if (missingStatusMap[iNameLow] === 'transit') {
+                    let missingStat = missingStatusMap[iNameLow] === 'transit' ? 'transit' : null;
+                    if (missingStat === 'transit') {
                         statHtml = `<span style="background:#e3f2fd; color:#1565c0; padding:2px 5px; border-radius:4px; font-size:11px; font-weight:900; margin-left:5px;">В пути 🚚</span>`;
                     } else {
                         let itemStatus = recentOrdersMap[i.name] || null;
@@ -2483,49 +2484,43 @@
                     }
                 }
 
+                let linkBtn = `<div style="float:right; display:flex; align-items:center;">${statHtml}</div>`;
+                
+                let affectedHtml = "";
+                if (info.sez || info.main) {
+                    affectedHtml += `<div style="font-size:13px; color:#d32f2f; margin-top:8px; padding:8px; background:#ffebee; border-radius:8px; border:1px dashed #ef9a9a; line-height:1.4;">`;
+                    if (info.sez) affectedHtml += `<div style="margin-bottom:4px;"><b>Отключает сезон:</b> ${info.sez}</div>`;
+                    if (info.main) affectedHtml += `<div><b>Отключает основу:</b> ${info.main}</div>`;
+                    affectedHtml += `</div>`;
+                }
+                
+                // Добавляем ВСЕ товары (включая сиропы) в основной список с напитками
+                mainListItems.push(`
+                <div style="padding:12px 0; border-bottom:1px dashed #f0f0f0; display:flex; flex-direction:column; justify-content:center;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; width:100%;">
+                        <b style="color:#333; font-size:16px;">${i.name}</b> ${linkBtn}
+                    </div>
+                    ${affectedHtml}
+                </div>`);
+
+                // Если это сироп, ДОПОЛНИТЕЛЬНО закидываем его название в нижнюю сводку
                 if (isSyrup) {
-                    allSyrups.push(`▪️ ${i.name} ${statHtml}`);
-                } else {
-                    let affected = [];
-                    if (info.sez) affected.push("Сезон: " + info.sez);
-                    if (info.main) affected.push("Основа: " + info.main);
-                    let subText = affected.length > 0 ? `<div style="font-size:13px; color:#d32f2f; margin-top:4px; font-style:italic; font-weight:600;">(${affected.join(" | ")})</div>` : "";
-                    
-                    otherItems.push(`<div style="margin-bottom:10px; border-bottom:1px dashed #f0f0f0; padding-bottom:5px;">
-                                <span>▪️ <b style="font-size:16px;">${i.name}</b> ${statHtml}</span>
-                                ${subText}
-                              </div>`);
+                    allSyrups.push(`▪️ ${i.name}`);
                 }
             });
 
-            html += otherItems.join("");
+            html += mainListItems.join("");
 
             if (allSyrups.length > 0) {
                 html += `<div style='margin-top: 20px; padding-top: 15px; border-top: 2px dashed #ddd; color:#7E57C2;'>
-                         🍾 <b style="font-size:17px;">Закончившиеся сиропы:</b><br><div style="color:#333; margin-top:5px; font-weight:900; font-size:16px; line-height: 1.6;">${allSyrups.join("<br>")}</div></div>`;
+                            🍾 <b style="font-size:17px;">Сводка по сиропам:</b>
+                            <div style="margin-top:10px; color:#333; font-weight:bold; font-size:15px; line-height:1.6;">${allSyrups.join("<br>")}</div>
+                         </div>`;
             }
             
             document.getElementById('report-content-area').innerHTML = html + "</div>";
         } catch (err) {
             document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; color:red; font-weight:900;">Ошибка загрузки стоп-листа</div></div>`;
-        }
-    }
-
-    function setReceiveChoice(name, qty, vendor, status, btnArrId, btnMissId, dateStr) {
-        triggerHaptic();
-        if (!state.receivingChoices) state.receivingChoices = {};
-        
-        state.receivingChoices[dateStr + "_" + name] = { name: name, qty: qty, vendor: vendor, status: status, date: dateStr };
-        
-        let btnArr = document.getElementById(btnArrId);
-        let btnMiss = document.getElementById(btnMissId);
-        
-        if (status === 'arrived') {
-            if (btnArr) { btnArr.style.border = '2px solid #2e7d32'; btnArr.style.background = '#e8f5e9'; btnArr.style.color = '#2e7d32'; }
-            if (btnMiss) { btnMiss.style.border = '1px solid #ccc'; btnMiss.style.background = '#fafafa'; btnMiss.style.color = '#888'; }
-        } else if (status === 'missing') {
-            if (btnMiss) { btnMiss.style.border = '2px solid #c62828'; btnMiss.style.background = '#ffebee'; btnMiss.style.color = '#c62828'; }
-            if (btnArr) { btnArr.style.border = '1px solid #ccc'; btnArr.style.background = '#fafafa'; btnArr.style.color = '#888'; }
         }
     }
 

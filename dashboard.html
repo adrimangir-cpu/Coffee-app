@@ -3547,6 +3547,29 @@ function renderGraphsTab() {
 
     function renderCatalogOrder() {
         const box = document.getElementById('content');
+        
+        // УМНАЯ СИНХРОНИЗАЦИЯ ФОТОГРАФИЙ МЕЖДУ СПРАВОЧНИКАМИ
+        let globalPhotoDict = {};
+        let combinedCatForPhotos = [];
+        if (cachedData.catalogOrder) combinedCatForPhotos.push(...Object.values(cachedData.catalogOrder));
+        if (cachedData.catalogChecklist) combinedCatForPhotos.push(...Object.values(cachedData.catalogChecklist));
+        combinedCatForPhotos.push(...Object.values(currentCatalog));
+        
+        combinedCatForPhotos.forEach(c => {
+            if (c && c.name && c.photo && c.photo.startsWith("data:image")) {
+                globalPhotoDict[cleanName(c.name)] = c.photo;
+            }
+        });
+
+        // Автоматически применяем найденные фото к товарам без фото
+        Object.keys(currentCatalog).forEach(k => {
+            let item = currentCatalog[k];
+            if (item && item.name && (!item.photo || !item.photo.startsWith("data:image"))) {
+                let sharedPhoto = globalPhotoDict[cleanName(item.name)];
+                if (sharedPhoto) item.photo = sharedPhoto; 
+            }
+        });
+
         let globalCats = ["Основное меню"];
         Object.values(currentCatalog).forEach(i => {
             if(i.globalCat && !globalCats.includes(i.globalCat) && !i.globalCat.includes("!!!")) globalCats.push(i.globalCat);
@@ -3558,23 +3581,19 @@ function renderGraphsTab() {
 
         let html = `
         <h3 style="margin-top:0; margin-bottom:15px; font-size:24px; color:#4A148C;">🛒 Справочник Закупки</h3>
-        
         <div class="cat-group-header" style="padding: 12px 15px; border-radius: 12px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.05);" onclick="toggleCatElements('cat-ord-actions', 'arrow_cat_ord_actions')">
             <span style="font-size:16px; color:#4A148C; font-weight:900;">⚡ Действия и Настройки</span>
             <span id="arrow_cat_ord_actions">${isActionsOpen ? '▲' : '▼'}</span>
         </div>
-        
         <div class="cat-ord-actions action-container" style="display: ${isActionsOpen ? 'flex' : 'none'}; flex-direction: column; margin-bottom: 20px;">
             <div style="display:flex; gap:10px; flex-wrap:wrap; width:100%;">
                 <button class="btn-add" style="flex:1 1 auto;" onclick="addItemOrder()">➕ Добавить позицию</button>
                 <button class="btn-save" style="flex:1 1 auto; margin:0; padding:12px 18px;" onclick="saveCatalog(this)">💾 Сохранить в базу</button>
             </div>
-            
             <div style="display:flex; gap:10px; flex-wrap:wrap; width:100%; margin-top:5px;">
                 <button class="tab-btn ${!isNewShopCatalog ? 'active' : ''}" style="flex:1 1 auto; padding: 10px 20px; font-size: 15px;" onclick="switchOrderCatalog(false)">📦 Обычная закупка</button>
                 <button class="tab-btn ${isNewShopCatalog ? 'active' : ''}" style="flex:1 1 auto; padding: 10px 20px; font-size: 15px;" onclick="switchOrderCatalog(true)">🏗 На новую кофейню</button>
             </div>
-            
             <div class="settings-panel" style="width:100%; margin-bottom:0; margin-top:5px; box-sizing:border-box;">
                 <h4 style="margin-top:0; margin-bottom:0; font-size:16px; color:#d32f2f; cursor:pointer; display:flex; justify-content:space-between; align-items:center;" onclick="toggleCatElements('settings-content-div', 'arrow_settings-content-div')">
                     <span>⚙️ Скрывать категории в приложении</span><span id="arrow_settings-content-div">${expandedDivs.has('settings-content-div') ? '▲' : '▼'}</span>
@@ -3586,10 +3605,17 @@ function renderGraphsTab() {
             if(gc.includes("!!!")) return; 
             html += `<label class="toggle-label" style="font-size:15px;"><input type="checkbox" onchange="toggleHiddenCategory('${gc}', this.checked, 'order')" ${appSettings.hidden_categories_order && appSettings.hidden_categories_order[gc] ? 'checked' : ''}> Скрыть "${gc}"</label>`;
         });
-        
         html += `</div></div></div>`;
+
+        // СБОР ВСЕХ НАИМЕНОВАНИЙ ДЛЯ ВЫПАДАЮЩЕГО СПИСКА (DATALIST)
+        let allPurchaseItems = [];
+        if (cachedData.catalogOrder) allPurchaseItems.push(...Object.values(cachedData.catalogOrder).map(i => i.name));
+        if (cachedData.catalogChecklist) allPurchaseItems.push(...Object.values(cachedData.catalogChecklist).map(i => i.name));
+        let uniqueNames = [...new Set(allPurchaseItems.filter(Boolean))].sort((a,b) => a.localeCompare(b));
+        let optionsHtml = uniqueNames.map(name => `<option value="${name.replace(/"/g, '&quot;')}">${name}</option>`).join("");
+        html += `<datalist id="order_items_list">${optionsHtml}</datalist>`;
         
-        html += `<div style="overflow-x:auto;" class="price-input-container"><table style="min-width:1600px;"><tr><th style="width:160px;">Глоб. Категория</th><th style="width:160px;">Подкатегория</th><th style="width:200px;">Наименование</th><th style="width:160px; text-align:center;">Фотографии</th><th style="width:120px;">Поставщик</th><th style="width:120px;">Цена 1 (₽)</th><th>Ссылка 1</th><th style="width:120px;">Цена 2 (₽)</th><th>Ссылка 2</th><th style="width:60px; text-align:center;">Удалить</th></tr>`;
+        html += `<div style="overflow-x:auto;" class="price-input-container"><table style="min-width:1600px;"><tr><th style="width:160px;">Глоб. Категория</th><th style="width:160px;">Подкатегория</th><th style="width:200px;">Наименование</th><th style="width:150px; text-align:center;">Фотографии</th><th style="width:120px;">Поставщик</th><th style="width:120px;">Цена 1 (₽)</th><th>Ссылка 1</th><th style="width:120px;">Цена 2 (₽)</th><th>Ссылка 2</th><th style="width:60px; text-align:center;">Удалить</th></tr>`;
 
         let grouped = {};
         Object.keys(currentCatalog).forEach(k => {
@@ -3602,24 +3628,18 @@ function renderGraphsTab() {
             let safeGc = getSafeId(gc); let displayGc = gc.replace("!!! НОВОЕ", "Новая добавленная позиция");
             let isGcOpen = gc.includes("!!!") || expandedDivs.has(`lvl2_${safeGc}`);
             
-            html += `<tr class="cat-group-header" onclick="toggleLvl1('${safeGc}')">
-                        <td colspan="10" style="padding:18px; background:#d1c4e9; font-size:18px;">🌍 <b>${displayGc}</b> <span style="float:right;">▼</span></td>
-                     </tr>`;
+            html += `<tr class="cat-group-header" onclick="toggleLvl1('${safeGc}')"><td colspan="10" style="padding:18px; background:#d1c4e9; font-size:18px;">🌍 <b>${displayGc}</b> <span style="float:right;">▼</span></td></tr>`;
             
             Object.keys(grouped[gc]).sort((a,b) => { if(a.includes("!!!")) return -1; if(b.includes("!!!")) return 1; return a.localeCompare(b); }).forEach(sc => {
                 let safeSc = getSafeId(gc + "_" + sc); let displaySc = sc.replace("!!! НОВОЕ", "Заполните данные"); 
                 let displayStyleL2 = isGcOpen ? "table-row" : "none";
                 let isScOpen = gc.includes("!!!") || expandedDivs.has(`lvl3_${safeSc}`);
                 
-                html += `<tr class="cat-group-header lvl2_${safeGc}" style="display:${displayStyleL2};" onclick="toggleCatElements('lvl3_${safeSc}', 'arrow_lvl3_${safeSc}')">
-                            <td colspan="10" style="padding:15px; padding-left:30px; font-size:16px;">📂 ${displaySc} <span id="arrow_lvl3_${safeSc}" style="float:right;">${isScOpen ? '▲' : '▼'}</span></td>
-                         </tr>`;
-                
+                html += `<tr class="cat-group-header lvl2_${safeGc}" style="display:${displayStyleL2};" onclick="toggleCatElements('lvl3_${safeSc}', 'arrow_lvl3_${safeSc}')"><td colspan="10" style="padding:15px; padding-left:30px; font-size:16px;">📂 ${displaySc} <span id="arrow_lvl3_${safeSc}" style="float:right;">${isScOpen ? '▲' : '▼'}</span></td></tr>`;
                 let displayStyleL3 = (isGcOpen && isScOpen) ? "table-row" : "none";
                 
                 grouped[gc][sc].sort((a,b) => (a.item.name||'').localeCompare(b.item.name||'')).forEach(data => {
                     let k = data.k; let item = data.item;
-                    
                     let gcatOptions = `<option value="${item.globalCat || 'Основное меню'}">${(item.globalCat || 'Основное меню').replace("!!! НОВОЕ", "Выберите...")}</option>`;
                     globalCats.forEach(c => { if(c !== (item.globalCat || 'Основное меню')) gcatOptions += `<option value="${c}">${c}</option>`; });
                     gcatOptions += `<option value="НОВАЯ ГЛОБАЛЬНАЯ">-- Создать --</option>`;
@@ -3628,23 +3648,18 @@ function renderGraphsTab() {
                     subCats.forEach(c => { if(c !== item.cat) catOptions += `<option value="${c}">${c}</option>`; });
                     catOptions += `<option value="НОВАЯ КАТЕГОРИЯ">-- Создать --</option>`;
                     
-                    // Полностью убрали кнопку вызова папки
                     let photoUi = "";
                     if (item.photo) {
-                        let imgDisplay = item.photo.startsWith("data:image") ? `<img src="${item.photo}" style="max-width:50px; max-height:50px; border-radius:6px; display:block; margin:0 auto; box-shadow:0 2px 4px rgba(0,0,0,0.1);">` : `<div style="font-size:12px; word-break:break-all; max-height:40px; overflow:hidden; color:#2e7d32; font-weight:bold;">✅ Ссылка</div>`;
-                        photoUi = `
-                            <div style="position:relative; display:inline-block; padding-top:5px;">
-                                ${imgDisplay}
-                                <button title="Удалить фото" onclick="removePhoto('${k}')" style="position:absolute; top:-5px; right:-10px; background:#e53935; color:white; border:none; border-radius:50%; width:22px; height:22px; font-size:12px; font-weight:900; cursor:pointer; display:flex; align-items:center; justify-content:center; box-shadow:0 2px 4px rgba(0,0,0,0.2);">✕</button>
-                            </div>`;
+                        let imgDisplay = item.photo.startsWith("data:image") ? `<img loading="lazy" src="${item.photo}" style="max-width:50px; max-height:50px; border-radius:6px; display:block; margin:0 auto; box-shadow:0 2px 4px rgba(0,0,0,0.1);">` : `<div style="font-size:12px; word-break:break-all; max-height:40px; overflow:hidden; color:#2e7d32; font-weight:bold;">✅ Ссылка</div>`;
+                        photoUi = `<div style="position:relative; display:inline-block; padding-top:5px;">${imgDisplay}<button title="Удалить фото" onclick="removePhoto('${k}')" style="position:absolute; top:-5px; right:-10px; background:#e53935; color:white; border:none; border-radius:50%; width:22px; height:22px; font-size:12px; font-weight:900; cursor:pointer; display:flex; align-items:center; justify-content:center; box-shadow:0 2px 4px rgba(0,0,0,0.2);">✕</button></div>`;
                     } else {
-                        photoUi = `<input type="text" style="font-size:12px; border:2px dashed #9575cd; background:#fafafa; text-align:center; width:100%; box-sizing:border-box; padding:8px 4px; border-radius:6px;" placeholder="Вставь Ctrl+V" onpaste="handleClipboardImagePaste(event, '${k}', 'order')" onchange="updateVal('${k}','photo',this.value)">`;
+                        photoUi = `<input type="text" style="font-size:12px; border:2px dashed #9575cd; background:#fafafa; text-align:center; cursor:pointer; width:100%; box-sizing:border-box; padding:8px 4px; border-radius:6px;" placeholder="Кликни и нажми Ctrl+V" onpaste="handleClipboardImagePaste(event, '${k}', 'order')" onchange="updateVal('${k}','photo',this.value)">`;
                     }
 
                     html += `<tr class="chk-row lvl3_${safeSc} lvl3_of_${safeGc}" style="display:${displayStyleL3};">
                         <td><select onchange="updateVal('${k}','globalCat',this.value)" style="font-size:14px;">${gcatOptions}</select></td>
                         <td><select onchange="updateVal('${k}','cat',this.value)" style="font-size:14px;">${catOptions}</select></td>
-                        <td><input type="text" style="font-weight:bold; font-size:15px; color:#311b92; width:100%; box-sizing:border-box;" value="${item.name || ''}" onchange="updateVal('${k}','name',this.value)"></td>
+                        <td><input type="text" list="order_items_list" style="font-weight:bold; font-size:15px; color:#311b92; width:100%; box-sizing:border-box;" value="${item.name || ''}" onchange="updateVal('${k}','name',this.value)"></td>
                         <td style="text-align:center;">${photoUi}</td>
                         <td><input type="text" style="font-size:14px; width:100%; box-sizing:border-box;" placeholder="Лента/Озон" value="${item.vendor || 'Лента'}" onchange="updateVal('${k}','vendor',this.value)"></td>
                         <td><input type="number" style="font-size:14px; box-sizing:border-box;" value="${item.price || 0}" onchange="updateVal('${k}','price',this.value)"></td>
@@ -3661,6 +3676,28 @@ function renderGraphsTab() {
 
    function renderCatalogChecklist() {
         const box = document.getElementById('content');
+        
+        // УМНАЯ СИНХРОНИЗАЦИЯ ФОТОГРАФИЙ МЕЖДУ СПРАВОЧНИКАМИ
+        let globalPhotoDict = {};
+        let combinedCatForPhotos = [];
+        if (cachedData.catalogOrder) combinedCatForPhotos.push(...Object.values(cachedData.catalogOrder));
+        if (cachedData.catalogChecklist) combinedCatForPhotos.push(...Object.values(cachedData.catalogChecklist));
+        combinedCatForPhotos.push(...Object.values(currentCatalog));
+        
+        combinedCatForPhotos.forEach(c => {
+            if (c && c.name && c.photo && c.photo.startsWith("data:image")) {
+                globalPhotoDict[cleanName(c.name)] = c.photo;
+            }
+        });
+
+        Object.keys(currentCatalog).forEach(k => {
+            let item = currentCatalog[k];
+            if (item && item.name && (!item.photo || !item.photo.startsWith("data:image"))) {
+                let sharedPhoto = globalPhotoDict[cleanName(item.name)];
+                if (sharedPhoto) item.photo = sharedPhoto; 
+            }
+        });
+
         let globalCats = ["Основное меню"];
         Object.values(currentCatalog).forEach(i => { if(i.globalCat && !globalCats.includes(i.globalCat) && !i.globalCat.includes("!!!")) globalCats.push(i.globalCat); });
         let subCats = [...new Set(Object.values(currentCatalog).map(i => i.cat).filter(c => c && !c.includes("!!!")))];
@@ -3692,15 +3729,14 @@ function renderGraphsTab() {
         html += `</div></div></div>`;
 
         let allPurchaseItems = [];
-        if (cachedData.catalogOrder) {
-            let names = Object.values(cachedData.catalogOrder).map(i => i.name).filter(Boolean);
-            allPurchaseItems = [...new Set(names)].sort((a,b) => a.localeCompare(b));
-        }
-        let optionsHtml = allPurchaseItems.map(name => `<option value="${name.replace(/"/g, '&quot;')}">${name}</option>`).join("");
+        if (cachedData.catalogOrder) allPurchaseItems.push(...Object.values(cachedData.catalogOrder).map(i => i.name));
+        if (cachedData.catalogChecklist) allPurchaseItems.push(...Object.values(cachedData.catalogChecklist).map(i => i.name));
+        let uniqueNames = [...new Set(allPurchaseItems.filter(Boolean))].sort((a,b) => a.localeCompare(b));
+        let optionsHtml = uniqueNames.map(name => `<option value="${name.replace(/"/g, '&quot;')}">${name}</option>`).join("");
         html += `<datalist id="checklist_items_list">${optionsHtml}</datalist>`;
 
         html += `<div style="overflow-x:auto;"><table style="min-width:1200px;">
-            <tr><th style="width:200px;">Глоб. Категория</th><th style="width:250px;">Подкатегория</th><th style="width:300px;">Наименование (из Закупки)</th><th style="width:160px; text-align:center;">Фотографии</th><th style="width:200px;">Формат ввода</th><th style="width:80px; text-align:center;">Удалить</th></tr>`;
+            <tr><th style="width:200px;">Глоб. Категория</th><th style="width:250px;">Подкатегория</th><th style="width:300px;">Наименование (из Закупки)</th><th style="width:150px; text-align:center;">Фотографии</th><th style="width:200px;">Формат ввода</th><th style="width:80px; text-align:center;">Удалить</th></tr>`;
             
         let grouped = {};
         Object.keys(currentCatalog).forEach(k => {
@@ -3721,12 +3757,10 @@ function renderGraphsTab() {
                 let isScOpen = gc.includes("!!!") || expandedDivs.has(`chitem_${safeSc}`);
 
                 html += `<tr class="cat-group-header lvl2_chksub_${safeGc}" style="display:${displayStyleL2};" onclick="toggleCatElements('chitem_${safeSc}', 'arrow_chkitem_${safeSc}')"><td colspan="6" style="padding:15px; padding-left:30px; font-size:18px;">📂 ${displaySc} <span id="arrow_chkitem_${safeSc}" style="float:right;">${isScOpen ? '▲' : '▼'}</span></td></tr>`;
-                
                 let displayStyleL3 = (isGcOpen && isScOpen) ? "table-row" : "none";
 
                 grouped[gc][sc].sort((a,b) => (a.item.name||'').localeCompare(b.item.name||'')).forEach(data => {
                     let k = data.k; let item = data.item;
-                    
                     let gcatOptions = `<option value="${item.globalCat || 'Основное меню'}">${(item.globalCat || 'Основное меню').replace("!!! НОВОЕ", "Выберите...")}</option>`;
                     globalCats.forEach(c => { if(c !== (item.globalCat || 'Основное меню')) gcatOptions += `<option value="${c}">${c}</option>`; });
                     gcatOptions += `<option value="НОВАЯ ГЛОБАЛЬНАЯ">-- Создать --</option>`;
@@ -3737,17 +3771,12 @@ function renderGraphsTab() {
                     
                     let isVol = (item.unit && item.unit.toLowerCase().includes("объем"));
                     
-                    // Аналогично, убрали папку
                     let photoUi = "";
                     if (item.photo) {
-                        let imgDisplay = item.photo.startsWith("data:image") ? `<img src="${item.photo}" style="max-width:50px; max-height:50px; border-radius:6px; display:block; margin:0 auto; box-shadow:0 2px 4px rgba(0,0,0,0.1);">` : `<div style="font-size:12px; word-break:break-all; max-height:40px; overflow:hidden; color:#2e7d32; font-weight:bold;">✅ Ссылка</div>`;
-                        photoUi = `
-                            <div style="position:relative; display:inline-block; padding-top:5px;">
-                                ${imgDisplay}
-                                <button title="Удалить фото" onclick="removePhoto('${k}')" style="position:absolute; top:-5px; right:-10px; background:#e53935; color:white; border:none; border-radius:50%; width:22px; height:22px; font-size:12px; font-weight:900; cursor:pointer; display:flex; align-items:center; justify-content:center; box-shadow:0 2px 4px rgba(0,0,0,0.2);">✕</button>
-                            </div>`;
+                        let imgDisplay = item.photo.startsWith("data:image") ? `<img loading="lazy" src="${item.photo}" style="max-width:50px; max-height:50px; border-radius:6px; display:block; margin:0 auto; box-shadow:0 2px 4px rgba(0,0,0,0.1);">` : `<div style="font-size:12px; word-break:break-all; max-height:40px; overflow:hidden; color:#2e7d32; font-weight:bold;">✅ Ссылка</div>`;
+                        photoUi = `<div style="position:relative; display:inline-block; padding-top:5px;">${imgDisplay}<button title="Удалить фото" onclick="removePhoto('${k}')" style="position:absolute; top:-5px; right:-10px; background:#e53935; color:white; border:none; border-radius:50%; width:22px; height:22px; font-size:12px; font-weight:900; cursor:pointer; display:flex; align-items:center; justify-content:center; box-shadow:0 2px 4px rgba(0,0,0,0.2);">✕</button></div>`;
                     } else {
-                        photoUi = `<input type="text" style="font-size:12px; border:2px dashed #9575cd; background:#fafafa; text-align:center; width:100%; box-sizing:border-box; padding:8px 4px; border-radius:6px;" placeholder="Вставь Ctrl+V" onpaste="handleClipboardImagePaste(event, '${k}', 'check')" onchange="updateVal('${k}','photo',this.value)">`;
+                        photoUi = `<input type="text" style="font-size:12px; border:2px dashed #9575cd; background:#fafafa; text-align:center; cursor:pointer; width:100%; box-sizing:border-box; padding:8px 4px; border-radius:6px;" placeholder="Кликни и нажми Ctrl+V" onpaste="handleClipboardImagePaste(event, '${k}', 'check')" onchange="updateVal('${k}','photo',this.value)">`;
                     }
 
                     html += `<tr class="chk-row chitem_${safeSc} lvl3_of_chksub_${safeGc}" style="display:${displayStyleL3};">
@@ -3918,19 +3947,15 @@ function renderGraphsTab() {
         e.target.style.opacity = "1";
     }
 
-    function renderMenuTab() {
+   function renderMenuTab() {
         const box = document.getElementById('content');
         let globalCats = ["Основное меню", "Сезонное меню"];
         
         Object.values(currentMenu).forEach(i => {
             if(i.globalCat && !globalCats.includes(i.globalCat)) globalCats.push(i.globalCat);
-            
             if (!i.blocks) {
-                if (i.recipe && i.recipe.length > 0) {
-                    i.blocks = [i.recipe];
-                } else {
-                    i.blocks = [[]];
-                }
+                if (i.recipe && i.recipe.length > 0) i.blocks = [i.recipe];
+                else i.blocks = [[]];
             }
         });
         
@@ -3939,45 +3964,25 @@ function renderGraphsTab() {
 
         let html = `
         <h3 style="margin-top:0; margin-bottom:15px; font-size:24px; color:#4A148C;">☕ Меню и Тех карты</h3>
-        
         <div class="cat-group-header" style="padding: 12px 15px; border-radius: 12px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.05);" onclick="toggleCatElements('menu-actions', 'arrow_menu_actions')">
             <span style="font-size:16px; color:#4A148C; font-weight:900;">⚡ Действия</span>
             <span id="arrow_menu_actions">${isActionsOpen ? '▲' : '▼'}</span>
         </div>
-        
         <div class="menu-actions action-container" style="display: ${isActionsOpen ? 'flex' : 'none'}; flex-direction: column; margin-bottom: 20px;">
             <div style="display:flex; gap:10px; flex-wrap:wrap; width:100%;">
                 <button class="btn-add" style="flex:1 1 auto;" onclick="addMenuItem()">➕ Добавить напиток</button>
                 <button class="btn-save" style="flex:1 1 auto; background: linear-gradient(135deg, #FF9800 0%, #F57C00 100%);" onclick="exportMenuToExcel()">📊 Экспорт в Excel (Техкарты)</button>
                 <button class="btn-save" style="flex:1 1 auto; margin:0;" onclick="saveMenu(this)">💾 Сохранить меню</button>
             </div>
-        </div>
-        `;
+        </div>`;
 
         let allPurchaseItems = [];
         let catalogDict = {};
-        
-        if (cachedData.catalogOrder) {
-            Object.values(cachedData.catalogOrder).forEach(i => {
-                if(i.name) {
-                    allPurchaseItems.push(i.name);
-                    catalogDict[i.name] = i;
-                }
-            });
-        }
-        
-        if (cachedData.catalogChecklist) {
-            Object.values(cachedData.catalogChecklist).forEach(i => {
-                if(i.name && !catalogDict[i.name]) {
-                    allPurchaseItems.push(i.name);
-                    catalogDict[i.name] = i;
-                }
-            });
-        }
+        if (cachedData.catalogOrder) Object.values(cachedData.catalogOrder).forEach(i => { if(i.name) { allPurchaseItems.push(i.name); catalogDict[i.name] = i; } });
+        if (cachedData.catalogChecklist) Object.values(cachedData.catalogChecklist).forEach(i => { if(i.name && !catalogDict[i.name]) { allPurchaseItems.push(i.name); catalogDict[i.name] = i; } });
 
         allPurchaseItems.sort((a,b) => a.localeCompare(b));
         let prodOptionsHtml = allPurchaseItems.map(name => `<option value="${name.replace(/"/g, '&quot;')}">${name}</option>`).join("");
-        
         html += `<datalist id="menu_ingredients_list">${prodOptionsHtml}</datalist>`;
 
         html += `<div style="overflow-x:auto;"><table style="min-width:1200px;">
@@ -3985,7 +3990,6 @@ function renderGraphsTab() {
 
         let grouped = {};
         let sortedKeys = Object.keys(currentMenu).sort((a,b) => (currentMenu[b].timestamp || 0) - (currentMenu[a].timestamp || 0));
-        
         sortedKeys.forEach(k => {
             let item = currentMenu[k]; let gc = item.globalCat || "Основное меню"; let sc = item.cat || "Прочее";
             if (!grouped[gc]) grouped[gc] = {}; if (!grouped[gc][sc]) grouped[gc][sc] = [];
@@ -3995,25 +3999,17 @@ function renderGraphsTab() {
         Object.keys(grouped).forEach(gc => {
             let safeGc = getSafeId("menu_" + gc);
             let isGcOpen = expandedDivs.has(`menulvl2_${safeGc}`);
-            
-            html += `<tr class="cat-group-header" onclick="toggleCatElements('menulvl2_${safeGc}', 'arrow_menulvl2_${safeGc}')">
-                        <td colspan="6" style="padding:18px; background:#d1c4e9; font-size:18px;">🌍 <b>${gc}</b> <span id="arrow_menulvl2_${safeGc}" style="float:right;">${isGcOpen?'▲':'▼'}</span></td>
-                     </tr>`;
-            
+            html += `<tr class="cat-group-header" onclick="toggleCatElements('menulvl2_${safeGc}', 'arrow_menulvl2_${safeGc}')"><td colspan="6" style="padding:18px; background:#d1c4e9; font-size:18px;">🌍 <b>${gc}</b> <span id="arrow_menulvl2_${safeGc}" style="float:right;">${isGcOpen?'▲':'▼'}</span></td></tr>`;
             Object.keys(grouped[gc]).forEach(sc => {
                 let safeSc = getSafeId("menu_" + gc + "_" + sc);
                 let displayStyleL2 = isGcOpen ? "table-row" : "none";
                 let isScOpen = expandedDivs.has(`menulvl3_${safeSc}`);
                 
-                html += `<tr class="cat-group-header menulvl2_${safeGc}" style="display:${displayStyleL2};" onclick="toggleCatElements('menulvl3_${safeSc}', 'arrow_menulvl3_${safeSc}')">
-                            <td colspan="6" style="padding:15px; padding-left:30px; font-size:16px; background:#ede7f6;">📂 ${sc} <span id="arrow_menulvl3_${safeSc}" style="float:right;">${isScOpen?'▲':'▼'}</span></td>
-                         </tr>`;
-                
+                html += `<tr class="cat-group-header menulvl2_${safeGc}" style="display:${displayStyleL2};" onclick="toggleCatElements('menulvl3_${safeSc}', 'arrow_menulvl3_${safeSc}')"><td colspan="6" style="padding:15px; padding-left:30px; font-size:16px; background:#ede7f6;">📂 ${sc} <span id="arrow_menulvl3_${safeSc}" style="float:right;">${isScOpen?'▲':'▼'}</span></td></tr>`;
                 let displayStyleL3 = (isGcOpen && isScOpen) ? "table-row" : "none";
                 
                 grouped[gc][sc].forEach(data => {
                     let k = data.k; let item = data.item;
-                    
                     let gcatOptions = `<option value="${item.globalCat || 'Основное меню'}">${item.globalCat || 'Основное меню'}</option>`;
                     globalCats.forEach(c => { if(c !== (item.globalCat || 'Основное меню')) gcatOptions += `<option value="${c}">${c}</option>`; });
                     gcatOptions += `<option value="НОВАЯ ГЛОБАЛЬНАЯ">-- Создать --</option>`;
@@ -4023,7 +4019,6 @@ function renderGraphsTab() {
                     catOptions += `<option value="НОВАЯ КАТЕГОРИЯ">-- Создать --</option>`;
 
                     let blocksHtml = ``;
-                    
                     if(item.blocks && item.blocks.length > 0) {
                         item.blocks.forEach((block, bIdx) => {
                             blocksHtml += `<div class="recipe-block-container" ondragover="dragOverRecipe(event)" ondragleave="dragLeaveRecipe(event)" ondrop="dropRecipe(event, '${k}', ${bIdx}, -1)">
@@ -4031,7 +4026,6 @@ function renderGraphsTab() {
                                     <b style="color:#5e35b1; font-size:13px;">Слой ${bIdx + 1}</b>
                                     <button style="background:none; border:none; color:#c62828; cursor:pointer; font-size:12px;" onclick="removeMenuRecipeBlock('${k}', ${bIdx})">Удалить слой</button>
                                 </div>`;
-                                
                             if (block.length > 0) {
                                 block.forEach((r, iIdx) => {
                                     blocksHtml += `<div class="recipe-item-row" draggable="true" ondragstart="dragStartRecipe(event, '${k}', ${bIdx}, ${iIdx})" ondragover="dragOverRecipe(event)" ondragleave="dragLeaveRecipe(event)" ondrop="dropRecipe(event, '${k}', ${bIdx}, ${iIdx})" ondragend="dragEndRecipe(event)">
@@ -4044,36 +4038,34 @@ function renderGraphsTab() {
                             } else {
                                 blocksHtml += `<div style="text-align:center; color:#999; font-size:12px; margin-bottom:10px;">Слой пуст. Перетащите сюда ингредиент или добавьте новый.</div>`;
                             }
-                            
-                            blocksHtml += `<button style="background:none; border:none; color:#0288d1; font-weight:bold; cursor:pointer; font-size:13px; width:100%; text-align:center; margin-top:5px;" onclick="addMenuRecipeItem('${k}', ${bIdx})">+ Добавить ингредиент</button>
-                            </div>`;
+                            blocksHtml += `<button style="background:none; border:none; color:#0288d1; font-weight:bold; cursor:pointer; font-size:13px; width:100%; text-align:center; margin-top:5px;" onclick="addMenuRecipeItem('${k}', ${bIdx})">+ Добавить ингредиент</button></div>`;
                         });
                     }
 
-                    let recipeHtml = `<div style="padding:5px;">
-                        ${blocksHtml}
+                    let recipeHtml = `<div style="padding:5px;">${blocksHtml}
                         <button style="background:none; border:none; color:#2e7d32; font-weight:bold; cursor:pointer; font-size:14px; width:100%; text-align:center; margin-bottom:15px; padding:10px; border: 2px dashed #4caf50; border-radius:8px;" onclick="addMenuRecipeBlock('${k}')">➕ Добавить новый слой</button>
-                        
                         <div style="display:flex; flex-direction:column; gap:5px; background:#fff3e0; padding:10px; border-radius:8px; border:1px solid #ffb74d;">
                             <b style="color:#e65100; font-size:14px;">Техническое приготовление:</b>
                             <textarea placeholder="Опишите процесс..." style="width:100%; font-size:14px; padding:6px; border-radius:6px; border:1px solid #ccc; resize:vertical; min-height:40px;" onchange="updateMenuVal('${k}', 'techPrep', this.value)">${item.techPrep || ''}</textarea>
                         </div>
                     </div>`;
                     
-                    let isPhotoSet = item.photo && item.photo.startsWith("data:image") ? `<span style="color:#2e7d32; font-size:11px;">✅ Загружено</span>` : '';
-                    
+                    let photoUi = "";
+                    if (item.photo && item.photo.startsWith("data:image")) {
+                        photoUi = `<div style="position:relative; display:inline-block; margin-top:5px;">
+                                      <img loading="lazy" src="${item.photo}" style="max-width:50px; max-height:50px; border-radius:6px; box-shadow:0 2px 4px rgba(0,0,0,0.1);">
+                                      <button title="Удалить фото" onclick="removeMenuPhoto('${k}')" style="position:absolute; top:-5px; right:-10px; background:#e53935; color:white; border:none; border-radius:50%; width:22px; height:22px; font-size:12px; font-weight:900; cursor:pointer; display:flex; align-items:center; justify-content:center;">✕</button>
+                                   </div>`;
+                    } else {
+                        photoUi = `<input type="text" style="font-size:12px; border:2px dashed #9575cd; background:#fff; text-align:center; cursor:pointer; width:100%; box-sizing:border-box; padding:8px; border-radius:6px; margin-top:5px;" placeholder="📷 Кликни и жми Ctrl+V" onpaste="handleClipboardImagePaste(event, '${k}', 'menu_photo')" onchange="updateMenuVal('${k}','photo',this.value)">`;
+                    }
+
                     html += `<tr class="chk-row menulvl3_${safeSc} menulvl3_of_${safeGc}" style="display:${displayStyleL3}; background:#fff;">
                         <td style="padding:10px;"><select onchange="updateMenuVal('${k}','globalCat',this.value)" style="font-size:13px; width:100%; box-sizing:border-box;">${gcatOptions}</select></td>
                         <td style="padding:10px;"><select onchange="updateMenuVal('${k}','cat',this.value)" style="font-size:13px; width:100%; box-sizing:border-box;">${catOptions}</select></td>
                         <td style="padding:10px; vertical-align:top;">
                             <input type="text" style="font-weight:bold; font-size:15px; color:#311b92; width:100%; box-sizing:border-box; margin-bottom:5px;" value="${item.name || ''}" onchange="updateMenuVal('${k}','name',this.value)">
-                            
-                            <div style="background:#f5f5f5; padding:5px; border-radius:6px; margin-bottom:5px;">
-                                <input type="file" id="file_menu_${k}" style="display:none;" accept="image/*" onchange="handleFileUpload(event, '${k}', 'menu_photo')">
-                                <input type="text" style="font-size:12px; border:2px dashed #9575cd; background:#fff; text-align:center; cursor:pointer; width:100%; box-sizing:border-box;" placeholder="📷 Нажми или Ctrl+V фото" value="" onclick="document.getElementById('file_menu_${k}').click()" onpaste="handleClipboardImagePaste(event, '${k}', 'menu_photo')">
-                                ${isPhotoSet}
-                            </div>
-                            
+                            <div style="background:#f5f5f5; padding:5px; border-radius:6px; margin-bottom:5px; text-align:center;">${photoUi}</div>
                             <input type="text" style="font-size:12px; width:100%; box-sizing:border-box; padding:6px; border:1px solid #ccc; border-radius:6px;" placeholder="🎥 Ссылка на видео" value="${item.video || ''}" onchange="updateMenuVal('${k}','video',this.value)">
                         </td>
                         <td style="padding:10px; vertical-align:top;"><input type="number" style="font-size:14px; font-weight:bold; width:100%; box-sizing:border-box;" value="${item.price || 0}" onchange="updateMenuVal('${k}','price',this.value)"></td>
@@ -4409,11 +4401,16 @@ async function exportGraphsToExcel() {
     }
 
     function removePhoto(id) {
-        if(!confirm("Удалить это фото?")) return;
         currentCatalog[id].photo = "";
         if (currentPath.includes('order') || currentPath.includes('newshop')) renderCatalogOrder();
         else if (currentPath.includes('stoplist')) renderCatalogStoplist();
         else renderCatalogChecklist();
+    }
+
+    function removeMenuPhoto(id) {
+        if(!confirm("Удалить фото напитка?")) return;
+        currentMenu[id].photo = "";
+        renderMenuTab();
     }
     
     function deleteItem(id) { 

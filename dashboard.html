@@ -4537,6 +4537,72 @@ async function exportGraphsToExcel() {
         let tabBtn = document.querySelector(`.tab-btn[onclick*="'${savedTab}'"]`) || document.querySelector('.tab-btn.active');
         loadTab(savedTab, tabBtn);
     };
+    
+    // ==========================================
+    // УМНАЯ АВТО-СИНХРОНИЗАЦИЯ ФОТО ПО ДУБЛИКАТАМ
+    // ==========================================
+    
+    window.autoSyncCatalogPhotos = function(catalogObj) {
+        if (!catalogObj) return false;
+        let photoMap = {};
+        let hasChanges = false;
+        
+        // 1. Ищем все фото на текущей вкладке и запоминаем их по имени товара
+        Object.keys(catalogObj).forEach(key => {
+            let item = catalogObj[key];
+            if (item && item.name && item.photo && item.photo.trim() !== "") {
+                // Приводим к нижнему регистру и обрезаем пробелы для точного совпадения
+                let clean = String(item.name).toLowerCase().trim();
+                photoMap[clean] = item.photo;
+            }
+        });
+
+        // 2. Идем по каталогу еще раз и раздаем найденные фото тем, у кого их нет
+        Object.keys(catalogObj).forEach(key => {
+            let item = catalogObj[key];
+            if (item && item.name) {
+                let clean = String(item.name).toLowerCase().trim();
+                if ((!item.photo || item.photo.trim() === "") && photoMap[clean]) {
+                    item.photo = photoMap[clean];
+                    hasChanges = true; // Фиксируем, что мы клонировали фото
+                }
+            }
+        });
+        
+        return hasChanges;
+    };
+
+    // Перехватываем вставку фото (Ctrl+V) по всему Дашборду
+    window.addEventListener('paste', function(e) {
+        // Проверяем, что в буфере обмена именно картинка
+        if (e.clipboardData && e.clipboardData.files && e.clipboardData.files.length > 0) {
+            
+            // Даем базовому коду Дашборда 300мс на сохранение новой картинки
+            setTimeout(() => {
+                let changed1 = false;
+                let changed2 = false;
+                
+                // Прогоняем синхронизацию по всем открытым рабочим словарям
+                if (typeof currentCatalog !== 'undefined') changed1 = window.autoSyncCatalogPhotos(currentCatalog);
+                if (typeof currentMenu !== 'undefined') changed2 = window.autoSyncCatalogPhotos(currentMenu);
+                
+                // Если нашлись дубликаты без фото и мы их заполнили — перерисовываем интерфейс
+                if (changed1 || changed2) {
+                    console.log("📸 Фото успешно скопировано на все дубликаты!");
+                    
+                    if (typeof currentPath !== 'undefined') {
+                        if (currentPath.includes('order') && typeof renderCatalogOrder === 'function') renderCatalogOrder();
+                        else if (currentPath.includes('checklist') && typeof renderCatalogChecklist === 'function') renderCatalogChecklist();
+                        else if (currentPath === 'menu' && typeof renderMenuTab === 'function') renderMenuTab();
+                    } else {
+                        // Резервный вызов перерисовки
+                        if (typeof renderMenuTab === 'function') renderMenuTab();
+                    }
+                }
+            }, 300);
+        }
+    });
+    
 </script>
 </body>
 </html>

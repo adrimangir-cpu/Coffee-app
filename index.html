@@ -639,53 +639,49 @@
     }
 
     // Умный кэш (Берет данные из памяти моментально)
-    async function getCatalog(name) {
+   async function getCatalog(name) {
         if (!state.cachedCatalogs) state.cachedCatalogs = {};
         
-        // 1. Если данные уже в оперативной памяти — отдаем за 0 сек
+        // 1. Возвращаем из оперативной памяти, если уже загружено
         if (state.cachedCatalogs[name] && Object.keys(state.cachedCatalogs[name]).length > 0) {
             return state.cachedCatalogs[name];
         }
         
-        // 2. Если их нет, ищем в физической памяти телефона (мгновенно)
+        // 2. Ищем в локальной памяти телефона (LocalStorage)
+        let savedData = null;
         try {
             let saved = localStorage.getItem("coffee_app_cat_" + name);
             if (saved) {
-                let parsed = JSON.parse(saved);
-                if (Object.keys(parsed).length > 0) {
-                    state.cachedCatalogs[name] = parsed;
-                    
-                    // Пока мы работаем с локальной копией, свежая тихо качается в фоне
-                    if (state.catalogPromises && state.catalogPromises[name]) {
-                        state.catalogPromises[name].then(fresh => {
-                            state.cachedCatalogs[name] = fresh;
-                        });
-                    }
-                    return parsed; 
-                }
+                savedData = JSON.parse(saved);
+                state.cachedCatalogs[name] = savedData;
             }
-        } catch(e) {}
-        
-        // 3. Если памяти нет вообще (первый запуск), только тогда ждем скачивания
-        if (state.catalogPromises && state.catalogPromises[name]) {
-            state.cachedCatalogs[name] = await state.catalogPromises[name];
-            return state.cachedCatalogs[name];
+        } catch(e) {
+            console.error("Ошибка чтения локального кэша:", e);
         }
         
-        let snap = await database.ref(`catalogs/${name}`).once("value");
-        let val = snap.val() || {};
-        state.cachedCatalogs[name] = val;
-        try { localStorage.setItem("coffee_app_cat_" + name, JSON.stringify(val)); } catch(e){}
-        return val;
-    }
-
-    async function getCatalogs() {
-        let catsToLoad = ['order', 'menu', 'checklist', 'stoplist', 'newshop'];
-        let results = {};
-        for (let cat of catsToLoad) {
-            results[cat] = await getCatalog(cat);
+        // Если кэш на телефоне найден — отдаем его бариста МГНОВЕННО, 
+        // а сетевой запрос на обновление запускаем тихо в фоне
+        if (savedData && Object.keys(savedData).length > 0) {
+            database.ref(`catalogs/${name}`).once("value").then(snap => {
+                let fresh = snap.val() || {};
+                state.cachedCatalogs[name] = fresh;
+                try { localStorage.setItem("coffee_app_cat_" + name, JSON.stringify(fresh)); } catch(err){}
+            }).catch(e => console.log("Фоновое обновление не удалось, работаем на кэше"));
+            
+            return savedData;
         }
-        return results;
+        
+        // 3. Если это самый первый запуск и кэша нет — идем в сеть напрямую
+        try {
+            let snap = await database.ref(`catalogs/${name}`).once("value");
+            let val = snap.val() || {};
+            state.cachedCatalogs[name] = val;
+            try { localStorage.setItem("coffee_app_cat_" + name, JSON.stringify(val)); } catch(err){}
+            return val;
+        } catch(networkErr) {
+            console.error("Критическая ошибка сети:", networkErr);
+            return {};
+        }
     }
 
     // ==========================================
@@ -1435,11 +1431,11 @@
       
       try {
           await loadSettings();
-          const catalogs = await getCatalogs(); // Данные берутся мгновенно из кэша
-
+          
           let pathKey = mode === 'checklist' ? 'checklist' : (mode === 'stoplist_fill' ? 'stoplist' : (mode === 'new_shop' ? 'newshop' : 'order'));
           
-          let sourceCatalog = catalogs[pathKey] || {};
+          // РЕШЕНИЕ ПРОБЛЕМЫ: Скачиваем ТОЛЬКО ОДИН запрашиваемый справочник вместо пяти!
+          let sourceCatalog = await getCatalog(pathKey);
           state.productCatalog = {};
 
           let hiddenList = {};
@@ -1449,7 +1445,7 @@
 
           let uniqueProducts = new Set();
 
-          // Сверхбыстрая фильтрация (исключаем дубликаты и скрытые категории без зависаний)
+          // Моментальная фильтрация дубликатов
           for(let k in sourceCatalog) {
               let item = sourceCatalog[k];
               if (!item || !item.name) continue;

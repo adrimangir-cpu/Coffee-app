@@ -639,24 +639,26 @@
     }
 
     // Умный кэш (Берет данные из памяти моментально)
-    async function getCatalogs() {
+    async function getCatalog(name) {
         if (!state.cachedCatalogs) state.cachedCatalogs = {};
+        if (state.cachedCatalogs[name]) return state.cachedCatalogs[name];
         
+        if (state.catalogPromises && state.catalogPromises[name]) {
+            state.cachedCatalogs[name] = await state.catalogPromises[name];
+            return state.cachedCatalogs[name];
+        }
+        
+        let snap = await database.ref(`catalogs/${name}`).once("value");
+        state.cachedCatalogs[name] = snap.val() || {};
+        return state.cachedCatalogs[name];
+    }
+
+    // 2. Общий кэш (для Закупки и Чек-листа)
+    async function getCatalogs() {
         let catsToLoad = ['order', 'menu', 'checklist', 'stoplist', 'newshop'];
         let results = {};
-        
         for (let cat of catsToLoad) {
-            if (state.cachedCatalogs[cat]) {
-                results[cat] = state.cachedCatalogs[cat];
-            } else if (state.catalogPromises && state.catalogPromises[cat]) {
-                // Если данные уже грузятся в фоне с момента старта аппа, просто ждем
-                state.cachedCatalogs[cat] = await state.catalogPromises[cat];
-                results[cat] = state.cachedCatalogs[cat];
-            } else {
-                let snap = await database.ref(`catalogs/${cat}`).once("value");
-                state.cachedCatalogs[cat] = snap.val() || {};
-                results[cat] = state.cachedCatalogs[cat];
-            }
+            results[cat] = await getCatalog(cat);
         }
         return results;
     }
@@ -2624,7 +2626,7 @@
             let historyMissing = [];
             missSnap.forEach(c => { 
                 let m = c.val(); 
-                if(!m) return;
+                if(!m || !m.name) return; // Защита от пустых записей
                 if(m.status !== 'arrived' && m.status !== 'canceled') {
                     activeMissing.push({key: c.key, ...m}); 
                 } else if (m.status === 'arrived') {
@@ -2910,7 +2912,8 @@
             document.getElementById('report-content-area').innerHTML = html || "<div class='report-card'>Пусто</div>";
         } catch (err) {
             console.error(err);
-            document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; color:red; font-weight:900;">Ошибка загрузки приемки.</div></div>`; 
+            // Если ошибка осталась, она подробно напишет причину прямо на экране!
+            document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; color:red; font-weight:900;">Ошибка загрузки приемки:<br><span style="font-size:12px; font-weight:normal;">${err.message}</span></div></div>`; 
         }
     }
 

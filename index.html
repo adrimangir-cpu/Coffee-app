@@ -639,14 +639,26 @@
     }
 
     // Умный кэш (Берет данные из памяти моментально)
-    async function getCatalog(name) {
+    async function getCatalogs() {
         if (!state.cachedCatalogs) state.cachedCatalogs = {};
-        if (state.cachedCatalogs[name] && Object.keys(state.cachedCatalogs[name]).length > 0) {
-            return state.cachedCatalogs[name];
+        
+        let catsToLoad = ['order', 'menu', 'checklist', 'stoplist', 'newshop'];
+        let results = {};
+        
+        for (let cat of catsToLoad) {
+            if (state.cachedCatalogs[cat]) {
+                results[cat] = state.cachedCatalogs[cat];
+            } else if (state.catalogPromises && state.catalogPromises[cat]) {
+                // Если данные уже грузятся в фоне с момента старта аппа, просто ждем
+                state.cachedCatalogs[cat] = await state.catalogPromises[cat];
+                results[cat] = state.cachedCatalogs[cat];
+            } else {
+                let snap = await database.ref(`catalogs/${cat}`).once("value");
+                state.cachedCatalogs[cat] = snap.val() || {};
+                results[cat] = state.cachedCatalogs[cat];
+            }
         }
-        let snap = await database.ref(`catalogs/${name}`).once("value");
-        state.cachedCatalogs[name] = snap.val() || {};
-        return state.cachedCatalogs[name];
+        return results;
     }
 
     // ==========================================
@@ -1376,11 +1388,11 @@
       
       try {
           await loadSettings();
-          
+          const catalogs = await getCatalogs(); // Данные берутся мгновенно из кэша
+
           let pathKey = mode === 'checklist' ? 'checklist' : (mode === 'stoplist_fill' ? 'stoplist' : (mode === 'new_shop' ? 'newshop' : 'order'));
           
-          // ГРУЗИМ ТОЛЬКО ОДИН НУЖНЫЙ СПРАВОЧНИК
-          let sourceCatalog = await getCatalog(pathKey);
+          let sourceCatalog = catalogs[pathKey] || {};
           state.productCatalog = {};
 
           let hiddenList = {};
@@ -1390,7 +1402,7 @@
 
           let uniqueProducts = new Set();
 
-          // Быстрая фильтрация дубликатов
+          // Сверхбыстрая фильтрация (исключаем дубликаты и скрытые категории без зависаний)
           for(let k in sourceCatalog) {
               let item = sourceCatalog[k];
               if (!item || !item.name) continue;
@@ -3161,9 +3173,16 @@
           globalTgUserId = "708179577";
       }
       
-      state.cachedCatalogs = {}; // Очищаем кэш при старте
-      // УБРАНА ТЯЖЕЛАЯ ФОНОВАЯ ЗАГРУЗКА
+      state.cachedCatalogs = {};
+      state.catalogPromises = {};
       
+      // Запускаем плавную загрузку частями, чтобы не вешать телефон
+      setTimeout(() => {
+          ['order', 'menu', 'checklist', 'stoplist', 'newshop'].forEach(cat => {
+              state.catalogPromises[cat] = database.ref(`catalogs/${cat}`).once("value").then(s => s.val() || {});
+          });
+      }, 50);
+
       restoreMpDraft();
       showScreen('step-1', false);
     };

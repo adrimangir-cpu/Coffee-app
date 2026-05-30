@@ -3159,20 +3159,92 @@
         localStorage.setItem("draft_" + state.currentShop + "_" + state.currentMode, JSON.stringify({basket: state.userBasket, time: Date.now()})); 
     }
     
-    function restoreFromDraft() { 
-        let d = localStorage.getItem("draft_" + state.currentShop + "_" + state.currentMode); 
-        if(d) { 
-           let p = JSON.parse(d); 
-           if (!state.userBasket["_catinfo"]) state.userBasket["_catinfo"] = {};
-           for(let k in p.basket) {
-               if(k !== "_catinfo" && state.userBasket[k] === undefined) {
-                   state.userBasket[k] = p.basket[k];
-                   if (p.basket["_catinfo"] && p.basket["_catinfo"][k]) {
-                       state.userBasket["_catinfo"][k] = p.basket["_catinfo"][k];
-                   }
-               }
-           }
-        } 
+    // ==========================================
+    // ПРОФЕССИОНАЛЬНЫЙ УЛЬТРА-КЭШ (ВМЕЩАЕТ ВСЕ ФОТОГРАФИИ)
+    // ==========================================
+    const IDB_NAME = "TeikuCoffeeDB";
+    const IDB_STORE = "catalogsStore";
+
+    function initIndexedDB() {
+        return new Promise((resolve) => {
+            let request = indexedDB.open(IDB_NAME, 1);
+            request.onupgradeneeded = function(event) {
+                let db = event.target.result;
+                if (!db.objectStoreNames.contains(IDB_STORE)) {
+                    db.createObjectStore(IDB_STORE);
+                }
+            };
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => resolve(null); // Если инкогнито, не крашим
+        });
+    }
+
+    async function saveToCache(name, data) {
+        try {
+            let db = await initIndexedDB();
+            if (db) {
+                let tx = db.transaction(IDB_STORE, "readwrite");
+                tx.objectStore(IDB_STORE).put(data, name);
+            }
+        } catch (e) { console.error("Ошибка сохранения кэша", e); }
+    }
+
+    async function loadFromCache(name) {
+        try {
+            let db = await initIndexedDB();
+            if (!db) return null;
+            return new Promise(resolve => {
+                let tx = db.transaction(IDB_STORE, "readonly");
+                let req = tx.objectStore(IDB_STORE).get(name);
+                req.onsuccess = () => resolve(req.result);
+                req.onerror = () => resolve(null);
+            });
+        } catch (e) { return null; }
+    }
+
+    async function getCatalog(name) {
+        if (!state.cachedCatalogs) state.cachedCatalogs = {};
+        
+        // 1. Если данные уже в оперативной памяти (отдаем моментально)
+        if (state.cachedCatalogs[name] && Object.keys(state.cachedCatalogs[name]).length > 0) {
+            return state.cachedCatalogs[name];
+        }
+        
+        // 2. Ищем в IndexedDB (Вмещает сотни мегабайт, грузится доли секунды)
+        let savedData = await loadFromCache(name);
+        
+        if (savedData && Object.keys(savedData).length > 0) {
+            state.cachedCatalogs[name] = savedData;
+            
+            // Тихо запускаем фоновое обновление
+            database.ref(`catalogs/${name}`).once("value").then(snap => {
+                let fresh = snap.val() || {};
+                state.cachedCatalogs[name] = fresh;
+                saveToCache(name, fresh); // Перезаписываем свежими данными
+            }).catch(e => {});
+            
+            return savedData;
+        }
+        
+        // 3. Самый первый запуск (тут придется подождать скачивания)
+        try {
+            let snap = await database.ref(`catalogs/${name}`).once("value");
+            let val = snap.val() || {};
+            state.cachedCatalogs[name] = val;
+            await saveToCache(name, val); // Сохраняем навсегда
+            return val;
+        } catch(err) {
+            return {};
+        }
+    }
+
+    async function getCatalogs() {
+        let catsToLoad = ['order', 'menu', 'checklist', 'stoplist', 'newshop'];
+        let results = {};
+        for (let cat of catsToLoad) {
+            results[cat] = await getCatalog(cat);
+        }
+        return results;
     }
 
     window.onload = async () => {
@@ -3189,7 +3261,6 @@
       }
       
       state.cachedCatalogs = {};
-      
       restoreMpDraft();
       showScreen('step-1', false);
     };

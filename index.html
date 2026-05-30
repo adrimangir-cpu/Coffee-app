@@ -622,7 +622,9 @@
       showScreen('step-1');
     }
 
-    // Функция для объединения Отключает Сезон и Отключает Основу в один блок
+    // ==========================================
+    // ФИЛЬТРЫ И УМНЫЙ СТОП-ЛИСТ
+    // ==========================================
     function getCombinedStopInfo(productName, stopCatObj) {
         let nameLow = String(productName).trim().toLowerCase();
         let sezSet = new Set();
@@ -638,49 +640,13 @@
         return { sez: Array.from(sezSet).join(", "), main: Array.from(mainSet).join(", "), cat: cat };
     }
 
-    // Умный кэш (Берет данные из памяти моментально)
-   async function getCatalog(name) {
-        if (!state.cachedCatalogs) state.cachedCatalogs = {};
-        
-        // 1. Возвращаем из оперативной памяти, если уже загружено
-        if (state.cachedCatalogs[name] && Object.keys(state.cachedCatalogs[name]).length > 0) {
-            return state.cachedCatalogs[name];
-        }
-        
-        // 2. Ищем в локальной памяти телефона (LocalStorage)
-        let savedData = null;
-        try {
-            let saved = localStorage.getItem("coffee_app_cat_" + name);
-            if (saved) {
-                savedData = JSON.parse(saved);
-                state.cachedCatalogs[name] = savedData;
-            }
-        } catch(e) {
-            console.error("Ошибка чтения локального кэша:", e);
-        }
-        
-        // Если кэш на телефоне найден — отдаем его бариста МГНОВЕННО, 
-        // а сетевой запрос на обновление запускаем тихо в фоне
-        if (savedData && Object.keys(savedData).length > 0) {
-            database.ref(`catalogs/${name}`).once("value").then(snap => {
-                let fresh = snap.val() || {};
-                state.cachedCatalogs[name] = fresh;
-                try { localStorage.setItem("coffee_app_cat_" + name, JSON.stringify(fresh)); } catch(err){}
-            }).catch(e => console.log("Фоновое обновление не удалось, работаем на кэше"));
-            
-            return savedData;
-        }
-        
-        // 3. Если это самый первый запуск и кэша нет — идем в сеть напрямую
-        try {
-            let snap = await database.ref(`catalogs/${name}`).once("value");
-            let val = snap.val() || {};
-            state.cachedCatalogs[name] = val;
-            try { localStorage.setItem("coffee_app_cat_" + name, JSON.stringify(val)); } catch(err){}
-            return val;
-        } catch(networkErr) {
-            console.error("Критическая ошибка сети:", networkErr);
-            return {};
+    async function getCatalogs() {
+        if (state.cachedCatalogs && Object.keys(state.cachedCatalogs).length > 0) {
+            return state.cachedCatalogs;
+        } else {
+            let snap = await database.ref("catalogs").once("value");
+            state.cachedCatalogs = snap.val() || {};
+            return state.cachedCatalogs;
         }
     }
 
@@ -1053,7 +1019,7 @@
     }
 
     // ==========================================
-    // 💡 БЛОК: МЕНЮ И ТЕХ КАРТЫ С АВТОСКРОЛЛОМ И СТОП-ЛИСТОМ
+    // 💡 БЛОК: МЕНЮ И ТЕХ КАРТЫ
     // ==========================================
     async function initMenuWorkflow() {
         triggerHaptic();
@@ -1063,16 +1029,11 @@
         document.getElementById('menu-container').innerHTML = `<div class="report-card"><div class="loading-pulse">⏳ Загрузка меню...</div></div>`;
 
         try {
-            // Грузим параллельно и только то, что нужно
-            const [menuCat, orderCat, checkCat, ordersSnap] = await Promise.all([
-                getCatalog('menu'),
-                getCatalog('order'),
-                getCatalog('checklist'),
-                database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(50).once("value")
-            ]);
+            const catalogs = await getCatalogs(); 
+            const ordersSnap = await database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(50).once("value");
             
-            state.menuCatalog = Object.assign({}, menuCat || {});
-            state.productCatalog = { ...(orderCat || {}), ...(checkCat || {}) };
+            state.menuCatalog = Object.assign({}, catalogs.menu || {});
+            state.productCatalog = { ...(catalogs.order || {}), ...(catalogs.checklist || {}) };
             
             // --- УМНАЯ СИНХРОНИЗАЦИЯ ФОТОГРАФИЙ ИНГРЕДИЕНТОВ ---
             let globalPhotoDict = {};
@@ -1081,8 +1042,6 @@
                     globalPhotoDict[cleanName(c.name)] = c.photo;
                 }
             });
-
-            // Если у продукта нет фото, но оно есть в другом справочнике - копируем!
             Object.keys(state.productCatalog).forEach(k => {
                 let item = state.productCatalog[k];
                 if (item && item.name && (!item.photo || item.photo.trim() === "")) {
@@ -1090,8 +1049,7 @@
                     if (sharedPhoto) item.photo = sharedPhoto;
                 }
             });
-            // ----------------------------------------------------
-
+            
             let shopOrders = [];
             ordersSnap.forEach(c => {
                 let val = c.val();
@@ -1115,7 +1073,7 @@
             document.getElementById('menu-container').innerHTML = `<div class="report-card"><div style="color:red; font-weight:bold; text-align:center;">Ошибка: ${e.message}</div></div>`;
         }
     }
-    
+
     function renderMenuApp() {
         let html = "";
         let grouped = {};
@@ -1149,7 +1107,6 @@
                     
                     let recipeHtml = `<div class="recipe_data_${safeDrink}" style="display:none; margin-top:10px; padding:12px; background:#f9fbe7; border-radius:12px; border:1px solid #c5e1a5;">`;
                     
-                    // --- ИСПРАВЛЕНИЕ: Теперь здесь прогружаются абсолютно все фото (и ссылки, и Base64) ---
                     if (drink.photo && drink.photo.trim() !== "") {
                         recipeHtml += `<div style="text-align:center; margin-bottom:15px;" onclick="showDrinkPhoto('${escapeName(drink.name)}')">
                                          <img loading="lazy" src="${drink.photo}" style="width:100px; height:100px; object-fit:cover; border-radius:16px; border:2px solid #D1C4E9; box-shadow: 0 4px 10px rgba(0,0,0,0.1); cursor:pointer;" alt="Фото напитка">
@@ -1157,7 +1114,6 @@
                                        </div>`;
                     }
                     
-                    // 2. СОСТАВ И ИНГРЕДИЕНТЫ
                     recipeHtml += `<div style="font-size:14px; font-weight:900; color:#2e7d32; margin-bottom:8px; text-transform:uppercase;">📝 Состав:</div>`;
                     
                     let blocks = drink.blocks || [drink.recipe || []];
@@ -1199,14 +1155,12 @@
                         recipeHtml += `<div style="color:#888; font-size:13px; font-style:italic;">Рецепт пока не заполнен</div>`;
                     }
                     
-                    // 3. ТЕХНИЧЕСКОЕ ПРИГОТОВЛЕНИЕ
                     if (drink.techPrep) {
                         recipeHtml += `<div style="margin-top:15px; padding:10px; background:#fff3e0; border-radius:8px; font-size:14px; line-height:1.5; color:#e65100; border: 1px solid #ffb74d;">
                                          <b style="color:#d84315;">⚙️ Тех. приготовление:</b><br>${drink.techPrep.replace(/\n/g, '<br>')}
                                        </div>`;
                     }
                     
-                    // 4. КНОПКА ВИДЕО ОБУЧЕНИЕ
                     if (drink.video && drink.video.trim() !== "") {
                         recipeHtml += `<div style="margin-top:15px; padding-top:10px; border-top:1px dashed #c5e1a5;">
                                          <button style="width:100%; padding:12px; background:#e3f2fd; color:#1565c0; border:none; border-radius:8px; font-weight:900; font-size:14px; cursor:pointer; box-shadow:0 2px 4px rgba(0,0,0,0.1);" onclick="window.open('${drink.video.trim()}', '_blank')">▶️ Видео обучение</button>
@@ -1253,14 +1207,12 @@
 
     function showIngredientPhoto(ingName) {
         let clean = cleanName(ingName);
-        // Ищем ингредиент, у которого ГАРАНТИРОВАННО есть фото
         let found = Object.values(state.productCatalog).find(c => c && cleanName(c.name) === clean && c.photo && c.photo.trim() !== "");
         let photoUrl = found ? found.photo : null;
         openPhotoModal(ingName, photoUrl);
     }
-    
+
     function showDrinkPhoto(drinkName) {
-        // Ищем сам напиток с фото
         let found = Object.values(state.menuCatalog).find(d => d && d.name === drinkName && d.photo && d.photo.trim() !== "");
         let photoUrl = found ? found.photo : null;
         openPhotoModal(drinkName, photoUrl);
@@ -1411,6 +1363,7 @@
       state.currentMode = mode; 
       document.body.classList.add('workflow-active');
       state.userBasket = {}; 
+      
       state.transitItems = new Set();
       state.unprocessedItems = new Set();
 
@@ -1427,15 +1380,15 @@
         cartFab.style.display = 'flex'; 
       }
       
-      document.getElementById('dynamic-list-container').innerHTML = `<div class="report-card"><div class="loading-pulse">⏳ Подготовка данных...</div></div>`;
+      document.getElementById('dynamic-list-container').innerHTML = `<div class="report-card"><div class="loading-pulse">⏳ Подключение к базе данных...</div></div>`;
       
       try {
           await loadSettings();
-          
+          const catalogs = await getCatalogs(); 
+
           let pathKey = mode === 'checklist' ? 'checklist' : (mode === 'stoplist_fill' ? 'stoplist' : (mode === 'new_shop' ? 'newshop' : 'order'));
           
-          // РЕШЕНИЕ ПРОБЛЕМЫ: Скачиваем ТОЛЬКО ОДИН запрашиваемый справочник вместо пяти!
-          let sourceCatalog = await getCatalog(pathKey);
+          let sourceCatalog = catalogs[pathKey] || {};
           state.productCatalog = {};
 
           let hiddenList = {};
@@ -1445,7 +1398,6 @@
 
           let uniqueProducts = new Set();
 
-          // Моментальная фильтрация дубликатов
           for(let k in sourceCatalog) {
               let item = sourceCatalog[k];
               if (!item || !item.name) continue;
@@ -1502,7 +1454,10 @@
                           if (i && i.name && i.name !== "НЕТ ЗАКАЗА") {
                               let isError = i.status === 'error' || i.bot_error === true;
                               let actuallyPlaced = i.status === 'ordered'; 
-                              if (!isError && !actuallyPlaced) pendingItems.add(cleanName(i.name));
+                              
+                              if (!isError && !actuallyPlaced) {
+                                  pendingItems.add(cleanName(i.name));
+                              }
                           }
                       });
                   }
@@ -1542,6 +1497,7 @@
               }
               state.transitItems = transitItems;
               state.unprocessedItems = pendingItems;
+
           } else {
               restoreFromDraft();
           }
@@ -1549,7 +1505,7 @@
           persistDraft(); 
           renderProductList();
       } catch (err) {
-          document.getElementById('dynamic-list-container').innerHTML = `<div class="report-card"><div style="text-align:center; padding:20px; color:red; font-weight:bold;">Ошибка: ${err.message}</div></div>`;
+          document.getElementById('dynamic-list-container').innerHTML = `<div class="report-card"><div style="text-align:center; padding:20px; color:red; font-weight:bold;">Ошибка базы данных: ${err.message}</div></div>`;
       }
     }
 
@@ -1668,7 +1624,6 @@
         if (!input) return;
         try { input.select(); } catch(e){}
         
-        // Надежный автоскролл для мобильных браузеров и Телеграма
         const scrollToInput = () => {
             const rect = input.getBoundingClientRect();
             const absoluteY = rect.top + window.scrollY;
@@ -1676,7 +1631,6 @@
             window.scrollTo({ top: targetY, behavior: 'smooth' });
         };
 
-        // Двойной вызов, чтобы сработать до и после выезда клавиатуры
         setTimeout(scrollToInput, 300);
         setTimeout(scrollToInput, 600); 
     }
@@ -1690,7 +1644,7 @@
             setTimeout(() => { 
                 let inp = container.querySelector('input');
                 inp.focus(); 
-                handleInputFocus(inp); // Запускаем автоскролл при появлении поля
+                handleInputFocus(inp);
             }, 100);
         } else {
             registerInputChange(name, select.value, cat);
@@ -2480,9 +2434,9 @@
     async function viewStopList() {
         showReportOverlay("Загрузка актуального стоп-листа...");
         try {
-            // Забираем каталоги (уже легкие)
-            let stopCatalog = await getCatalog('stoplist');
-            let orderCatalog = await getCatalog('order'); // Если фото нет, загрузится быстро
+            const catalogs = await getCatalogs();
+            let stopCatalog = catalogs.stoplist || {};
+            let orderCatalog = catalogs.order || {};
 
             const [ordersSnap, missSnap] = await Promise.all([
                 database.ref("orders").orderByChild("shop").equalTo(state.currentShop).once("value"),
@@ -2541,7 +2495,7 @@
             
             let allSyrups = [];
             let mainListItems = [];
-            let seenNames = new Set(); // КЭШ ДЛЯ ОТЛОВА ДУБЛИКАТОВ
+            let seenNames = new Set(); 
 
             let itemsArr = Array.isArray(latest.items) ? latest.items : Object.values(latest.items);
             
@@ -2657,15 +2611,13 @@
    async function showLastOrder() {
         showReportOverlay("Загружаю приемку...");
         try {
-            // НЕ качаем всю базу Закупки в кэш! 
-            // Берем только нужные поля (без тяжелых фото) для быстроты:
-            const [ordersSnap, missSnap, catSnap] = await Promise.all([
-                database.ref("orders").orderByChild("shop").equalTo(state.currentShop).once("value"),
-                database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value"),
-                database.ref("catalogs/order").once("value") // Легкий запрос мимо кэша
-            ]);
+            const catalogs = await getCatalogs();
+            let orderCatalog = catalogs.order || {};
 
-            let orderCatalog = catSnap.val() || {};
+            const [ordersSnap, missSnap] = await Promise.all([
+                database.ref("orders").orderByChild("shop").equalTo(state.currentShop).once("value"),
+                database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value")
+            ]);
 
             let activeMissing = [];
             let historyMissing = [];
@@ -2957,12 +2909,29 @@
             document.getElementById('report-content-area').innerHTML = html || "<div class='report-card'>Пусто</div>";
         } catch (err) {
             console.error(err);
-            // Если ошибка осталась, она подробно напишет причину прямо на экране!
-            document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; color:red; font-weight:900;">Ошибка загрузки приемки:<br><span style="font-size:12px; font-weight:normal;">${err.message}</span></div></div>`; 
+            document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; color:red; font-weight:900;">Ошибка загрузки приемки: ${err.message}</div></div>`; 
         }
     }
 
-   async function finishReceiving(vendorKey, keysStr, expectedCount, dateStr) {
+   function setReceiveChoice(name, qty, vendor, status, btnArrId, btnMissId, dateStr) {
+        triggerHaptic();
+        if (!state.receivingChoices) state.receivingChoices = {};
+        
+        state.receivingChoices[dateStr + "_" + name] = { name: name, qty: qty, vendor: vendor, status: status, date: dateStr };
+        
+        let btnArr = document.getElementById(btnArrId);
+        let btnMiss = document.getElementById(btnMissId);
+        
+        if (status === 'arrived') {
+            if (btnArr) { btnArr.style.border = '2px solid #2e7d32'; btnArr.style.background = '#e8f5e9'; btnArr.style.color = '#2e7d32'; }
+            if (btnMiss) { btnMiss.style.border = '1px solid #ccc'; btnMiss.style.background = '#fafafa'; btnMiss.style.color = '#888'; }
+        } else if (status === 'missing') {
+            if (btnMiss) { btnMiss.style.border = '2px solid #c62828'; btnMiss.style.background = '#ffebee'; btnMiss.style.color = '#c62828'; }
+            if (btnArr) { btnArr.style.border = '1px solid #ccc'; btnArr.style.background = '#fafafa'; btnArr.style.color = '#888'; }
+        }
+    }
+
+    async function finishReceiving(vendorKey, keysStr, expectedCount, dateStr) {
         let checkedCount = 0;
         let missingMap = {};
         let arrivedItemsToClear = [];
@@ -3089,12 +3058,10 @@
     async function openMissingAdmin() {
         showReportOverlay("Проверка недовозов...");
         try {
-            const [orderCatPart, newCatPart, snap] = await Promise.all([
-                getCatalog('order'),
-                getCatalog('newshop'),
-                database.ref("missing_items").once("value")
-            ]);
-            let orderCat = { ...(orderCatPart || {}), ...(newCatPart || {}) };
+            const catalogs = await getCatalogs(); 
+            let orderCat = { ...(catalogs.order || {}), ...(catalogs.newshop || {}) };
+
+            const snap = await database.ref("missing_items").once("value");
             
             let activeHtml = "";
             let historyHtml = "";
@@ -3222,18 +3189,7 @@
       }
       
       state.cachedCatalogs = {};
-      state.catalogPromises = {};
       
-      // Сразу запускаем скачивание свежих данных. 
-      // При успехе - они сохранятся прямо в жесткий диск телефона (LocalStorage)
-      ['order', 'menu', 'checklist', 'stoplist', 'newshop'].forEach(cat => {
-          state.catalogPromises[cat] = database.ref(`catalogs/${cat}`).once("value").then(s => {
-              let val = s.val() || {};
-              try { localStorage.setItem("coffee_app_cat_" + cat, JSON.stringify(val)); } catch(e) {}
-              return val;
-          });
-      });
-
       restoreMpDraft();
       showScreen('step-1', false);
     };
@@ -3241,4 +3197,3 @@
   </script>
 </body>
 </html>
-  

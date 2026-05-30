@@ -1375,8 +1375,8 @@
 
           let pathKey = mode === 'checklist' ? 'checklist' : (mode === 'stoplist_fill' ? 'stoplist' : (mode === 'new_shop' ? 'newshop' : 'order'));
           
-          // Глубокая копия базы, чтобы скрытые категории и дубликаты не ломали кэш
-          state.productCatalog = JSON.parse(JSON.stringify(catalogs[pathKey] || {}));
+          let sourceCatalog = catalogs[pathKey] || {};
+          state.productCatalog = {};
 
           let hiddenList = {};
           if (mode === 'checklist') hiddenList = state.appSettings.hidden_categories_checklist || {};
@@ -1384,37 +1384,24 @@
           else hiddenList = state.appSettings.hidden_categories_order || {};
 
           let uniqueProducts = new Set();
-          let keysToDelete = [];
 
-          for(let k in state.productCatalog) {
-              let item = state.productCatalog[k];
-              if (!item || !item.name) {
-                  keysToDelete.push(k);
-                  continue;
-              }
+          // Быстрая фильтрация дубликатов и скрытых категорий без зависаний
+          for(let k in sourceCatalog) {
+              let item = sourceCatalog[k];
+              if (!item || !item.name) continue;
 
               let exactCat = item.globalCat || "Основное меню";
               let trimmedCat = exactCat.trim();
               
-              // 1. ИСПРАВЛЕНИЕ СКРЫТЫХ КАТЕГОРИЙ (С учетом пробелов)
-              if (hiddenList[exactCat] || hiddenList[trimmedCat]) {
-                  keysToDelete.push(k);
-                  continue;
-              }
+              if (hiddenList[exactCat] || hiddenList[trimmedCat]) continue;
 
-              // 2. ИСПРАВЛЕНИЕ ДУБЛИКАТОВ (Оставляем продукт только 1 раз)
               let clean = cleanName(item.name);
-              if (uniqueProducts.has(clean)) {
-                  keysToDelete.push(k);
-              } else {
+              if (!uniqueProducts.has(clean)) {
                   uniqueProducts.add(clean);
+                  state.productCatalog[k] = item;
               }
           }
 
-          // Удаляем всё лишнее из списка перед отрисовкой
-          keysToDelete.forEach(k => delete state.productCatalog[k]);
-
-          // --- Ниже идет стандартная загрузка статусов заказов ---
           if (mode === 'order' || mode === 'new_shop') {
               const ordersSnap = await database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(100).once("value");
               let shopOrders = [];
@@ -1455,10 +1442,7 @@
                           if (i && i.name && i.name !== "НЕТ ЗАКАЗА") {
                               let isError = i.status === 'error' || i.bot_error === true;
                               let actuallyPlaced = i.status === 'ordered'; 
-                              
-                              if (!isError && !actuallyPlaced) {
-                                  pendingItems.add(cleanName(i.name));
-                              }
+                              if (!isError && !actuallyPlaced) pendingItems.add(cleanName(i.name));
                           }
                       });
                   }
@@ -1496,10 +1480,8 @@
                       }
                   });
               }
-
               state.transitItems = transitItems;
               state.unprocessedItems = pendingItems;
-
           } else {
               restoreFromDraft();
           }
@@ -1507,7 +1489,7 @@
           persistDraft(); 
           renderProductList();
       } catch (err) {
-          document.getElementById('dynamic-list-container').innerHTML = `<div class="report-card"><div style="text-align:center; padding:20px; color:red; font-weight:bold;">Ошибка базы данных: ${err.message}</div></div>`;
+          document.getElementById('dynamic-list-container').innerHTML = `<div class="report-card"><div style="text-align:center; padding:20px; color:red; font-weight:bold;">Ошибка: ${err.message}</div></div>`;
       }
     }
 
@@ -1623,13 +1605,20 @@
     }
 
     function handleInputFocus(input) {
-        input.select(); // автоматически выделяем текст для быстрого ввода
+        if (!input) return;
+        try { input.select(); } catch(e){}
         
-        // Даем 300 миллисекунд, чтобы клавиатура успела полностью выехать наверх
-        setTimeout(() => {
-            // Плавно прокручиваем экран так, чтобы поле ввода оказалось ровно по центру видимой области
-            input.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        }, 300);
+        // Надежный автоскролл для мобильных браузеров и Телеграма
+        const scrollToInput = () => {
+            const rect = input.getBoundingClientRect();
+            const absoluteY = rect.top + window.scrollY;
+            const targetY = absoluteY - (window.innerHeight / 2) + 40;
+            window.scrollTo({ top: targetY, behavior: 'smooth' });
+        };
+
+        // Двойной вызов, чтобы сработать до и после выезда клавиатуры
+        setTimeout(scrollToInput, 300);
+        setTimeout(scrollToInput, 600); 
     }
 
     function handleVolumeSelection(select, name, cat, safeId) {
@@ -1638,7 +1627,11 @@
             let escName = escapeName(name);
             container.innerHTML = `<input type="text" class="qty-input" style="width:80px; border-bottom:2px solid #7E57C2;" value="" onchange="registerInputChange('${escName}', this.value, '${cat}')" onfocus="handleInputFocus(this)">
                                    <button class="reset-btn" onclick="registerInputChange('${escName}', '-', '${cat}'); renderProductList();">✕</button>`;
-            setTimeout(() => { container.querySelector('input').focus(); }, 100);
+            setTimeout(() => { 
+                let inp = container.querySelector('input');
+                inp.focus(); 
+                handleInputFocus(inp); // Запускаем автоскролл при появлении поля
+            }, 100);
         } else {
             registerInputChange(name, select.value, cat);
         }
@@ -2488,6 +2481,7 @@
             
             let allSyrups = [];
             let mainListItems = [];
+            let seenNames = new Set(); // КЭШ ДЛЯ ОТЛОВА ДУБЛИКАТОВ
 
             let itemsArr = Array.isArray(latest.items) ? latest.items : Object.values(latest.items);
             
@@ -2496,7 +2490,11 @@
                 
                 let iNameLow = String(i.name).trim().toLowerCase();
                 
-                // --- ИСПОЛЬЗУЕМ ФУНКЦИЮ ОБЪЕДИНЕНИЯ СЕЗОНА И ОСНОВЫ ---
+                // ПРОПУСКАЕМ ДУБЛИКАТЫ (Схлопываем Основное и Сезонное меню)
+                if (seenNames.has(iNameLow)) return;
+                seenNames.add(iNameLow);
+                
+                // ИСПОЛЬЗУЕМ ФУНКЦИЮ ОБЪЕДИНЕНИЯ СЕЗОНА И ОСНОВЫ
                 let info = getCombinedStopInfo(i.name, stopCatalog);
                 let inOrderCat = Object.values(orderCatalog).find(c => c && c.name && String(c.name).trim().toLowerCase() === iNameLow);
                 

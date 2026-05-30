@@ -639,14 +639,14 @@
     }
 
     // Умный кэш (Берет данные из памяти моментально)
-    async function getCatalogs() {
-        if (state.cachedCatalogs && Object.keys(state.cachedCatalogs).length > 0) {
-            return state.cachedCatalogs;
-        } else {
-            let snap = await database.ref("catalogs").once("value");
-            state.cachedCatalogs = snap.val() || {};
-            return state.cachedCatalogs;
+    async function getCatalog(name) {
+        if (!state.cachedCatalogs) state.cachedCatalogs = {};
+        if (state.cachedCatalogs[name] && Object.keys(state.cachedCatalogs[name]).length > 0) {
+            return state.cachedCatalogs[name];
         }
+        let snap = await database.ref(`catalogs/${name}`).once("value");
+        state.cachedCatalogs[name] = snap.val() || {};
+        return state.cachedCatalogs[name];
     }
 
     // ==========================================
@@ -1025,14 +1025,19 @@
         state.currentMode = 'menu';
         document.getElementById('title').innerText = "Меню и Тех карты";
         showScreen('step-menu');
-        document.getElementById('menu-container').innerHTML = `<div class="report-card"><div class="loading-pulse">⏳ Загрузка меню и стоп-листов...</div></div>`;
+        document.getElementById('menu-container').innerHTML = `<div class="report-card"><div class="loading-pulse">⏳ Загрузка меню...</div></div>`;
 
         try {
-            const catalogs = await getCatalogs(); // МОМЕНТАЛЬНО из памяти
-            const ordersSnap = await database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(50).once("value");
+            // Грузим параллельно и только то, что нужно
+            const [menuCat, orderCat, checkCat, ordersSnap] = await Promise.all([
+                getCatalog('menu'),
+                getCatalog('order'),
+                getCatalog('checklist'),
+                database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(50).once("value")
+            ]);
             
-            state.menuCatalog = Object.assign({}, catalogs.menu || {});
-            state.productCatalog = { ...(catalogs.order || {}), ...(catalogs.checklist || {}) };
+            state.menuCatalog = Object.assign({}, menuCat || {});
+            state.productCatalog = { ...(orderCat || {}), ...(checkCat || {}) };
             
             let shopOrders = [];
             ordersSnap.forEach(c => {
@@ -1371,11 +1376,11 @@
       
       try {
           await loadSettings();
-          const catalogs = await getCatalogs(); 
-
+          
           let pathKey = mode === 'checklist' ? 'checklist' : (mode === 'stoplist_fill' ? 'stoplist' : (mode === 'new_shop' ? 'newshop' : 'order'));
           
-          let sourceCatalog = catalogs[pathKey] || {};
+          // ГРУЗИМ ТОЛЬКО ОДИН НУЖНЫЙ СПРАВОЧНИК
+          let sourceCatalog = await getCatalog(pathKey);
           state.productCatalog = {};
 
           let hiddenList = {};
@@ -1385,7 +1390,7 @@
 
           let uniqueProducts = new Set();
 
-          // Быстрая фильтрация дубликатов и скрытых категорий без зависаний
+          // Быстрая фильтрация дубликатов
           for(let k in sourceCatalog) {
               let item = sourceCatalog[k];
               if (!item || !item.name) continue;
@@ -2420,11 +2425,10 @@
     async function viewStopList() {
         showReportOverlay("Загрузка актуального стоп-листа...");
         try {
-            const catalogs = await getCatalogs(); // МОМЕНТАЛЬНО из памяти
-            let stopCatalog = catalogs.stoplist || {};
-            let orderCatalog = catalogs.order || {};
-
-            const [ordersSnap, missSnap] = await Promise.all([
+            // Грузим точечно
+            const [stopCatalog, orderCatalog, ordersSnap, missSnap] = await Promise.all([
+                getCatalog('stoplist'),
+                getCatalog('order'),
                 database.ref("orders").orderByChild("shop").equalTo(state.currentShop).once("value"),
                 database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value")
             ]);
@@ -2597,17 +2601,13 @@
    async function showLastOrder() {
         showReportOverlay("Загружаю приемку...");
         try {
-            const catalogs = await getCatalogs();
-            let orderCatalog = catalogs.order || {};
+            let orderCatalog = await getCatalog('order');
 
             const [ordersSnap, missSnap] = await Promise.all([
                 database.ref("orders").orderByChild("shop").equalTo(state.currentShop).once("value"),
                 database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value")
             ]);
 
-            // ... Остальной код функции showLastOrder оставляем без изменений ...
-            // УБЕРИ из старого кода Promise.all запрос к catalogs/order! 
-            // Дальше всё то же самое:
             let activeMissing = [];
             let historyMissing = [];
             missSnap.forEach(c => { 
@@ -3029,10 +3029,12 @@
     async function openMissingAdmin() {
         showReportOverlay("Проверка недовозов...");
         try {
-            const catalogs = await getCatalogs(); // МОМЕНТАЛЬНО из памяти
-            let orderCat = { ...(catalogs.order || {}), ...(catalogs.newshop || {}) };
-
-            const snap = await database.ref("missing_items").once("value");
+            const [orderCatPart, newCatPart, snap] = await Promise.all([
+                getCatalog('order'),
+                getCatalog('newshop'),
+                database.ref("missing_items").once("value")
+            ]);
+            let orderCat = { ...(orderCatPart || {}), ...(newCatPart || {}) };
             
             let activeHtml = "";
             let historyHtml = "";
@@ -3159,15 +3161,13 @@
           globalTgUserId = "708179577";
       }
       
-      state.cachedCatalogs = {};
-      // Фоновая загрузка тяжелых справочников, чтобы кнопки нажимались моментально!
-      database.ref("catalogs").on("value", snap => {
-          state.cachedCatalogs = snap.val() || {};
-      });
-
+      state.cachedCatalogs = {}; // Очищаем кэш при старте
+      // УБРАНА ТЯЖЕЛАЯ ФОНОВАЯ ЗАГРУЗКА
+      
       restoreMpDraft();
       showScreen('step-1', false);
     };
+    
   </script>
 </body>
 </html>

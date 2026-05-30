@@ -1371,23 +1371,50 @@
       
       try {
           await loadSettings();
-          const catalogs = await getCatalogs(); // МОМЕНТАЛЬНО из памяти
+          const catalogs = await getCatalogs(); 
 
           let pathKey = mode === 'checklist' ? 'checklist' : (mode === 'stoplist_fill' ? 'stoplist' : (mode === 'new_shop' ? 'newshop' : 'order'));
-          state.productCatalog = Object.assign({}, catalogs[pathKey] || {});
+          
+          // Глубокая копия базы, чтобы скрытые категории и дубликаты не ломали кэш
+          state.productCatalog = JSON.parse(JSON.stringify(catalogs[pathKey] || {}));
 
           let hiddenList = {};
-          if (mode === 'checklist') hiddenList = state.appSettings.hidden_categories_checklist;
-          else if (mode === 'stoplist_fill') hiddenList = state.appSettings.hidden_categories_stoplist;
-          else hiddenList = state.appSettings.hidden_categories_order;
+          if (mode === 'checklist') hiddenList = state.appSettings.hidden_categories_checklist || {};
+          else if (mode === 'stoplist_fill') hiddenList = state.appSettings.hidden_categories_stoplist || {};
+          else hiddenList = state.appSettings.hidden_categories_order || {};
+
+          let uniqueProducts = new Set();
+          let keysToDelete = [];
 
           for(let k in state.productCatalog) {
               let item = state.productCatalog[k];
-              if(item && item.globalCat && hiddenList[item.globalCat]) {
-                  delete state.productCatalog[k];
+              if (!item || !item.name) {
+                  keysToDelete.push(k);
+                  continue;
+              }
+
+              let exactCat = item.globalCat || "Основное меню";
+              let trimmedCat = exactCat.trim();
+              
+              // 1. ИСПРАВЛЕНИЕ СКРЫТЫХ КАТЕГОРИЙ (С учетом пробелов)
+              if (hiddenList[exactCat] || hiddenList[trimmedCat]) {
+                  keysToDelete.push(k);
+                  continue;
+              }
+
+              // 2. ИСПРАВЛЕНИЕ ДУБЛИКАТОВ (Оставляем продукт только 1 раз)
+              let clean = cleanName(item.name);
+              if (uniqueProducts.has(clean)) {
+                  keysToDelete.push(k);
+              } else {
+                  uniqueProducts.add(clean);
               }
           }
 
+          // Удаляем всё лишнее из списка перед отрисовкой
+          keysToDelete.forEach(k => delete state.productCatalog[k]);
+
+          // --- Ниже идет стандартная загрузка статусов заказов ---
           if (mode === 'order' || mode === 'new_shop') {
               const ordersSnap = await database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(100).once("value");
               let shopOrders = [];
@@ -1428,6 +1455,7 @@
                           if (i && i.name && i.name !== "НЕТ ЗАКАЗА") {
                               let isError = i.status === 'error' || i.bot_error === true;
                               let actuallyPlaced = i.status === 'ordered'; 
+                              
                               if (!isError && !actuallyPlaced) {
                                   pendingItems.add(cleanName(i.name));
                               }
@@ -1479,7 +1507,7 @@
           persistDraft(); 
           renderProductList();
       } catch (err) {
-          document.getElementById('dynamic-list-container').innerHTML = `<div class="report-card"><div style="text-align:center; padding:20px; color:red; font-weight:bold;">Ошибка: ${err.message}</div></div>`;
+          document.getElementById('dynamic-list-container').innerHTML = `<div class="report-card"><div style="text-align:center; padding:20px; color:red; font-weight:bold;">Ошибка базы данных: ${err.message}</div></div>`;
       }
     }
 

@@ -3684,7 +3684,6 @@ function renderGraphsTab() {
         
         html += `</div></div></div>`;
 
-        // Собираем уникальные имена товаров из закупки для автоподтягивания
         let allPurchaseItems = [];
         if (cachedData.catalogOrder) {
             let names = Object.values(cachedData.catalogOrder).map(i => i.name).filter(Boolean);
@@ -3692,11 +3691,10 @@ function renderGraphsTab() {
         }
         let optionsHtml = allPurchaseItems.map(name => `<option value="${name.replace(/"/g, '&quot;')}">${name}</option>`).join("");
         
-        // Создаем datalist для выбора
         html += `<datalist id="checklist_items_list">${optionsHtml}</datalist>`;
 
         html += `<div style="overflow-x:auto;"><table style="min-width:1200px;">
-            <tr><th style="width:200px;">Глоб. Категория</th><th style="width:250px;">Подкатегория</th><th style="width:300px;">Наименование (из Закупки)</th><th style="width:150px;">Фото (Вставь Ctrl+V)</th><th style="width:200px;">Формат ввода</th><th style="width:80px; text-align:center;">Удалить</th></tr>`;
+            <tr><th style="width:200px;">Глоб. Категория</th><th style="width:250px;">Подкатегория</th><th style="width:300px;">Наименование (из Закупки)</th><th style="width:150px; text-align:center;">Фотографии</th><th style="width:200px;">Формат ввода</th><th style="width:80px; text-align:center;">Удалить</th></tr>`;
             
         let grouped = {};
         Object.keys(currentCatalog).forEach(k => {
@@ -3732,18 +3730,27 @@ function renderGraphsTab() {
                     catOptions += `<option value="НОВАЯ КАТЕГОРИЯ">-- Создать --</option>`;
                     
                     let isVol = (item.unit && item.unit.toLowerCase().includes("объем"));
-                    let isFileStr = item.photo && item.photo.startsWith("data:image") ? `<img src="${item.photo}" style="max-width:50px; max-height:50px; border-radius:4px; margin-top:5px;">` : '';
+                    
+                    // --- ИЗМЕНЕНИЕ ДИЗАЙНА КНОПКИ ФОТО ---
+                    let photoUi = "";
+                    if (item.photo) {
+                        let imgDisplay = item.photo.startsWith("data:image") ? `<img src="${item.photo}" style="max-width:50px; max-height:50px; border-radius:6px; display:block; margin:0 auto; box-shadow:0 2px 4px rgba(0,0,0,0.1);">` : `<div style="font-size:12px; word-break:break-all; max-height:40px; overflow:hidden; color:#2e7d32; font-weight:bold;">✅ Ссылка</div>`;
+                        photoUi = `
+                            <div style="position:relative; display:inline-block; padding-top:5px;">
+                                ${imgDisplay}
+                                <button title="Удалить фото" onclick="removePhoto('${k}')" style="position:absolute; top:-5px; right:-10px; background:#e53935; color:white; border:none; border-radius:50%; width:22px; height:22px; font-size:12px; font-weight:900; cursor:pointer; display:flex; align-items:center; justify-content:center; box-shadow:0 2px 4px rgba(0,0,0,0.2);">✕</button>
+                            </div>`;
+                    } else {
+                        photoUi = `
+                            <input type="file" id="file_check_${k}" style="display:none;" accept="image/*" onchange="handleFileUpload(event, '${k}', 'check')">
+                            <input type="text" style="font-size:12px; border:2px dashed #9575cd; background:#fafafa; text-align:center; cursor:pointer; width:100%; box-sizing:border-box; padding:8px 4px;" placeholder="📷 Клик / Ctrl+V" onclick="document.getElementById('file_check_${k}').click()" onpaste="handleClipboardImagePaste(event, '${k}', 'check')">`;
+                    }
 
-                    // Добавлен атрибут list="checklist_items_list" к инпуту наименования
                     html += `<tr class="chk-row chitem_${safeSc} lvl3_of_chksub_${safeGc}" style="display:${displayStyleL3};">
                         <td><select onchange="updateVal('${k}','globalCat',this.value)" style="font-size:14px; width:100%; box-sizing:border-box;">${gcatOptions}</select></td>
                         <td><select onchange="updateVal('${k}','cat',this.value)" style="font-weight:bold; font-size:14px; color:#7E57C2; width:100%; box-sizing:border-box;">${catOptions}</select></td>
                         <td><input type="text" list="checklist_items_list" style="font-weight:bold; font-size:17px; color:#311b92; width:100%; box-sizing:border-box;" value="${item.name || ''}" onchange="updateVal('${k}','name',this.value)"></td>
-                        <td style="text-align:center;">
-                            <input type="file" id="file_check_${k}" style="display:none;" accept="image/*" onchange="handleFileUpload(event, '${k}', 'check')">
-                            <input type="text" style="font-size:12px; border:2px dashed #9575cd; background:#fafafa; text-align:center; cursor:pointer; width:100%; box-sizing:border-box;" placeholder="Нажми или Ctrl+V" value="${item.photo && !item.photo.startsWith("data:image") ? item.photo : ''}" onclick="document.getElementById('file_check_${k}').click()" onpaste="handleClipboardImagePaste(event, '${k}')" onchange="updateVal('${k}','photo',this.value)">
-                            ${isFileStr}
-                        </td>
+                        <td style="text-align:center;">${photoUi}</td>
                         <td><select onchange="updateVal('${k}','unit',this.value)" style="width:100%; box-sizing:border-box;"><option value="текст" ${!isVol?'selected':''}>Текст (Шт / Уп)</option><option value="объем" ${isVol?'selected':''}>Объем (Полная / Половина)</option></select></td>
                         <td style="text-align:center;"><button class="btn-del" onclick="deleteItem('${k}')">🗑</button></td>
                     </tr>`;
@@ -3764,14 +3771,12 @@ function renderGraphsTab() {
         
         let isActionsOpen = expandedDivs.has('cat-stop-actions');
         
-        // Формируем чекбоксы для скрытия категорий
         let settingsHtml = '';
         globalCats.forEach(gc => {
             if(gc.includes("!!!")) return; 
             settingsHtml += `<label class="toggle-label" style="font-size:15px;"><input type="checkbox" onchange="toggleHiddenCategory('${gc}', this.checked, 'stoplist')" ${appSettings.hidden_categories_stoplist && appSettings.hidden_categories_stoplist[gc] ? 'checked' : ''}> Скрыть "${gc}"</label>`;
         });
 
-        // 1. ЗАКРЕПЛЕННАЯ ПАНЕЛЬ ДЕЙСТВИЙ (Sticky) с новой кнопкой
         setupUniversalActionBar(`
             <div class="cat-group-header" style="padding: 10px 15px; border-radius: 12px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 8px rgba(0,0,0,0.05);" onclick="toggleCatElements('cat-stop-actions', 'arrow_catstop_actions')">
                 <span style="font-size:16px; color:#D50000; font-weight:900;">⚡ Действия и Настройки</span>
@@ -3811,11 +3816,15 @@ function renderGraphsTab() {
             grouped[gc][sc].push({k: k, item: item});
         });
         
+        // --- ИЗМЕНЕНИЕ: СОБИРАЕМ ПРОДУКТЫ И ИЗ ЗАКУПКИ, И ИЗ ЧЕК-ЛИСТА ---
         let allPurchaseItems = [];
-        if (cachedData.catalogOrder) {
-            let names = Object.values(cachedData.catalogOrder).map(i => i.name).filter(Boolean);
-            allPurchaseItems = [...new Set(names)].sort((a,b) => a.localeCompare(b));
-        }
+        let combinedCat = [];
+        if (cachedData.catalogOrder) combinedCat.push(...Object.values(cachedData.catalogOrder));
+        if (cachedData.catalogChecklist) combinedCat.push(...Object.values(cachedData.catalogChecklist));
+        
+        let names = combinedCat.map(i => i.name).filter(Boolean);
+        allPurchaseItems = [...new Set(names)].sort((a,b) => a.localeCompare(b));
+        
         let optionsHtml = allPurchaseItems.map(name => `<option value="${name.replace(/"/g, '&quot;')}">${name}</option>`).join("");
         
         Object.keys(grouped).sort((a,b) => { if(a.includes("!!!")) return -1; if(b.includes("!!!")) return 1; return a.localeCompare(b); }).forEach(gc => {
@@ -4394,13 +4403,19 @@ async function exportGraphsToExcel() {
         currentCatalog[id] = { globalCat: "Основное меню", cat: "Новая", name: "", sez: "", main: "" }; 
         renderCatalogStoplist();
     }
+
+    function removePhoto(id) {
+        currentCatalog[id].photo = "";
+        if (currentPath.includes('order') || currentPath.includes('newshop')) renderCatalogOrder();
+        else if (currentPath.includes('stoplist')) renderCatalogStoplist();
+        else renderCatalogChecklist();
+    }
     
-    async function deleteItem(id) { 
-        if(confirm("Вы уверены, что хотите УДАЛИТЬ эту позицию НАВСЕГДА?")) { 
-            await fetch(`${FB_URL}/${currentPath}/${id}.json`, { method: 'DELETE' });
-            delete currentCatalog[id]; 
-            loadTab(currentTabType, document.querySelector('.tab-btn.active'));
-        } 
+    function deleteItem(id) { 
+        delete currentCatalog[id]; 
+        if (currentPath.includes('order') || currentPath.includes('newshop')) renderCatalogOrder();
+        else if (currentPath.includes('stoplist')) renderCatalogStoplist();
+        else renderCatalogChecklist();
     }
 
     async function deleteOrder(key) {

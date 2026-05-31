@@ -1026,16 +1026,18 @@
         state.currentMode = 'menu';
         document.getElementById('title').innerText = "Меню и Тех карты";
         showScreen('step-menu');
-        document.getElementById('menu-container').innerHTML = `<div class="report-card"><div class="loading-pulse">⏳ Загрузка меню...</div></div>`;
+        document.getElementById('menu-container').innerHTML = `<div class="report-card"><div class="loading-pulse">⏳ Подготовка...</div></div>`;
 
         try {
-            const catalogs = await getCatalogs(); 
-            const ordersSnap = await database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(50).once("value");
+            // 1. ИНСТАНТ-РЕНДЕР
+            let menuCat = await getCatalog('menu');
+            let orderCat = await getCatalog('order');
+            let checkCat = await getCatalog('checklist');
             
-            state.menuCatalog = Object.assign({}, catalogs.menu || {});
-            state.productCatalog = { ...(catalogs.order || {}), ...(catalogs.checklist || {}) };
+            state.menuCatalog = Object.assign({}, menuCat || {});
+            state.productCatalog = { ...(orderCat || {}), ...(checkCat || {}) };
             
-            // --- УМНАЯ СИНХРОНИЗАЦИЯ ФОТОГРАФИЙ ИНГРЕДИЕНТОВ ---
+            // Синхронизация фото для рецептов
             let globalPhotoDict = {};
             Object.values(state.productCatalog).forEach(c => {
                 if (c && c.name && c.photo && c.photo.trim() !== "") {
@@ -1050,25 +1052,35 @@
                 }
             });
             
-            let shopOrders = [];
-            ordersSnap.forEach(c => {
-                let val = c.val();
-                if(val && val.mode === 'stoplist_fill') shopOrders.push(val);
-            });
-            shopOrders.sort((a,b) => b.timestamp - a.timestamp);
-            
             state.outOfStockItems = {};
-            if (shopOrders.length > 0) {
-                let latestStoplist = shopOrders[0];
-                let itemsArr = Array.isArray(latestStoplist.items) ? latestStoplist.items : Object.values(latestStoplist.items || {});
-                itemsArr.forEach(i => {
-                    if (i && i.name && i.qty === 'Закончилось') {
-                        state.outOfStockItems[cleanName(i.name)] = latestStoplist.timestamp;
-                    }
-                });
-            }
             
+            // Отрисовываем меню мгновенно!
             renderMenuApp();
+
+            // 2. ФОНОВАЯ ЗАГРУЗКА СТОП-ЛИСТОВ (Бейджи "На стопе" подтянутся чуть позже)
+            database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(50).once("value")
+            .then(ordersSnap => {
+                let shopOrders = [];
+                ordersSnap.forEach(c => {
+                    let val = c.val();
+                    if(val && val.mode === 'stoplist_fill') shopOrders.push(val);
+                });
+                shopOrders.sort((a,b) => b.timestamp - a.timestamp);
+                
+                if (shopOrders.length > 0) {
+                    let latestStoplist = shopOrders[0];
+                    let itemsArr = Array.isArray(latestStoplist.items) ? latestStoplist.items : Object.values(latestStoplist.items || {});
+                    itemsArr.forEach(i => {
+                        if (i && i.name && i.qty === 'Закончилось') {
+                            state.outOfStockItems[cleanName(i.name)] = latestStoplist.timestamp;
+                        }
+                    });
+                    
+                    // Перерисовываем меню, чтобы добавить значки стопов
+                    renderMenuApp();
+                }
+            }).catch(e => console.log(e));
+            
         } catch (e) {
             document.getElementById('menu-container').innerHTML = `<div class="report-card"><div style="color:red; font-weight:bold; text-align:center;">Ошибка: ${e.message}</div></div>`;
         }
@@ -1338,26 +1350,31 @@
     // ==========================================
     // 💡 БЛОК: ИНИЦИАЛИЗАЦИЯ И РЕНДЕР КАТАЛОГОВ
     // ==========================================
-    async function loadSettings() {
-        try {
-            let snap = await database.ref("settings").once("value");
+    function loadSettings() {
+        let saved = localStorage.getItem("teiku_settings");
+        if (saved) {
+            try {
+                let s = JSON.parse(saved);
+                state.appSettings.hidden_categories_order = s.hidden_categories_order || s.hidden_categories || {};
+                state.appSettings.hidden_categories_checklist = s.hidden_categories_checklist || s.hidden_categories || {};
+                state.appSettings.hidden_categories_stoplist = s.hidden_categories_stoplist || s.hidden_categories || {};
+                state.appSettings.new_shop_order_active = s.new_shop_order_active || false;
+                if (document.getElementById('btn-newshop')) {
+                    document.getElementById('btn-newshop').style.display = state.appSettings.new_shop_order_active ? 'block' : 'none';
+                }
+            } catch(e){}
+        }
+        
+        // Тихая фоновая проверка свежих настроек
+        database.ref("settings").once("value").then(snap => {
             let s = snap.val() || {};
-            
-            // Читаем все три списка скрытых категорий
+            localStorage.setItem("teiku_settings", JSON.stringify(s));
             state.appSettings.hidden_categories_order = s.hidden_categories_order || s.hidden_categories || {};
             state.appSettings.hidden_categories_checklist = s.hidden_categories_checklist || s.hidden_categories || {};
-            state.appSettings.hidden_categories_stoplist = s.hidden_categories_stoplist || s.hidden_categories || {}; // ДОБАВИЛИ СТОП-ЛИСТ
-            
+            state.appSettings.hidden_categories_stoplist = s.hidden_categories_stoplist || s.hidden_categories || {};
             state.appSettings.new_shop_order_active = s.new_shop_order_active || false;
-            
-            if (state.appSettings.new_shop_order_active) {
-                document.getElementById('btn-newshop').style.display = 'block';
-            } else {
-                document.getElementById('btn-newshop').style.display = 'none';
-            }
-        } catch(e) { console.log(e); }
+        }).catch(e=>{});
     }
-
     async function initWorkflow(mode) {
       triggerHaptic(); 
       state.currentMode = mode; 
@@ -1373,65 +1390,55 @@
       var cartFab = document.getElementById('cart-fab');
       
       if (mode === 'checklist' || mode === 'stoplist_fill') { 
-        mainBtn.style.display = 'flex'; 
-        cartFab.style.display = 'none'; 
+        mainBtn.style.display = 'flex'; cartFab.style.display = 'none'; 
       } else { 
-        mainBtn.style.display = 'none'; 
-        cartFab.style.display = 'flex'; 
+        mainBtn.style.display = 'none'; cartFab.style.display = 'flex'; 
       }
       
-      document.getElementById('dynamic-list-container').innerHTML = `<div class="report-card"><div class="loading-pulse">⏳ Запуск...</div></div>`;
+      document.getElementById('dynamic-list-container').innerHTML = `<div class="report-card"><div class="loading-pulse">⏳ Подготовка...</div></div>`;
       
       try {
-          await loadSettings();
-
+          loadSettings(); // Мгновенно из кэша
           let pathKey = mode === 'checklist' ? 'checklist' : (mode === 'stoplist_fill' ? 'stoplist' : (mode === 'new_shop' ? 'newshop' : 'order'));
           
-          // ==========================================
-          // ЛЕНИВАЯ ЗАГРУЗКА: Сначала мгновенно берем из кэша
-          // ==========================================
-          let sourceCatalog = {};
-          let cachedData = await loadFromCache(pathKey); // Берем из IndexedDB без интернета
-          
-          if (cachedData && Object.keys(cachedData).length > 0) {
-              sourceCatalog = cachedData;
-              state.cachedCatalogs[pathKey] = sourceCatalog;
+          // 1. ИНСТАНТ-РЕНДЕР ИЗ ПАМЯТИ ТЕЛЕФОНА
+          let sourceCatalog = await getCatalog(pathKey); 
+          state.productCatalog = {};
+
+          let hiddenList = {};
+          if (mode === 'checklist') hiddenList = state.appSettings.hidden_categories_checklist || {};
+          else if (mode === 'stoplist_fill') hiddenList = state.appSettings.hidden_categories_stoplist || {};
+          else hiddenList = state.appSettings.hidden_categories_order || {};
+
+          let uniqueProducts = new Set();
+
+          for(let k in sourceCatalog) {
+              let item = sourceCatalog[k];
+              if (!item || !item.name) continue;
+
+              let exactCat = item.globalCat || "Основное меню";
+              let trimmedCat = exactCat.trim();
+              
+              if (hiddenList[exactCat] || hiddenList[trimmedCat]) continue;
+
+              let clean = cleanName(item.name);
+              if (!uniqueProducts.has(clean)) {
+                  uniqueProducts.add(clean);
+                  state.productCatalog[k] = item;
+              }
           }
 
-          // Функция для отрисовки интерфейса (вызываем её сразу, если есть кэш)
-          const processAndRender = async (catalogData, isSilentUpdate = false) => {
-              state.productCatalog = {};
+          restoreFromDraft();
+          // Отрисовываем интерфейс сразу же! (Без статусов сети)
+          renderProductList(); 
 
-              let hiddenList = {};
-              if (mode === 'checklist') hiddenList = state.appSettings.hidden_categories_checklist || {};
-              else if (mode === 'stoplist_fill') hiddenList = state.appSettings.hidden_categories_stoplist || {};
-              else hiddenList = state.appSettings.hidden_categories_order || {};
-
-              let uniqueProducts = new Set();
-
-              for(let k in catalogData) {
-                  let item = catalogData[k];
-                  if (!item || !item.name) continue;
-
-                  let exactCat = item.globalCat || "Основное меню";
-                  let trimmedCat = exactCat.trim();
-                  
-                  if (hiddenList[exactCat] || hiddenList[trimmedCat]) continue;
-
-                  let clean = cleanName(item.name);
-                  if (!uniqueProducts.has(clean)) {
-                      uniqueProducts.add(clean);
-                      state.productCatalog[k] = item;
-                  }
-              }
-
-              if (mode === 'order' || mode === 'new_shop') {
-                  // Фоновые запросы по недовозам (идут параллельно)
-                  const [ordersSnap, missSnap] = await Promise.all([
-                      database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(100).once("value"),
-                      database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value")
-                  ]);
-                  
+          // 2. ФОНОВАЯ ПРОВЕРКА СЕТИ (Недовозы, Корзины, Статусы)
+          // Она не мешает баристе работать, а просто обновит значки, когда скачается
+          if (mode === 'order' || mode === 'new_shop') {
+              Promise.all([
+                  database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(100).once("value"),
+                  database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value")
+              ]).then(([ordersSnap, missSnap]) => {
                   let shopOrders = [];
                   ordersSnap.forEach(c => { let val = c.val(); if(val && typeof val === 'object') shopOrders.push(val); });
 
@@ -1457,7 +1464,7 @@
                       }
                   });
 
-                  if (hasCanceledMissings && !isSilentUpdate) showPopupError("Внимание", "⚠️ Отмененные администратором недовозы возвращены в вашу корзину.");
+                  if (hasCanceledMissings) showPopupError("Внимание", "⚠️ Отмененные администратором недовозы возвращены в вашу корзину.");
 
                   shopOrders.forEach(o => {
                       if (o.mode === 'order' || o.mode === 'new_shop') {
@@ -1475,8 +1482,6 @@
                           });
                       }
                   });
-
-                  restoreFromDraft();
 
                   for (let key in state.userBasket) {
                       if (key === "_catinfo") continue;
@@ -1508,35 +1513,17 @@
                           }
                       });
                   }
+                  
                   state.transitItems = transitItems;
                   state.unprocessedItems = pendingItems;
-
-              } else {
-                  restoreFromDraft();
-              }
-              
-              persistDraft(); 
-              renderProductList();
-          };
-
-          // 1. Мгновенно рисуем из кэша (если он есть)
-          if (Object.keys(sourceCatalog).length > 0) {
-              await processAndRender(sourceCatalog, false);
+                  persistDraft();
+                  
+                  // Мягко обновляем экран с новыми бейджиками статусов
+                  renderProductList(); 
+              }).catch(e => console.log("Фоновая загрузка статусов не удалась", e));
+          } else {
+              persistDraft();
           }
-
-          // 2. Фоновая тихая загрузка свежих данных (НЕ БЛОКИРУЕТ ЭКРАН)
-          database.ref(`catalogs/${pathKey}`).once("value").then(snap => {
-              let freshData = snap.val() || {};
-              // Если кэша не было вообще, рисуем первый раз
-              if (Object.keys(sourceCatalog).length === 0) {
-                  processAndRender(freshData, false);
-              } else {
-                  // Если кэш был, просто обновляем словари в фоне
-                  state.cachedCatalogs[pathKey] = freshData;
-                  state.productCatalog = freshData; // Фотографии догрузились
-              }
-              saveToCache(pathKey, freshData); // Сохраняем свежие тяжелые фото в память телефона
-          }).catch(e => console.log("Фоновая сеть недоступна", e));
 
       } catch (err) {
           document.getElementById('dynamic-list-container').innerHTML = `<div class="report-card"><div style="text-align:center; padding:20px; color:red; font-weight:bold;">Ошибка: ${err.message}</div></div>`;

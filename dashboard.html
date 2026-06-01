@@ -928,103 +928,124 @@
         const actionBar = document.getElementById('dynamic-action-bar');
         actionBar.style.display = 'none'; 
         
-        box.innerHTML = "<div class='loading-pulse' style='font-size:20px; color:#7E57C2;'>⌛ Открываем...</div>";
+        box.innerHTML = "<div class='loading-pulse' style='font-size:20px; color:#7E57C2;'>⌛ Загрузка...</div>";
 
         try {
-            // ЛЕНИВАЯ ЗАГРУЗКА БАЗЫ
-            // Тяжелые каталоги с фото грузим из кэша (IndexedDB) мгновенно!
-            let catOrd = await fetchHeavyCatalog('catalogs/order');
-            let catNew = await fetchHeavyCatalog('catalogs/newshop');
+            // 🔥 МГНОВЕННАЯ ЗАГРУЗКА БАЗ ЧЕРЕЗ КЭШ
+            let catOrd = await fetchOptimistic('catalogs/order');
+            let catNew = await fetchOptimistic('catalogs/newshop');
+            
+            if (currentTabType !== fetchId) return;
+
             cachedData.catalogOrder = { ...catOrd, ...catNew };
             cachedData.catalog = cachedData.catalogOrder;
 
-            if (currentTabType !== fetchId) return;
-
-            // Далее загружаем быстрые текстовые данные и отрисовываем вкладку
             if (type === 'menu') {
                 currentPath = "catalogs/menu";
-                currentMenu = await fetchHeavyCatalog('catalogs/menu');
-                cachedData.catalogChecklist = await fetchHeavyCatalog('catalogs/checklist');
                 
-                let [miss, ords] = await Promise.all([
-                    fetchDynamicData('missing_items'), 
-                    fetchDynamicData('orders')
+                let [resMenu, resMiss, resStops, resChecklist] = await Promise.all([
+                    fetchOptimistic('catalogs/menu'),
+                    fetchOptimistic('missing_items'),
+                    fetchOptimistic('orders'),
+                    fetchOptimistic('catalogs/checklist')
                 ]);
-                cachedData.missing = miss;
-                Object.keys(ords).forEach(k => { if (ords[k]) ords[k].key = k; });
-                cachedData.orders = ords;
                 
                 if (currentTabType !== fetchId) return;
+                currentMenu = resMenu;
+                cachedData.missing = resMiss;
+                cachedData.catalogChecklist = resChecklist;
+                
+                let ordersObj = resStops;
+                Object.keys(ordersObj).forEach(k => { if (ordersObj[k]) ordersObj[k].key = k; });
+                cachedData.orders = ordersObj;
                 renderMenuTab();
             }
+
             else if (type === 'graphs') {
-                cachedData.schedules = await fetchDynamicData('schedules');
+                cachedData.schedules = await fetchOptimistic('schedules');
                 if (currentTabType !== fetchId) return;
                 window.graphDraft = null; 
                 originalGraphDraft = null;
                 isGraphCompareMode = false;
                 renderGraphsTab();
             }
+        
             else if (type === 'orders') {
                 isSvodEditMode = false; svodDeletions = []; tempSvodQty = {}; tempSvodStatus = {}; tempSvodVendor = {}; tempSvodShop = {}; tempSvodNewRows = [];
-                let ords = await fetchDynamicData('orders');
-                Object.keys(ords).forEach(k => { if (ords[k]) ords[k].key = k; });
-                cachedData.orders = ords;
+                let ordersObj = await fetchOptimistic('orders');
                 if (currentTabType !== fetchId) return;
+                Object.keys(ordersObj).forEach(k => { if (ordersObj[k]) ordersObj[k].key = k; });
+                cachedData.orders = ordersObj;
                 await renderOrdersSvod();
             }
             else if (type === 'marketplace') {
                 isMpEditMode = false; mpDeletions.clear();
-                cachedData.marketplace = await fetchDynamicData('marketplace_records');
+                cachedData.marketplace = await fetchOptimistic('marketplace_records');
                 if (currentTabType !== fetchId) return;
                 renderMarketplaceTab();
             }
             else if (type === 'missing') {
                 isMissingEditMode = false; missingDeletions.clear(); tempMissingStatus = {};
-                cachedData.missing = await fetchDynamicData('missing_items');
+                cachedData.missing = await fetchOptimistic('missing_items');
                 if (currentTabType !== fetchId) return;
                 renderMissing();
             }
             else if (type === 'stoplists') {
-                cachedData.orders = await fetchDynamicData('orders');
+                cachedData.orders = await fetchOptimistic('orders');
                 if (currentTabType !== fetchId) return;
                 renderStoplists();
             }
             else if (type === 'checks_table') {
                 isChecklistEditMode = false; 
-                cachedData.catalog = await fetchHeavyCatalog('catalogs/checklist');
-                let ords = await fetchDynamicData('orders');
-                Object.keys(ords).forEach(k => { if (ords[k]) ords[k].key = k; });
-                cachedData.orders = ords;
+                let [resCheck, resOrders] = await Promise.all([
+                    fetchOptimistic('catalogs/checklist'), 
+                    fetchOptimistic('orders')
+                ]);
                 if (currentTabType !== fetchId) return;
+                cachedData.catalog = resCheck;
+                let ordersObj = resOrders;
+                Object.keys(ordersObj).forEach(k => { if (ordersObj[k]) ordersObj[k].key = k; });
+                cachedData.orders = ordersObj;
                 renderChecksTable();
             }
             else if (type === 'catalog_order') {
                 isNewShopCatalog = false; currentPath = "catalogs/order";
-                currentCatalog = await fetchHeavyCatalog('catalogs/order');
-                appSettings = await fetchDynamicData('settings');
-                if (!appSettings.hidden_categories_order) appSettings.hidden_categories_order = {};
+                let [res, setRes] = await Promise.all([
+                    fetchOptimistic(currentPath), 
+                    fetchOptimistic('settings')
+                ]);
                 if (currentTabType !== fetchId) return;
+                currentCatalog = res;
+                appSettings = setRes;
+                if (!appSettings.hidden_categories_order) appSettings.hidden_categories_order = {};
                 renderCatalogOrder();
             } 
             else if (type === 'catalog_checklist') {
                 currentPath = "catalogs/checklist";
-                currentCatalog = await fetchHeavyCatalog('catalogs/checklist');
-                appSettings = await fetchDynamicData('settings');
-                if (!appSettings.hidden_categories_checklist) appSettings.hidden_categories_checklist = {};
+                let [res, setRes] = await Promise.all([
+                    fetchOptimistic(currentPath), 
+                    fetchOptimistic('settings')
+                ]);
                 if (currentTabType !== fetchId) return;
+                currentCatalog = res;
+                appSettings = setRes;
+                if (!appSettings.hidden_categories_checklist) appSettings.hidden_categories_checklist = {};
                 renderCatalogChecklist();
             }
             else if (type === 'catalog_stoplist') {
                 currentPath = "catalogs/stoplist";
-                currentCatalog = await fetchHeavyCatalog('catalogs/stoplist');
-                appSettings = await fetchDynamicData('settings');
-                if (!appSettings.hidden_categories_stoplist) appSettings.hidden_categories_stoplist = {};
+                let [res, setRes] = await Promise.all([
+                    fetchOptimistic(currentPath), 
+                    fetchOptimistic('settings')
+                ]);
                 if (currentTabType !== fetchId) return;
+                currentCatalog = res;
+                appSettings = setRes;
+                if (!appSettings.hidden_categories_stoplist) appSettings.hidden_categories_stoplist = {};
                 renderCatalogStoplist();
             }
             else if (type === 'stats') {
-                cachedData.orders = await fetchDynamicData('orders');
+                cachedData.orders = await fetchOptimistic('orders');
                 if (currentTabType !== fetchId) return;
                 renderStats();
             }
@@ -4543,18 +4564,7 @@ async function exportGraphsToExcel() {
         let origText = btn.innerHTML;
         btn.innerHTML = "⌛ СОХРАНЕНИЕ...";
         try { 
-            // Создаем копию каталога перед отправкой
-            let dataToSave = JSON.parse(JSON.stringify(currentCatalog));
-
-            // 🧹 КРИТИЧЕСКАЯ ОЧИСТКА БАЗЫ
-            // Если мы сохраняем НЕ меню, безжалостно удаляем все тяжелые фото!
-            if (!currentPath.includes('menu')) {
-                Object.values(dataToSave).forEach(item => {
-                    if (item.photo) delete item.photo; 
-                });
-            }
-
-            await fetch(`${FB_URL}/${currentPath}.json`, { method: 'PUT', body: JSON.stringify(dataToSave) }); 
+            await fetch(`${FB_URL}/${currentPath}.json`, { method: 'PUT', body: JSON.stringify(currentCatalog) }); 
             btn.innerHTML = "✅ СОХРАНЕНО!";
             setTimeout(() => {
                 if(btn) btn.innerHTML = origText;

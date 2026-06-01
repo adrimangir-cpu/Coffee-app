@@ -472,7 +472,7 @@
     const shopListAll = ["Бояринова", "Гагарина", "Вертолетчиков", "Липчанского", "Новокосино", "Новокосино 2", "Старое Павлино", "Красноказарменная", "Ухтомского ополчения"];
     let draggedRecipeItem = null;
 
-    // ==========================================
+ // ==========================================
     // ПРОФЕССИОНАЛЬНЫЙ УЛЬТРА-КЭШ ДЛЯ ДАШБОРДА
     // ==========================================
     const IDB_NAME = "TeikuDashboardDB";
@@ -490,23 +490,46 @@
         });
     }
 
-    async function saveToCache(name, data) {
+    async function saveToCache(path, data) {
         try {
             let db = await initIndexedDB();
-            if (db) db.transaction(IDB_STORE, "readwrite").objectStore(IDB_STORE).put(data, name);
+            if (db) db.transaction(IDB_STORE, "readwrite").objectStore(IDB_STORE).put(data, path);
         } catch (e) {}
     }
 
-    async function loadFromCache(name) {
+    async function loadFromCache(path) {
         try {
             let db = await initIndexedDB();
             if (!db) return null;
             return new Promise(resolve => {
-                let req = db.transaction(IDB_STORE, "readonly").objectStore(IDB_STORE).get(name);
+                let req = db.transaction(IDB_STORE, "readonly").objectStore(IDB_STORE).get(path);
                 req.onsuccess = () => resolve(req.result);
                 req.onerror = () => resolve(null);
             });
         } catch (e) { return null; }
+    }
+
+    async function fetchOptimistic(path) {
+        let cached = await loadFromCache(path);
+        
+        let networkPromise = fetch(`${FB_URL}/${path}.json`).then(r => r.json()).then(data => {
+            let finalData = data || {};
+            saveToCache(path, finalData); // Сохраняем свежие данные в фон
+            return finalData;
+        }).catch(e => null);
+
+        if (cached && Object.keys(cached).length > 0) {
+            networkPromise.then(fresh => {
+                if (fresh) {
+                    if (!window.silentCache) window.silentCache = {};
+                    window.silentCache[path] = fresh; 
+                }
+            });
+            return cached;
+        } else {
+            let fresh = await networkPromise;
+            return fresh || {};
+        }
     }
 
     // Функция для тяжелых фото: мгновенно из кэша, потом тихо обновляет

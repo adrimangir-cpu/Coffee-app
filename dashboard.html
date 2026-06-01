@@ -1758,7 +1758,7 @@
         let vendorMap = {};
         if (cachedData.catalogOrder) Object.values(cachedData.catalogOrder).forEach(c => { if (c && c.name) vendorMap[c.name] = (c.vendor || 'Лента').toLowerCase(); });
 
-        let todaysOrders = [], historyOrdersList = [], allOrders = Object.values(cachedData.orders).sort((a,b) => (b.timestamp || 0) - (a.timestamp || 0)), lastOrderItems = {}, lastOrderTimestamp = {}; 
+        let todaysOrders = [], historyOrdersList = [], allOrders = Object.values(cachedData.orders || {}).sort((a,b) => (b.timestamp || 0) - (a.timestamp || 0)), lastOrderItems = {}, lastOrderTimestamp = {}; 
         let cutoffMonth = Date.now() - (30 * 24 * 60 * 60 * 1000); 
 
         allOrders.forEach(o => {
@@ -1823,13 +1823,13 @@
                 if (!shopLentaSums[shop]) shopLentaSums[shop] = 0;
                 let itemsObj = svodDataByDate[dateStr][shop].items;
                 Object.keys(itemsObj).forEach(name => {
-                    let vendor = itemsObj[name].vendor || (Object.values(cachedData.catalogOrder).find(c => c && c.name === name) || {}).vendor || 'Лента';
+                    let vendor = itemsObj[name].vendor || (Object.values(cachedData.catalogOrder || {}).find(c => c && c.name === name) || {}).vendor || 'Лента';
                     let actualVendor = (tempSvodVendor[dateStr] && tempSvodVendor[dateStr][shop] && tempSvodVendor[dateStr][shop][name]) ? tempSvodVendor[dateStr][shop][name] : vendor;
                     let actualShop = (tempSvodShop[dateStr] && tempSvodShop[dateStr][shop] && tempSvodShop[dateStr][shop][name]) ? tempSvodShop[dateStr][shop][name] : shop;
                     if (!shopLentaSums[actualShop]) shopLentaSums[actualShop] = 0;
                     let itemStatus = (tempSvodStatus[dateStr] && tempSvodStatus[dateStr][shop] && tempSvodStatus[dateStr][shop][name]) ? tempSvodStatus[dateStr][shop][name] : itemsObj[name].status;
                     if (!svodDeletions.some(d => d.date === dateStr && d.shop === shop && d.name === name) && !(activeMissing[shop] && activeMissing[shop][name] === 'transit') && itemStatus !== 'error' && itemStatus !== 'not_needed' && (actualVendor.toLowerCase().includes('лента') || actualVendor.toLowerCase().includes('lenta'))) {
-                        shopLentaSums[actualShop] += (((tempSvodQty[dateStr] && tempSvodQty[dateStr][shop] && tempSvodQty[dateStr][shop][name] !== undefined) ? tempSvodQty[dateStr][shop][name] : itemsObj[name].qty) * (parseFloat((Object.values(cachedData.catalogOrder).find(c => c && c.name === name) || {}).price) || 0));
+                        shopLentaSums[actualShop] += (((tempSvodQty[dateStr] && tempSvodQty[dateStr][shop] && tempSvodQty[dateStr][shop][name] !== undefined) ? tempSvodQty[dateStr][shop][name] : itemsObj[name].qty) * (parseFloat((Object.values(cachedData.catalogOrder || {}).find(c => c && c.name === name) || {}).price) || 0));
                     }
                 });
             });
@@ -1878,7 +1878,7 @@
                     if (sortedItemNames.length === 0 && shopsObj[shop].no_order) html += `<tr class="svoditem_${safeShopDate} svodlvl3_of_${safeDate}" style="display:${displayShop}; background:#f1f8e9;"><td colspan="5" style="padding:15px; padding-left:45px; font-weight:bold; color:#2e7d32; text-align:center; font-size:15px;">➖ Заказ на эту дату не требуется</td></tr>`;
                     else {
                         sortedItemNames.forEach(name => {
-                            let catItem = Object.values(cachedData.catalogOrder).find(c => c && c.name === name) || {};
+                            let catItem = Object.values(cachedData.catalogOrder || {}).find(c => c && c.name === name) || {};
                             let actualVendor = (tempSvodVendor[dateStr] && tempSvodVendor[dateStr][shop] && tempSvodVendor[dateStr][shop][name]) ? tempSvodVendor[dateStr][shop][name] : (shopsObj[shop].items[name].vendor || catItem.vendor || 'Лента');
                             let actualShop = (tempSvodShop[dateStr] && tempSvodShop[dateStr][shop] && tempSvodShop[dateStr][shop][name]) ? tempSvodShop[dateStr][shop][name] : shop;
                             let actualQty = (tempSvodQty[dateStr] && tempSvodQty[dateStr][shop] && tempSvodQty[dateStr][shop][name] !== undefined) ? tempSvodQty[dateStr][shop][name] : shopsObj[shop].items[name].qty;
@@ -1944,7 +1944,7 @@
                     }
                     if (isSvodEditMode) {
                         tempSvodNewRows.filter(r => r.date === dateStr && r.shop === shop).forEach(r => {
-                            let itemOptions = `<option value="">-- Выберите --</option>` + Object.values(cachedData.catalogOrder).sort((a,b) => (a.name||'').localeCompare(b.name||'')).map(c => c && c.name ? `<option value="${c.name.replace(/"/g, '&quot;')}" data-vendor="${(c.vendor || 'Лента').replace(/"/g, '&quot;')}" ${c.name === r.name ? 'selected' : ''}>${c.name}</option>` : '').join('');
+                            let itemOptions = `<option value="">-- Выберите --</option>` + Object.values(cachedData.catalogOrder || {}).sort((a,b) => (a.name||'').localeCompare(b.name||'')).map(c => c && c.name ? `<option value="${c.name.replace(/"/g, '&quot;')}" data-vendor="${(c.vendor || 'Лента').replace(/"/g, '&quot;')}" ${c.name === r.name ? 'selected' : ''}>${c.name}</option>` : '').join('');
                             html += `<tr class="svod-row svoditem_${safeShopDate} svodlvl3_of_${safeDate} new-svod-row" style="background-color: #e8f5e9; display:${displayShop};"><td style="padding-left:15px;"><select class="new-svod-name" data-date="${dateStr}" data-shop="${shop.replace(/"/g, '&quot;')}" style="font-size:14px; padding:4px; width:100%; border:2px solid #4caf50; font-weight:bold; color:#2e7d32;" onchange="updateNewRowVendor(this); recalcSvodTotals();">${itemOptions}</select></td><td style="text-align:center;"><input type="number" class="new-svod-qty" value="${r.qty}" oninput="recalcSvodTotals()" style="width:100px; text-align:center; font-size:15px; font-weight:bold; border:2px solid #4caf50; border-radius:6px; padding:4px;"></td><td style="text-align:center;"><span style="color:#2e7d32; font-weight:bold; font-size:13px;">Новый 🆕</span></td><td><select class="new-svod-vendor" style="font-size: 14px; padding: 4px; border: 1px solid #ccc; border-radius: 4px; width: 100%;" onchange="recalcSvodTotals()">${["Лента", "Озон", "Купер", "Wildberries", "Самокат", "METRO"].map(v => `<option value="${v}" ${v.toLowerCase() === r.vendor.toLowerCase() ? 'selected' : ''}>${v}</option>`).join('')}</select></td><td style="text-align:center;"><button class="btn-del" onclick="this.closest('tr').remove(); recalcSvodTotals();">🗑</button></td></tr>`;
                         });
                         html += `<tr class="svoditem_${safeShopDate} svodlvl3_of_${safeDate}" style="display:${displayShop};"><td colspan="5" style="text-align:center; padding:15px; background:#f9fbe7; border-bottom: 2px dashed #c5e1a5;"><button class="btn-add" style="background: linear-gradient(135deg, #4caf50 0%, #2e7d32 100%); padding:8px 16px; font-size:14px; border-radius:8px;" onclick="addSvodRowUI(this, '${dateStr}', '${shop.replace(/'/g, "\\'").replace(/"/g, '&quot;')}', '${safeShopDate}', '${safeDate}')">➕ Добавить товар</button></td></tr>`;

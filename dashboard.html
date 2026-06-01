@@ -472,6 +472,61 @@
     const shopListAll = ["Бояринова", "Гагарина", "Вертолетчиков", "Липчанского", "Новокосино", "Новокосино 2", "Старое Павлино", "Красноказарменная", "Ухтомского ополчения"];
     let draggedRecipeItem = null;
 
+    // ==========================================
+    // ПРОФЕССИОНАЛЬНЫЙ УЛЬТРА-КЭШ ДЛЯ ДАШБОРДА
+    // ==========================================
+    const IDB_NAME = "TeikuDashboardDB";
+    const IDB_STORE = "dashboardStore";
+
+    function initIndexedDB() {
+        return new Promise((resolve) => {
+            let request = indexedDB.open(IDB_NAME, 1);
+            request.onupgradeneeded = function(event) {
+                let db = event.target.result;
+                if (!db.objectStoreNames.contains(IDB_STORE)) db.createObjectStore(IDB_STORE);
+            };
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => resolve(null);
+        });
+    }
+
+    async function saveToCache(name, data) {
+        try {
+            let db = await initIndexedDB();
+            if (db) db.transaction(IDB_STORE, "readwrite").objectStore(IDB_STORE).put(data, name);
+        } catch (e) {}
+    }
+
+    async function loadFromCache(name) {
+        try {
+            let db = await initIndexedDB();
+            if (!db) return null;
+            return new Promise(resolve => {
+                let req = db.transaction(IDB_STORE, "readonly").objectStore(IDB_STORE).get(name);
+                req.onsuccess = () => resolve(req.result);
+                req.onerror = () => resolve(null);
+            });
+        } catch (e) { return null; }
+    }
+
+    // Функция для тяжелых фото: мгновенно из кэша, потом тихо обновляет
+    async function fetchHeavyCatalog(pathKey) {
+        let cached = await loadFromCache(pathKey);
+        // Фоновое тихое обновление (не заставляет экран виснуть)
+        fetch(`${FB_URL}/${pathKey}.json`).then(r=>r.json()).then(d=>{ if(d) saveToCache(pathKey, d); }).catch(e=>{});
+        if (cached) return cached; // Если есть кэш - отдаем сразу!
+        
+        // Если кэша нет (самый первый запуск) - ждем сеть
+        let d = await fetch(`${FB_URL}/${pathKey}.json`).then(r=>r.json()).catch(e=>({}));
+        if (d) saveToCache(pathKey, d);
+        return d || {};
+    }
+
+    // Функция для быстрых текстовых данных (всегда свежие заказы и графики)
+    async function fetchDynamicData(pathKey) {
+        return await fetch(`${FB_URL}/${pathKey}.json`).then(r=>r.json()).catch(e=>({})) || {};
+    }
+    
     function escCss(str) {
         if (!str) return "";
         return str.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/'/g, "\\'");
@@ -873,122 +928,104 @@
         const actionBar = document.getElementById('dynamic-action-bar');
         actionBar.style.display = 'none'; 
         
-        box.innerHTML = "<div style='text-align:center; padding:40px; font-weight:bold; font-size:20px; color:#7E57C2;'>⌛ Синхронизация данных...</div>";
+        box.innerHTML = "<div class='loading-pulse' style='font-size:20px; color:#7E57C2;'>⌛ Открываем...</div>";
 
         try {
-            let [resCat, resNewCat] = await Promise.all([
-                fetch(`${FB_URL}/catalogs/order.json`),
-                fetch(`${FB_URL}/catalogs/newshop.json`)
-            ]);
-            
-            if (currentTabType !== fetchId) return;
-
-            let catOrd = await resCat.json() || {};
-            let catNew = await resNewCat.json() || {};
+            // ЛЕНИВАЯ ЗАГРУЗКА БАЗЫ
+            // Тяжелые каталоги с фото грузим из кэша (IndexedDB) мгновенно!
+            let catOrd = await fetchHeavyCatalog('catalogs/order');
+            let catNew = await fetchHeavyCatalog('catalogs/newshop');
             cachedData.catalogOrder = { ...catOrd, ...catNew };
             cachedData.catalog = cachedData.catalogOrder;
 
+            if (currentTabType !== fetchId) return;
+
+            // Далее загружаем быстрые текстовые данные и отрисовываем вкладку
             if (type === 'menu') {
                 currentPath = "catalogs/menu";
-                let [resMenu, resMiss, resStops, resChecklist] = await Promise.all([
-                    fetch(`${FB_URL}/catalogs/menu.json`), fetch(`${FB_URL}/missing_items.json`), fetch(`${FB_URL}/orders.json`), fetch(`${FB_URL}/catalogs/checklist.json`)
+                currentMenu = await fetchHeavyCatalog('catalogs/menu');
+                cachedData.catalogChecklist = await fetchHeavyCatalog('catalogs/checklist');
+                
+                let [miss, ords] = await Promise.all([
+                    fetchDynamicData('missing_items'), 
+                    fetchDynamicData('orders')
                 ]);
+                cachedData.missing = miss;
+                Object.keys(ords).forEach(k => { if (ords[k]) ords[k].key = k; });
+                cachedData.orders = ords;
+                
                 if (currentTabType !== fetchId) return;
-                currentMenu = await resMenu.json() || {};
-                cachedData.missing = await resMiss.json() || {};
-                cachedData.catalogChecklist = await resChecklist.json() || {};
-                let ordersObj = await resStops.json() || {};
-                Object.keys(ordersObj).forEach(k => { if (ordersObj[k]) ordersObj[k].key = k; });
-                cachedData.orders = ordersObj;
                 renderMenuTab();
             }
-
             else if (type === 'graphs') {
-                let resGraphs = await fetch(`${FB_URL}/schedules.json`);
+                cachedData.schedules = await fetchDynamicData('schedules');
                 if (currentTabType !== fetchId) return;
-                cachedData.schedules = await resGraphs.json() || {};
-                
-                // При загрузке вкладки сбрасываем черновик и выключаем режим сравнения
                 window.graphDraft = null; 
                 originalGraphDraft = null;
                 isGraphCompareMode = false;
-                
                 renderGraphsTab();
             }
-        
             else if (type === 'orders') {
                 isSvodEditMode = false; svodDeletions = []; tempSvodQty = {}; tempSvodStatus = {}; tempSvodVendor = {}; tempSvodShop = {}; tempSvodNewRows = [];
-                let resOrders = await fetch(`${FB_URL}/orders.json`);
+                let ords = await fetchDynamicData('orders');
+                Object.keys(ords).forEach(k => { if (ords[k]) ords[k].key = k; });
+                cachedData.orders = ords;
                 if (currentTabType !== fetchId) return;
-                let ordersObj = await resOrders.json() || {};
-                Object.keys(ordersObj).forEach(k => { if (ordersObj[k]) ordersObj[k].key = k; });
-                cachedData.orders = ordersObj;
                 await renderOrdersSvod();
             }
             else if (type === 'marketplace') {
                 isMpEditMode = false; mpDeletions.clear();
-                let res = await fetch(`${FB_URL}/marketplace_records.json`);
+                cachedData.marketplace = await fetchDynamicData('marketplace_records');
                 if (currentTabType !== fetchId) return;
-                cachedData.marketplace = await res.json() || {};
                 renderMarketplaceTab();
             }
             else if (type === 'missing') {
                 isMissingEditMode = false; missingDeletions.clear(); tempMissingStatus = {};
-                let resMiss = await fetch(`${FB_URL}/missing_items.json`);
+                cachedData.missing = await fetchDynamicData('missing_items');
                 if (currentTabType !== fetchId) return;
-                cachedData.missing = await resMiss.json() || {};
                 renderMissing();
             }
             else if (type === 'stoplists') {
-                let resOrders = await fetch(`${FB_URL}/orders.json`);
+                cachedData.orders = await fetchDynamicData('orders');
                 if (currentTabType !== fetchId) return;
-                cachedData.orders = await resOrders.json() || {};
                 renderStoplists();
             }
             else if (type === 'checks_table') {
                 isChecklistEditMode = false; 
-                let [resCheck, resOrders] = await Promise.all([fetch(`${FB_URL}/catalogs/checklist.json`), fetch(`${FB_URL}/orders.json`)]);
+                cachedData.catalog = await fetchHeavyCatalog('catalogs/checklist');
+                let ords = await fetchDynamicData('orders');
+                Object.keys(ords).forEach(k => { if (ords[k]) ords[k].key = k; });
+                cachedData.orders = ords;
                 if (currentTabType !== fetchId) return;
-                cachedData.catalog = await resCheck.json() || {};
-                let ordersObj = await resOrders.json() || {};
-                Object.keys(ordersObj).forEach(k => { if (ordersObj[k]) ordersObj[k].key = k; });
-                cachedData.orders = ordersObj;
                 renderChecksTable();
             }
             else if (type === 'catalog_order') {
                 isNewShopCatalog = false; currentPath = "catalogs/order";
-                let [res, setRes] = await Promise.all([fetch(`${FB_URL}/${currentPath}.json`), fetch(`${FB_URL}/settings.json`)]);
-                if (currentTabType !== fetchId) return;
-                currentCatalog = await res.json() || {};
-                appSettings = await setRes.json() || {};
+                currentCatalog = await fetchHeavyCatalog('catalogs/order');
+                appSettings = await fetchDynamicData('settings');
                 if (!appSettings.hidden_categories_order) appSettings.hidden_categories_order = {};
+                if (currentTabType !== fetchId) return;
                 renderCatalogOrder();
             } 
             else if (type === 'catalog_checklist') {
                 currentPath = "catalogs/checklist";
-                let [res, setRes] = await Promise.all([fetch(`${FB_URL}/${currentPath}.json`), fetch(`${FB_URL}/settings.json`)]);
-                if (currentTabType !== fetchId) return;
-                currentCatalog = await res.json() || {};
-                appSettings = await setRes.json() || {};
+                currentCatalog = await fetchHeavyCatalog('catalogs/checklist');
+                appSettings = await fetchDynamicData('settings');
                 if (!appSettings.hidden_categories_checklist) appSettings.hidden_categories_checklist = {};
+                if (currentTabType !== fetchId) return;
                 renderCatalogChecklist();
             }
-
             else if (type === 'catalog_stoplist') {
                 currentPath = "catalogs/stoplist";
-                let [res, setRes] = await Promise.all([fetch(`${FB_URL}/${currentPath}.json`), fetch(`${FB_URL}/settings.json`)]);
-                if (currentTabType !== fetchId) return;
-                currentCatalog = await res.json() || {};
-                appSettings = await setRes.json() || {};
+                currentCatalog = await fetchHeavyCatalog('catalogs/stoplist');
+                appSettings = await fetchDynamicData('settings');
                 if (!appSettings.hidden_categories_stoplist) appSettings.hidden_categories_stoplist = {};
+                if (currentTabType !== fetchId) return;
                 renderCatalogStoplist();
             }
-                
-    
             else if (type === 'stats') {
-                let resOrders = await fetch(`${FB_URL}/orders.json`);
+                cachedData.orders = await fetchDynamicData('orders');
                 if (currentTabType !== fetchId) return;
-                cachedData.orders = await resOrders.json() || {};
                 renderStats();
             }
         } catch (e) {

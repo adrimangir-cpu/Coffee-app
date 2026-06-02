@@ -2452,23 +2452,40 @@
         }
     }
 
-    async function viewStopList() {
+   async function viewStopList() {
         showReportOverlay("Загрузка актуального стоп-листа...");
         try {
             const catalogs = await getCatalogs();
             let stopCatalog = catalogs.stoplist || {};
             let orderCatalog = catalogs.order || {};
 
+            // ОПТИМИЗАЦИЯ СЕТИ: Скачиваем только последние 100 заказов этой кофейни
             const [ordersSnap, missSnap] = await Promise.all([
-                database.ref("orders").orderByChild("shop").equalTo(state.currentShop).once("value"),
+                database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(100).once("value"),
                 database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value")
             ]);
             
+            // ОПТИМИЗАЦИЯ ПРОЦЕССОРА: Строим быстрые словари (карты) для мгновенного поиска за O(1)
             let missingStatusMap = {};
             missSnap.forEach(c => {
                 let m = c.val();
                 if (m && m.status !== 'arrived' && m.status !== 'canceled') {
                     missingStatusMap[String(m.name).trim().toLowerCase()] = m.status;
+                }
+            });
+
+            let orderCatMap = {};
+            Object.values(orderCatalog).forEach(c => {
+                if (c && c.name) orderCatMap[String(c.name).trim().toLowerCase()] = c;
+            });
+
+            let stopInfoMap = {};
+            Object.values(stopCatalog).forEach(c => {
+                if (c && c.name) {
+                    let nameLow = String(c.name).trim().toLowerCase();
+                    if (!stopInfoMap[nameLow]) stopInfoMap[nameLow] = { sez: new Set(), main: new Set(), cat: c.cat || "" };
+                    if (c.sez) c.sez.split(',').forEach(s => { if (s.trim()) stopInfoMap[nameLow].sez.add(s.trim()); });
+                    if (c.main) c.main.split(',').forEach(s => { if (s.trim()) stopInfoMap[nameLow].main.add(s.trim()); });
                 }
             });
 
@@ -2525,19 +2542,25 @@
                 
                 let iNameLow = String(i.name).trim().toLowerCase();
                 
-                // ПРОПУСКАЕМ ДУБЛИКАТЫ (Схлопываем Основное и Сезонное меню)
                 if (seenNames.has(iNameLow)) return;
                 seenNames.add(iNameLow);
                 
-                // ИСПОЛЬЗУЕМ ФУНКЦИЮ ОБЪЕДИНЕНИЯ СЕЗОНА И ОСНОВЫ
-                let info = getCombinedStopInfo(i.name, stopCatalog);
-                let inOrderCat = Object.values(orderCatalog).find(c => c && c.name && String(c.name).trim().toLowerCase() === iNameLow);
+                // Используем мгновенный поиск по словарю
+                let stopInfo = stopInfoMap[iNameLow] || { sez: new Set(), main: new Set(), cat: "" };
+                let info = {
+                    sez: Array.from(stopInfo.sez).join(", "),
+                    main: Array.from(stopInfo.main).join(", "),
+                    cat: stopInfo.cat
+                };
+                
+                let inOrderCat = orderCatMap[iNameLow];
+                let cleanedItemName = cleanName(i.name);
                 
                 let isSyrup = (info.cat && String(info.cat).toLowerCase().includes("сироп")) || (inOrderCat && inOrderCat.cat && String(inOrderCat.cat).toLowerCase().includes("сироп")) || iNameLow.includes("сироп");
                 
                 let statHtml = "";
                 if (inOrderCat) {
-                    let missingStat = missingStatusMap[iNameLow] === 'transit' ? 'transit' : null;
+                    let missingStat = missingStatusMap[cleanedItemName] === 'transit' ? 'transit' : null;
                     if (missingStat === 'transit') {
                         statHtml = `<span style="background:#e3f2fd; color:#1565c0; padding:2px 5px; border-radius:4px; font-size:11px; font-weight:900; margin-left:5px;">В пути 🚚</span>`;
                     } else {
@@ -2635,16 +2658,23 @@
             const catalogs = await getCatalogs();
             let orderCatalog = catalogs.order || {};
 
+            // ОПТИМИЗАЦИЯ СЕТИ: Скачиваем только последние 150 заказов (это около 2-3 месяцев назад)
             const [ordersSnap, missSnap] = await Promise.all([
-                database.ref("orders").orderByChild("shop").equalTo(state.currentShop).once("value"),
+                database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(150).once("value"),
                 database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value")
             ]);
+
+            // ОПТИМИЗАЦИЯ ПРОЦЕССОРА: Быстрая карта каталога закупки
+            let orderCatMapFast = {};
+            Object.values(orderCatalog).forEach(c => {
+                if (c && c.name) orderCatMapFast[c.name] = c;
+            });
 
             let activeMissing = [];
             let historyMissing = [];
             missSnap.forEach(c => { 
                 let m = c.val(); 
-                if(!m || !m.name) return; // Защита от пустых записей
+                if(!m || !m.name) return; 
                 if(m.status !== 'arrived' && m.status !== 'canceled') {
                     activeMissing.push({key: c.key, ...m}); 
                 } else if (m.status === 'arrived') {
@@ -2691,7 +2721,6 @@
                         let safeNameEsc = escapeName(m.name);
                         let btnMissArrId = `btn_miss_arr_${m.key}`;
                         let isMarked = state.missingChoices && state.missingChoices[m.key] !== undefined;
-
                         let orderDateStr = m.timestamp ? new Date(m.timestamp).toLocaleDateString('ru-RU') : '';
 
                         html += `<div class="report-card-item" style="flex-direction:column; align-items:flex-start; border-bottom:1px solid #eee;">
@@ -2716,7 +2745,7 @@
                     itemsArr.forEach(i => {
                         if (!i || !i.name || i.name === "НЕТ ЗАКАЗА") return;
                         if (i.status === 'ordered' && i.bot_error !== true) {
-                            let catItem = Object.values(orderCatalog).find(c => c && c.name === i.name) || {};
+                            let catItem = orderCatMapFast[i.name] || {};
                             let vendor = (catItem.vendor || 'Лента').toLowerCase() === 'озон' ? 'ozon' : 'lenta';
 
                             if ((vendor === 'ozon' && !o.ozon_received) || (vendor === 'lenta' && !o.lenta_received)) {
@@ -2824,7 +2853,7 @@
                         
                         itemsArr.forEach(i => {
                             if (!i || !i.name || i.name === "НЕТ ЗАКАЗА" || i.status !== 'ordered') return;
-                            let catItem = Object.values(orderCatalog).find(c => c && c.name === i.name) || {};
+                            let catItem = orderCatMapFast[i.name] || {};
                             let vendor = (catItem.vendor || 'Лента').toLowerCase() === 'озон' ? 'ozon' : 'lenta';
                             if (vendor === 'lenta') {
                                 historyByDate[dateStr].items.push({ name: i.name, qty: i.qty, vendor: 'lenta', bot_error: i.bot_error, is_missing: false });
@@ -2839,7 +2868,7 @@
                         
                         itemsArr.forEach(i => {
                             if (!i || !i.name || i.name === "НЕТ ЗАКАЗА" || i.status !== 'ordered') return;
-                            let catItem = Object.values(orderCatalog).find(c => c && c.name === i.name) || {};
+                            let catItem = orderCatMapFast[i.name] || {};
                             let vendor = (catItem.vendor || 'Лента').toLowerCase() === 'озон' ? 'ozon' : 'lenta';
                             if (vendor === 'ozon') {
                                 historyByDate[dateStr].items.push({ name: i.name, qty: i.qty, vendor: 'ozon', bot_error: i.bot_error, is_missing: false });

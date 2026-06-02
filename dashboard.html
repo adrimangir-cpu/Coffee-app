@@ -1904,7 +1904,7 @@
         } else { svodActionBar.style.display = 'none'; }
 
         let html = `<h3 style="color:#311B92; font-size:22px; margin-top:0; margin-bottom:15px;">📊 Ожидают сборки</h3>`;
-        if (isSvodEditMode) html += `<div style="margin-bottom:15px; padding:15px; background:#fff3e0; color:#e65100; border-radius:12px; font-size:15px; font-weight:bold; border: 2px dashed #ffb74d;">💡 <b>Режим редактирования активен:</b><br>- Нажмите на статус товара 🔄, чтобы переключить: Ожидает ➡️ Заказано ➡️ Не надо ➡️ Ошибка.<br>- Вы можете перенести товар на другого поставщика или на другой адрес.<br>- Внизу каждого адреса есть кнопка <b>➕ Добавить товар</b>.<br><b style="color:#d32f2f;">ВНИМАНИЕ:</b> Нажмите "Сохранить изменения", когда закончите все правки!</div>`;
+        if (isSvodEditMode) html += `<div style="margin-bottom:15px; padding:15px; background:#fff3e0; color:#e65100; border-radius:12px; font-size:15px; font-weight:bold; border: 2px dashed #ffb74d;">💡 <b>Режим редактирования активен:</b><br>- <b>Статусы сохраняются МГНОВЕННО</b> при выборе из выпадающего списка.<br>- Вы можете перенести товар на другого поставщика или на другой адрес.<br>- Внизу каждого адреса есть кнопка <b>➕ Добавить товар</b>.<br><b style="color:#d32f2f;">ВНИМАНИЕ:</b> Нажмите "Сохранить изменения", когда закончите править количества и цены!</div>`;
         html += `<table style='margin-bottom:20px;'><tr><th>Кофейня / Товар</th><th style="text-align:center;">Кол-во</th><th style="text-align:center;">Статус</th><th>Поставщик</th><th style="text-align:center;">${isSvodEditMode ? 'Удалить' : 'Ссылка'}</th></tr>`;
         
         if (sortedDates.length === 0) html += `<tr><td colspan="5" style="text-align:center; padding:20px; font-weight:bold; font-size:16px; color:#888;">Нет заказов, ожидающих сборки</td></tr>`;
@@ -1972,12 +1972,19 @@
                             let displayVendorCell = isSvodEditMode ? `<select class="edit-svod-vendor-select" data-shop="${htmlShop}" data-item="${htmlName}" data-date="${dateStr}" style="font-size: 14px; padding: 4px; border: 1px solid #ccc; border-radius: 4px; width: 100%;" onchange="markSvodVendorChange('${dateStr}', '${jsShop}', '${jsName}', this.value)" ${isDeleted || inTransit ? 'disabled' : ''}>${!["лента", "озон", "купер", "wildberries", "самокат", "metro", "купер (авто)"].includes(actualVendor.toLowerCase()) ? `<option value="${actualVendor}" selected>${actualVendor}</option>` : ''}${["Лента", "Озон", "Купер", "Wildberries", "Самокат", "METRO"].map(v => `<option value="${v}" ${v.toLowerCase() === actualVendor.toLowerCase() ? 'selected' : ''}>${v}</option>`).join('')}</select>` : actualVendor;
 
                             if (isSvodEditMode) {
-                                statusBadge = `<button onclick="markSvodStatusChange('${dateStr}', '${jsShop}', '${jsName}', '${itemStatus}')" style="cursor:pointer; background:${statusBg}; color:${statusColor}; border:2px dashed ${statusColor}; padding:4px 8px; border-radius:8px; font-size:13px; font-weight:900; display:inline-block; box-shadow:0 2px 4px rgba(0,0,0,0.1);">${statusText} 🔄</button>`;
+                                let selectHtml = `
+                                <select onchange="instantStatusChange('${dateStr}', '${jsShop}', '${jsName}', this.value)" style="cursor:pointer; background:${statusBg}; color:${statusColor}; border:2px solid ${statusColor}; padding:4px 4px; border-radius:8px; font-size:13px; font-weight:900; outline:none; width:100%; box-shadow:0 2px 4px rgba(0,0,0,0.1);">
+                                    <option value="error" ${itemStatus === 'error' ? 'selected' : ''}>Ошибка ❌</option>
+                                    <option value="ordered" ${itemStatus === 'ordered' ? 'selected' : ''}>Заказано ✅</option>
+                                    <option value="pending" ${(itemStatus === 'pending' || itemStatus === 'from_stoplist') ? 'selected' : ''}>Ожидает ⏳</option>
+                                    <option value="not_needed" ${itemStatus === 'not_needed' ? 'selected' : ''}>Не надо ⛔</option>
+                                </select>`;
+
                                 html += `
                                 <tr class="svod-row svoditem_${safeShopDate} svodlvl3_of_${safeDate}" style="display:${displayShop}; color:${isDeleted ? '#aaa':'#333'}; ${rowBg}">
                                     <td style="padding-left:15px; font-size:15px; font-weight:bold;">${name} ${repeatBadge} <select class="edit-svod-shop-select" data-original-shop="${htmlShop}" data-item="${htmlName}" data-date="${dateStr}" style="margin-top: 5px; font-size: 13px; padding: 4px; border: 1px solid #ccc; border-radius: 4px; width: 100%;" onchange="markSvodShopChange('${dateStr}', '${jsShop}', '${jsName}', this.value)" ${isDeleted || inTransit ? 'disabled' : ''}>${shopListAll.map(sName => `<option value="${sName}" ${sName === actualShop ? 'selected' : ''}>${sName}</option>`).join('')}</select></td>
                                     <td style="text-align:center;"><input type="number" class="edit-svod-input" data-date="${dateStr}" data-shop="${htmlShop}" data-item="${htmlName}" data-vendor="${actualVendor}" data-price="${finalPrice}" data-deleted="${isDeleted}" data-status="${itemStatus}" value="${actualQty}" ${isDeleted || inTransit ? 'disabled' : ''} oninput="recalcSvodTotals()" style="width: 100px; text-align: center; font-size: 15px; font-weight: bold; color: ${isDeleted ? '#aaa' : '#311b92'}; border: 2px solid ${isDeleted ? '#eee' : '#7E57C2'}; border-radius: 6px; padding: 4px;"></td>
-                                    <td style="text-align:center;"><button onclick="markSvodStatusChange('${dateStr}', '${jsShop}', '${jsName}', '${itemStatus}')" style="cursor:pointer; background:${statusBg}; color:${statusColor}; border:2px dashed ${statusColor}; padding:4px 8px; border-radius:8px; font-size:13px; font-weight:900; display:inline-block; box-shadow:0 2px 4px rgba(0,0,0,0.1);">${statusText} 🔄</button></td>
+                                    <td style="text-align:center;">${selectHtml}</td>
                                     <td style="font-size:14px; color:${isDeleted ? '#aaa' : '#333'}">${displayVendorCell}</td>
                                     <td style="text-align:center;"><button class="btn-del" ${isDeleted ? 'disabled' : ''} onclick="markSvodDelete(this, '${dateStr}', '${jsShop}', '${jsName}')">🗑</button></td>
                                 </tr>`;
@@ -4599,18 +4606,47 @@ async function exportGraphsToExcel() {
         }
     }
 
-    async function quietRefreshOrders() {
-        if (currentTabType !== 'orders' || isSvodEditMode) return;
-        try {
-            let res = await fetch(`${FB_URL}/orders.json`);
-            let ordersObj = await res.json() || {};
-            Object.keys(ordersObj).forEach(k => { if (ordersObj[k]) ordersObj[k].key = k; });
-            cachedData.orders = ordersObj;
-            renderOrdersSvod();
-        } catch(e) {}
+    // Мгновенное авто-сохранение статуса в базу (без кнопки "Сохранить")
+    async function instantStatusChange(dateStr, shop, name, newStatus) {
+        preserveSvodInputs(); // сохраняем текущие правки количеств
+        if (!tempSvodStatus[dateStr]) tempSvodStatus[dateStr] = {};
+        if (!tempSvodStatus[dateStr][shop]) tempSvodStatus[dateStr][shop] = {};
+        tempSvodStatus[dateStr][shop][name] = newStatus;
+        
+        // Ищем заказ в базе
+        let targetOrderKey = Object.keys(cachedData.orders).find(k => {
+            let o = cachedData.orders[k];
+            return o && o.shop === shop && !o.ordered && new Date(o.timestamp).toLocaleDateString('ru-RU') === dateStr;
+        });
+
+        if (targetOrderKey) {
+            let order = cachedData.orders[targetOrderKey];
+            let itemsArr = Array.isArray(order.items) ? order.items : Object.values(order.items || {});
+            let itemIdx = itemsArr.findIndex(i => i && i.name === name);
+            
+            if (itemIdx !== -1) {
+                let isError = (newStatus === 'error');
+                // Сразу пуляем в базу
+                fetch(`${FB_URL}/orders/${targetOrderKey}/items/${itemIdx}.json`, {
+                    method: 'PATCH',
+                    body: JSON.stringify({ status: newStatus, bot_error: isError, not_found: isError })
+                });
+            }
+        }
+        renderOrdersSvod(); // Сразу перекрашиваем строку в нужный цвет
     }
-    
-    setInterval(quietRefreshOrders, 15000);
+
+    // Live-обновление Свода в реальном времени (от бота и других админов)
+    db.ref('orders').on('value', (snapshot) => {
+        let ordersObj = snapshot.val() || {};
+        Object.keys(ordersObj).forEach(k => { if (ordersObj[k]) ordersObj[k].key = k; });
+        cachedData.orders = ordersObj;
+        
+        // Перерисовываем Свод мгновенно, только если мы не в режиме редактирования!
+        if (currentTabType === 'orders' && !isSvodEditMode) {
+            renderOrdersSvod();
+        }
+    });
 
     window.onload = () => {
         loadUIState();

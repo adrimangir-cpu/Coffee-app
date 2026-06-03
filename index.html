@@ -2459,17 +2459,17 @@
             let stopCatalog = catalogs.stoplist || {};
             let orderCatalog = catalogs.order || {};
 
-            // ОПТИМИЗАЦИЯ СЕТИ: Скачиваем только последние 100 заказов этой кофейни
+            // ⚡ СКОРОСТНАЯ ОПТИМИЗАЦИЯ: Берем последние записи глобально, без тяжелой сортировки на сервере
             const [ordersSnap, missSnap] = await Promise.all([
-                database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(100).once("value"),
-                database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value")
+                database.ref("orders").limitToLast(1500).once("value"),
+                database.ref("missing_items").limitToLast(1500).once("value")
             ]);
             
-            // ОПТИМИЗАЦИЯ ПРОЦЕССОРА: Строим быстрые словари (карты) для мгновенного поиска за O(1)
             let missingStatusMap = {};
             missSnap.forEach(c => {
                 let m = c.val();
-                if (m && m.status !== 'arrived' && m.status !== 'canceled') {
+                // Фильтруем нужную кофейню прямо на лету в памяти телефона
+                if (m && m.shop === state.currentShop && m.status !== 'arrived' && m.status !== 'canceled') {
                     missingStatusMap[String(m.name).trim().toLowerCase()] = m.status;
                 }
             });
@@ -2495,7 +2495,8 @@
 
             ordersSnap.forEach(c => { 
                 let val = c.val(); 
-                if(val && typeof val === 'object') {
+                // Отбираем только нужную кофейню из скачанного быстрого пула
+                if(val && typeof val === 'object' && val.shop === state.currentShop) {
                     shopOrders.push(val); 
                     
                     if (val.mode === 'order' || val.mode === 'new_shop') {
@@ -2524,6 +2525,7 @@
             
             if(!latest || !latest.items) { 
                 document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; font-weight:900;">Сегодня стоп-лист не заполнялся.</div></div>`; 
+                hideReportOverlay();
                 return; 
             }
             
@@ -2545,7 +2547,6 @@
                 if (seenNames.has(iNameLow)) return;
                 seenNames.add(iNameLow);
                 
-                // Используем мгновенный поиск по словарю
                 let stopInfo = stopInfoMap[iNameLow] || { sez: new Set(), main: new Set(), cat: "" };
                 let info = {
                     sez: Array.from(stopInfo.sez).join(", "),
@@ -2601,8 +2602,10 @@
                          </div>`;
             }
             document.getElementById('report-content-area').innerHTML = html + "</div>";
+            hideReportOverlay();
         } catch (err) {
             document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; color:red; font-weight:900;">Ошибка загрузки стоп-листа</div></div>`;
+            hideReportOverlay();
         }
     }
 
@@ -2652,19 +2655,18 @@
         }
     }
 
-   async function showLastOrder() {
+  async function showLastOrder() {
         showReportOverlay("Загружаю приемку...");
         try {
             const catalogs = await getCatalogs();
             let orderCatalog = catalogs.order || {};
 
-            // ОПТИМИЗАЦИЯ СЕТИ: Скачиваем только последние 150 заказов (это около 2-3 месяцев назад)
+            // ⚡ СКОРОСТНАЯ ОПТИМИЗАЦИЯ: Глобальный быстрый запрос без индекса
             const [ordersSnap, missSnap] = await Promise.all([
-                database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(150).once("value"),
-                database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value")
+                database.ref("orders").limitToLast(1500).once("value"),
+                database.ref("missing_items").limitToLast(1500).once("value")
             ]);
 
-            // ОПТИМИЗАЦИЯ ПРОЦЕССОРА: Быстрая карта каталога закупки
             let orderCatMapFast = {};
             Object.values(orderCatalog).forEach(c => {
                 if (c && c.name) orderCatMapFast[c.name] = c;
@@ -2674,7 +2676,9 @@
             let historyMissing = [];
             missSnap.forEach(c => { 
                 let m = c.val(); 
-                if(!m || !m.name) return; 
+                // Оставляем только нужную кофейню
+                if(!m || !m.name || m.shop !== state.currentShop) return; 
+                
                 if(m.status !== 'arrived' && m.status !== 'canceled') {
                     activeMissing.push({key: c.key, ...m}); 
                 } else if (m.status === 'arrived') {
@@ -2686,7 +2690,8 @@
             let ordersArr = [];
             ordersSnap.forEach(c => { 
                 let val = c.val(); 
-                if(val && typeof val === 'object' && (val.mode === 'order' || val.mode === 'new_shop') && val.timestamp >= fifteenDaysAgo) { 
+                // Отбираем записи
+                if(val && typeof val === 'object' && val.shop === state.currentShop && (val.mode === 'order' || val.mode === 'new_shop') && val.timestamp >= fifteenDaysAgo) { 
                     val.key = c.key; 
                     ordersArr.push(val); 
                 } 
@@ -2957,9 +2962,11 @@
             }
             
             document.getElementById('report-content-area').innerHTML = html || "<div class='report-card'>Пусто</div>";
+            hideReportOverlay();
         } catch (err) {
             console.error(err);
             document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; color:red; font-weight:900;">Ошибка загрузки приемки: ${err.message}</div></div>`; 
+            hideReportOverlay();
         }
     }
 

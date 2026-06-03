@@ -2459,17 +2459,16 @@
             let stopCatalog = catalogs.stoplist || {};
             let orderCatalog = catalogs.order || {};
 
-            // ⚡ СКОРОСТНАЯ ОПТИМИЗАЦИЯ: Берем последние записи глобально, без тяжелой сортировки на сервере
+            // ⚡ ИДЕАЛЬНЫЙ ЗАПРОС К БАЗЕ (Скачивает только нужный адрес за доли секунды)
             const [ordersSnap, missSnap] = await Promise.all([
-                database.ref("orders").limitToLast(1500).once("value"),
-                database.ref("missing_items").limitToLast(1500).once("value")
+                database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(50).once("value"),
+                database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value")
             ]);
             
             let missingStatusMap = {};
             missSnap.forEach(c => {
                 let m = c.val();
-                // Фильтруем нужную кофейню прямо на лету в памяти телефона
-                if (m && m.shop === state.currentShop && m.status !== 'arrived' && m.status !== 'canceled') {
+                if (m && m.status !== 'arrived' && m.status !== 'canceled') {
                     missingStatusMap[String(m.name).trim().toLowerCase()] = m.status;
                 }
             });
@@ -2495,8 +2494,7 @@
 
             ordersSnap.forEach(c => { 
                 let val = c.val(); 
-                // Отбираем только нужную кофейню из скачанного быстрого пула
-                if(val && typeof val === 'object' && val.shop === state.currentShop) {
+                if(val && typeof val === 'object') {
                     shopOrders.push(val); 
                     
                     if (val.mode === 'order' || val.mode === 'new_shop') {
@@ -2661,10 +2659,10 @@
             const catalogs = await getCatalogs();
             let orderCatalog = catalogs.order || {};
 
-            // ⚡ СКОРОСТНАЯ ОПТИМИЗАЦИЯ: Глобальный быстрый запрос без индекса
+            // ⚡ ИДЕАЛЬНЫЙ ЗАПРОС К БАЗЕ
             const [ordersSnap, missSnap] = await Promise.all([
-                database.ref("orders").limitToLast(1500).once("value"),
-                database.ref("missing_items").limitToLast(1500).once("value")
+                database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(100).once("value"),
+                database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value")
             ]);
 
             let orderCatMapFast = {};
@@ -2676,8 +2674,7 @@
             let historyMissing = [];
             missSnap.forEach(c => { 
                 let m = c.val(); 
-                // Оставляем только нужную кофейню
-                if(!m || !m.name || m.shop !== state.currentShop) return; 
+                if(!m || !m.name) return; 
                 
                 if(m.status !== 'arrived' && m.status !== 'canceled') {
                     activeMissing.push({key: c.key, ...m}); 
@@ -2690,8 +2687,7 @@
             let ordersArr = [];
             ordersSnap.forEach(c => { 
                 let val = c.val(); 
-                // Отбираем записи
-                if(val && typeof val === 'object' && val.shop === state.currentShop && (val.mode === 'order' || val.mode === 'new_shop') && val.timestamp >= fifteenDaysAgo) { 
+                if(val && typeof val === 'object' && (val.mode === 'order' || val.mode === 'new_shop') && val.timestamp >= fifteenDaysAgo) { 
                     val.key = c.key; 
                     ordersArr.push(val); 
                 } 

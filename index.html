@@ -613,27 +613,48 @@
       showScreen('step-2');
       loadSettings();
 
-      // ⚡ УМНЫЙ ПРЕДПРИЕМ: Загружаем данные в фоне, пока пользователь смотрит на кнопки
       state.localOrders = [];
       state.localMissing = [];
 
-      database.ref("orders").orderByChild("shop").equalTo(name).limitToLast(60).once("value").then(snap => {
+      // ⚡ УМНЫЙ ПРЕДПРИЕМ с запасным планом
+      database.ref("orders").orderByChild("shop").equalTo(name).limitToLast(60).once("value")
+      .then(snap => {
           let orders = [];
           snap.forEach(c => {
               let val = c.val();
               if (val && typeof val === 'object') { val.key = c.key; orders.push(val); }
           });
           state.localOrders = orders.sort((a,b) => (b.timestamp || 0) - (a.timestamp || 0));
-      }).catch(()=>{});
+      }).catch(() => {
+          // Если индекс не сработал - качаем старым способом
+          database.ref("orders").limitToLast(1000).once("value").then(snap => {
+              let orders = [];
+              snap.forEach(c => {
+                  let val = c.val();
+                  if (val && typeof val === 'object' && val.shop === name) { val.key = c.key; orders.push(val); }
+              });
+              state.localOrders = orders.sort((a,b) => (b.timestamp || 0) - (a.timestamp || 0));
+          });
+      });
 
-      database.ref("missing_items").orderByChild("shop").equalTo(name).once("value").then(snap => {
+      database.ref("missing_items").orderByChild("shop").equalTo(name).once("value")
+      .then(snap => {
           let missing = [];
           snap.forEach(c => {
               let m = c.val();
               if (m && m.name) { m.key = c.key; missing.push(m); }
           });
           state.localMissing = missing;
-      }).catch(()=>{});
+      }).catch(() => {
+          database.ref("missing_items").limitToLast(1000).once("value").then(snap => {
+              let missing = [];
+              snap.forEach(c => {
+                  let m = c.val();
+                  if (m && m.name && m.shop === name) { m.key = c.key; missing.push(m); }
+              });
+              state.localMissing = missing;
+          });
+      });
     }
 
     function clearShopAndReturn() {
@@ -2206,8 +2227,7 @@
                 let allOrders = (state.localOrders || []).filter(o => o && (o.mode === 'order' || o.mode === 'new_shop'));
 
                 if (allOrders.length === 0) {
-                     document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; padding:10px; font-weight:bold; color:#888;">Заказов не найдено.</div></div>`;
-                     hideReportOverlay();
+                     document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; padding:10px; font-weight:bold; color:#888;">Заказов не найдено. (Если вы только зашли, подождите пару секунд)</div></div>`;
                      return;
                 }
 
@@ -2277,10 +2297,8 @@
                 html += (state.currentMyOrderTab === 'current') ? renderOrderBlock(currentAgg, currentOrderDateStr, "Текущий заказ", true) : renderOrderBlock(prevAgg, prevOrderDateStr, "Прошлый заказ", false);
 
                 document.getElementById('report-content-area').innerHTML = html;
-                hideReportOverlay();
             } catch(e) {
                 document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; color:red; font-weight:900;">Ошибка: ${e.message}</div></div>`;
-                hideReportOverlay();
             }
         }, 40);
     }
@@ -2497,7 +2515,6 @@ async function viewStopList() {
                 let latest = shopOrders.find(o => o.mode === 'stoplist_fill');
                 if(!latest || !latest.items) {
                     document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; font-weight:900;">Сегодня стоп-лист не заполнялся.</div></div>`;
-                    hideReportOverlay();
                     return;
                 }
 
@@ -2553,10 +2570,8 @@ async function viewStopList() {
                     html += `<div style='margin-top: 20px; padding-top: 15px; border-top: 2px dashed #ddd; color:#7E57C2;'>🍾 <b>Сиропы на стопе:</b><br><span style="color:#333; font-size:14px; line-height:1.5;">${allSyrups.join("<br>")}</span></div>`;
                 }
                 document.getElementById('report-content-area').innerHTML = html + "</div>";
-                hideReportOverlay();
             } catch (err) {
                 document.getElementById('report-content-area').innerHTML = `<div class="report-card">Ошибка: ${err.message}</div>`;
-                hideReportOverlay();
             }
         }, 40);
     }
@@ -2677,7 +2692,9 @@ async function viewStopList() {
                         activeMissing.forEach(m => {
                             let statText = m.status === 'transit' ? "В пути" : "Ожидает проверки", statColor = m.status === 'transit' ? "#1565c0" : "#ef6c00", bg = m.status === 'transit' ? "#e3f2fd" : "#fff3e0";
                             let safeNameEsc = escapeName(m.name), btnMissArrId = `btn_miss_arr_${m.key}`, btnMissId = `btn_miss_${m.key}`;
-                            let isMarked = state.missingChoices && state.missingChoices[m.key] !== undefined;
+                            
+                            let isMarked = false;
+                            if (state.missingChoices && state.missingChoices[m.key] !== undefined) isMarked = true;
 
                             html += `<div class="report-card-item" style="flex-direction:column; align-items:flex-start; border-bottom:1px solid #eee;">
                                         <span style="margin-bottom:8px;"><b>${m.name}</b> (x${m.qty})</span>
@@ -2728,8 +2745,13 @@ async function viewStopList() {
                                     } else {
                                         expCount++;
                                         let bA = `ba_${listId}_${getSafeId(name)}`, bM = `bm_${listId}_${getSafeId(name)}`, choiceKey = dateStr+"_"+name;
-                                        let c = (state.receivingChoices && state.receivingChoices[choiceKey]) ? state.receivingChoices[choiceKey].status : null;
-                                        let isA = c==='arrived', isM = c==='missing';
+                                        
+                                        let isA = false, isM = false;
+                                        if (state.receivingChoices && state.receivingChoices[choiceKey]) {
+                                            isA = state.receivingChoices[choiceKey].status === 'arrived';
+                                            isM = state.receivingChoices[choiceKey].status === 'missing';
+                                        }
+
                                         res += `<div class="report-card-item" style="flex-direction:column; align-items:flex-start;">
                                                     <span style="font-size:15px; margin-bottom:6px;"><b>${name}</b> (x${grpData[name].qty})</span>
                                                     <div style="display:flex; gap:8px; width:100%;">
@@ -2755,7 +2777,7 @@ async function viewStopList() {
                             if(!historyByDate[dateStr]) historyByDate[dateStr] = { items: [], ts: o.timestamp };
                             itemsArr.forEach(i => {
                                 if(i && i.name && i.status === 'ordered') {
-                                    let vendor = (orderCatMapFast[i.name] && orderCatMapFast[i.name].vendor || 'Лента').toLowerCase() === 'озон' ? 'ozon' : 'lenta';
+                                    let vendor = (orderCatMapFast[i.name]?.vendor || 'Лента').toLowerCase() === 'озон' ? 'ozon' : 'lenta';
                                     if(vendor === typeKey) historyByDate[dateStr].items.push({ name: i.name, qty: i.qty, vendor: typeKey, bot_error: i.bot_error });
                                 }
                             });
@@ -2783,10 +2805,8 @@ async function viewStopList() {
                     }
                 }
                 document.getElementById('report-content-area').innerHTML = html;
-                hideReportOverlay();
             } catch (err) {
                 document.getElementById('report-content-area').innerHTML = `<div class="report-card">Ошибка: ${err.message}</div>`;
-                hideReportOverlay();
             }
         }, 40);
     }

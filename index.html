@@ -613,19 +613,18 @@
       showScreen('step-2');
       loadSettings();
 
-      // ⚡ УМНЫЙ ПРЕДПРИЕМ: Пока бариста выбирает кнопку в меню, 
-      // телефон за 0.2 сек скачивает точечный и легкий пул данных для этой точки
+      // ⚡ УМНЫЙ ПРЕДПРИЕМ: Загружаем данные в фоне, пока пользователь смотрит на кнопки
       state.localOrders = [];
       state.localMissing = [];
 
-      database.ref("orders").orderByChild("shop").equalTo(name).limitToLast(40).once("value").then(snap => {
+      database.ref("orders").orderByChild("shop").equalTo(name).limitToLast(60).once("value").then(snap => {
           let orders = [];
           snap.forEach(c => {
               let val = c.val();
               if (val && typeof val === 'object') { val.key = c.key; orders.push(val); }
           });
           state.localOrders = orders.sort((a,b) => (b.timestamp || 0) - (a.timestamp || 0));
-      });
+      }).catch(()=>{});
 
       database.ref("missing_items").orderByChild("shop").equalTo(name).once("value").then(snap => {
           let missing = [];
@@ -634,7 +633,7 @@
               if (m && m.name) { m.key = c.key; missing.push(m); }
           });
           state.localMissing = missing;
-      });
+      }).catch(()=>{});
     }
 
     function clearShopAndReturn() {
@@ -2199,6 +2198,7 @@
     }
 
     async function showMyLastOrder() {
+        triggerHaptic();
         showReportOverlay("Считаю суммарный заказ...");
         
         setTimeout(() => {
@@ -2445,6 +2445,7 @@
     }
 
 async function viewStopList() {
+        triggerHaptic();
         showReportOverlay("Загрузка актуального стоп-листа...");
         setTimeout(async () => {
             try {
@@ -2540,7 +2541,7 @@ async function viewStopList() {
                     }
 
                     mainListItems.push(`
-                    <div style="padding:12px 0; border-bottom:1px solid #f0f0f0; display:flex; flex-direction:column;">
+                    <div style="padding:12px 0; border-bottom:1px dashed #f0f0f0; display:flex; flex-direction:column;">
                         <div style="display:flex; justify-content:space-between; align-items:center; width:100%;"><b style="color:#333; font-size:15px;">${i.name}</b> ${statHtml}</div>
                         ${affectedHtml}
                     </div>`);
@@ -2646,6 +2647,7 @@ async function viewStopList() {
     }
 
  async function showLastOrder() {
+        triggerHaptic();
         showReportOverlay("Загрузка приемки...");
         setTimeout(async () => {
             try {
@@ -2726,7 +2728,8 @@ async function viewStopList() {
                                     } else {
                                         expCount++;
                                         let bA = `ba_${listId}_${getSafeId(name)}`, bM = `bm_${listId}_${getSafeId(name)}`, choiceKey = dateStr+"_"+name;
-                                        let c = state.receivingChoices?.[choiceKey]?.status, isA = c==='arrived', isM = c==='missing';
+                                        let c = (state.receivingChoices && state.receivingChoices[choiceKey]) ? state.receivingChoices[choiceKey].status : null;
+                                        let isA = c==='arrived', isM = c==='missing';
                                         res += `<div class="report-card-item" style="flex-direction:column; align-items:flex-start;">
                                                     <span style="font-size:15px; margin-bottom:6px;"><b>${name}</b> (x${grpData[name].qty})</span>
                                                     <div style="display:flex; gap:8px; width:100%;">
@@ -2752,7 +2755,7 @@ async function viewStopList() {
                             if(!historyByDate[dateStr]) historyByDate[dateStr] = { items: [], ts: o.timestamp };
                             itemsArr.forEach(i => {
                                 if(i && i.name && i.status === 'ordered') {
-                                    let vendor = (orderCatMapFast[i.name]?.vendor || 'Лента').toLowerCase() === 'озон' ? 'ozon' : 'lenta';
+                                    let vendor = (orderCatMapFast[i.name] && orderCatMapFast[i.name].vendor || 'Лента').toLowerCase() === 'озон' ? 'ozon' : 'lenta';
                                     if(vendor === typeKey) historyByDate[dateStr].items.push({ name: i.name, qty: i.qty, vendor: typeKey, bot_error: i.bot_error });
                                 }
                             });

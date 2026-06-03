@@ -2628,6 +2628,45 @@
         }
     }
 
+    async function autoRemoveFromStoplist(shop, itemNamesArray) {
+        if (!itemNamesArray || itemNamesArray.length === 0) return;
+        try {
+            let snap = await database.ref("orders").orderByChild("shop").equalTo(shop).once("value");
+            let shopOrders = [];
+            snap.forEach(c => {
+                let val = c.val();
+                if (val && val.mode === 'stoplist_fill') {
+                    val.key = c.key;
+                    shopOrders.push(val);
+                }
+            });
+            if (shopOrders.length === 0) return;
+            shopOrders.sort((a,b) => b.timestamp - a.timestamp);
+            let latestStoplist = shopOrders[0];
+            if (!latestStoplist.items) return;
+            
+            let itemsArr = Array.isArray(latestStoplist.items) ? latestStoplist.items : Object.values(latestStoplist.items);
+            itemsArr = itemsArr.filter(i => i !== null && i !== undefined);
+
+            let namesToRemove = itemNamesArray.map(n => String(n).trim().toLowerCase());
+            let newItems = itemsArr.filter(i => {
+                if (!i || !i.name) return false;
+                let iName = String(i.name).trim().toLowerCase();
+                return !namesToRemove.includes(iName);
+            });
+            
+            if (newItems.length !== itemsArr.length) {
+                if (newItems.length === 0) {
+                    await database.ref(`orders/${latestStoplist.key}/items`).set([{name: "Всё в наличии", qty: "В наличии"}]);
+                } else {
+                    await database.ref(`orders/${latestStoplist.key}/items`).set(newItems);
+                }
+            }
+        } catch(e) {
+            console.error("Auto stoplist update failed:", e);
+        }
+    }
+    
     async function finishMissingReceiving() {
         if (!state.missingChoices || Object.keys(state.missingChoices).length === 0) {
             showPopupError("Внимание", "Вы не отметили ни одного недовоза как 'Доехал'.");

@@ -2453,28 +2453,30 @@ async function viewStopList() {
                 let stopCatalog = catalogs.stoplist || {};
                 let orderCatalog = catalogs.order || {};
 
-                // ⚡ ЖДЕМ загрузки свежих данных
-                let data = await fetchShopData();
-
+                // ИСПОЛЬЗУЕМ cleanName ДЛЯ ТОЧНОГО СОПОСТАВЛЕНИЯ БЕЗ СКОБОК
                 let missingStatusMap = {};
-                data.missing.forEach(m => {
-                    if (m && m.status !== 'arrived' && m.status !== 'canceled') missingStatusMap[String(m.name).trim().toLowerCase()] = m.status;
+                (state.localMissing || []).forEach(m => {
+                    if (m && m.status !== 'arrived' && m.status !== 'canceled') {
+                        missingStatusMap[cleanName(m.name)] = m.status;
+                    }
                 });
 
                 let orderCatMap = {};
-                Object.values(orderCatalog).forEach(c => { if (c && c.name) orderCatMap[String(c.name).trim().toLowerCase()] = c; });
+                Object.values(orderCatalog).forEach(c => { 
+                    if (c && c.name) orderCatMap[cleanName(c.name)] = c; 
+                });
 
                 let stopInfoMap = {};
                 Object.values(stopCatalog).forEach(c => {
                     if (c && c.name) {
-                        let nameLow = String(c.name).trim().toLowerCase();
-                        if (!stopInfoMap[nameLow]) stopInfoMap[nameLow] = { sez: new Set(), main: new Set(), cat: c.cat || "" };
-                        if (c.sez) c.sez.split(',').forEach(s => { if (s.trim()) stopInfoMap[nameLow].sez.add(s.trim()); });
-                        if (c.main) c.main.split(',').forEach(s => { if (s.trim()) stopInfoMap[nameLow].main.add(s.trim()); });
+                        let cName = cleanName(c.name);
+                        if (!stopInfoMap[cName]) stopInfoMap[cName] = { sez: new Set(), main: new Set(), cat: c.cat || "" };
+                        if (c.sez) c.sez.split(',').forEach(s => { if (s.trim()) stopInfoMap[cName].sez.add(s.trim()); });
+                        if (c.main) c.main.split(',').forEach(s => { if (s.trim()) stopInfoMap[cName].main.add(s.trim()); });
                     }
                 });
 
-                let shopOrders = data.orders;
+                let shopOrders = (state.localOrders || []).filter(o => o && o.shop === state.currentShop);
                 let recentOrdersMap = {};
                 let sevenDaysAgo = Date.now() - (7 * 24 * 60 * 60 * 1000);
 
@@ -2489,7 +2491,9 @@ async function viewStopList() {
                                     if (val.svod && (i.status === 'error' || i.bot_error)) stat = 'error';
                                     else if (val.svod && i.status === 'ordered') stat = 'ordered';
                                     if (val.ordered && !val.svod) stat = 'ordered';
-                                    if (recentOrdersMap[i.name] !== 'ordered') recentOrdersMap[i.name] = stat;
+                                    
+                                    let cleanI = cleanName(i.name);
+                                    if (recentOrdersMap[cleanI] !== 'ordered') recentOrdersMap[cleanI] = stat;
                                 }
                             });
                         }
@@ -2499,6 +2503,7 @@ async function viewStopList() {
                 let latest = shopOrders.find(o => o.mode === 'stoplist_fill');
                 if(!latest || !latest.items) {
                     document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; font-weight:900;">Сегодня стоп-лист не заполнялся.</div></div>`;
+                    hideReportOverlay();
                     return;
                 }
 
@@ -2515,17 +2520,18 @@ async function viewStopList() {
                     if (seenNames.has(iNameLow)) return;
                     seenNames.add(iNameLow);
 
-                    let stopInfo = stopInfoMap[iNameLow] || { sez: new Set(), main: new Set(), cat: "" };
-                    let info = { sez: Array.from(stopInfo.sez).join(", "), main: Array.from(stopInfo.main).join(", "), cat: stopInfo.cat };
-                    let inOrderCat = orderCatMap[iNameLow];
                     let cleanedItemName = cleanName(i.name);
+
+                    let stopInfo = stopInfoMap[cleanedItemName] || { sez: new Set(), main: new Set(), cat: "" };
+                    let info = { sez: Array.from(stopInfo.sez).join(", "), main: Array.from(stopInfo.main).join(", "), cat: stopInfo.cat };
+                    let inOrderCat = orderCatMap[cleanedItemName];
                     let isSyrup = (info.cat && String(info.cat).toLowerCase().includes("сироп")) || (inOrderCat && inOrderCat.cat && String(inOrderCat.cat).toLowerCase().includes("сироп")) || iNameLow.includes("сироп");
 
                     let statHtml = "";
                     if (inOrderCat) {
                         if (missingStatusMap[cleanedItemName] === 'transit') statHtml = `<span style="background:#e3f2fd; color:#1565c0; padding:2px 5px; border-radius:4px; font-size:11px; font-weight:900; margin-left:5px;">В пути 🚚</span>`;
                         else {
-                            let itemStatus = recentOrdersMap[i.name] || null;
+                            let itemStatus = recentOrdersMap[cleanedItemName] || null;
                             statHtml = itemStatus === 'ordered' ? `<span style="background:#e8f5e9; color:#2e7d32; padding:2px 5px; border-radius:4px; font-size:11px; font-weight:900; margin-left:5px;">Оформлено ✅</span>` :
                                        (itemStatus === 'pending' ? `<span style="background:#fff3e0; color:#f57c00; padding:2px 5px; border-radius:4px; font-size:11px; font-weight:900; margin-left:5px;">В корзине ⏳</span>` :
                                        (itemStatus === 'error' ? `<span style="background:#ffebee; color:#c62828; padding:2px 5px; border-radius:4px; font-size:11px; font-weight:900; margin-left:5px;">Ошибка ❌</span>` :
@@ -2554,11 +2560,14 @@ async function viewStopList() {
                     html += `<div style='margin-top: 20px; padding-top: 15px; border-top: 2px dashed #ddd; color:#7E57C2;'>🍾 <b>Сиропы на стопе:</b><br><span style="color:#333; font-size:14px; line-height:1.5;">${allSyrups.join("<br>")}</span></div>`;
                 }
                 document.getElementById('report-content-area').innerHTML = html + "</div>";
+                hideReportOverlay();
             } catch (err) {
                 document.getElementById('report-content-area').innerHTML = `<div class="report-card">Ошибка: ${err.message}</div>`;
+                hideReportOverlay();
             }
         }, 40);
     }
+  
     function toggleMissingArrived(key, nameStr, btnId) {
         triggerHaptic();
         if (!state.missingChoices) state.missingChoices = {};
@@ -2652,20 +2661,17 @@ async function viewStopList() {
                 const catalogs = await getCatalogs();
                 let orderCatalog = catalogs.order || {};
 
-                // ⚡ ЖДЕМ загрузки свежих данных
-                let data = await fetchShopData();
-
                 let orderCatMapFast = {};
                 Object.values(orderCatalog).forEach(c => { if (c && c.name) orderCatMapFast[c.name] = c; });
 
                 let activeMissing = [], historyMissing = [];
-                data.missing.forEach(m => {
+                (state.localMissing || []).forEach(m => {
                     if (m && m.status !== 'arrived' && m.status !== 'canceled') activeMissing.push(m);
                     else if (m && m.status === 'arrived') historyMissing.push(m);
                 });
 
                 let fifteenDaysAgo = Date.now() - (15 * 24 * 60 * 60 * 1000);
-                let ordersArr = data.orders.filter(o => o && (o.mode === 'order' || o.mode === 'new_shop') && o.timestamp >= fifteenDaysAgo);
+                let ordersArr = (state.localOrders || []).filter(o => o && (o.mode === 'order' || o.mode === 'new_shop') && o.timestamp >= fifteenDaysAgo);
 
                 let html = `<div style="display: flex; gap: 10px; margin-bottom: 20px; background: #fff; padding: 6px; border-radius: 14px; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
                                 <button onclick="state.currentReceivingTab = 'active'; showLastOrder();" style="flex: 1; padding: 12px; border: none; border-radius: 10px; font-size: 15px; font-weight: 900; transition: 0.2s; cursor: pointer; ${state.currentReceivingTab === 'active' ? 'background: #4A148C; color: #fff;' : 'background: transparent; color: #888;'}">🚚 Текущая приемка</button>
@@ -2677,7 +2683,7 @@ async function viewStopList() {
                         html += `<div class="report-card" style="border: 2px solid #FFCA28;"><div class="report-card-title" style="color:#E65100;">🚚 Ожидаемые недовозы</div>`;
                         activeMissing.forEach(m => {
                             let statText = m.status === 'transit' ? "В пути" : "Ожидает проверки", statColor = m.status === 'transit' ? "#1565c0" : "#ef6c00", bg = m.status === 'transit' ? "#e3f2fd" : "#fff3e0";
-                            let safeNameEsc = escapeName(m.name), btnMissArrId = `btn_miss_arr_${m.key}`, btnMissId = `btn_miss_${m.key}`;
+                            let safeNameEsc = escapeName(m.name), btnMissArrId = `btn_miss_arr_${m.key}`;
                             
                             let isMarked = false;
                             if (state.missingChoices && state.missingChoices[m.key] !== undefined) isMarked = true;
@@ -2686,7 +2692,7 @@ async function viewStopList() {
                                         <span style="margin-bottom:8px;"><b>${m.name}</b> (x${m.qty})</span>
                                         <div style="display:flex; justify-content:space-between; width:100%; align-items:center;">
                                             <span style="background:${bg}; color:${statColor}; padding:4px 8px; border-radius:8px; font-size:12px; font-weight:900;">${statText}</span>
-                                            <button id="${btnMissArrId}" onclick="toggleMissingArrived('${m.key}', '${safeNameEsc}', '${btnMissArrId}')" style="border:${isMarked ? '2px solid #2e7d32' : '1px solid #ccc'}; background:${isMarked ? '#e8f5e9' : '#fafafa'}; color:${isMarked ? '#2e7d32' : '#888'}; padding:6px 12px; border-radius:8px; font-weight:bold;">Доехал ✅</button>
+                                            <button id="${btnMissArrId}" onclick="toggleMissingArrived('${m.key}', '${safeNameEsc}', '${btnMissArrId}')" style="border:${isMarked ? '2px solid #2e7d32' : '1px solid #ccc'}; background:${isMarked ? '#e8f5e9' : '#fafafa'}; color:${isMarked ? '#2e7d32' : '#888'}; padding:8px 15px; border-radius:10px; font-weight:900; font-size:14px; cursor:pointer; transition:0.2s;">Доехал ✅</button>
                                         </div>
                                      </div>`;
                         });
@@ -2738,11 +2744,12 @@ async function viewStopList() {
                                             isM = state.receivingChoices[choiceKey].status === 'missing';
                                         }
 
+                                        // ВЕРНУЛИ КЛАССИЧЕСКИЕ КНОПКИ ДЛЯ ПРИЕМКИ С ОТСТУПАМИ И ИКОНКАМИ
                                         res += `<div class="report-card-item" style="flex-direction:column; align-items:flex-start;">
                                                     <span style="font-size:15px; margin-bottom:6px;"><b>${name}</b> (x${grpData[name].qty})</span>
                                                     <div style="display:flex; gap:8px; width:100%;">
-                                                        <button id="${bA}" onclick="setReceiveChoice('${escapeName(name)}', ${grpData[name].qty}, '${vendorKey}', 'arrived', '${bA}', '${bM}', '${dateStr}')" style="flex:1; padding:6px; border-radius:6px; border:${isA?'2px solid #2e7d32':'1px solid #ccc'}; background:${isA?'#e8f5e9':'#fff'}; color:${isA?'#2e7d32':'#777'}; font-weight:bold;">Принято</button>
-                                                        <button id="${bM}" onclick="setReceiveChoice('${escapeName(name)}', ${grpData[name].qty}, '${vendorKey}', 'missing', '${bA}', '${bM}', '${dateStr}')" style="flex:1; padding:6px; border-radius:6px; border:${isM?'2px solid #c62828':'1px solid #ccc'}; background:${isM?'#ffebee':'#fff'}; color:${isM?'#c62828':'#777'}; font-weight:bold;">Недовоз</button>
+                                                        <button id="${bA}" onclick="setReceiveChoice('${escapeName(name)}', ${grpData[name].qty}, '${vendorKey}', 'arrived', '${bA}', '${bM}', '${dateStr}')" style="flex:1; padding:8px; border-radius:8px; border:${isA?'2px solid #2e7d32':'1px solid #ccc'}; background:${isA?'#e8f5e9':'#fafafa'}; color:${isA?'#2e7d32':'#888'}; font-weight:bold; transition:0.2s;">✅ Принято</button>
+                                                        <button id="${bM}" onclick="setReceiveChoice('${escapeName(name)}', ${grpData[name].qty}, '${vendorKey}', 'missing', '${bA}', '${bM}', '${dateStr}')" style="flex:1; padding:8px; border-radius:8px; border:${isM?'2px solid #c62828':'1px solid #ccc'}; background:${isM?'#ffebee':'#fafafa'}; color:${isM?'#c62828':'#888'}; font-weight:bold; transition:0.2s;">❌ Недовоз</button>
                                                     </div>
                                                 </div>`;
                                     }
@@ -2791,8 +2798,10 @@ async function viewStopList() {
                     }
                 }
                 document.getElementById('report-content-area').innerHTML = html;
+                hideReportOverlay();
             } catch (err) {
                 document.getElementById('report-content-area').innerHTML = `<div class="report-card">Ошибка: ${err.message}</div>`;
+                hideReportOverlay();
             }
         }, 40);
     }

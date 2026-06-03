@@ -612,51 +612,31 @@
       state.screenHistory = []; 
       showScreen('step-2');
       loadSettings();
-
-      state.localOrders = [];
-      state.localMissing = [];
-
-      // ⚡ УМНЫЙ ПРЕДПРИЕМ с запасным планом
-      database.ref("orders").orderByChild("shop").equalTo(name).limitToLast(60).once("value")
-      .then(snap => {
-          let orders = [];
-          snap.forEach(c => {
-              let val = c.val();
-              if (val && typeof val === 'object') { val.key = c.key; orders.push(val); }
-          });
-          state.localOrders = orders.sort((a,b) => (b.timestamp || 0) - (a.timestamp || 0));
-      }).catch(() => {
-          // Если индекс не сработал - качаем старым способом
-          database.ref("orders").limitToLast(1000).once("value").then(snap => {
-              let orders = [];
-              snap.forEach(c => {
-                  let val = c.val();
-                  if (val && typeof val === 'object' && val.shop === name) { val.key = c.key; orders.push(val); }
-              });
-              state.localOrders = orders.sort((a,b) => (b.timestamp || 0) - (a.timestamp || 0));
-          });
-      });
-
-      database.ref("missing_items").orderByChild("shop").equalTo(name).once("value")
-      .then(snap => {
-          let missing = [];
-          snap.forEach(c => {
-              let m = c.val();
-              if (m && m.name) { m.key = c.key; missing.push(m); }
-          });
-          state.localMissing = missing;
-      }).catch(() => {
-          database.ref("missing_items").limitToLast(1000).once("value").then(snap => {
-              let missing = [];
-              snap.forEach(c => {
-                  let m = c.val();
-                  if (m && m.name && m.shop === name) { m.key = c.key; missing.push(m); }
-              });
-              state.localMissing = missing;
-          });
-      });
     }
 
+    // ⚡ ДОБАВЛЯЕМ НОВУЮ ФУНКЦИЮ: Сверхбыстрый и точный загрузчик для кнопок
+    async function fetchShopData() {
+        let ordersArr = [];
+        let missingArr = [];
+        try {
+            // Мгновенный запрос по настроенным индексам
+            let [oSnap, mSnap] = await Promise.all([
+                database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(80).once("value"),
+                database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value")
+            ]);
+            oSnap.forEach(c => { let v = c.val(); if(v) { v.key = c.key; ordersArr.push(v); } });
+            mSnap.forEach(c => { let v = c.val(); if(v) { v.key = c.key; missingArr.push(v); } });
+        } catch (e) {
+            // Резервный маршрут на случай сбоя
+            let [oSnap, mSnap] = await Promise.all([
+                database.ref("orders").limitToLast(300).once("value"),
+                database.ref("missing_items").limitToLast(200).once("value")
+            ]);
+            oSnap.forEach(c => { let v = c.val(); if(v && v.shop === state.currentShop) { v.key = c.key; ordersArr.push(v); } });
+            mSnap.forEach(c => { let v = c.val(); if(v && v.shop === state.currentShop) { v.key = c.key; missingArr.push(v); } });
+        }
+        return { orders: ordersArr.sort((a,b) => b.timestamp - a.timestamp), missing: missingArr };
+    }
     function clearShopAndReturn() {
       triggerHaptic(); 
       state.currentShop = "";
@@ -2222,12 +2202,14 @@
         triggerHaptic();
         showReportOverlay("Считаю суммарный заказ...");
         
-        setTimeout(() => {
+        setTimeout(async () => {
             try {
-                let allOrders = (state.localOrders || []).filter(o => o && (o.mode === 'order' || o.mode === 'new_shop'));
+                // ⚡ ЖДЕМ загрузки свежих данных
+                let data = await fetchShopData();
+                let allOrders = data.orders.filter(o => o.mode === 'order' || o.mode === 'new_shop');
 
                 if (allOrders.length === 0) {
-                     document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; padding:10px; font-weight:bold; color:#888;">Заказов не найдено. (Если вы только зашли, подождите пару секунд)</div></div>`;
+                     document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; padding:10px; font-weight:bold; color:#888;">Заказов не найдено.</div></div>`;
                      return;
                 }
 
@@ -2254,7 +2236,7 @@
                 let prevAgg = aggregateSingleOrder(prevOrderObj);
 
                 let activeMissing = {};
-                (state.localMissing || []).forEach(m => {
+                data.missing.forEach(m => {
                     if (m && m.status !== 'arrived' && m.status !== 'canceled') activeMissing[m.name] = true;
                 });
 
@@ -2471,9 +2453,11 @@ async function viewStopList() {
                 let stopCatalog = catalogs.stoplist || {};
                 let orderCatalog = catalogs.order || {};
 
-                // ⚡ СВЕРХБЫСТРЫЕ МАРШРУТЫ ПО ХЭШ-КАРТАМ (O(1) вместо O(N))
+                // ⚡ ЖДЕМ загрузки свежих данных
+                let data = await fetchShopData();
+
                 let missingStatusMap = {};
-                (state.localMissing || []).forEach(m => {
+                data.missing.forEach(m => {
                     if (m && m.status !== 'arrived' && m.status !== 'canceled') missingStatusMap[String(m.name).trim().toLowerCase()] = m.status;
                 });
 
@@ -2490,7 +2474,7 @@ async function viewStopList() {
                     }
                 });
 
-                let shopOrders = (state.localOrders || []).filter(o => o && o.shop === state.currentShop);
+                let shopOrders = data.orders;
                 let recentOrdersMap = {};
                 let sevenDaysAgo = Date.now() - (7 * 24 * 60 * 60 * 1000);
 
@@ -2575,7 +2559,6 @@ async function viewStopList() {
             }
         }, 40);
     }
-
     function toggleMissingArrived(key, nameStr, btnId) {
         triggerHaptic();
         if (!state.missingChoices) state.missingChoices = {};
@@ -2669,17 +2652,20 @@ async function viewStopList() {
                 const catalogs = await getCatalogs();
                 let orderCatalog = catalogs.order || {};
 
+                // ⚡ ЖДЕМ загрузки свежих данных
+                let data = await fetchShopData();
+
                 let orderCatMapFast = {};
                 Object.values(orderCatalog).forEach(c => { if (c && c.name) orderCatMapFast[c.name] = c; });
 
                 let activeMissing = [], historyMissing = [];
-                (state.localMissing || []).forEach(m => {
+                data.missing.forEach(m => {
                     if (m && m.status !== 'arrived' && m.status !== 'canceled') activeMissing.push(m);
                     else if (m && m.status === 'arrived') historyMissing.push(m);
                 });
 
                 let fifteenDaysAgo = Date.now() - (15 * 24 * 60 * 60 * 1000);
-                let ordersArr = (state.localOrders || []).filter(o => o && (o.mode === 'order' || o.mode === 'new_shop') && o.timestamp >= fifteenDaysAgo);
+                let ordersArr = data.orders.filter(o => o && (o.mode === 'order' || o.mode === 'new_shop') && o.timestamp >= fifteenDaysAgo);
 
                 let html = `<div style="display: flex; gap: 10px; margin-bottom: 20px; background: #fff; padding: 6px; border-radius: 14px; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
                                 <button onclick="state.currentReceivingTab = 'active'; showLastOrder();" style="flex: 1; padding: 12px; border: none; border-radius: 10px; font-size: 15px; font-weight: 900; transition: 0.2s; cursor: pointer; ${state.currentReceivingTab === 'active' ? 'background: #4A148C; color: #fff;' : 'background: transparent; color: #888;'}">🚚 Текущая приемка</button>

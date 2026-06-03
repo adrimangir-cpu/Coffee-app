@@ -2453,33 +2453,32 @@
     }
 
  async function viewStopList() {
-        // Мгновенно показываем скелет отчета, не блокируя экран
         showReportOverlay("Подключение к базе...");
         
-        // Даем браузеру время (50мс) отрисовать интерфейс перед тяжелыми вычислениями
         setTimeout(async () => {
             try {
                 const catalogs = await getCatalogs();
                 let stopCatalog = catalogs.stoplist || {};
                 let orderCatalog = catalogs.order || {};
 
-                document.getElementById('overlay-text').innerText = "Получение данных...";
+                showReportOverlay("Получение данных...");
 
-                // Запрашиваем данные по индексам. Ждем ответа от сервера.
                 let ordersSnap, missSnap;
                 try {
+                    // ⚡ ПЛАН А: Быстрый индексный запрос
                     [ordersSnap, missSnap] = await Promise.all([
-                        database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(100).once("value"),
+                        database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(150).once("value"),
                         database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value")
                     ]);
                 } catch (dbError) {
+                    // ПЛАН Б: Фолбэк без индексов
                     [ordersSnap, missSnap] = await Promise.all([
                         database.ref("orders").limitToLast(500).once("value"),
                         database.ref("missing_items").limitToLast(500).once("value")
                     ]);
                 }
 
-                document.getElementById('overlay-text').innerText = "Формирование списка...";
+                showReportOverlay("Формирование списка...");
 
                 let missingStatusMap = {};
                 missSnap.forEach(c => {
@@ -2538,7 +2537,6 @@
                 
                 if(!latest || !latest.items) { 
                     document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; font-weight:900;">Сегодня стоп-лист не заполнялся.</div></div>`; 
-                    hideReportOverlay();
                     return; 
                 }
                 
@@ -2606,14 +2604,11 @@
                                 <div style="margin-top:10px; color:#333; font-weight:bold; font-size:15px; line-height:1.6;">${allSyrups.join("<br>")}</div>
                              </div>`;
                 }
-                
                 document.getElementById('report-content-area').innerHTML = html + "</div>";
-                hideReportOverlay();
             } catch (err) {
                 document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; color:red; font-weight:900;">Ошибка: ${err.message}</div></div>`;
-                hideReportOverlay();
             }
-        }, 50); // Конец таймаута
+        }, 50);
     }
 
     function toggleMissingArrived(key, nameStr, btnId) {
@@ -2670,7 +2665,7 @@
                 const catalogs = await getCatalogs();
                 let orderCatalog = catalogs.order || {};
                 
-                document.getElementById('overlay-text').innerText = "Получение данных...";
+                showReportOverlay("Получение данных...");
 
                 let ordersSnap, missSnap;
                 try {
@@ -2687,7 +2682,7 @@
                     ]);
                 }
 
-                document.getElementById('overlay-text').innerText = "Формирование отчета...";
+                showReportOverlay("Формирование отчета...");
 
                 let orderCatMapFast = {};
                 Object.values(orderCatalog).forEach(c => {
@@ -2945,11 +2940,9 @@
                 }
                 
                 document.getElementById('report-content-area').innerHTML = html || "<div class='report-card'>Пусто</div>";
-                hideReportOverlay();
             } catch (err) {
                 console.error(err);
                 document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; color:red; font-weight:900;">Ошибка загрузки: ${err.message}</div></div>`; 
-                hideReportOverlay();
             }
         }, 50); // Конец таймаута
     }

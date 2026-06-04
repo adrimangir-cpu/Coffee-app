@@ -3107,7 +3107,7 @@ async function viewStopList() {
     // ==========================================
     // ПРОФЕССИОНАЛЬНЫЙ УЛЬТРА-КЭШ (ВМЕЩАЕТ ВСЕ ФОТОГРАФИИ)
     // ==========================================
-    const IDB_NAME = "TeikuCoffeeDB";
+    const IDB_NAME = "TeikuCoffeeDB_v2"; // ⚡ ИЗМЕНЕНО ИМЯ, ЧТОБЫ СБРОСИТЬ КЭШ У ВСЕХ ТЕЛЕФОНОВ
     const IDB_STORE = "catalogsStore";
 
     function initIndexedDB() {
@@ -3150,70 +3150,32 @@ async function viewStopList() {
     async function getCatalog(name) {
         if (!state.cachedCatalogs) state.cachedCatalogs = {};
         
-        // 1. Если данные уже в оперативной памяти (отдаем моментально)
-        if (state.cachedCatalogs[name] && Object.keys(state.cachedCatalogs[name]).length > 0) {
-            return state.cachedCatalogs[name];
-        }
-        
-        // 2. Ищем в IndexedDB (Вмещает сотни мегабайт, грузится доли секунды)
+        // 1. Пытаемся взять из новой памяти телефона
         let savedData = await loadFromCache(name);
         
-        if (savedData && Object.keys(savedData).length > 0) {
-            state.cachedCatalogs[name] = savedData;
-            
-            // Тихо запускаем фоновое обновление
-            database.ref(`catalogs/${name}`).once("value").then(snap => {
-                let fresh = snap.val() || {};
-                state.cachedCatalogs[name] = fresh;
-                saveToCache(name, fresh); // Перезаписываем свежими данными
-            }).catch(e => {});
-            
-            return savedData;
-        }
-        
-        // 3. Самый первый запуск (тут придется подождать скачивания)
-        try {
-            let snap = await database.ref(`catalogs/${name}`).once("value");
-            let val = snap.val() || {};
-            state.cachedCatalogs[name] = val;
-            await saveToCache(name, val); // Сохраняем навсегда
-            return val;
-        } catch(err) {
-            return {};
-        }
-    }
-
-    async function getCatalog(name) {
-        if (!state.cachedCatalogs) state.cachedCatalogs = {};
-        
-        // 1. Моментально отдаем то, что есть в локальной памяти телефона
-        let savedData = await loadFromCache(name);
-        
-        // 2. Всегда запускаем тихий фоновый запрос к базе за свежими данными
+        // 2. Всегда делаем тихий запрос за самыми свежими данными
         let fetchPromise = database.ref(`catalogs/${name}`).once("value").then(snap => {
             let fresh = snap.val() || {};
             state.cachedCatalogs[name] = fresh;
-            saveToCache(name, fresh); // Обновляем память телефона
+            saveToCache(name, fresh); // Обновляем память
+            
+            // ⚡ МАГИЯ: Принудительно перерисовываем меню, если данные изменились
+            if (savedData && JSON.stringify(savedData) !== JSON.stringify(fresh)) {
+                if (state.currentMode === 'menu' && name === 'menu') {
+                    state.menuCatalog = Object.assign({}, fresh);
+                    renderMenuApp();
+                }
+            }
             return fresh;
         });
 
+        // Если кэш уже есть, отдаем его моментально, чтобы не было белого экрана
         if (savedData && Object.keys(savedData).length > 0) {
             state.cachedCatalogs[name] = savedData;
-            
-            // ⚡ МАГИЯ: Если прилетели новые данные и они отличаются от старых — перерисовываем экран прямо на глазах у бариста
-            fetchPromise.then(fresh => {
-                if (JSON.stringify(savedData) !== JSON.stringify(fresh)) {
-                    if (state.currentMode === 'menu' && name === 'menu') {
-                        state.menuCatalog = Object.assign({}, fresh);
-                        renderMenuApp(); // Автоматически покажет новую категорию!
-                    }
-                }
-            }).catch(e => {});
-            
-            return savedData; // Отдаем старый кэш моментально, чтобы не было белого экрана
+            return savedData;
         }
         
-        // 3. Самый первый запуск в жизни (когда памяти еще нет)
+        // 3. Если кэша еще нет (первый запуск с новой версией базы) - ждем скачивания
         try {
             return await fetchPromise;
         } catch(err) {

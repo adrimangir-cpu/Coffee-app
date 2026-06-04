@@ -1441,8 +1441,11 @@
     }
 
     function loadSettings() {
-        database.goOffline();
-        database.goOnline();
+        // ⚡ ШОКЕР РАБОТАЕТ В ФОНЕ (ЧЕРЕЗ 10 мс), НЕ ТОРМОЗЯ ПРИЛОЖЕНИЕ
+        setTimeout(() => {
+            database.goOffline();
+            database.goOnline();
+        }, 10);
 
         let saved = localStorage.getItem("teiku_settings");
         if (saved) {
@@ -1455,7 +1458,7 @@
             } catch(e){}
         }
         
-        // Тихая фоновая загрузка новых настроек (без тормозов экрана)
+        // Тихая фоновая загрузка новых настроек (без await)
         database.ref("settings").once("value").then(snap => {
             let s = snap.val() || {};
             let oldSettings = JSON.stringify(state.appSettings);
@@ -1474,9 +1477,9 @@
             if (oldSettings !== JSON.stringify(state.appSettings)) {
                  if (['order', 'new_shop', 'stoplist_fill', 'checklist'].includes(state.currentMode)) {
                      let activePath = state.currentMode === 'checklist' ? 'checklist' : (state.currentMode === 'stoplist_fill' ? 'stoplist' : (state.currentMode === 'new_shop' ? 'newshop' : 'order'));
-                     let freshCat = state.cachedCatalogs[activePath];
+                     let freshCat = state.cachedCatalogs ? state.cachedCatalogs[activePath] : null;
                      if (freshCat) {
-                         rebuildProductCatalog(freshCat);
+                         if (typeof rebuildProductCatalog === 'function') rebuildProductCatalog(freshCat);
                          if (typeof renderProductList === 'function') renderProductList();
                      }
                  }
@@ -3170,7 +3173,7 @@ async function viewStopList() {
     // ==========================================
     // ПРОФЕССИОНАЛЬНЫЙ УЛЬТРА-КЭШ (ВМЕЩАЕТ ВСЕ ФОТОГРАФИИ)
     // ==========================================
-    const IDB_NAME = "TeikuCoffeeDB_v2"; // ⚡ ИЗМЕНЕНО ИМЯ, ЧТОБЫ СБРОСИТЬ КЭШ У ВСЕХ ТЕЛЕФОНОВ
+    const IDB_NAME = "TeikuCoffeeDB_v3"; // ⚡ v3 - ЖЕСТКО СБРОСИТ КЭШ У ВСЕХ БАРИСТА
     const IDB_STORE = "catalogsStore";
 
     function initIndexedDB() {
@@ -3217,38 +3220,50 @@ async function viewStopList() {
         let savedData = await loadFromCache(name);
         
         // 2. Тихий запрос за свежими данными
-        database.ref(`catalogs/${name}`).once("value").then(snap => {
+        let fetchPromise = database.ref(`catalogs/${name}`).once("value").then(snap => {
             let fresh = snap.val() || {};
-            state.cachedCatalogs[name] = fresh;
-            saveToCache(name, fresh); 
             
-            // Если данные изменились (добавили фото или товар) - обновляем экран!
-            if (!savedData || JSON.stringify(savedData) !== JSON.stringify(fresh)) {
-                if (state.currentMode === 'menu' && name === 'menu') {
-                    state.menuCatalog = Object.assign({}, fresh);
-                    if (typeof renderMenuApp === 'function') renderMenuApp();
-                } else if (['order', 'new_shop', 'stoplist_fill', 'checklist'].includes(state.currentMode)) {
-                    let activePath = state.currentMode === 'checklist' ? 'checklist' : (state.currentMode === 'stoplist_fill' ? 'stoplist' : (state.currentMode === 'new_shop' ? 'newshop' : 'order'));
-                    if (name === activePath) {
-                        rebuildProductCatalog(fresh);
-                        if (typeof renderProductList === 'function') renderProductList();
+            // ⚡ ГЛАВНАЯ ЗАЩИТА: Сохраняем в кэш ТОЛЬКО если данные реально пришли (не пустые!)
+            if (Object.keys(fresh).length > 0) {
+                state.cachedCatalogs[name] = fresh;
+                saveToCache(name, fresh); 
+                
+                // Если данные изменились - обновляем экран!
+                if (!savedData || JSON.stringify(savedData) !== JSON.stringify(fresh)) {
+                    if (state.currentMode === 'menu' && name === 'menu') {
+                        state.menuCatalog = Object.assign({}, fresh);
+                        if (typeof renderMenuApp === 'function') renderMenuApp();
+                    } else if (['order', 'new_shop', 'stoplist_fill', 'checklist'].includes(state.currentMode)) {
+                        let activePath = state.currentMode === 'checklist' ? 'checklist' : (state.currentMode === 'stoplist_fill' ? 'stoplist' : (state.currentMode === 'new_shop' ? 'newshop' : 'order'));
+                        if (name === activePath) {
+                            if (typeof rebuildProductCatalog === 'function') rebuildProductCatalog(fresh);
+                            if (typeof renderProductList === 'function') renderProductList();
+                        }
                     }
                 }
             }
+            return fresh;
         }).catch(e => {});
 
-        // ⚡ ВСЕГДА ОТДАЕМ КЭШ СРАЗУ (Даже если он пустой {}). Никаких ожиданий интернета!
-        if (savedData) {
+        // ВСЕГДА ОТДАЕМ КЭШ СРАЗУ. Никаких ожиданий интернета!
+        if (savedData && Object.keys(savedData).length > 0) {
             state.cachedCatalogs[name] = savedData;
             return savedData;
         }
-        return {}; 
+        
+        // Если кэша еще нет, ждем базу, чтобы экран не был вечно белым
+        try {
+            return await fetchPromise;
+        } catch(err) {
+            return {};
+        }
     }
 
+  
     // ==========================================
-    // СУПЕР-ФОНОВАЯ ЗАГРУЗКА (Предзагрузка данных)
+    // СТАРТ ПРИЛОЖЕНИЯ (МГНОВЕННЫЙ ЗАПУСК БЕЗ ТОРМОЗОВ)
     // ==========================================
-    window.onload = async () => {
+    window.onload = () => { 
       try { 
           Telegram.WebApp.ready(); 
           Telegram.WebApp.expand(); 
@@ -3266,42 +3281,16 @@ async function viewStopList() {
       state.globalMissing = [];
       
       restoreMpDraft();
+      
+      // ⚡ МГНОВЕННО ПОКАЗЫВАЕМ ВЫБОР КОФЕЙНИ
       showScreen('step-1', false);
       
-      // ТИХО И НЕЗАМЕТНО СКАЧИВАЕМ ДАННЫЕ В ФОНЕ (Пока пользователь выбирает кофейню)
-      try {
-          // 1. Быстро качаем справочники
-          await getCatalogs(); 
-          
-          // 2. Скачиваем последние 1500 заказов и недовозов для всех точек СРАЗУ
-          database.ref("orders").limitToLast(1500).once("value").then(snap => {
-              let orders = [];
-              snap.forEach(c => {
-                  let val = c.val();
-                  if (val && typeof val === 'object') {
-                      val.key = c.key;
-                      orders.push(val);
-                  }
-              });
-              // Сортируем от новых к старым и сохраняем в глобальную память
-              state.globalOrders = orders.sort((a,b) => (b.timestamp || 0) - (a.timestamp || 0));
-          });
-
-          database.ref("missing_items").limitToLast(1000).once("value").then(snap => {
-              let missing = [];
-              snap.forEach(c => {
-                  let m = c.val();
-                  if (m && m.name) {
-                      m.key = c.key;
-                      missing.push(m);
-                  }
-              });
-              state.globalMissing = missing;
-          });
-      } catch (e) {
-          console.error("Ошибка фоновой загрузки:", e);
-      }
+      // ⚡ ЛЕГКАЯ ФОНОВАЯ ЗАГРУЗКА БАЗ (Через 1 секунду после отрисовки экрана, чтобы не лагало)
+      setTimeout(() => {
+          getCatalogs().catch(e => console.log(e));
+      }, 1000);
     };
+  
     // ==========================================
     // ВОССТАНОВЛЕННЫЕ ФУНКЦИИ (Черновики и Авто-стоплист)
     // ==========================================

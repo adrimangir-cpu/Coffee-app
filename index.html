@@ -1387,7 +1387,11 @@
     // ==========================================
     // 💡 БЛОК: ИНИЦИАЛИЗАЦИЯ И РЕНДЕР КАТАЛОГОВ
     // ==========================================
-    function loadSettings() {
+    async function loadSettings() {
+        // ⚡ Принудительно будим соединение Телеграма
+        database.goOffline();
+        database.goOnline();
+
         let saved = localStorage.getItem("teiku_settings");
         if (saved) {
             try {
@@ -1396,22 +1400,27 @@
                 state.appSettings.hidden_categories_checklist = s.hidden_categories_checklist || s.hidden_categories || {};
                 state.appSettings.hidden_categories_stoplist = s.hidden_categories_stoplist || s.hidden_categories || {};
                 state.appSettings.new_shop_order_active = s.new_shop_order_active || false;
-                if (document.getElementById('btn-newshop')) {
-                    document.getElementById('btn-newshop').style.display = state.appSettings.new_shop_order_active ? 'block' : 'none';
-                }
             } catch(e){}
         }
         
-        // Тихая фоновая проверка свежих настроек
-        database.ref("settings").once("value").then(snap => {
+        // ⚡ ТЕПЕРЬ МЫ ЖДЕМ СВЕЖИЕ НАСТРОЙКИ ИЗ ДАШБОРДА (Это занимает 0.05 сек)
+        try {
+            let snap = await database.ref("settings").once("value");
             let s = snap.val() || {};
             localStorage.setItem("teiku_settings", JSON.stringify(s));
             state.appSettings.hidden_categories_order = s.hidden_categories_order || s.hidden_categories || {};
             state.appSettings.hidden_categories_checklist = s.hidden_categories_checklist || s.hidden_categories || {};
             state.appSettings.hidden_categories_stoplist = s.hidden_categories_stoplist || s.hidden_categories || {};
             state.appSettings.new_shop_order_active = s.new_shop_order_active || false;
-        }).catch(e=>{});
+        } catch(e) {
+            console.log("Ошибка загрузки настроек:", e);
+        }
+        
+        if (document.getElementById('btn-newshop')) {
+            document.getElementById('btn-newshop').style.display = state.appSettings.new_shop_order_active ? 'block' : 'none';
+        }
     }
+    
     async function initWorkflow(mode) {
       triggerHaptic(); 
       state.currentMode = mode; 
@@ -1435,10 +1444,10 @@
       document.getElementById('dynamic-list-container').innerHTML = `<div class="report-card"><div class="loading-pulse">⏳ Подготовка...</div></div>`;
       
       try {
-          loadSettings(); // Мгновенно из кэша
+          // ⚡ ЖДЕМ ПРИМЕНЕНИЯ ГАЛОЧЕК СКРЫТИЯ ИЗ ДАШБОРДА
+          await loadSettings(); 
           let pathKey = mode === 'checklist' ? 'checklist' : (mode === 'stoplist_fill' ? 'stoplist' : (mode === 'new_shop' ? 'newshop' : 'order'));
           
-          // 1. ИНСТАНТ-РЕНДЕР ИЗ ПАМЯТИ ТЕЛЕФОНА
           let sourceCatalog = await getCatalog(pathKey); 
           state.productCatalog = {};
 
@@ -1466,11 +1475,10 @@
           }
 
           restoreFromDraft();
-          // Отрисовываем интерфейс сразу же! (Без статусов сети)
+          // Отрисовываем интерфейс с уже вырезанными категориями
           renderProductList(); 
 
           // 2. ФОНОВАЯ ПРОВЕРКА СЕТИ (Недовозы, Корзины, Статусы)
-          // Она не мешает баристе работать, а просто обновит значки, когда скачается
           if (mode === 'order' || mode === 'new_shop') {
               Promise.all([
                   database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(100).once("value"),
@@ -1555,7 +1563,6 @@
                   state.unprocessedItems = pendingItems;
                   persistDraft();
                   
-                  // Мягко обновляем экран с новыми бейджиками статусов
                   renderProductList(); 
               }).catch(e => console.log("Фоновая загрузка статусов не удалась", e));
           } else {

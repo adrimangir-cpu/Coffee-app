@@ -1056,13 +1056,13 @@
     // ==========================================
     async function initMenuWorkflow() {
         triggerHaptic();
-        
-        // ⚡ СТРАХОВОЧНЫЙ ШОКЕР
         database.goOffline();
         database.goOnline();
         
         state.currentMode = 'menu';
-        document.getElementById('title').innerText = "Меню и Тех карты";
+        let execMode = 'menu'; // ЗАЩИТА
+        
+        document.getElementById('title').innerText = "☕ Меню и Тех карты";
         showScreen('step-menu');
         document.getElementById('menu-container').innerHTML = `<div class="report-card"><div class="loading-pulse">⏳ Подготовка...</div></div>`;
 
@@ -1070,6 +1070,8 @@
             let menuCat = await getCatalog('menu');
             let orderCat = await getCatalog('order');
             let checkCat = await getCatalog('checklist');
+            
+            if (state.currentMode !== execMode) return; // ЗАЩИТА
             
             state.menuCatalog = Object.assign({}, menuCat || {});
             state.productCatalog = { ...(orderCat || {}), ...(checkCat || {}) };
@@ -1093,6 +1095,8 @@
 
             database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(50).once("value")
             .then(ordersSnap => {
+                if (state.currentMode !== execMode) return; // ЗАЩИТА
+                
                 let shopOrders = [];
                 ordersSnap.forEach(c => {
                     let val = c.val();
@@ -1396,8 +1400,31 @@
     // ==========================================
     // 💡 БЛОК: ИНИЦИАЛИЗАЦИЯ И РЕНДЕР КАТАЛОГОВ
     // ==========================================
-    async function loadSettings() {
-        // ⚡ ПРИНУДИТЕЛЬНО БУДИМ БАЗУ (ШОКЕР)
+    function rebuildProductCatalog(sourceCatalog) {
+        state.productCatalog = {};
+        let hiddenList = {};
+        if (state.currentMode === 'checklist') hiddenList = state.appSettings.hidden_categories_checklist || {};
+        else if (state.currentMode === 'stoplist_fill') hiddenList = state.appSettings.hidden_categories_stoplist || {};
+        else hiddenList = state.appSettings.hidden_categories_order || {};
+
+        let uniqueProducts = new Set();
+        for(let k in sourceCatalog) {
+            let item = sourceCatalog[k];
+            if (!item || !item.name) continue;
+
+            let exactCat = item.globalCat || "Основное меню";
+            let trimmedCat = exactCat.trim();
+            if (hiddenList[exactCat] || hiddenList[trimmedCat]) continue;
+
+            let clean = cleanName(item.name);
+            if (!uniqueProducts.has(clean)) {
+                uniqueProducts.add(clean);
+                state.productCatalog[k] = item;
+            }
+        }
+    }
+
+    function loadSettings() {
         database.goOffline();
         database.goOnline();
 
@@ -1412,18 +1439,33 @@
             } catch(e){}
         }
         
-        try {
-            // ⚡ ЖДЕМ самые свежие настройки прямо из Дашборда
-            let snap = await database.ref("settings").once("value");
+        // Тихая фоновая загрузка новых настроек (без тормозов экрана)
+        database.ref("settings").once("value").then(snap => {
             let s = snap.val() || {};
+            let oldSettings = JSON.stringify(state.appSettings);
+            
             localStorage.setItem("teiku_settings", JSON.stringify(s));
             state.appSettings.hidden_categories_order = s.hidden_categories_order || s.hidden_categories || {};
             state.appSettings.hidden_categories_checklist = s.hidden_categories_checklist || s.hidden_categories || {};
             state.appSettings.hidden_categories_stoplist = s.hidden_categories_stoplist || s.hidden_categories || {};
             state.appSettings.new_shop_order_active = s.new_shop_order_active || false;
-        } catch(e) {
-            console.log("Ошибка загрузки настроек:", e);
-        }
+            
+            if (document.getElementById('btn-newshop')) {
+                document.getElementById('btn-newshop').style.display = state.appSettings.new_shop_order_active ? 'block' : 'none';
+            }
+
+            // Если настройки скрытия изменились, перерисовываем список
+            if (oldSettings !== JSON.stringify(state.appSettings)) {
+                 if (['order', 'new_shop', 'stoplist_fill', 'checklist'].includes(state.currentMode)) {
+                     let activePath = state.currentMode === 'checklist' ? 'checklist' : (state.currentMode === 'stoplist_fill' ? 'stoplist' : (state.currentMode === 'new_shop' ? 'newshop' : 'order'));
+                     let freshCat = state.cachedCatalogs[activePath];
+                     if (freshCat) {
+                         rebuildProductCatalog(freshCat);
+                         if (typeof renderProductList === 'function') renderProductList();
+                     }
+                 }
+            }
+        }).catch(e => console.log("Ошибка загрузки настроек", e));
         
         if (document.getElementById('btn-newshop')) {
             document.getElementById('btn-newshop').style.display = state.appSettings.new_shop_order_active ? 'block' : 'none';
@@ -1432,14 +1474,12 @@
     
     async function initWorkflow(mode) {
       triggerHaptic(); 
-      
-      // ⚡ СТРАХОВОЧНЫЙ ШОКЕР
       database.goOffline();
       database.goOnline();
 
       state.currentMode = mode; 
+      let execMode = mode; // ⚡ ЗАЩИТА: Запоминаем, куда нажал бариста
       
-      // ⚡ СТАВИМ ПРАВИЛЬНЫЙ ЗАГОЛОВОК ДЛЯ ТЕКУЩЕГО РАЗДЕЛА
       if (mode === 'order') document.getElementById('title').innerText = "📦 Закупка";
       else if (mode === 'new_shop') document.getElementById('title').innerText = "🏗 Закупка (Новая)";
       else if (mode === 'checklist') document.getElementById('title').innerText = "📋 Чек-лист";
@@ -1447,7 +1487,6 @@
 
       document.body.classList.add('workflow-active');
       state.userBasket = {}; 
-      
       state.transitItems = new Set();
       state.unprocessedItems = new Set();
 
@@ -1465,46 +1504,26 @@
       document.getElementById('dynamic-list-container').innerHTML = `<div class="report-card"><div class="loading-pulse">⏳ Подготовка...</div></div>`;
       
       try {
-          // ЖДЕМ ПРИМЕНЕНИЯ ГАЛОЧЕК СКРЫТИЯ ИЗ ДАШБОРДА
-          await loadSettings(); 
+          loadSettings(); // Вызывается моментально
           let pathKey = mode === 'checklist' ? 'checklist' : (mode === 'stoplist_fill' ? 'stoplist' : (mode === 'new_shop' ? 'newshop' : 'order'));
           
           let sourceCatalog = await getCatalog(pathKey); 
-          state.productCatalog = {};
+          
+          // ⚡ ЗАЩИТА ОТ СМЕШИВАНИЯ: Если бариста уже ушел с этого экрана, прерываем процесс!
+          if (state.currentMode !== execMode) return; 
 
-          let hiddenList = {};
-          if (mode === 'checklist') hiddenList = state.appSettings.hidden_categories_checklist || {};
-          else if (mode === 'stoplist_fill') hiddenList = state.appSettings.hidden_categories_stoplist || {};
-          else hiddenList = state.appSettings.hidden_categories_order || {};
-
-          let uniqueProducts = new Set();
-
-          for(let k in sourceCatalog) {
-              let item = sourceCatalog[k];
-              if (!item || !item.name) continue;
-
-              let exactCat = item.globalCat || "Основное меню";
-              let trimmedCat = exactCat.trim();
-              
-              if (hiddenList[exactCat] || hiddenList[trimmedCat]) continue;
-
-              let clean = cleanName(item.name);
-              if (!uniqueProducts.has(clean)) {
-                  uniqueProducts.add(clean);
-                  state.productCatalog[k] = item;
-              }
-          }
-
+          rebuildProductCatalog(sourceCatalog);
           restoreFromDraft();
-          // Отрисовываем интерфейс с уже вырезанными категориями
           renderProductList(); 
 
-          // 2. ФОНОВАЯ ПРОВЕРКА СЕТИ (Недовозы, Корзины, Статусы)
+          // ФОНОВАЯ ПРОВЕРКА СЕТИ (Недовозы и Корзины)
           if (mode === 'order' || mode === 'new_shop') {
               Promise.all([
                   database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(100).once("value"),
                   database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value")
               ]).then(([ordersSnap, missSnap]) => {
+                  if (state.currentMode !== execMode) return; // ⚡ ЗАЩИТА ВТОРОГО УРОВНЯ
+                  
                   let shopOrders = [];
                   ordersSnap.forEach(c => { let val = c.val(); if(val && typeof val === 'object') shopOrders.push(val); });
 
@@ -3178,37 +3197,36 @@ async function viewStopList() {
     async function getCatalog(name) {
         if (!state.cachedCatalogs) state.cachedCatalogs = {};
         
-        // 1. Пытаемся взять из новой памяти телефона
+        // 1. Пытаемся взять моментально из памяти телефона
         let savedData = await loadFromCache(name);
         
-        // 2. Всегда делаем тихий запрос за самыми свежими данными
-        let fetchPromise = database.ref(`catalogs/${name}`).once("value").then(snap => {
+        // 2. Тихий запрос за свежими данными
+        database.ref(`catalogs/${name}`).once("value").then(snap => {
             let fresh = snap.val() || {};
             state.cachedCatalogs[name] = fresh;
-            saveToCache(name, fresh); // Обновляем память
+            saveToCache(name, fresh); 
             
-            // ⚡ МАГИЯ: Принудительно перерисовываем меню, если данные изменились
-            if (savedData && JSON.stringify(savedData) !== JSON.stringify(fresh)) {
+            // Если данные изменились (добавили фото или товар) - обновляем экран!
+            if (!savedData || JSON.stringify(savedData) !== JSON.stringify(fresh)) {
                 if (state.currentMode === 'menu' && name === 'menu') {
                     state.menuCatalog = Object.assign({}, fresh);
-                    renderMenuApp();
+                    if (typeof renderMenuApp === 'function') renderMenuApp();
+                } else if (['order', 'new_shop', 'stoplist_fill', 'checklist'].includes(state.currentMode)) {
+                    let activePath = state.currentMode === 'checklist' ? 'checklist' : (state.currentMode === 'stoplist_fill' ? 'stoplist' : (state.currentMode === 'new_shop' ? 'newshop' : 'order'));
+                    if (name === activePath) {
+                        rebuildProductCatalog(fresh);
+                        if (typeof renderProductList === 'function') renderProductList();
+                    }
                 }
             }
-            return fresh;
-        });
+        }).catch(e => {});
 
-        // Если кэш уже есть, отдаем его моментально, чтобы не было белого экрана
-        if (savedData && Object.keys(savedData).length > 0) {
+        // ⚡ ВСЕГДА ОТДАЕМ КЭШ СРАЗУ (Даже если он пустой {}). Никаких ожиданий интернета!
+        if (savedData) {
             state.cachedCatalogs[name] = savedData;
             return savedData;
         }
-        
-        // 3. Если кэша еще нет (первый запуск с новой версией базы) - ждем скачивания
-        try {
-            return await fetchPromise;
-        } catch(err) {
-            return {};
-        }
+        return {}; 
     }
 
     // ==========================================

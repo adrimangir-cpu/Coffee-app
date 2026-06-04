@@ -594,11 +594,24 @@
 
     function toggleRecipeAndScroll(contentId, arrowId, headerEl) {
         triggerHaptic();
-        let els = document.querySelectorAll('.' + contentId);
-        if (els.length === 0) return;
         
-        let isOpening = els[0].style.display === 'none' || els[0].style.display === '';
-        els.forEach(el => { el.style.display = isOpening ? 'block' : 'none'; });
+        let targetEl = document.querySelector('.' + contentId);
+        if (!targetEl) return;
+        
+        let isOpening = targetEl.style.display === 'none' || targetEl.style.display === '';
+        
+        // ⚡ ЕСЛИ МЫ ОТКРЫВАЕМ НОВЫЙ РЕЦЕПТ - ЗАКРЫВАЕМ ВСЕ ОСТАЛЬНЫЕ
+        if (isOpening) {
+            document.querySelectorAll('.all-recipe-blocks').forEach(el => {
+                el.style.display = 'none';
+            });
+            document.querySelectorAll('.recipe-arrow').forEach(arr => {
+                arr.innerText = '▼';
+            });
+        }
+        
+        // Открываем целевой
+        targetEl.style.display = isOpening ? 'block' : 'none';
         
         let arrowEl = document.getElementById(arrowId);
         if (arrowEl) arrowEl.innerText = isOpening ? "▲" : "▼";
@@ -1136,14 +1149,17 @@
 
         Object.keys(grouped).sort().forEach(gc => {
             let safeGc = getSafeId("app_menu_" + gc);
-            html += `<div class="category-block open" style="margin-bottom:15px; border:2px solid #D1C4E9; background:#fff;">
+            
+            // ⚡ ИСПРАВЛЕНИЕ 1: Убрал класс "open", чтобы категории были свернуты
+            html += `<div class="category-block" style="margin-bottom:15px; border:2px solid #D1C4E9; background:#fff;">
                         <div class="category-header" style="background:#ede7f6; color:#311b92;" onclick="handleCategoryToggle(this)">
                             <span>🌍 ${gc}</span> <span style="opacity:0.5; font-size:14px;">▼</span>
                         </div>
                         <div class="category-content" style="padding:10px;">`;
             
             Object.keys(grouped[gc]).sort().forEach(sc => {
-                let safeSc = getSafeId("app_menu_sc_" + sc);
+                // ⚡ ИСПРАВЛЕНИЕ 3: Добавил gc в ID, чтобы избежать совпадения одинаковых подкатегорий
+                let safeSc = getSafeId("app_menu_sc_" + gc + "_" + sc);
                 html += `<div style="margin-bottom:10px;">
                             <div style="font-weight:900; color:#7E57C2; padding:8px 5px; border-bottom:2px dashed #eee; margin-bottom:5px; font-size:17px;" onclick="toggleElements('items_${safeSc}', 'arrow_sc_${safeSc}')">
                                 📂 ${sc} <span id="arrow_sc_${safeSc}" style="float:right; opacity:0.5; font-size:14px;">▼</span>
@@ -1151,9 +1167,11 @@
                             <div class="items_${safeSc}" style="display:none;">`;
                 
                 grouped[gc][sc].sort((a,b) => (a.name||'').localeCompare(b.name||'')).forEach(drink => {
-                    let safeDrink = getSafeId("app_drink_" + drink.name);
+                    // Также добавлено gc и sc в ID напитка
+                    let safeDrink = getSafeId("app_drink_" + gc + "_" + sc + "_" + drink.name);
                     
-                    let recipeHtml = `<div class="recipe_data_${safeDrink}" style="display:none; margin-top:10px; padding:12px; background:#f9fbe7; border-radius:12px; border:1px solid #c5e1a5;">`;
+                    // ⚡ ДОБАВЛЕНО: класс all-recipe-blocks для функции автозакрытия других рецептов
+                    let recipeHtml = `<div class="recipe_data_${safeDrink} all-recipe-blocks" style="display:none; margin-top:10px; padding:12px; background:#f9fbe7; border-radius:12px; border:1px solid #c5e1a5;">`;
                     
                     if (drink.photo && drink.photo.trim() !== "") {
                         recipeHtml += `<div style="text-align:center; margin-bottom:15px;" onclick="showDrinkPhoto('${escapeName(drink.name)}')">
@@ -1167,7 +1185,6 @@
                     let blocks = drink.blocks || [drink.recipe || []];
                     
                     if (blocks.length > 0 && blocks.some(b => b.length > 0)) {
-                        // ⚡ НОВАЯ ТАБЛИЦА С 3 ОБЪЕМАМИ
                         recipeHtml += `<table style="width:100%; font-size:13px; border-collapse:collapse; text-align:center;">`;
                         recipeHtml += `<tr style="color:#888; font-size:11px; border-bottom:1px solid #c5e1a5;">
                                          <th style="text-align:left; padding-bottom:4px; font-weight:bold;">Ингредиент</th>
@@ -1192,7 +1209,6 @@
                                         stopBadge = `<div style="color:#c62828; font-size:11px; font-weight:bold; margin-top:4px;">🛑 На стопе с ${stopDateStr}</div>`;
                                     }
 
-                                    // Подтягиваем старые данные, если они есть, или прочерки
                                     let q250 = (r.qty_250 !== undefined && r.qty_250 !== "") ? r.qty_250 : (r.qty || '-');
                                     let q350 = (r.qty_350 !== undefined && r.qty_350 !== "") ? r.qty_350 : '-';
                                     let q540 = (r.qty_540 !== undefined && r.qty_540 !== "") ? r.qty_540 : '-';
@@ -1234,7 +1250,7 @@
                     html += `<div style="background:#fff; border-radius:12px; box-shadow:0 2px 8px rgba(0,0,0,0.05); margin-bottom:8px; padding:12px; border: 1px solid #f0f0f0;">
                                 <div style="display:flex; justify-content:space-between; align-items:center; cursor:pointer;" onclick="toggleRecipeAndScroll('recipe_data_${safeDrink}', 'arr_drink_${safeDrink}', this)">
                                     <span style="font-weight:900; font-size:16px; color:#311b92;">☕ ${drink.name}</span>
-                                    <span id="arr_drink_${safeDrink}" style="color:#888; font-size:13px; padding:5px; transition:0.2s;">▼</span>
+                                    <span id="arr_drink_${safeDrink}" class="recipe-arrow" style="color:#888; font-size:13px; padding:5px; transition:0.2s;">▼</span>
                                 </div>
                                 ${recipeHtml}
                              </div>`;

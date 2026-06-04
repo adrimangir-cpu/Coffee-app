@@ -1150,7 +1150,9 @@
         Object.keys(grouped).sort().forEach(gc => {
             let safeGc = getSafeId("app_menu_" + gc);
             
-            // ⚡ ИСПРАВЛЕНИЕ 1: Убрал класс "open", чтобы категории были свернуты
+            // ⚡ ЖЕЛЕЗНАЯ ПРОВЕРКА НА ОСНОВНОЕ МЕНЮ
+            let isMainMenu = (String(gc).trim().toLowerCase() === 'основное меню'); 
+            
             html += `<div class="category-block" style="margin-bottom:15px; border:2px solid #D1C4E9; background:#fff;">
                         <div class="category-header" style="background:#ede7f6; color:#311b92;" onclick="handleCategoryToggle(this)">
                             <span>🌍 ${gc}</span> <span style="opacity:0.5; font-size:14px;">▼</span>
@@ -1158,7 +1160,6 @@
                         <div class="category-content" style="padding:10px;">`;
             
             Object.keys(grouped[gc]).sort().forEach(sc => {
-                // ⚡ ИСПРАВЛЕНИЕ 3: Добавил gc в ID, чтобы избежать совпадения одинаковых подкатегорий
                 let safeSc = getSafeId("app_menu_sc_" + gc + "_" + sc);
                 html += `<div style="margin-bottom:10px;">
                             <div style="font-weight:900; color:#7E57C2; padding:8px 5px; border-bottom:2px dashed #eee; margin-bottom:5px; font-size:17px;" onclick="toggleElements('items_${safeSc}', 'arrow_sc_${safeSc}')">
@@ -1167,10 +1168,8 @@
                             <div class="items_${safeSc}" style="display:none;">`;
                 
                 grouped[gc][sc].sort((a,b) => (a.name||'').localeCompare(b.name||'')).forEach(drink => {
-                    // Также добавлено gc и sc в ID напитка
                     let safeDrink = getSafeId("app_drink_" + gc + "_" + sc + "_" + drink.name);
                     
-                    // ⚡ ДОБАВЛЕНО: класс all-recipe-blocks для функции автозакрытия других рецептов
                     let recipeHtml = `<div class="recipe_data_${safeDrink} all-recipe-blocks" style="display:none; margin-top:10px; padding:12px; background:#f9fbe7; border-radius:12px; border:1px solid #c5e1a5;">`;
                     
                     if (drink.photo && drink.photo.trim() !== "") {
@@ -1186,17 +1185,26 @@
                     
                     if (blocks.length > 0 && blocks.some(b => b.length > 0)) {
                         recipeHtml += `<table style="width:100%; font-size:13px; border-collapse:collapse; text-align:center;">`;
-                        recipeHtml += `<tr style="color:#888; font-size:11px; border-bottom:1px solid #c5e1a5;">
-                                         <th style="text-align:left; padding-bottom:4px; font-weight:bold;">Ингредиент</th>
-                                         <th style="padding-bottom:4px; font-weight:bold; color:#1976d2;" title="250 мл">250мл</th>
-                                         <th style="padding-bottom:4px; font-weight:bold; color:#8e24aa;" title="350 мл">350мл</th>
-                                         <th style="padding-bottom:4px; font-weight:bold; color:#f57c00;" title="540 мл">540мл</th>
-                                       </tr>`;
+                        
+                        // ⚡ РАЗНЫЕ ШАПКИ ТАБЛИЦЫ ДЛЯ ОСНОВЫ И СЕЗОНКИ
+                        if (isMainMenu) {
+                            recipeHtml += `<tr style="color:#888; font-size:11px; border-bottom:1px solid #c5e1a5;">
+                                             <th style="text-align:left; padding-bottom:4px; font-weight:bold;">Ингредиент</th>
+                                             <th style="padding-bottom:4px; font-weight:bold; color:#1976d2;" title="250 мл">250мл</th>
+                                             <th style="padding-bottom:4px; font-weight:bold; color:#8e24aa;" title="350 мл">350мл</th>
+                                             <th style="padding-bottom:4px; font-weight:bold; color:#f57c00;" title="450-540 мл">540мл</th>
+                                           </tr>`;
+                        } else {
+                            recipeHtml += `<tr style="color:#888; font-size:11px; border-bottom:1px solid #c5e1a5;">
+                                             <th style="text-align:left; padding-bottom:4px; font-weight:bold;">Ингредиент</th>
+                                             <th style="padding-bottom:4px; font-weight:bold; color:#311b92; text-align:right;">Грамм/мл</th>
+                                           </tr>`;
+                        }
                         
                         blocks.forEach((block, bIdx) => {
                             if (block.length > 0) {
                                 if (bIdx > 0) {
-                                    recipeHtml += `<tr><td colspan="4" style="text-align:center; color:#f57c00; font-weight:900; font-size:24px; line-height:0.8; padding:5px 0;">+</td></tr>`;
+                                    recipeHtml += `<tr><td colspan="${isMainMenu ? 4 : 2}" style="text-align:center; color:#f57c00; font-weight:900; font-size:24px; line-height:0.8; padding:5px 0;">+</td></tr>`;
                                 }
                                 block.forEach(r => {
                                     let escName = escapeName(r.name);
@@ -1209,22 +1217,31 @@
                                         stopBadge = `<div style="color:#c62828; font-size:11px; font-weight:bold; margin-top:4px;">🛑 На стопе с ${stopDateStr}</div>`;
                                     }
 
-                                    let q250 = (r.qty_250 !== undefined && r.qty_250 !== "") ? r.qty_250 : (r.qty || '-');
-                                    let q350 = (r.qty_350 !== undefined && r.qty_350 !== "") ? r.qty_350 : '-';
-                                    let q540 = (r.qty_540 !== undefined && r.qty_540 !== "") ? r.qty_540 : '-';
-
-                                    recipeHtml += `<tr style="border-bottom:1px solid #e0e0e0;" onclick="showIngredientPhoto('${escName}')">
+                                    let trStart = `<tr style="border-bottom:1px solid #e0e0e0;" onclick="showIngredientPhoto('${escName}')">
                                                     <td style="padding:10px 2px; font-weight:bold; color:#333; cursor:pointer; vertical-align:top; text-align:left;">
                                                         <div style="display:flex; align-items:center;">
                                                             <span style="margin-right:6px; font-size:15px;">🔍</span>
                                                             <span style="border-bottom:1px dashed #999; line-height: 1.2;">${r.name}</span>
                                                         </div>
                                                         ${stopBadge}
-                                                    </td>
-                                                    <td style="padding:10px 2px; font-weight:900; color:#1976d2; vertical-align:top; width:40px;">${q250}</td>
-                                                    <td style="padding:10px 2px; font-weight:900; color:#8e24aa; vertical-align:top; width:40px;">${q350}</td>
-                                                    <td style="padding:10px 2px; font-weight:900; color:#f57c00; vertical-align:top; width:40px;">${q540}</td>
-                                                   </tr>`;
+                                                    </td>`;
+
+                                    // ⚡ РАЗНАЯ ОТРИСОВКА ЯЧЕЕК
+                                    if (isMainMenu) {
+                                        let q250 = (r.qty_250 !== undefined && r.qty_250 !== "") ? r.qty_250 : (r.qty || '-');
+                                        let q350 = (r.qty_350 !== undefined && r.qty_350 !== "") ? r.qty_350 : '-';
+                                        let q540 = (r.qty_540 !== undefined && r.qty_540 !== "") ? r.qty_540 : '-';
+                                        recipeHtml += trStart + `
+                                                        <td style="padding:10px 2px; font-weight:900; color:#1976d2; vertical-align:top; width:40px;">${q250}</td>
+                                                        <td style="padding:10px 2px; font-weight:900; color:#8e24aa; vertical-align:top; width:40px;">${q350}</td>
+                                                        <td style="padding:10px 2px; font-weight:900; color:#f57c00; vertical-align:top; width:40px;">${q540}</td>
+                                                       </tr>`;
+                                    } else {
+                                        let qSingle = (r.qty !== undefined && r.qty !== "") ? r.qty : '-';
+                                        recipeHtml += trStart + `
+                                                        <td style="padding:10px 2px; font-weight:900; color:#311b92; vertical-align:top; text-align:right; width:60px;">${qSingle}</td>
+                                                       </tr>`;
+                                    }
                                 });
                             }
                         });

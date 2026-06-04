@@ -3183,33 +3183,42 @@ async function viewStopList() {
         }
     }
 
-    async function getCatalogs() {
-        let catsToLoad = ['order', 'menu', 'checklist', 'stoplist', 'newshop'];
-        let results = {};
-        for (let cat of catsToLoad) {
-            results[cat] = await getCatalog(cat);
-        }
-        return results;
-    }
+    async function getCatalog(name) {
+        if (!state.cachedCatalogs) state.cachedCatalogs = {};
+        
+        // 1. Моментально отдаем то, что есть в локальной памяти телефона
+        let savedData = await loadFromCache(name);
+        
+        // 2. Всегда запускаем тихий фоновый запрос к базе за свежими данными
+        let fetchPromise = database.ref(`catalogs/${name}`).once("value").then(snap => {
+            let fresh = snap.val() || {};
+            state.cachedCatalogs[name] = fresh;
+            saveToCache(name, fresh); // Обновляем память телефона
+            return fresh;
+        });
 
-    function persistDraft() { 
-        localStorage.setItem("draft_" + state.currentShop + "_" + state.currentMode, JSON.stringify({basket: state.userBasket, time: Date.now()})); 
-    }
-    
-    function restoreFromDraft() { 
-        let d = localStorage.getItem("draft_" + state.currentShop + "_" + state.currentMode); 
-        if(d) { 
-           let p = JSON.parse(d); 
-           if (!state.userBasket["_catinfo"]) state.userBasket["_catinfo"] = {};
-           for(let k in p.basket) {
-               if(k !== "_catinfo" && state.userBasket[k] === undefined) {
-                   state.userBasket[k] = p.basket[k];
-                   if (p.basket["_catinfo"] && p.basket["_catinfo"][k]) {
-                       state.userBasket["_catinfo"][k] = p.basket["_catinfo"][k];
-                   }
-               }
-           }
-        } 
+        if (savedData && Object.keys(savedData).length > 0) {
+            state.cachedCatalogs[name] = savedData;
+            
+            // ⚡ МАГИЯ: Если прилетели новые данные и они отличаются от старых — перерисовываем экран прямо на глазах у бариста
+            fetchPromise.then(fresh => {
+                if (JSON.stringify(savedData) !== JSON.stringify(fresh)) {
+                    if (state.currentMode === 'menu' && name === 'menu') {
+                        state.menuCatalog = Object.assign({}, fresh);
+                        renderMenuApp(); // Автоматически покажет новую категорию!
+                    }
+                }
+            }).catch(e => {});
+            
+            return savedData; // Отдаем старый кэш моментально, чтобы не было белого экрана
+        }
+        
+        // 3. Самый первый запуск в жизни (когда памяти еще нет)
+        try {
+            return await fetchPromise;
+        } catch(err) {
+            return {};
+        }
     }
 
     // ==========================================

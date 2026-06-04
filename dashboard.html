@@ -4100,6 +4100,10 @@ function renderGraphsTab() {
         Object.keys(grouped).forEach(gc => {
             let safeGc = getSafeId("menu_" + gc);
             let isGcOpen = expandedDivs.has(`menulvl2_${safeGc}`);
+            
+            // ⚡ ЖЕЛЕЗНАЯ ПРОВЕРКА НА ОСНОВНОЕ МЕНЮ
+            let isMainMenu = (String(gc).trim().toLowerCase() === 'основное меню');
+            
             html += `<tr class="cat-group-header" onclick="toggleCatElements('menulvl2_${safeGc}', 'arrow_menulvl2_${safeGc}')"><td colspan="6" style="padding:18px; background:#d1c4e9; font-size:18px;">🌍 <b>${gc}</b> <span id="arrow_menulvl2_${safeGc}" style="float:right;">${isGcOpen?'▲':'▼'}</span></td></tr>`;
             Object.keys(grouped[gc]).forEach(sc => {
                 let safeSc = getSafeId("menu_" + gc + "_" + sc);
@@ -4129,14 +4133,25 @@ function renderGraphsTab() {
                                 </div>`;
                             if (block.length > 0) {
                                 block.forEach((r, iIdx) => {
-                                    // Подтягиваем старое qty в 250мл для совместимости старых данных
-                                    let q250 = r.qty_250 !== undefined ? r.qty_250 : (r.qty || '');
+                                    let inputsHtml = "";
+                                    
+                                    // ⚡ ЕСЛИ ОСНОВНОЕ МЕНЮ - ПОКАЗЫВАЕМ 3 ИНПУТА. ИНАЧЕ - 1 ИНПУТ
+                                    if (isMainMenu) {
+                                        let q250 = r.qty_250 !== undefined ? r.qty_250 : (r.qty || '');
+                                        let q350 = r.qty_350 !== undefined ? r.qty_350 : '';
+                                        let q540 = r.qty_540 !== undefined ? r.qty_540 : '';
+                                        inputsHtml = `<input type="text" value="${q250}" style="width:65px; font-size:13px; text-align:center; padding:6px; border-radius:6px; border:1px solid #90caf9; background:#e3f2fd;" placeholder="250 мл" title="Объем 250 мл" onchange="updateMenuRecipe('${k}', ${bIdx}, ${iIdx}, 'qty_250', this.value)">
+                                                      <input type="text" value="${q350}" style="width:65px; font-size:13px; text-align:center; padding:6px; border-radius:6px; border:1px solid #ce93d8; background:#f3e5f5;" placeholder="350 мл" title="Объем 350 мл" onchange="updateMenuRecipe('${k}', ${bIdx}, ${iIdx}, 'qty_350', this.value)">
+                                                      <input type="text" value="${q540}" style="width:65px; font-size:13px; text-align:center; padding:6px; border-radius:6px; border:1px solid #ffb74d; background:#fff3e0;" placeholder="450/540" title="Объем 450/540 мл" onchange="updateMenuRecipe('${k}', ${bIdx}, ${iIdx}, 'qty_540', this.value)">`;
+                                    } else {
+                                        let qSingle = r.qty !== undefined ? r.qty : '';
+                                        inputsHtml = `<input type="text" value="${qSingle}" style="width:80px; font-size:13px; text-align:center; padding:6px; border-radius:6px; border:1px solid #ccc;" placeholder="Грамм/мл" onchange="updateMenuRecipe('${k}', ${bIdx}, ${iIdx}, 'qty', this.value)">`;
+                                    }
+
                                     blocksHtml += `<div class="recipe-item-row" draggable="true" ondragstart="dragStartRecipe(event, '${k}', ${bIdx}, ${iIdx})" ondragover="dragOverRecipe(event)" ondragleave="dragLeaveRecipe(event)" ondrop="dropRecipe(event, '${k}', ${bIdx}, ${iIdx})" ondragend="dragEndRecipe(event)">
                                         <div style="cursor:grab; padding:0 5px; color:#999; font-size:18px;">☰</div>
                                         <input type="text" list="menu_ingredients_list" style="flex:1; font-size:13px; padding:6px; border:1px solid #ccc; border-radius:6px;" value="${r.name || ''}" placeholder="Ингредиент..." onchange="updateMenuRecipe('${k}', ${bIdx}, ${iIdx}, 'name', this.value)">
-                                        <input type="text" value="${q250}" style="width:65px; font-size:13px; text-align:center; padding:6px; border-radius:6px; border:1px solid #90caf9; background:#e3f2fd;" placeholder="250 мл" title="Объем 250 мл" onchange="updateMenuRecipe('${k}', ${bIdx}, ${iIdx}, 'qty_250', this.value)">
-                                        <input type="text" value="${r.qty_350 || ''}" style="width:65px; font-size:13px; text-align:center; padding:6px; border-radius:6px; border:1px solid #ce93d8; background:#f3e5f5;" placeholder="350 мл" title="Объем 350 мл" onchange="updateMenuRecipe('${k}', ${bIdx}, ${iIdx}, 'qty_350', this.value)">
-                                        <input type="text" value="${r.qty_540 || ''}" style="width:65px; font-size:13px; text-align:center; padding:6px; border-radius:6px; border:1px solid #ffb74d; background:#fff3e0;" placeholder="540 мл" title="Объем 540 мл" onchange="updateMenuRecipe('${k}', ${bIdx}, ${iIdx}, 'qty_540', this.value)">
+                                        ${inputsHtml}
                                         <button class="btn-del" style="padding:4px 8px; font-size:12px;" onclick="removeMenuRecipeItem('${k}', ${bIdx}, ${iIdx})">❌</button>
                                     </div>`;
                                 });
@@ -4283,8 +4298,11 @@ function renderGraphsTab() {
             Object.values(currentMenu).forEach(drink => {
                 let startRow = rIdx + 2; 
                 
+                // ⚡ ЖЕЛЕЗНАЯ ПРОВЕРКА НА ОСНОВНОЕ МЕНЮ ДЛЯ EXCEL
+                let isMainMenu = (String(drink.globalCat || "Основное меню").trim().toLowerCase() === 'основное меню');
+                
                 let pRowHeader = priceRows[rIdx] || ["","","",""];
-                fullAOA.push([`=== ${drink.name ? drink.name.toUpperCase() : "БЕЗ НАЗВАНИЯ"} ===`, "250 мл", "350 мл", "540 мл", "Цена за ед.", "Итог 250", "Итог 350", "Итог 540", "", ...pRowHeader]);
+                fullAOA.push([`=== ${drink.name ? drink.name.toUpperCase() : "БЕЗ НАЗВАНИЯ"} ===`, "250 мл", "350 мл", "450-540 / Стандарт", "Цена за ед.", "Итог 250", "Итог 350", "Итог Стандарт", "", ...pRowHeader]);
                 rIdx++;
 
                 let blocks = drink.blocks || [drink.recipe || []];
@@ -4292,17 +4310,24 @@ function renderGraphsTab() {
                     b.forEach(item => {
                         let xlRow = rIdx + 1; 
                         let pR = priceRows[rIdx] || ["","","",""];
-                        let q250 = item.qty_250 !== undefined ? item.qty_250 : (item.qty || 0);
+                        
+                        // Если Основное меню - берем qty_X. Иначе - берем обычный qty и пишем в последнюю колонку
+                        let q250 = isMainMenu ? (item.qty_250 !== undefined ? item.qty_250 : (item.qty || 0)) : "";
+                        let q350 = isMainMenu ? (item.qty_350 || 0) : "";
+                        let q540 = isMainMenu ? (item.qty_540 || 0) : (item.qty || 0);
+                        
+                        let formula250 = isMainMenu ? {t:'n', f:`B${xlRow}*E${xlRow}`} : "";
+                        let formula350 = isMainMenu ? {t:'n', f:`C${xlRow}*E${xlRow}`} : "";
                         
                         fullAOA.push([
                             item.name || "", 
-                            parseFloat(q250) || 0, 
-                            parseFloat(item.qty_350) || 0,
-                            parseFloat(item.qty_540) || 0,
+                            parseFloat(q250) || q250, 
+                            parseFloat(q350) || q350,
+                            parseFloat(q540) || q540,
                             {t:'n', f:`IFERROR(VLOOKUP(A${xlRow},J:M,4,FALSE),0)`}, 
-                            {t:'n', f:`B${xlRow}*E${xlRow}`}, // Итог 250 = 250мл * Цена ед.
-                            {t:'n', f:`C${xlRow}*E${xlRow}`}, // Итог 350 = 350мл * Цена ед.
-                            {t:'n', f:`D${xlRow}*E${xlRow}`}  // Итог 540 = 540мл * Цена ед.
+                            formula250, 
+                            formula350, 
+                            {t:'n', f:`D${xlRow}*E${xlRow}`}  // Итог Стандарт
                         , "", ...pR]);
                         rIdx++;
                     });
@@ -4311,11 +4336,15 @@ function renderGraphsTab() {
                 let xlRowExtra = rIdx + 1;
                 let pR1 = priceRows[rIdx] || ["","","",""];
                 let extra = parseFloat(drink.extraCost) || 0;
-                fullAOA.push(["Доп расход", "", "", "", "", extra, extra, extra, "", ...pR1]);
+                fullAOA.push(["Доп расход", "", "", "", "", isMainMenu?extra:"", isMainMenu?extra:"", extra, "", ...pR1]);
                 rIdx++;
 
                 let pR2 = priceRows[rIdx] || ["","","",""];
-                fullAOA.push(["ИТОГО", "", "", "", "", {t:'n', f:`SUM(F${startRow}:F${xlRowExtra})`}, {t:'n', f:`SUM(G${startRow}:G${xlRowExtra})`}, {t:'n', f:`SUM(H${startRow}:H${xlRowExtra})`}, "", ...pR2]);
+                fullAOA.push(["ИТОГО", "", "", "", "", 
+                              isMainMenu ? {t:'n', f:`SUM(F${startRow}:F${xlRowExtra})`} : "", 
+                              isMainMenu ? {t:'n', f:`SUM(G${startRow}:G${xlRowExtra})`} : "", 
+                              {t:'n', f:`SUM(H${startRow}:H${xlRowExtra})`}, 
+                              "", ...pR2]);
                 rIdx++;
 
                 let pR3 = priceRows[rIdx] || ["","","",""];
@@ -4340,11 +4369,11 @@ function renderGraphsTab() {
                 { wch: 30 }, // A: Название
                 { wch: 8 },  // B: 250 мл
                 { wch: 8 },  // C: 350 мл
-                { wch: 8 },  // D: 540 мл
+                { wch: 15 }, // D: 540 мл / Стандарт
                 { wch: 12 }, // E: Цена ед.
                 { wch: 10 }, // F: Итог 250
                 { wch: 10 }, // G: Итог 350
-                { wch: 10 }, // H: Итог 540
+                { wch: 12 }, // H: Итог Стд
                 { wch: 4 },  // I: Пустая
                 { wch: 35 }, // J: Ингредиенты (Справочник)
                 { wch: 10 }, // K: Объем

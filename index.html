@@ -1046,13 +1046,17 @@
     // ==========================================
     async function initMenuWorkflow() {
         triggerHaptic();
+        
+        // ⚡ СТРАХОВОЧНЫЙ ШОКЕР
+        database.goOffline();
+        database.goOnline();
+        
         state.currentMode = 'menu';
         document.getElementById('title').innerText = "Меню и Тех карты";
         showScreen('step-menu');
         document.getElementById('menu-container').innerHTML = `<div class="report-card"><div class="loading-pulse">⏳ Подготовка...</div></div>`;
 
         try {
-            // 1. ИНСТАНТ-РЕНДЕР
             let menuCat = await getCatalog('menu');
             let orderCat = await getCatalog('order');
             let checkCat = await getCatalog('checklist');
@@ -1060,7 +1064,6 @@
             state.menuCatalog = Object.assign({}, menuCat || {});
             state.productCatalog = { ...(orderCat || {}), ...(checkCat || {}) };
             
-            // Синхронизация фото для рецептов
             let globalPhotoDict = {};
             Object.values(state.productCatalog).forEach(c => {
                 if (c && c.name && c.photo && c.photo.trim() !== "") {
@@ -1076,11 +1079,8 @@
             });
             
             state.outOfStockItems = {};
-            
-            // Отрисовываем меню мгновенно!
             renderMenuApp();
 
-            // 2. ФОНОВАЯ ЗАГРУЗКА СТОП-ЛИСТОВ (Бейджи "На стопе" подтянутся чуть позже)
             database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(50).once("value")
             .then(ordersSnap => {
                 let shopOrders = [];
@@ -1099,7 +1099,6 @@
                         }
                     });
                     
-                    // Перерисовываем меню, чтобы добавить значки стопов
                     renderMenuApp();
                 }
             }).catch(e => console.log(e));
@@ -1108,7 +1107,7 @@
             document.getElementById('menu-container').innerHTML = `<div class="report-card"><div style="color:red; font-weight:bold; text-align:center;">Ошибка: ${e.message}</div></div>`;
         }
     }
-
+    
     function renderMenuApp() {
         let html = "";
         let grouped = {};
@@ -1388,7 +1387,7 @@
     // 💡 БЛОК: ИНИЦИАЛИЗАЦИЯ И РЕНДЕР КАТАЛОГОВ
     // ==========================================
     async function loadSettings() {
-        // ⚡ Принудительно будим соединение Телеграма
+        // ⚡ ПРИНУДИТЕЛЬНО БУДИМ БАЗУ (ШОКЕР)
         database.goOffline();
         database.goOnline();
 
@@ -1403,8 +1402,8 @@
             } catch(e){}
         }
         
-        // ⚡ ТЕПЕРЬ МЫ ЖДЕМ СВЕЖИЕ НАСТРОЙКИ ИЗ ДАШБОРДА (Это занимает 0.05 сек)
         try {
+            // ⚡ ЖДЕМ самые свежие настройки прямо из Дашборда
             let snap = await database.ref("settings").once("value");
             let s = snap.val() || {};
             localStorage.setItem("teiku_settings", JSON.stringify(s));
@@ -1423,6 +1422,11 @@
     
     async function initWorkflow(mode) {
       triggerHaptic(); 
+      
+      // ⚡ СТРАХОВОЧНЫЙ ШОКЕР
+      database.goOffline();
+      database.goOnline();
+
       state.currentMode = mode; 
       document.body.classList.add('workflow-active');
       state.userBasket = {}; 
@@ -1444,7 +1448,6 @@
       document.getElementById('dynamic-list-container').innerHTML = `<div class="report-card"><div class="loading-pulse">⏳ Подготовка...</div></div>`;
       
       try {
-          // ⚡ ЖДЕМ ПРИМЕНЕНИЯ ГАЛОЧЕК СКРЫТИЯ ИЗ ДАШБОРДА
           await loadSettings(); 
           let pathKey = mode === 'checklist' ? 'checklist' : (mode === 'stoplist_fill' ? 'stoplist' : (mode === 'new_shop' ? 'newshop' : 'order'));
           
@@ -1475,10 +1478,8 @@
           }
 
           restoreFromDraft();
-          // Отрисовываем интерфейс с уже вырезанными категориями
           renderProductList(); 
 
-          // 2. ФОНОВАЯ ПРОВЕРКА СЕТИ (Недовозы, Корзины, Статусы)
           if (mode === 'order' || mode === 'new_shop') {
               Promise.all([
                   database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(100).once("value"),

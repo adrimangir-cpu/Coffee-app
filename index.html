@@ -530,8 +530,18 @@
         if (state.screenHistory.length > 0) {
             let prevScreen = state.screenHistory.pop();
             showScreen(prevScreen, false);
+            
+            // ⚡ ВОЗВРАЩАЕМ ПРАВИЛЬНЫЙ ЗАГОЛОВОК ПРИ ШАГЕ НАЗАД
+            if (prevScreen === 'step-1') {
+                document.getElementById('title').innerText = "Выбор кофейни";
+            } else if (prevScreen === 'step-2') {
+                document.getElementById('title').innerText = state.currentShop === 'Красноказарменная' ? 'МЭИ' : state.currentShop;
+            } else if (prevScreen === 'step-panel') {
+                document.getElementById('title').innerText = TG_BOSS_IDS.includes(String(globalTgUserId)) ? "Кабинет Босса" : "Админ-панель";
+            }
         } else {
             showScreen('step-1', false);
+            document.getElementById('title').innerText = "Выбор кофейни";
         }
     }
 
@@ -1428,6 +1438,13 @@
       database.goOnline();
 
       state.currentMode = mode; 
+      
+      // ⚡ СТАВИМ ПРАВИЛЬНЫЙ ЗАГОЛОВОК ДЛЯ ТЕКУЩЕГО РАЗДЕЛА
+      if (mode === 'order') document.getElementById('title').innerText = "📦 Закупка";
+      else if (mode === 'new_shop') document.getElementById('title').innerText = "🏗 Закупка (Новая)";
+      else if (mode === 'checklist') document.getElementById('title').innerText = "📋 Чек-лист";
+      else if (mode === 'stoplist_fill') document.getElementById('title').innerText = "🛑 Стоп-лист";
+
       document.body.classList.add('workflow-active');
       state.userBasket = {}; 
       
@@ -1448,6 +1465,7 @@
       document.getElementById('dynamic-list-container').innerHTML = `<div class="report-card"><div class="loading-pulse">⏳ Подготовка...</div></div>`;
       
       try {
+          // ЖДЕМ ПРИМЕНЕНИЯ ГАЛОЧЕК СКРЫТИЯ ИЗ ДАШБОРДА
           await loadSettings(); 
           let pathKey = mode === 'checklist' ? 'checklist' : (mode === 'stoplist_fill' ? 'stoplist' : (mode === 'new_shop' ? 'newshop' : 'order'));
           
@@ -1478,8 +1496,10 @@
           }
 
           restoreFromDraft();
+          // Отрисовываем интерфейс с уже вырезанными категориями
           renderProductList(); 
 
+          // 2. ФОНОВАЯ ПРОВЕРКА СЕТИ (Недовозы, Корзины, Статусы)
           if (mode === 'order' || mode === 'new_shop') {
               Promise.all([
                   database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(100).once("value"),

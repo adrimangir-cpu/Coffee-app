@@ -436,7 +436,8 @@
     const FB_URL = "https://project-lenta22-default-rtdb.firebaseio.com"; // ⚡ ВОЗВРАЩАЕМ ЭТУ СТРОЧКУ!
     const ADMIN_CHAT_ID = "708179577"; 
     const BOSS_CHAT_ID = "634812312";   
-
+    let catalogChanges = {}; // Трекер изменений для закупки/чек-листов
+    let menuChanges = {};    // Трекер изменений для техкарт напитков
     const firebaseConfig = {
       apiKey: "AIzaSyDQ_-YPu7gxKruOzOFy_zeNfDqF3xs3xts",
       authDomain: "project-lenta22.firebaseapp.com",
@@ -4306,14 +4307,16 @@ function renderGraphsTab() {
             let newCat = prompt("Введите название новой категории:");
             if (newCat) {
                 currentMenu[id][field] = newCat;
-                renderMenuTab(); // ⚡ ДОБАВЛЕНО: Мгновенная перерисовка экрана
+                renderMenuTab();
             } else {
-                renderMenuTab(); // ⚡ ДОБАВЛЕНО: Возвращаем как было, если нажали "Отмена"
+                renderMenuTab();
                 return;
             }
         } else {
             currentMenu[id][field] = val;
         }
+        // ⚡ Запоминаем измененный напиток для PATCH-сохранения
+        menuChanges[id] = currentMenu[id];
     }
 
     function addMenuRecipeBlock(id) {
@@ -4342,11 +4345,21 @@ function renderGraphsTab() {
         currentMenu[id].blocks[bIdx][iIdx][field] = val;
     }
 
-    async function saveMenu(btn) {
+   async function saveMenu(btn) {
         let origText = btn.innerHTML;
-        btn.innerHTML = "⌛ СОХРАНЕНИЕ...";
+        
+        if (Object.keys(menuChanges).length === 0) {
+            btn.innerHTML = "✅ ИЗМЕНЕНИЙ НЕТ";
+            setTimeout(() => { btn.innerHTML = origText; }, 1500);
+            return;
+        }
+        
+        btn.innerHTML = "⌛ СОХРАНЕНИЕ МЕНЮ...";
         try {
-            await fetch(`${FB_URL}/catalogs/menu.json`, { method: 'PUT', body: JSON.stringify(currentMenu) });
+            // ⚡ Сохраняем меню через PATCH — улетают только отредактированные рецепты
+            await fetch(`${FB_URL}/catalogs/menu.json`, { method: 'PATCH', body: JSON.stringify(menuChanges) });
+            menuChanges = {}; // Очищаем трекер
+            
             btn.innerHTML = "✅ СОХРАНЕНО!";
             setTimeout(() => {
                 if(btn) btn.innerHTML = origText;
@@ -4354,7 +4367,7 @@ function renderGraphsTab() {
             }, 1000);
         } catch(e) {
             if(btn) btn.innerHTML = origText;
-            alert("❌ Ошибка при сохранении меню: " + e.message);
+            alert("❌ Ошибка при точечном сохранении меню: " + e.message);
         }
     }
 
@@ -4621,6 +4634,8 @@ async function exportGraphsToExcel() {
         } else {
             currentCatalog[id][field] = val; 
         }
+        // ⚡ Запоминаем измененную позицию для PATCH-сохранения
+        catalogChanges[id] = currentCatalog[id];
     }
     
     function addItemOrder() { 
@@ -4729,9 +4744,20 @@ async function exportGraphsToExcel() {
 
     async function saveCatalog(btn) {
         let origText = btn.innerHTML;
-        btn.innerHTML = "⌛ СОХРАНЕНИЕ...";
+        
+        // Защита: если ничего не правили, не мучаем сервер
+        if (Object.keys(catalogChanges).length === 0) {
+            btn.innerHTML = "✅ ИЗМЕНЕНИЙ НЕТ";
+            setTimeout(() => { btn.innerHTML = origText; }, 1500);
+            return;
+        }
+        
+        btn.innerHTML = "⌛ СОХРАНЕНИЕ ПРАВОК...";
         try { 
-            await fetch(`${FB_URL}/${currentPath}.json`, { method: 'PUT', body: JSON.stringify(currentCatalog) }); 
+            // ⚡ Отправляем только измененные строки через PATCH вместо тяжелого PUT
+            await fetch(`${FB_URL}/${currentPath}.json`, { method: 'PATCH', body: JSON.stringify(catalogChanges) }); 
+            catalogChanges = {}; // Очищаем память правок после успеха
+            
             btn.innerHTML = "✅ СОХРАНЕНО!";
             setTimeout(() => {
                 if(btn) btn.innerHTML = origText;
@@ -4739,7 +4765,7 @@ async function exportGraphsToExcel() {
             }, 1000);
         } catch(e) { 
             if(btn) btn.innerHTML = origText;
-            alert("❌ Ошибка при сохранении!"); 
+            alert("❌ Ошибка при точечном сохранении каталога: " + e.message); 
         }
     }
 

@@ -11,7 +11,8 @@
     <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-database-compat.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-
+    <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-storage-compat.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
     <style>
         /* =========================================
            ОБЩИЕ СТИЛИ
@@ -439,6 +440,7 @@
     const BOSS_CHAT_ID = "634812312";   // ПРАВКА 1: Фиксированный Telegram ID Босса для чек-листов
     firebase.initializeApp({ databaseURL: FB_URL });
     const db = firebase.database();
+    const storage = firebase.storage(); 
     
     let currentCatalog = {};
     let currentMenu = {}; 
@@ -899,21 +901,37 @@
         }
     }
     
+    async function uploadFileToFirebase(file, itemId, type) {
+        showReportOverlay("⏳ Загрузка фото на сервер...");
+        try {
+            let ext = file.name ? file.name.split('.').pop() : 'png';
+            let fileName = `photos/${type}_${itemId}_${Date.now()}.${ext}`;
+            let storageRef = storage.ref().child(fileName);
+            
+            // Загружаем в Storage и получаем ссылку
+            let snapshot = await storageRef.put(file);
+            let downloadUrl = await snapshot.ref.getDownloadURL();
+            
+            // Сохраняем готовую короткую ссылку в Дашборд
+            if (type === 'menu_photo') {
+                currentMenu[itemId].photo = downloadUrl;
+                renderMenuTab();
+            } else {
+                currentCatalog[itemId].photo = downloadUrl;
+                if (currentPath.includes('order')) renderCatalogOrder();
+                else renderCatalogChecklist();
+            }
+            hideReportOverlay();
+        } catch (e) {
+            hideReportOverlay();
+            alert("❌ Ошибка загрузки фото: " + e.message);
+        }
+    }
+
     async function handleFileUpload(e, itemId, type) {
         let file = e.target.files[0];
         if(!file) return;
-        let reader = new FileReader();
-        reader.onload = function(evt) {
-            if (type === 'menu_photo') {
-                currentMenu[itemId].photo = evt.target.result;
-                renderMenuTab();
-            } else {
-                currentCatalog[itemId].photo = evt.target.result;
-                if(type === 'order') renderCatalogOrder();
-                else renderCatalogChecklist();
-            }
-        };
-        reader.readAsDataURL(file);
+        await uploadFileToFirebase(file, itemId, type);
     }
 
     async function handleClipboardImagePaste(e, itemId, type) {
@@ -921,19 +939,10 @@
         for (let i = 0; i < clipboardItems.length; i++) {
             if (clipboardItems[i].type.indexOf("image") !== -1) {
                 e.preventDefault();
-                let imageBlob = clipboardItems[i].getAsFile();
-                let fileReader = new FileReader();
-                fileReader.onload = function(evt) {
-                    if (type === 'menu_photo') {
-                        currentMenu[itemId].photo = evt.target.result;
-                        renderMenuTab();
-                    } else {
-                        currentCatalog[itemId].photo = evt.target.result;
-                        if (currentTabType === 'catalog_order') renderCatalogOrder();
-                        else if (currentTabType === 'catalog_checklist') renderCatalogChecklist();
-                    }
-                };
-                fileReader.readAsDataURL(imageBlob);
+                let imageFile = clipboardItems[i].getAsFile();
+                if (imageFile) {
+                    await uploadFileToFirebase(imageFile, itemId, type);
+                }
                 break;
             }
         }
@@ -3649,7 +3658,6 @@ function renderGraphsTab() {
     function renderCatalogOrder() {
         const box = document.getElementById('content');
         
-        // УМНАЯ СИНХРОНИЗАЦИЯ ФОТОГРАФИЙ МЕЖДУ СПРАВОЧНИКАМИ
         let globalPhotoDict = {};
         let combinedCatForPhotos = [];
         if (cachedData.catalogOrder) combinedCatForPhotos.push(...Object.values(cachedData.catalogOrder));
@@ -3657,15 +3665,14 @@ function renderGraphsTab() {
         combinedCatForPhotos.push(...Object.values(currentCatalog));
         
         combinedCatForPhotos.forEach(c => {
-            if (c && c.name && c.photo && c.photo.startsWith("data:image")) {
+            if (c && c.name && c.photo && (c.photo.startsWith("data:image") || c.photo.startsWith("http"))) {
                 globalPhotoDict[cleanName(c.name)] = c.photo;
             }
         });
 
-        // Автоматически применяем найденные фото к товарам без фото
         Object.keys(currentCatalog).forEach(k => {
             let item = currentCatalog[k];
-            if (item && item.name && (!item.photo || !item.photo.startsWith("data:image"))) {
+            if (item && item.name && (!item.photo || (!item.photo.startsWith("data:image") && !item.photo.startsWith("http")))) {
                 let sharedPhoto = globalPhotoDict[cleanName(item.name)];
                 if (sharedPhoto) item.photo = sharedPhoto; 
             }
@@ -3708,7 +3715,6 @@ function renderGraphsTab() {
         });
         html += `</div></div></div>`;
 
-        // СБОР ВСЕХ НАИМЕНОВАНИЙ ДЛЯ ВЫПАДАЮЩЕГО СПИСКА (DATALIST)
         let allPurchaseItems = [];
         if (cachedData.catalogOrder) allPurchaseItems.push(...Object.values(cachedData.catalogOrder).map(i => i.name));
         if (cachedData.catalogChecklist) allPurchaseItems.push(...Object.values(cachedData.catalogChecklist).map(i => i.name));
@@ -3750,8 +3756,8 @@ function renderGraphsTab() {
                     catOptions += `<option value="НОВАЯ КАТЕГОРИЯ">-- Создать --</option>`;
                     
                     let photoUi = "";
-                    if (item.photo) {
-                        let imgDisplay = item.photo.startsWith("data:image") ? `<img loading="lazy" src="${item.photo}" style="max-width:50px; max-height:50px; border-radius:6px; display:block; margin:0 auto; box-shadow:0 2px 4px rgba(0,0,0,0.1);">` : `<div style="font-size:12px; word-break:break-all; max-height:40px; overflow:hidden; color:#2e7d32; font-weight:bold;">✅ Ссылка</div>`;
+                    if (item.photo && (item.photo.startsWith("data:image") || item.photo.startsWith("http"))) {
+                        let imgDisplay = `<img loading="lazy" src="${item.photo}" style="max-width:50px; max-height:50px; border-radius:6px; display:block; margin:0 auto; box-shadow:0 2px 4px rgba(0,0,0,0.1);">`;
                         photoUi = `<div style="position:relative; display:inline-block; padding-top:5px;">${imgDisplay}<button title="Удалить фото" onclick="removePhoto('${k}')" style="position:absolute; top:-5px; right:-10px; background:#e53935; color:white; border:none; border-radius:50%; width:22px; height:22px; font-size:12px; font-weight:900; cursor:pointer; display:flex; align-items:center; justify-content:center; box-shadow:0 2px 4px rgba(0,0,0,0.2);">✕</button></div>`;
                     } else {
                         photoUi = `<input type="text" style="font-size:12px; border:2px dashed #9575cd; background:#fafafa; text-align:center; cursor:pointer; width:100%; box-sizing:border-box; padding:8px 4px; border-radius:6px;" placeholder="Кликни и нажми Ctrl+V" onpaste="handleClipboardImagePaste(event, '${k}', 'order')" onchange="updateVal('${k}','photo',this.value)">`;
@@ -3778,7 +3784,6 @@ function renderGraphsTab() {
    function renderCatalogChecklist() {
         const box = document.getElementById('content');
         
-        // УМНАЯ СИНХРОНИЗАЦИЯ ФОТОГРАФИЙ МЕЖДУ СПРАВОЧНИКАМИ
         let globalPhotoDict = {};
         let combinedCatForPhotos = [];
         if (cachedData.catalogOrder) combinedCatForPhotos.push(...Object.values(cachedData.catalogOrder));
@@ -3786,14 +3791,14 @@ function renderGraphsTab() {
         combinedCatForPhotos.push(...Object.values(currentCatalog));
         
         combinedCatForPhotos.forEach(c => {
-            if (c && c.name && c.photo && c.photo.startsWith("data:image")) {
+            if (c && c.name && c.photo && (c.photo.startsWith("data:image") || c.photo.startsWith("http"))) {
                 globalPhotoDict[cleanName(c.name)] = c.photo;
             }
         });
 
         Object.keys(currentCatalog).forEach(k => {
             let item = currentCatalog[k];
-            if (item && item.name && (!item.photo || !item.photo.startsWith("data:image"))) {
+            if (item && item.name && (!item.photo || (!item.photo.startsWith("data:image") && !item.photo.startsWith("http")))) {
                 let sharedPhoto = globalPhotoDict[cleanName(item.name)];
                 if (sharedPhoto) item.photo = sharedPhoto; 
             }
@@ -3873,8 +3878,8 @@ function renderGraphsTab() {
                     let isVol = (item.unit && item.unit.toLowerCase().includes("объем"));
                     
                     let photoUi = "";
-                    if (item.photo) {
-                        let imgDisplay = item.photo.startsWith("data:image") ? `<img loading="lazy" src="${item.photo}" style="max-width:50px; max-height:50px; border-radius:6px; display:block; margin:0 auto; box-shadow:0 2px 4px rgba(0,0,0,0.1);">` : `<div style="font-size:12px; word-break:break-all; max-height:40px; overflow:hidden; color:#2e7d32; font-weight:bold;">✅ Ссылка</div>`;
+                    if (item.photo && (item.photo.startsWith("data:image") || item.photo.startsWith("http"))) {
+                        let imgDisplay = `<img loading="lazy" src="${item.photo}" style="max-width:50px; max-height:50px; border-radius:6px; display:block; margin:0 auto; box-shadow:0 2px 4px rgba(0,0,0,0.1);">`;
                         photoUi = `<div style="position:relative; display:inline-block; padding-top:5px;">${imgDisplay}<button title="Удалить фото" onclick="removePhoto('${k}')" style="position:absolute; top:-5px; right:-10px; background:#e53935; color:white; border:none; border-radius:50%; width:22px; height:22px; font-size:12px; font-weight:900; cursor:pointer; display:flex; align-items:center; justify-content:center; box-shadow:0 2px 4px rgba(0,0,0,0.2);">✕</button></div>`;
                     } else {
                         photoUi = `<input type="text" style="font-size:12px; border:2px dashed #9575cd; background:#fafafa; text-align:center; cursor:pointer; width:100%; box-sizing:border-box; padding:8px 4px; border-radius:6px;" placeholder="Кликни и нажми Ctrl+V" onpaste="handleClipboardImagePaste(event, '${k}', 'check')" onchange="updateVal('${k}','photo',this.value)">`;
@@ -4100,9 +4105,7 @@ function renderGraphsTab() {
         Object.keys(grouped).forEach(gc => {
             let safeGc = getSafeId("menu_" + gc);
             let isGcOpen = expandedDivs.has(`menulvl2_${safeGc}`);
-            
-            // ⚡ ЖЕЛЕЗНАЯ ПРОВЕРКА НА ОСНОВНОЕ МЕНЮ
-            let isMainMenu = (String(gc).trim().toLowerCase() === 'основное меню');
+            let isMainMenu = (String(gc).trim().toLowerCase() === 'основное меню'); 
             
             html += `<tr class="cat-group-header" onclick="toggleCatElements('menulvl2_${safeGc}', 'arrow_menulvl2_${safeGc}')"><td colspan="6" style="padding:18px; background:#d1c4e9; font-size:18px;">🌍 <b>${gc}</b> <span id="arrow_menulvl2_${safeGc}" style="float:right;">${isGcOpen?'▲':'▼'}</span></td></tr>`;
             Object.keys(grouped[gc]).forEach(sc => {
@@ -4135,7 +4138,6 @@ function renderGraphsTab() {
                                 block.forEach((r, iIdx) => {
                                     let inputsHtml = "";
                                     
-                                    // ⚡ ЕСЛИ ОСНОВНОЕ МЕНЮ - ПОКАЗЫВАЕМ 3 ИНПУТА. ИНАЧЕ - 1 ИНПУТ
                                     if (isMainMenu) {
                                         let q250 = r.qty_250 !== undefined ? r.qty_250 : (r.qty || '');
                                         let q350 = r.qty_350 !== undefined ? r.qty_350 : '';
@@ -4171,13 +4173,11 @@ function renderGraphsTab() {
                     </div>`;
                     
                     let photoUi = "";
-                    if (item.photo && item.photo.startsWith("data:image")) {
-                        photoUi = `<div style="position:relative; display:inline-block; margin-top:5px;">
-                                      <img loading="lazy" src="${item.photo}" style="max-width:50px; max-height:50px; border-radius:6px; box-shadow:0 2px 4px rgba(0,0,0,0.1);">
-                                      <button title="Удалить фото" onclick="removeMenuPhoto('${k}')" style="position:absolute; top:-5px; right:-10px; background:#e53935; color:white; border:none; border-radius:50%; width:22px; height:22px; font-size:12px; font-weight:900; cursor:pointer; display:flex; align-items:center; justify-content:center;">✕</button>
-                                   </div>`;
+                    if (item.photo && (item.photo.startsWith("data:image") || item.photo.startsWith("http"))) {
+                        let imgDisplay = `<img loading="lazy" src="${item.photo}" style="max-width:50px; max-height:50px; border-radius:6px; display:block; margin:0 auto; box-shadow:0 2px 4px rgba(0,0,0,0.1);">`;
+                        photoUi = `<div style="position:relative; display:inline-block; padding-top:5px;">${imgDisplay}<button title="Удалить фото" onclick="removeMenuPhoto('${k}')" style="position:absolute; top:-5px; right:-10px; background:#e53935; color:white; border:none; border-radius:50%; width:22px; height:22px; font-size:12px; font-weight:900; cursor:pointer; display:flex; align-items:center; justify-content:center; box-shadow:0 2px 4px rgba(0,0,0,0.2);">✕</button></div>`;
                     } else {
-                        photoUi = `<input type="text" style="font-size:12px; border:2px dashed #9575cd; background:#fff; text-align:center; cursor:pointer; width:100%; box-sizing:border-box; padding:8px; border-radius:6px; margin-top:5px;" placeholder="📷 Кликни и жми Ctrl+V" onpaste="handleClipboardImagePaste(event, '${k}', 'menu_photo')" onchange="updateMenuVal('${k}','photo',this.value)">`;
+                        photoUi = `<input type="text" style="font-size:12px; border:2px dashed #9575cd; background:#fafafa; text-align:center; cursor:pointer; width:100%; box-sizing:border-box; padding:8px 4px; border-radius:6px;" placeholder="Кликни и нажми Ctrl+V" onpaste="handleClipboardImagePaste(event, '${k}', 'menu_photo')" onchange="updateMenuVal('${k}','photo',this.value)">`;
                     }
 
                     html += `<tr class="chk-row menulvl3_${safeSc} menulvl3_of_${safeGc}" style="display:${displayStyleL3}; background:#fff;">
@@ -4718,24 +4718,21 @@ async function exportGraphsToExcel() {
         let photoMap = {};
         let hasChanges = false;
         
-        // 1. Ищем все фото на текущей вкладке и запоминаем их по имени товара
         Object.keys(catalogObj).forEach(key => {
             let item = catalogObj[key];
-            if (item && item.name && item.photo && item.photo.trim() !== "") {
-                // Приводим к нижнему регистру и обрезаем пробелы для точного совпадения
+            if (item && item.name && item.photo && (item.photo.startsWith("data:image") || item.photo.startsWith("http"))) {
                 let clean = String(item.name).toLowerCase().trim();
                 photoMap[clean] = item.photo;
             }
         });
 
-        // 2. Идем по каталогу еще раз и раздаем найденные фото тем, у кого их нет
         Object.keys(catalogObj).forEach(key => {
             let item = catalogObj[key];
             if (item && item.name) {
                 let clean = String(item.name).toLowerCase().trim();
-                if ((!item.photo || item.photo.trim() === "") && photoMap[clean]) {
+                if ((!item.photo || (!item.photo.startsWith("data:image") && !item.photo.startsWith("http"))) && photoMap[clean]) {
                     item.photo = photoMap[clean];
-                    hasChanges = true; // Фиксируем, что мы клонировали фото
+                    hasChanges = true; 
                 }
             }
         });

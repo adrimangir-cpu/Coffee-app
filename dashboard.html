@@ -1833,7 +1833,7 @@
         }
     }
     
-    async function renderOrdersSvod() {
+async function renderOrdersSvod() {
       try {
         const box = document.getElementById('content');
         let svodActionBar = document.getElementById('svod-action-bar');
@@ -1856,7 +1856,14 @@
         let vendorMap = {};
         if (cachedData.catalogOrder) Object.values(cachedData.catalogOrder).forEach(c => { if (c && c.name) vendorMap[c.name] = (c.vendor || 'Лента').toLowerCase(); });
 
-        let todaysOrders = [], historyOrdersList = [], allOrders = Object.values(cachedData.orders || {}).sort((a,b) => (b.timestamp || 0) - (a.timestamp || 0)), lastOrderItems = {}, lastOrderTimestamp = {}; 
+        // Память для анализа повторов и статуса приемок
+        let lastOrderItems = {};
+        let lastOrderTimestamp = {};
+        let lastOrderOzonReceived = {}; // ⚡ Память для флага приемки Озона из прошлого заказа
+        
+        let todaysOrders = [];
+        let historyOrdersList = [];
+        let allOrders = Object.values(cachedData.orders || {}).sort((a,b) => (b.timestamp || 0) - (a.timestamp || 0));
         let cutoffMonth = Date.now() - (30 * 24 * 60 * 60 * 1000); 
 
         allOrders.forEach(o => {
@@ -1867,12 +1874,44 @@
                     if (!lastOrderItems[o.shop]) { 
                         lastOrderItems[o.shop] = new Set(); 
                         lastOrderTimestamp[o.shop] = o.timestamp || 0; 
+                        lastOrderOzonReceived[o.shop] = !!o.ozon_received; // ⚡ Запоминаем, была ли выполнена приемка Озона
                         let itemsArr = Array.isArray(o.items) ? o.items : (typeof o.items === 'object' && o.items !== null ? Object.values(o.items) : []); 
-                        itemsArr.forEach(i => { if(i && i.name) lastOrderItems[o.shop].add(i.name); }); 
+                        itemsArr.forEach(i => { if(i && i.name) lastOrderItems[o.shop].add(cleanName(i.name)); }); 
                     }
                 }
             }
         });
+
+        // ⚡ АВТОМАТИЗАЦИЯ: Если приемка Озона выполнена — переводим новые повторы в "не надо"
+        let autoUpdates = {};
+        todaysOrders.forEach(o => {
+            let itemsArr = Array.isArray(o.items) ? o.items : (typeof o.items === 'object' && o.items !== null ? Object.values(o.items) : []);
+            let changed = false;
+            
+            itemsArr.forEach(i => {
+                if (i && i.name && i.name !== "НЕТ ЗАКАЗА") {
+                    let cName = cleanName(i.name);
+                    let vendor = (i.vendor || vendorMap[i.name] || 'Лента').toLowerCase();
+                    let isOzon = vendor.includes('озон') || vendor.includes('ozon');
+                    let isInLastOrder = lastOrderItems[o.shop] && lastOrderItems[o.shop].has(cName);
+                    
+                    // Условие: Товар из Озона + был в прошлом заказе + приемка по прошлому заказу выполнена + статус еще не меняли вручную
+                    if (isOzon && isInLastOrder && lastOrderOzonReceived[o.shop] && (!i.status || i.status === 'pending')) {
+                        i.status = 'not_needed'; // Меняем статус на "Не надо"
+                        changed = true;
+                    }
+                }
+            });
+            
+            if (changed) {
+                autoUpdates[o.key + "/items"] = itemsArr;
+            }
+        });
+
+        // Тихо отправляем авто-апдейты в Firebase, чтобы Свод на сервере тоже обновился
+        if (Object.keys(autoUpdates).length > 0) {
+            fetch(`${FB_URL}/orders.json`, { method: 'PATCH', body: JSON.stringify(autoUpdates) }).catch(e => console.error(e));
+        }
 
         historyOrdersList = historyOrdersList.slice(0, 150); 
         let keysToDelete = [], shopHasRealOrder = {};
@@ -4733,18 +4772,86 @@ async function exportGraphsToExcel() {
         renderOrdersSvod(); 
     }
 
-    // Live-обновление Свода в реальном времени (от бота и других админов)
+    // ==========================================
+    // ⚡ LIVE-ОБНОВЛЕНИЕ ДАШБОРДА В РЕАЛЬНОМ ВРЕМЕНИ
+    // ==========================================
+
+    // 1. Свод и Заказы (уже было, слегка улучшено)
     db.ref('orders').on('value', (snapshot) => {
         let ordersObj = snapshot.val() || {};
         Object.keys(ordersObj).forEach(k => { if (ordersObj[k]) ordersObj[k].key = k; });
         cachedData.orders = ordersObj;
         
-        // Перерисовываем Свод мгновенно, только если мы не в режиме редактирования!
-        if (currentTabType === 'orders' && !isSvodEditMode) {
-            renderOrdersSvod();
+        // Перерисовываем, только если админ сейчас не в режиме редактирования!
+        if (currentTabType === 'orders' && !isSvodEditMode) renderOrdersSvod();
+        if (currentTabType === 'stoplists') renderStoplists();
+        if (currentTabType === 'checks_table' && !isChecklistEditMode) renderChecksTable();
+        if (currentTabType === 'stats') renderStats();
+    });
+
+    // 2. Все Справочники и Меню
+    db.ref('catalogs').on('value', (snapshot) => {
+        let cats = snapshot.val() || {};
+        
+        // Обновляем кэш в фоне
+        cachedData.catalogOrder = { ...(cats.order || {}), ...(cats.newshop || {}) };
+        cachedData.catalogChecklist = cats.checklist || {};
+        
+        // Если у админа открыта какая-то из этих вкладок — мгновенно перерисовываем
+        if (currentTabType === 'menu') {
+            currentMenu = cats.menu || {};
+            renderMenuTab();
+        }
+        else if (currentTabType === 'catalog_order') {
+            currentCatalog = isNewShopCatalog ? (cats.newshop || {}) : (cats.order || {});
+            renderCatalogOrder();
+        }
+        else if (currentTabType === 'catalog_checklist') {
+            currentCatalog = cats.checklist || {};
+            renderCatalogChecklist();
+        }
+        else if (currentTabType === 'catalog_stoplist') {
+            currentCatalog = cats.stoplist || {};
+            renderCatalogStoplist();
         }
     });
 
+    // 3. Актуальные Недовозы
+    db.ref('missing_items').on('value', (snapshot) => {
+        cachedData.missing = snapshot.val() || {};
+        // Перерисовываем, если вкладка открыта и мы не в режиме редактирования
+        if (currentTabType === 'missing' && !isMissingEditMode) {
+            renderMissing();
+        }
+    });
+
+    // 4. Маркетплейсы
+    db.ref('marketplace_records').on('value', (snapshot) => {
+        cachedData.marketplace = snapshot.val() || {};
+        if (currentTabType === 'marketplace' && !isMpEditMode) {
+            renderMarketplaceTab();
+        }
+    });
+
+    // 5. Графики
+    db.ref('schedules').on('value', (snapshot) => {
+        cachedData.schedules = snapshot.val() || {};
+        // 💡 Примечание: Графики мы не перерисовываем на лету, 
+        // чтобы не стереть те данные, которые админ прямо сейчас печатает в окошках.
+    });
+
+    // 6. Настройки системы
+    db.ref('settings').on('value', (snapshot) => {
+        let s = snapshot.val() || {};
+        appSettings.hidden_categories_order = s.hidden_categories_order || s.hidden_categories || {};
+        appSettings.hidden_categories_checklist = s.hidden_categories_checklist || s.hidden_categories || {};
+        appSettings.hidden_categories_stoplist = s.hidden_categories_stoplist || s.hidden_categories || {};
+        appSettings.new_shop_order_active = s.new_shop_order_active || false;
+    });
+
+    // ==========================================
+    // ИНИЦИАЛИЗАЦИЯ ПРИ СТАРТЕ
+    // ==========================================
     window.onload = () => {
         loadUIState();
         let savedTab = localStorage.getItem('activeTab') || 'orders';

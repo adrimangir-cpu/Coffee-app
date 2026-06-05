@@ -1320,7 +1320,8 @@
                             let missingStat = activeMissing[o.shop] ? activeMissing[o.shop][i.name] : null;
                             let inTransit = missingStat === 'transit';
                             
-                            if (!inTransit && i.status !== 'error' && i.status !== 'not_needed' && (vendor.includes('лента') || vendor.includes('lenta'))) {
+                            // ⚡ ИСКЛЮЧАЕМ "УЖЕ ПРИНЯТ" ИЗ ИТОГОВОГО СВОДА 
+                            if (!inTransit && i.status !== 'error' && i.status !== 'not_needed' && i.status !== 'already_received' && (vendor.includes('лента') || vendor.includes('lenta'))) {
                                 shopLentaSums[o.shop] += (parseFloat(i.qty) * (parseFloat(catItem.price)||0));
                             }
                         }
@@ -1348,8 +1349,8 @@
                                 i.status = 'error'; 
                                 i.bot_error = true; 
                                 changed = true;
-                            } else if (i.status === 'not_needed') {
-                                // Исключаем
+                            } else if (i.status === 'not_needed' || i.status === 'already_received') {
+                                // ⚡ Товары со статусом "Уже принят" или "Не надо" не учитываются в сумме
                             } else {
                                 let isAutoKuper = false;
                                 let isLenta = vendor.includes('лента') || vendor.includes('lenta');
@@ -1547,7 +1548,8 @@
             }
 
             if (!shopLentaSums[targetShop]) shopLentaSums[targetShop] = 0;
-            if (!isDeleted && !inTransit && itemStatus !== 'error' && itemStatus !== 'not_needed' && (isLenta || isAutoKuper)) {
+            // ⚡ СТАТУС "УЖЕ ПРИНЯТ" ИСКЛЮЧАЕТСЯ ИЗ СУММЫ
+            if (!isDeleted && !inTransit && itemStatus !== 'error' && itemStatus !== 'not_needed' && itemStatus !== 'already_received' && (isLenta || isAutoKuper)) {
                 shopLentaSums[targetShop] += (qty * price1);
             }
         });
@@ -1605,7 +1607,8 @@
             let finalPrice = (isRegularKuper && price2 > 0) ? price2 : price1;
             
             let cost = finalPrice * qty;
-            if (inTransit || itemStatus === 'error' || itemStatus === 'not_needed' || isDeleted) cost = 0;
+            // ⚡ ИСКЛЮЧАЕМ ИЗ ФИНАЛЬНОГО ПОДСЧЕТА
+            if (inTransit || itemStatus === 'error' || itemStatus === 'not_needed' || itemStatus === 'already_received' || isDeleted) cost = 0;
             
             if (vendor.includes('лента') || vendor.includes('lenta')) {
                 totalLenta += cost;
@@ -1856,8 +1859,6 @@ async function renderOrdersSvod() {
         let vendorMap = {};
         if (cachedData.catalogOrder) Object.values(cachedData.catalogOrder).forEach(c => { if (c && c.name) vendorMap[c.name] = (c.vendor || 'Лента').toLowerCase(); });
 
-        // Память для анализа повторов и статуса приемок
-        // Память для анализа повторов и статуса приемок
         let lastOrderItems = {};
         let lastOrderTimestamp = {};
         let lastOrderOzonReceived = {}; 
@@ -1875,7 +1876,7 @@ async function renderOrdersSvod() {
                     if (!lastOrderItems[o.shop]) { 
                         lastOrderItems[o.shop] = new Set(); 
                         lastOrderTimestamp[o.shop] = o.timestamp || 0; 
-                        lastOrderOzonReceived[o.shop] = !!o.ozon_received; // ⚡ Запоминаем только Озон
+                        lastOrderOzonReceived[o.shop] = !!o.ozon_received; 
                         let itemsArr = Array.isArray(o.items) ? o.items : (typeof o.items === 'object' && o.items !== null ? Object.values(o.items) : []); 
                         itemsArr.forEach(i => { if(i && i.name) lastOrderItems[o.shop].add(cleanName(i.name)); }); 
                     }
@@ -1883,7 +1884,7 @@ async function renderOrdersSvod() {
             }
         });
 
-        // ⚡ УМНАЯ АВТОМАТИЗАЦИЯ (Только для Озона!)
+        // ⚡ АВТОМАТИЗАЦИЯ "УЖЕ ПРИНЯТ" ДЛЯ ОЗОНА
         let autoUpdates = {};
         todaysOrders.forEach(o => {
             let itemsArr = Array.isArray(o.items) ? o.items : (typeof o.items === 'object' && o.items !== null ? Object.values(o.items) : []);
@@ -1893,27 +1894,22 @@ async function renderOrdersSvod() {
                 if (i && i.name && i.name !== "НЕТ ЗАКАЗА") {
                     let cName = cleanName(i.name);
                     let vendor = (i.vendor || vendorMap[i.name] || 'Лента').toLowerCase();
-                    
-                    // ⚡ Ленту мы игнорируем! Проверяем только Озон
                     let isOzon = vendor.includes('озон') || vendor.includes('ozon');
                     
                     let isInLastOrder = lastOrderItems[o.shop] && lastOrderItems[o.shop].has(cName);
                     let isMissing = activeMissing[o.shop] && activeMissing[o.shop][i.name];
                     
-                    // ГЛАВНОЕ УСЛОВИЕ: Это Озон + Повтор + Приемка Озона выполнена + ТОВАРА НЕТ В НЕДОВОЗАХ
+                    // Если это повтор Озона, он принят, его нет в недовозах и статус еще чистый
                     if (isOzon && isInLastOrder && lastOrderOzonReceived[o.shop] && !isMissing && (!i.status || i.status === 'pending')) {
-                        i.status = 'not_needed'; // Меняем статус на "Не надо"
+                        i.status = 'already_received'; // ⚡ Устанавливаем новый статус
                         changed = true;
                     }
                 }
             });
             
-            if (changed) {
-                autoUpdates[o.key + "/items"] = itemsArr;
-            }
+            if (changed) autoUpdates[o.key + "/items"] = itemsArr;
         });
 
-        // Тихо отправляем авто-апдейты в Firebase, чтобы Свод на сервере тоже обновился
         if (Object.keys(autoUpdates).length > 0) {
             fetch(`${FB_URL}/orders.json`, { method: 'PATCH', body: JSON.stringify(autoUpdates) }).catch(e => console.error(e));
         }
@@ -1955,6 +1951,7 @@ async function renderOrdersSvod() {
                     else if (i.status === 'ordered') sd.items[i.name].status = 'ordered';
                     else if (i.status === 'not_needed') sd.items[i.name].status = 'not_needed';
                     else if (i.status === 'from_stoplist') sd.items[i.name].status = 'from_stoplist';
+                    else if (i.status === 'already_received') sd.items[i.name].status = 'already_received'; // ⚡ Читаем новый статус
                 }
             });
         });
@@ -1970,7 +1967,8 @@ async function renderOrdersSvod() {
                     let actualShop = (tempSvodShop[dateStr] && tempSvodShop[dateStr][shop] && tempSvodShop[dateStr][shop][name]) ? tempSvodShop[dateStr][shop][name] : shop;
                     if (!shopLentaSums[actualShop]) shopLentaSums[actualShop] = 0;
                     let itemStatus = (tempSvodStatus[dateStr] && tempSvodStatus[dateStr][shop] && tempSvodStatus[dateStr][shop][name]) ? tempSvodStatus[dateStr][shop][name] : itemsObj[name].status;
-                    if (!svodDeletions.some(d => d.date === dateStr && d.shop === shop && d.name === name) && !(activeMissing[shop] && activeMissing[shop][name] === 'transit') && itemStatus !== 'error' && itemStatus !== 'not_needed' && (actualVendor.toLowerCase().includes('лента') || actualVendor.toLowerCase().includes('lenta'))) {
+                    // ⚡ СТАТУС "УЖЕ ПРИНЯТ" НЕ ИДЕТ В СУММУ
+                    if (!svodDeletions.some(d => d.date === dateStr && d.shop === shop && d.name === name) && !(activeMissing[shop] && activeMissing[shop][name] === 'transit') && itemStatus !== 'error' && itemStatus !== 'not_needed' && itemStatus !== 'already_received' && (actualVendor.toLowerCase().includes('лента') || actualVendor.toLowerCase().includes('lenta'))) {
                         shopLentaSums[actualShop] += (((tempSvodQty[dateStr] && tempSvodQty[dateStr][shop] && tempSvodQty[dateStr][shop][name] !== undefined) ? tempSvodQty[dateStr][shop][name] : itemsObj[name].qty) * (parseFloat((Object.values(cachedData.catalogOrder || {}).find(c => c && c.name === name) || {}).price) || 0));
                     }
                 });
@@ -2030,7 +2028,7 @@ async function renderOrdersSvod() {
                             if ((actualVendor.toLowerCase().includes('лента') || actualVendor.toLowerCase().includes('lenta')) && shopLentaSums[actualShop] > 0 && shopLentaSums[actualShop] < 2000) { actualVendor = 'Купер (Авто)'; isAutoKuper = true; }
 
                             let baseStatus = shopsObj[shop].items[name].status;
-                            if (!shopsObj[shop].all_svod && baseStatus !== 'from_stoplist' && baseStatus !== 'error' && baseStatus !== 'not_needed' && baseStatus !== 'ordered') baseStatus = 'pending';
+                            if (!shopsObj[shop].all_svod && baseStatus !== 'from_stoplist' && baseStatus !== 'error' && baseStatus !== 'not_needed' && baseStatus !== 'already_received' && baseStatus !== 'ordered') baseStatus = 'pending';
                             let itemStatus = (tempSvodStatus[dateStr] && tempSvodStatus[dateStr][shop] && tempSvodStatus[dateStr][shop][name]) ? tempSvodStatus[dateStr][shop][name] : baseStatus;
                             
                             let missingStat = activeMissing[shop] ? activeMissing[shop][name] : null;
@@ -2049,7 +2047,8 @@ async function renderOrdersSvod() {
                             let finalPrice = (isRegularKuper && price2 > 0) ? price2 : price1;
 
                             let cost = finalPrice * (isDeleted ? 0 : actualQty);
-                            if (inTransit || itemStatus === 'error' || itemStatus === 'not_needed') cost = 0; 
+                            // ⚡ ИСКЛЮЧАЕМ "УЖЕ ПРИНЯТ" ИЗ ТЕКСТОВЫХ СУММ
+                            if (inTransit || itemStatus === 'error' || itemStatus === 'not_needed' || itemStatus === 'already_received') cost = 0; 
                             if (actualVendor.toLowerCase().includes('лента')) totalLenta += cost; else if (actualVendor.toLowerCase().includes('озон') || actualVendor.toLowerCase().includes('ozon')) totalOzon += cost; else if (actualVendor.toLowerCase().includes('купер') || actualVendor.toLowerCase().includes('kuper')) totalKuper += cost;
 
                             let linksHtml = [(catItem.link ? `<a href="${catItem.link}" target="_blank" style="color:#0288d1; font-weight:bold;">🔗 Осн</a>` : ""), (catItem.link2 ? `<a href="${catItem.link2}" target="_blank" style="color:#e53935; font-weight:bold; margin-left:8px;">🔗 Рез</a>` : "")].filter(Boolean).join(" ");
@@ -2058,13 +2057,16 @@ async function renderOrdersSvod() {
                             let repeatBadge = "", rowBg = (itemStatus === 'error') ? `background-color: #ffebee;` : ``;
                             if (inTransit) { repeatBadge = `<span style='color:#1565c0; font-size:12px; margin-left:5px; font-weight:bold;'>(Уже в пути 🚚)</span>`; itemStatus = 'error'; } 
                             else if (itemStatus === 'from_stoplist') { repeatBadge = `<span style='color:#d32f2f; font-size:12px; margin-left:5px; font-weight:bold;'>⚠️ Из стоп-листа</span>`; rowBg = `background-color: #ffebee;`; } 
-                            else if (isOzon && isRepeat) { repeatBadge = `<span style='color:#d32f2f; font-size:12px; margin-left:5px; font-weight:bold;'>⚠️ ${(missingStat === 'pending' ? "В недовозах!" : "Был в прошлой закупке!")}</span>`; rowBg = `background-color: #fff9c4;`; }
+                            else if (isOzon && isRepeat && itemStatus !== 'already_received') { repeatBadge = `<span style='color:#d32f2f; font-size:12px; margin-left:5px; font-weight:bold;'>⚠️ ${(missingStat === 'pending' ? "В недовозах!" : "Был в прошлой закупке!")}</span>`; rowBg = `background-color: #fff9c4;`; }
 
                             let statusText = "Ожидает ⏳", statusColor = "#f57c00", statusBg = "#fff3e0";
                             if (itemStatus === 'ordered') { statusText = "Заказано ✅"; statusColor = "#2e7d32"; statusBg = "#e8f5e9"; } 
                             else if (itemStatus === 'not_needed') { statusText = "Не надо ⛔"; statusColor = "#616161"; statusBg = "#eeeeee"; }
                             else if (itemStatus === 'error') { statusText = "Ошибка ❌"; statusColor = "#c62828"; statusBg = "#ffebee"; } 
                             else if (itemStatus === 'from_stoplist') { statusText = "Из стоп-листа 🛑"; statusColor = "#c62828"; statusBg = "#ffcdd2"; }
+                            // ⚡ ДИЗАЙН ДЛЯ НОВОГО СТАТУСА
+                            else if (itemStatus === 'already_received') { statusText = "Уже принят 📦"; statusColor = "#0277bd"; statusBg = "#e3f2fd"; }
+                            
                             let statusBadge = `<span style="background:${statusBg}; color:${statusColor}; padding:6px 10px; border-radius:8px; font-size:13px; font-weight:900; display:inline-block;">${statusText}</span>`;
 
                             let displayVendorCell = isSvodEditMode ? `<select class="edit-svod-vendor-select" data-shop="${htmlShop}" data-item="${htmlName}" data-date="${dateStr}" style="font-size: 14px; padding: 4px; border: 1px solid #ccc; border-radius: 4px; width: 100%;" onchange="markSvodVendorChange('${dateStr}', '${jsShop}', '${jsName}', this.value)" ${isDeleted || inTransit ? 'disabled' : ''}>${!["лента", "озон", "купер", "wildberries", "самокат", "metro", "купер (авто)"].includes(actualVendor.toLowerCase()) ? `<option value="${actualVendor}" selected>${actualVendor}</option>` : ''}${["Лента", "Озон", "Купер", "Wildberries", "Самокат", "METRO"].map(v => `<option value="${v}" ${v.toLowerCase() === actualVendor.toLowerCase() ? 'selected' : ''}>${v}</option>`).join('')}</select>` : actualVendor;
@@ -4746,8 +4748,9 @@ async function exportGraphsToExcel() {
     async function instantStatusToggle(dateStr, shop, name, currentStatus) {
         preserveSvodInputs(); 
         
+        // ⚡ ЦИКЛ ПЕРЕКЛЮЧЕНИЙ СО СТАТУСОМ "УЖЕ ПРИНЯТ"
         let newStatus = 'ordered'; 
-        if (currentStatus === 'pending' || currentStatus === 'from_stoplist') newStatus = 'ordered';
+        if (currentStatus === 'pending' || currentStatus === 'from_stoplist' || currentStatus === 'already_received') newStatus = 'ordered';
         else if (currentStatus === 'ordered') newStatus = 'not_needed';
         else if (currentStatus === 'not_needed') newStatus = 'error';
         else if (currentStatus === 'error') newStatus = 'pending';

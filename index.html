@@ -3275,7 +3275,41 @@ async function viewStopList() {
             return {};
         }
     }
+// ==========================================
+    // ⚡ LIVE-ОБНОВЛЕНИЕ ДЛЯ ТЕЛЕФОНА (МИНИ-АПП)
+    // ==========================================
+    function startRealtimeUpdates() {
+        const paths = [
+            { key: 'menu', mode: 'menu' },
+            { key: 'order', mode: 'order' },
+            { key: 'newshop', mode: 'new_shop' },
+            { key: 'stoplist', mode: 'stoplist_fill' },
+            { key: 'checklist', mode: 'checklist' }
+        ];
 
+        paths.forEach(p => {
+            database.ref('catalogs/' + p.key).on('value', snap => {
+                let fresh = snap.val();
+                if (fresh && Object.keys(fresh).length > 0) {
+                    // 1. Обновляем тихий кэш телефона
+                    if (!state.cachedCatalogs) state.cachedCatalogs = {};
+                    state.cachedCatalogs[p.key] = fresh;
+                    saveToCache(p.key, fresh); 
+                    
+                    // 2. Если бариста прямо сейчас смотрит этот раздел - перерисовываем
+                    if (state.currentMode === p.mode) {
+                        if (p.mode === 'menu') {
+                            state.menuCatalog = Object.assign({}, fresh);
+                            if (typeof renderMenuApp === 'function') renderMenuApp();
+                        } else {
+                            if (typeof rebuildProductCatalog === 'function') rebuildProductCatalog(fresh);
+                            if (typeof renderProductList === 'function') renderProductList();
+                        }
+                    }
+                }
+            });
+        });
+    }
   
     // ==========================================
     // СТАРТ ПРИЛОЖЕНИЯ (МГНОВЕННЫЙ ЗАПУСК БЕЗ ТОРМОЗОВ)
@@ -3305,6 +3339,7 @@ async function viewStopList() {
       // ⚡ ЛЕГКАЯ ФОНОВАЯ ЗАГРУЗКА БАЗ (Через 1 секунду после отрисовки экрана, чтобы не лагало)
       setTimeout(() => {
           getCatalogs().catch(e => console.log(e));
+          startRealtimeUpdates(); // ⚡ Включаем магию реального времени
       }, 1000);
     };
   

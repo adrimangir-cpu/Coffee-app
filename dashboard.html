@@ -1857,9 +1857,10 @@ async function renderOrdersSvod() {
         if (cachedData.catalogOrder) Object.values(cachedData.catalogOrder).forEach(c => { if (c && c.name) vendorMap[c.name] = (c.vendor || 'Лента').toLowerCase(); });
 
         // Память для анализа повторов и статуса приемок
+        // Память для анализа повторов и статуса приемок
         let lastOrderItems = {};
         let lastOrderTimestamp = {};
-        let lastOrderOzonReceived = {}; // ⚡ Память для флага приемки Озона из прошлого заказа
+        let lastOrderOzonReceived = {}; 
         
         let todaysOrders = [];
         let historyOrdersList = [];
@@ -1874,7 +1875,7 @@ async function renderOrdersSvod() {
                     if (!lastOrderItems[o.shop]) { 
                         lastOrderItems[o.shop] = new Set(); 
                         lastOrderTimestamp[o.shop] = o.timestamp || 0; 
-                        lastOrderOzonReceived[o.shop] = !!o.ozon_received; // ⚡ Запоминаем, была ли выполнена приемка Озона
+                        lastOrderOzonReceived[o.shop] = !!o.ozon_received; // ⚡ Запоминаем только Озон
                         let itemsArr = Array.isArray(o.items) ? o.items : (typeof o.items === 'object' && o.items !== null ? Object.values(o.items) : []); 
                         itemsArr.forEach(i => { if(i && i.name) lastOrderItems[o.shop].add(cleanName(i.name)); }); 
                     }
@@ -1882,7 +1883,7 @@ async function renderOrdersSvod() {
             }
         });
 
-        // ⚡ АВТОМАТИЗАЦИЯ: Если приемка Озона выполнена — переводим новые повторы в "не надо"
+        // ⚡ УМНАЯ АВТОМАТИЗАЦИЯ (Только для Озона!)
         let autoUpdates = {};
         todaysOrders.forEach(o => {
             let itemsArr = Array.isArray(o.items) ? o.items : (typeof o.items === 'object' && o.items !== null ? Object.values(o.items) : []);
@@ -1892,11 +1893,15 @@ async function renderOrdersSvod() {
                 if (i && i.name && i.name !== "НЕТ ЗАКАЗА") {
                     let cName = cleanName(i.name);
                     let vendor = (i.vendor || vendorMap[i.name] || 'Лента').toLowerCase();
-                    let isOzon = vendor.includes('озон') || vendor.includes('ozon');
-                    let isInLastOrder = lastOrderItems[o.shop] && lastOrderItems[o.shop].has(cName);
                     
-                    // Условие: Товар из Озона + был в прошлом заказе + приемка по прошлому заказу выполнена + статус еще не меняли вручную
-                    if (isOzon && isInLastOrder && lastOrderOzonReceived[o.shop] && (!i.status || i.status === 'pending')) {
+                    // ⚡ Ленту мы игнорируем! Проверяем только Озон
+                    let isOzon = vendor.includes('озон') || vendor.includes('ozon');
+                    
+                    let isInLastOrder = lastOrderItems[o.shop] && lastOrderItems[o.shop].has(cName);
+                    let isMissing = activeMissing[o.shop] && activeMissing[o.shop][i.name];
+                    
+                    // ГЛАВНОЕ УСЛОВИЕ: Это Озон + Повтор + Приемка Озона выполнена + ТОВАРА НЕТ В НЕДОВОЗАХ
+                    if (isOzon && isInLastOrder && lastOrderOzonReceived[o.shop] && !isMissing && (!i.status || i.status === 'pending')) {
                         i.status = 'not_needed'; // Меняем статус на "Не надо"
                         changed = true;
                     }

@@ -3371,6 +3371,70 @@ async function viewStopList() {
             console.error("Auto stoplist update failed:", e);
         }
     }
+    // ==========================================
+    // ВОССТАНОВЛЕННЫЕ ФУНКЦИИ (Черновики и Авто-стоплист)
+    // ==========================================
+    function restoreFromDraft() { 
+        let d = localStorage.getItem("draft_" + state.currentShop + "_" + state.currentMode); 
+        if(d) { 
+           let p = JSON.parse(d); 
+           if (!state.userBasket["_catinfo"]) state.userBasket["_catinfo"] = {};
+           for(let k in p.basket) {
+               if(k !== "_catinfo" && state.userBasket[k] === undefined) {
+                   state.userBasket[k] = p.basket[k];
+                   if (p.basket["_catinfo"] && p.basket["_catinfo"][k]) {
+                       state.userBasket["_catinfo"][k] = p.basket["_catinfo"][k];
+                   }
+               }
+           }
+        } 
+    }
+
+    async function autoRemoveFromStoplist(shop, itemNamesArray) {
+        if (!itemNamesArray || itemNamesArray.length === 0) return;
+        try {
+            let shopOrders = [];
+            try {
+                let snap = await database.ref("orders").orderByChild("shop").equalTo(shop).limitToLast(50).once("value");
+                snap.forEach(c => {
+                    let val = c.val();
+                    if (val && val.mode === 'stoplist_fill') { val.key = c.key; shopOrders.push(val); }
+                });
+            } catch (e) {
+                let snap = await database.ref("orders").limitToLast(600).once("value");
+                snap.forEach(c => {
+                    let val = c.val();
+                    if (val && val.shop === shop && val.mode === 'stoplist_fill') { val.key = c.key; shopOrders.push(val); }
+                });
+            }
+            
+            if (shopOrders.length === 0) return;
+            shopOrders.sort((a,b) => b.timestamp - a.timestamp);
+            let latestStoplist = shopOrders[0];
+            if (!latestStoplist.items) return;
+            
+            let itemsArr = Array.isArray(latestStoplist.items) ? latestStoplist.items : Object.values(latestStoplist.items);
+            itemsArr = itemsArr.filter(i => i !== null && i !== undefined);
+
+            let namesToRemove = itemNamesArray.map(n => cleanName(n));
+            let newItems = itemsArr.filter(i => {
+                if (!i || !i.name) return false;
+                let iName = cleanName(i.name);
+                return !namesToRemove.includes(iName); 
+            });
+            
+            if (newItems.length !== itemsArr.length) {
+                if (newItems.length === 0) {
+                    await database.ref(`orders/${latestStoplist.key}/items`).set([{name: "Всё в наличии", qty: "В наличии"}]);
+                } else {
+                    await database.ref(`orders/${latestStoplist.key}/items`).set(newItems);
+                }
+            }
+        } catch(e) {
+            console.error("Auto stoplist update failed:", e);
+        }
+    }
+    
   </script>
 </body>
 </html>

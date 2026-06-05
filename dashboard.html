@@ -4354,12 +4354,23 @@ function renderGraphsTab() {
             return;
         }
         
-        btn.innerHTML = "⌛ СОХРАНЕНИЕ МЕНЮ...";
+        btn.innerHTML = "⏳ ТРАНЗАКЦИЯ МЕНЮ...";
         try {
-            // ⚡ Сохраняем меню через PATCH — улетают только отредактированные рецепты
-            await fetch(`${FB_URL}/catalogs/menu.json`, { method: 'PATCH', body: JSON.stringify(menuChanges) });
-            menuChanges = {}; // Очищаем трекер
-            
+            // ⚡ ИСПОЛЬЗУЕМ ТРАНЗАКЦИЮ SDK ДЛЯ ТЕХКАРТ
+            await db.ref('catalogs/menu').transaction((currentMenuData) => {
+                if (!currentMenuData) currentMenuData = {};
+                
+                for (let id in menuChanges) {
+                    if (menuChanges[id] === null || menuChanges[id] === undefined) {
+                        delete currentMenuData[id];
+                    } else {
+                        currentMenuData[id] = menuChanges[id];
+                    }
+                }
+                return currentMenuData;
+            });
+
+            menuChanges = {}; // Очищаем трекер правок меню
             btn.innerHTML = "✅ СОХРАНЕНО!";
             setTimeout(() => {
                 if(btn) btn.innerHTML = origText;
@@ -4367,10 +4378,10 @@ function renderGraphsTab() {
             }, 1000);
         } catch(e) {
             if(btn) btn.innerHTML = origText;
-            alert("❌ Ошибка при точечном сохранении меню: " + e.message);
+            alert("❌ Критическая ошибка транзакции меню: " + e.message);
         }
     }
-
+    
     async function exportMenuToExcel() {
         showReportOverlay("Генерация Excel...");
         try {
@@ -4713,7 +4724,8 @@ async function exportGraphsToExcel() {
     };
     
     function deleteItem(id) { 
-        delete currentCatalog[id]; 
+        currentCatalog[id] = null; // Помечаем для удаления в транзакции
+        catalogChanges[id] = null; // Записываем в изменения
         if (currentPath.includes('order') || currentPath.includes('newshop')) renderCatalogOrder();
         else if (currentPath.includes('stoplist')) renderCatalogStoplist();
         else renderCatalogChecklist();
@@ -4745,19 +4757,30 @@ async function exportGraphsToExcel() {
     async function saveCatalog(btn) {
         let origText = btn.innerHTML;
         
-        // Защита: если ничего не правили, не мучаем сервер
         if (Object.keys(catalogChanges).length === 0) {
             btn.innerHTML = "✅ ИЗМЕНЕНИЙ НЕТ";
             setTimeout(() => { btn.innerHTML = origText; }, 1500);
             return;
         }
         
-        btn.innerHTML = "⌛ СОХРАНЕНИЕ ПРАВОК...";
+        btn.innerHTML = "⏳ ТРАНЗАКЦИЯ БАЗЫ...";
         try { 
-            // ⚡ Отправляем только измененные строки через PATCH вместо тяжелого PUT
-            await fetch(`${FB_URL}/${currentPath}.json`, { method: 'PATCH', body: JSON.stringify(catalogChanges) }); 
-            catalogChanges = {}; // Очищаем память правок после успеха
-            
+            // ⚡ ИСПОЛЬЗУЕМ СВЕРХБЫСТРУЮ ТРАНЗАКЦИЮ SDK ВМЕСТО FETCH/PATCH
+            await db.ref(currentPath).transaction((currentCatalogData) => {
+                if (!currentCatalogData) currentCatalogData = {};
+                
+                // Накатываем только те изменения, которые ты сделала на экране
+                for (let id in catalogChanges) {
+                    if (catalogChanges[id] === null || catalogChanges[id] === undefined) {
+                        delete currentCatalogData[id]; // Если товар удалили
+                    } else {
+                        currentCatalogData[id] = catalogChanges[id];
+                    }
+                }
+                return currentCatalogData; // Firebase моментально применяет изменения на сервере
+            });
+
+            catalogChanges = {}; // Очищаем буфер изменений после успеха
             btn.innerHTML = "✅ СОХРАНЕНО!";
             setTimeout(() => {
                 if(btn) btn.innerHTML = origText;
@@ -4765,7 +4788,7 @@ async function exportGraphsToExcel() {
             }, 1000);
         } catch(e) { 
             if(btn) btn.innerHTML = origText;
-            alert("❌ Ошибка при точечном сохранении каталога: " + e.message); 
+            alert("❌ Критическая ошибка транзакции каталога: " + e.message); 
         }
     }
 

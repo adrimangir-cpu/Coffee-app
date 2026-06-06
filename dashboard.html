@@ -4354,21 +4354,10 @@ function renderGraphsTab() {
             return;
         }
         
-        btn.innerHTML = "⏳ ТРАНЗАКЦИЯ МЕНЮ...";
+        btn.innerHTML = "⏳ СОХРАНЕНИЕ МЕНЮ...";
         try {
-            // ⚡ ИСПОЛЬЗУЕМ ТРАНЗАКЦИЮ SDK ДЛЯ ТЕХКАРТ
-            await db.ref('catalogs/menu').transaction((currentMenuData) => {
-                if (!currentMenuData) currentMenuData = {};
-                
-                for (let id in menuChanges) {
-                    if (menuChanges[id] === null || menuChanges[id] === undefined) {
-                        delete currentMenuData[id];
-                    } else {
-                        currentMenuData[id] = menuChanges[id];
-                    }
-                }
-                return currentMenuData;
-            });
+            // ⚡ ОТПРАВЛЯЕМ ТОЛЬКО ДЕЛЬТУ ИЗМЕНЕНИЙ (без скачивания всей базы)
+            await db.ref('catalogs/menu').update(menuChanges);
 
             menuChanges = {}; // Очищаем трекер правок меню
             btn.innerHTML = "✅ СОХРАНЕНО!";
@@ -4378,7 +4367,7 @@ function renderGraphsTab() {
             }, 1000);
         } catch(e) {
             if(btn) btn.innerHTML = origText;
-            alert("❌ Критическая ошибка транзакции меню: " + e.message);
+            alert("❌ Критическая ошибка сохранения меню: " + e.message);
         }
     }
     
@@ -4754,7 +4743,7 @@ async function exportGraphsToExcel() {
         saveToCache('settings', appSettings); // ⚡ СОХРАНЯЕМ СКРЫТИЕ В ПАМЯТЬ ДАШБОРДА
     }
 
-    async function saveCatalog(btn) {
+   async function saveCatalog(btn) {
         let origText = btn.innerHTML;
         
         if (Object.keys(catalogChanges).length === 0) {
@@ -4763,22 +4752,10 @@ async function exportGraphsToExcel() {
             return;
         }
         
-        btn.innerHTML = "⏳ ТРАНЗАКЦИЯ БАЗЫ...";
+        btn.innerHTML = "⏳ СОХРАНЕНИЕ ПРАВОК...";
         try { 
-            // ⚡ ИСПОЛЬЗУЕМ СВЕРХБЫСТРУЮ ТРАНЗАКЦИЮ SDK ВМЕСТО FETCH/PATCH
-            await db.ref(currentPath).transaction((currentCatalogData) => {
-                if (!currentCatalogData) currentCatalogData = {};
-                
-                // Накатываем только те изменения, которые ты сделала на экране
-                for (let id in catalogChanges) {
-                    if (catalogChanges[id] === null || catalogChanges[id] === undefined) {
-                        delete currentCatalogData[id]; // Если товар удалили
-                    } else {
-                        currentCatalogData[id] = catalogChanges[id];
-                    }
-                }
-                return currentCatalogData; // Firebase моментально применяет изменения на сервере
-            });
+            // ⚡ ИСПОЛЬЗУЕМ РОДНОЙ SDK UPDATE (Точечная отправка только измененных строк)
+            await db.ref(currentPath).update(catalogChanges);
 
             catalogChanges = {}; // Очищаем буфер изменений после успеха
             btn.innerHTML = "✅ СОХРАНЕНО!";
@@ -4788,7 +4765,7 @@ async function exportGraphsToExcel() {
             }, 1000);
         } catch(e) { 
             if(btn) btn.innerHTML = origText;
-            alert("❌ Критическая ошибка транзакции каталога: " + e.message); 
+            alert("❌ Критическая ошибка сохранения каталога: " + e.message); 
         }
     }
 

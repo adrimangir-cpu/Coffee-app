@@ -3201,23 +3201,33 @@ async function viewStopList() {
         localStorage.setItem("draft_" + state.currentShop + "_" + state.currentMode, JSON.stringify({basket: state.userBasket, time: Date.now()})); 
     }
     
+    // ==========================================
+    // ПРОСТАЯ И БЕЗОТКАЗНАЯ ЗАГРУЗКА (БЕЗ КЭША, БЕЗ БЛОКИРОВОК)
+    // ==========================================
+    let isFetchingCatalogs = false; // Флаг, чтобы не качать дважды
+
     async function getCatalogs() {
+        if (isFetchingCatalogs) return state.cachedCatalogs; // Если уже качаем - не мешаем
+        isFetchingCatalogs = true;
         try {
-            // Берем свежайшие данные напрямую из Firebase
             let snap = await database.ref("catalogs").once("value");
             state.cachedCatalogs = snap.val() || {};
+            isFetchingCatalogs = false;
             return state.cachedCatalogs;
         } catch (e) {
-            console.error("Ошибка загрузки каталогов:", e);
-            return state.cachedCatalogs || {}; // Возвращаем то, что есть в памяти при ошибке
+            console.error("Ошибка загрузки:", e);
+            isFetchingCatalogs = false;
+            return state.cachedCatalogs || {};
         }
-      }
-     async function getCatalog(name) {
-        // Если база еще не скачалась — качаем всё разом
+    }
+
+    async function getCatalog(name) {
+        // ⚡ МГНОВЕННЫЙ ОТВЕТ: Если база уже скачалась (или начала скачиваться) — сразу отдаем то, что есть.
+        // Live-обновление само перерисует экран через секунду, когда данные докачаются!
         if (!state.cachedCatalogs || Object.keys(state.cachedCatalogs).length === 0) {
-            await getCatalogs();
+             getCatalogs(); // Запускаем тихо, БЕЗ await! (Не тормозим экран)
+             return {};     // Отдаем пустой объект, пока качается
         }
-        // Отдаем приложению только ту часть, которую оно просит
         return state.cachedCatalogs[name] || {};
     }
       

@@ -3201,72 +3201,86 @@ async function viewStopList() {
         localStorage.setItem("draft_" + state.currentShop + "_" + state.currentMode, JSON.stringify({basket: state.userBasket, time: Date.now()})); 
     }
     
+   // ==========================================
+    // УМНАЯ И БЫСТРАЯ ЗАГРУЗКА ПО ЧАСТЯМ
     // ==========================================
-    // ПРОСТАЯ И БЕЗОТКАЗНАЯ ЗАГРУЗКА (БЕЗ КЭША, БЕЗ БЛОКИРОВОК)
-    // ==========================================
-    let isFetchingCatalogs = false; // Флаг, чтобы не качать дважды
-
     async function getCatalogs() {
-        if (isFetchingCatalogs) return state.cachedCatalogs; // Если уже качаем - не мешаем
-        isFetchingCatalogs = true;
-        try {
-            let snap = await database.ref("catalogs").once("value");
-            state.cachedCatalogs = snap.val() || {};
-            isFetchingCatalogs = false;
-            return state.cachedCatalogs;
-        } catch (e) {
-            console.error("Ошибка загрузки:", e);
-            isFetchingCatalogs = false;
-            return state.cachedCatalogs || {};
+        if (!state.cachedCatalogs) state.cachedCatalogs = {};
+        // Для админки догружаем только легкие таблицы, если их нет (БЕЗ тяжелого МЕНЮ)
+        let paths = ['order', 'stoplist', 'newshop'];
+        for (let p of paths) {
+            if (!state.cachedCatalogs[p]) {
+                let snap = await database.ref(`catalogs/${p}`).once("value");
+                state.cachedCatalogs[p] = snap.val() || {};
+            }
         }
+        return state.cachedCatalogs;
     }
 
     async function getCatalog(name) {
-        // ⚡ МГНОВЕННЫЙ ОТВЕТ: Если база уже скачалась (или начала скачиваться) — сразу отдаем то, что есть.
-        // Live-обновление само перерисует экран через секунду, когда данные докачаются!
-        if (!state.cachedCatalogs || Object.keys(state.cachedCatalogs).length === 0) {
-             getCatalogs(); // Запускаем тихо, БЕЗ await! (Не тормозим экран)
-             return {};     // Отдаем пустой объект, пока качается
+        // 1. Мгновенная отдача: если Live-обновление уже скачало этот раздел
+        if (state.cachedCatalogs && state.cachedCatalogs[name] && Object.keys(state.cachedCatalogs[name]).length > 0) {
+            return state.cachedCatalogs[name];
         }
-        return state.cachedCatalogs[name] || {};
+
+        // 2. Если нет: качаем ТОЛЬКО нужный кусок. Закупка скачается за 0.1 сек!
+        try {
+            let snap = await database.ref(`catalogs/${name}`).once("value");
+            if (!state.cachedCatalogs) state.cachedCatalogs = {};
+            state.cachedCatalogs[name] = snap.val() || {};
+            return state.cachedCatalogs[name];
+        } catch (e) {
+            return {};
+        }
     }
-      
+
     // ==========================================
     // ⚡ LIVE-ОБНОВЛЕНИЕ ДЛЯ ТЕЛЕФОНА 
     // ==========================================
     function startRealtimeUpdates() {
         const paths = [
-            { key: 'menu', mode: 'menu' },
             { key: 'order', mode: 'order' },
             { key: 'newshop', mode: 'new_shop' },
             { key: 'stoplist', mode: 'stoplist_fill' },
             { key: 'checklist', mode: 'checklist' }
         ];
 
+        // 1. Запускаем слежение за легкими таблицами моментально
         paths.forEach(p => {
             database.ref('catalogs/' + p.key).on('value', snap => {
                 let fresh = snap.val();
-                if (fresh && Object.keys(fresh).length > 0) {
-                    // Просто обновляем оперативную память (без сохранения в память телефона)
+                if (fresh) {
                     if (!state.cachedCatalogs) state.cachedCatalogs = {};
                     state.cachedCatalogs[p.key] = fresh;
                     
                     if (state.currentMode === p.mode) {
-                        if (p.mode === 'menu') {
-                            state.menuCatalog = Object.assign({}, fresh);
-                            if (typeof renderMenuApp === 'function') renderMenuApp();
-                        } else {
-                            if (typeof rebuildProductCatalog === 'function') rebuildProductCatalog(fresh);
-                            if (typeof renderProductList === 'function') renderProductList();
-                        }
+                        if (typeof rebuildProductCatalog === 'function') rebuildProductCatalog(fresh);
+                        if (typeof renderProductList === 'function') renderProductList();
                     }
                 }
             });
         });
+
+        // 2. ⚡ ЗАДЕРЖКА ДЛЯ МЕНЮ: Начинаем грузить тяжелое меню только через 4 секунды, 
+        // чтобы оно не "забивало интернет" и не мешало бариста открыть Закупку.
+        setTimeout(() => {
+            database.ref('catalogs/menu').on('value', snap => {
+                let fresh = snap.val();
+                if (fresh) {
+                    if (!state.cachedCatalogs) state.cachedCatalogs = {};
+                    state.cachedCatalogs['menu'] = fresh;
+                    
+                    if (state.currentMode === 'menu') {
+                        state.menuCatalog = Object.assign({}, fresh);
+                        if (typeof renderMenuApp === 'function') renderMenuApp();
+                    }
+                }
+            });
+        }, 4000);
     }
   
     // ==========================================
-    // СТАРТ ПРИЛОЖЕНИЯ (МГНОВЕННЫЙ ЗАПУСК БЕЗ ТОРМОЗОВ)
+    // СТАРТ ПРИЛОЖЕНИЯ
     // ==========================================
     window.onload = () => { 
       try { 
@@ -3287,13 +3301,12 @@ async function viewStopList() {
       
       restoreMpDraft();
       
-      // ⚡ МГНОВЕННО ПОКАЗЫВАЕМ ВЫБОР КОФЕЙНИ
+      // МГНОВЕННО ПОКАЗЫВАЕМ ВЫБОР КОФЕЙНИ
       showScreen('step-1', false);
       
-      // ⚡ ЛЕГКАЯ ФОНОВАЯ ЗАГРУЗКА БАЗ (Через 1 секунду после отрисовки экрана, чтобы не лагало)
+      // ⚡ Включаем магию реального времени через секунду (без лишних запросов)
       setTimeout(() => {
-          getCatalogs().catch(e => console.log(e));
-          startRealtimeUpdates(); // ⚡ Включаем магию реального времени
+          startRealtimeUpdates(); 
       }, 1000);
     };
   

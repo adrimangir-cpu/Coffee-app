@@ -3210,96 +3210,22 @@ async function viewStopList() {
         localStorage.setItem("draft_" + state.currentShop + "_" + state.currentMode, JSON.stringify({basket: state.userBasket, time: Date.now()})); 
     }
     
-    // ==========================================
-    // ПРОФЕССИОНАЛЬНЫЙ УЛЬТРА-КЭШ (ВМЕЩАЕТ ВСЕ ФОТОГРАФИИ)
-    // ==========================================
-    const IDB_NAME = "TeikuCoffeeDB_v3"; // ⚡ v3 - ЖЕСТКО СБРОСИТ КЭШ У ВСЕХ БАРИСТА
-    const IDB_STORE = "catalogsStore";
-
-    function initIndexedDB() {
-        return new Promise((resolve) => {
-            let request = indexedDB.open(IDB_NAME, 1);
-            request.onupgradeneeded = function(event) {
-                let db = event.target.result;
-                if (!db.objectStoreNames.contains(IDB_STORE)) {
-                    db.createObjectStore(IDB_STORE);
-                }
-            };
-            request.onsuccess = () => resolve(request.result);
-            request.onerror = () => resolve(null); // Если инкогнито, не крашим
-        });
-    }
-
-    async function saveToCache(name, data) {
+    async function getCatalogs() {
         try {
-            let db = await initIndexedDB();
-            if (db) {
-                let tx = db.transaction(IDB_STORE, "readwrite");
-                tx.objectStore(IDB_STORE).put(data, name);
-            }
-        } catch (e) { console.error("Ошибка сохранения кэша", e); }
-    }
-
-    async function loadFromCache(name) {
-        try {
-            let db = await initIndexedDB();
-            if (!db) return null;
-            return new Promise(resolve => {
-                let tx = db.transaction(IDB_STORE, "readonly");
-                let req = tx.objectStore(IDB_STORE).get(name);
-                req.onsuccess = () => resolve(req.result);
-                req.onerror = () => resolve(null);
-            });
-        } catch (e) { return null; }
-    }
-
-    async function getCatalog(name) {
-        if (!state.cachedCatalogs) state.cachedCatalogs = {};
-        
-        // 1. Пытаемся взять моментально из памяти телефона
-        let savedData = await loadFromCache(name);
-        
-        // 2. Тихий запрос за свежими данными
-        let fetchPromise = database.ref(`catalogs/${name}`).once("value").then(snap => {
-            let fresh = snap.val() || {};
-            
-            // ⚡ ГЛАВНАЯ ЗАЩИТА: Сохраняем в кэш ТОЛЬКО если данные реально пришли (не пустые!)
-            if (Object.keys(fresh).length > 0) {
-                state.cachedCatalogs[name] = fresh;
-                saveToCache(name, fresh); 
-                
-                // Если данные изменились - обновляем экран!
-                if (!savedData || JSON.stringify(savedData) !== JSON.stringify(fresh)) {
-                    if (state.currentMode === 'menu' && name === 'menu') {
-                        state.menuCatalog = Object.assign({}, fresh);
-                        if (typeof renderMenuApp === 'function') renderMenuApp();
-                    } else if (['order', 'new_shop', 'stoplist_fill', 'checklist'].includes(state.currentMode)) {
-                        let activePath = state.currentMode === 'checklist' ? 'checklist' : (state.currentMode === 'stoplist_fill' ? 'stoplist' : (state.currentMode === 'new_shop' ? 'newshop' : 'order'));
-                        if (name === activePath) {
-                            if (typeof rebuildProductCatalog === 'function') rebuildProductCatalog(fresh);
-                            if (typeof renderProductList === 'function') renderProductList();
-                        }
-                    }
-                }
-            }
-            return fresh;
-        }).catch(e => {});
-
-        // ВСЕГДА ОТДАЕМ КЭШ СРАЗУ. Никаких ожиданий интернета!
-        if (savedData && Object.keys(savedData).length > 0) {
-            state.cachedCatalogs[name] = savedData;
-            return savedData;
-        }
-        
-        // Если кэша еще нет, ждем базу, чтобы экран не был вечно белым
-        try {
-            return await fetchPromise;
-        } catch(err) {
-            return {};
+            // Берем свежайшие данные напрямую из Firebase
+            let snap = await database.ref("catalogs").once("value");
+            state.cachedCatalogs = snap.val() || {};
+            return state.cachedCatalogs;
+        } catch (e) {
+            console.error("Ошибка загрузки каталогов:", e);
+            return state.cachedCatalogs || {}; // Возвращаем то, что есть в памяти при ошибке
         }
     }
 // ==========================================
     // ⚡ LIVE-ОБНОВЛЕНИЕ ДЛЯ ТЕЛЕФОНА (МИНИ-АПП)
+    // ==========================================
+    // ==========================================
+    // ⚡ LIVE-ОБНОВЛЕНИЕ ДЛЯ ТЕЛЕФОНА 
     // ==========================================
     function startRealtimeUpdates() {
         const paths = [
@@ -3314,12 +3240,10 @@ async function viewStopList() {
             database.ref('catalogs/' + p.key).on('value', snap => {
                 let fresh = snap.val();
                 if (fresh && Object.keys(fresh).length > 0) {
-                    // 1. Обновляем тихий кэш телефона
+                    // Просто обновляем оперативную память (без сохранения в память телефона)
                     if (!state.cachedCatalogs) state.cachedCatalogs = {};
                     state.cachedCatalogs[p.key] = fresh;
-                    saveToCache(p.key, fresh); 
                     
-                    // 2. Если бариста прямо сейчас смотрит этот раздел - перерисовываем
                     if (state.currentMode === p.mode) {
                         if (p.mode === 'menu') {
                             state.menuCatalog = Object.assign({}, fresh);

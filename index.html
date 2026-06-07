@@ -1066,8 +1066,7 @@
     // ==========================================
     async function initMenuWorkflow() {
         triggerHaptic();
-        database.goOffline();
-        database.goOnline();
+        
         
         state.currentMode = 'menu';
         let execMode = 'menu'; // ЗАЩИТА
@@ -1456,8 +1455,7 @@
     function loadSettings() {
         // ⚡ ШОКЕР РАБОТАЕТ В ФОНЕ (ЧЕРЕЗ 10 мс), НЕ ТОРМОЗЯ ПРИЛОЖЕНИЕ
         setTimeout(() => {
-            database.goOffline();
-            database.goOnline();
+            
         }, 10);
 
         let saved = localStorage.getItem("teiku_settings");
@@ -1506,8 +1504,7 @@
     
     async function initWorkflow(mode) {
       triggerHaptic(); 
-      database.goOffline();
-      database.goOnline();
+      
 
       state.currentMode = mode; 
       let execMode = mode; // ⚡ ЗАЩИТА: Запоминаем, куда нажал бариста
@@ -2313,10 +2310,6 @@
     async function showMyLastOrder() {
         triggerHaptic();
         
-        // ⚡ «ШОКЕР» ДЛЯ ЗАВИСШЕГО ТЕЛЕГРАМА
-        database.goOffline();
-        database.goOnline();
-        
         showReportOverlay("Считаю суммарный заказ...");
         
         try {
@@ -2568,8 +2561,7 @@
 
 async function viewStopList() {
         triggerHaptic();
-        database.goOffline();
-        database.goOnline();
+      
 
         showReportOverlay("Загрузка актуального стоп-листа...");
         
@@ -2801,8 +2793,7 @@ async function viewStopList() {
 
  async function showLastOrder() {
         triggerHaptic();
-        database.goOffline();
-        database.goOnline();
+        
 
         showReportOverlay("Загрузка приемки...");
         
@@ -3201,132 +3192,76 @@ async function viewStopList() {
         localStorage.setItem("draft_" + state.currentShop + "_" + state.currentMode, JSON.stringify({basket: state.userBasket, time: Date.now()})); 
     }
     
-   // ==========================================
-    // УМНАЯ И СВЕРХБЫСТРАЯ ЗАГРУЗКА (СЕКУНДНЫЙ КЭШ)
+// ==========================================
+    // ⚡ УЛЬТРА-СКОРОСТНОЕ ЯДРО ДАННЫХ (Память телефона + Live)
     // ==========================================
     async function getCatalogs() {
-        if (!state.cachedCatalogs) state.cachedCatalogs = {};
-        
-        // 1. ⚡ Мгновенно достаем данные из памяти телефона (0.1 сек)
-        let localData = localStorage.getItem("teiku_light_cache");
-        if (localData) {
-            try {
-                let parsed = JSON.parse(localData);
-                state.cachedCatalogs = parsed;
-                return parsed; // Сразу отдаем бариста, чтобы не ждал!
-            } catch(e){}
-        }
-
-        // 2. Если это самый-самый первый запуск в жизни - качаем из сети легкие базы
-        let paths = ['order', 'stoplist', 'newshop'];
-        for (let p of paths) {
-            if (!state.cachedCatalogs[p]) {
-                try {
-                    let snap = await database.ref(`catalogs/${p}`).once("value");
-                    state.cachedCatalogs[p] = snap.val() || {};
-                } catch(e){}
-            }
-        }
-        
-        try { localStorage.setItem("teiku_light_cache", JSON.stringify(state.cachedCatalogs)); } catch(e){}
-        return state.cachedCatalogs;
+        return state.cachedCatalogs || {};
     }
 
     async function getCatalog(name) {
-        if (state.cachedCatalogs && state.cachedCatalogs[name] && Object.keys(state.cachedCatalogs[name]).length > 0) {
-            return state.cachedCatalogs[name];
-        }
-        try {
-            let snap = await database.ref(`catalogs/${name}`).once("value");
-            if (!state.cachedCatalogs) state.cachedCatalogs = {};
-            state.cachedCatalogs[name] = snap.val() || {};
-            return state.cachedCatalogs[name];
-        } catch (e) { return {}; }
+        // Мгновенная отдача данных из памяти (без ожидания загрузки)
+        return (state.cachedCatalogs && state.cachedCatalogs[name]) ? state.cachedCatalogs[name] : {};
     }
 
-    // ==========================================
-    // ⚡ LIVE-ОБНОВЛЕНИЕ ДЛЯ ТЕЛЕФОНА 
-    // ==========================================
     function startRealtimeUpdates() {
-        const paths = [
-            { key: 'order', mode: 'order' },
-            { key: 'newshop', mode: 'new_shop' },
-            { key: 'stoplist', mode: 'stoplist_fill' },
-            { key: 'checklist', mode: 'checklist' }
-        ];
-
-        // Следим за базами и бесшумно перерисовываем
+        const paths = ['order', 'newshop', 'stoplist', 'checklist', 'menu'];
+        
         paths.forEach(p => {
-            database.ref('catalogs/' + p.key).on('value', snap => {
+            database.ref('catalogs/' + p).on('value', snap => {
                 let fresh = snap.val();
                 if (fresh) {
+                    // 1. Сохраняем в оперативную память
                     if (!state.cachedCatalogs) state.cachedCatalogs = {};
-                    state.cachedCatalogs[p.key] = fresh;
+                    state.cachedCatalogs[p] = fresh;
                     
-                    // ⚡ Обновляем тихий кэш телефона
+                    // 2. Тихо сохраняем в телефон (чтобы в следующий раз открылось за 0.1 сек)
                     try { localStorage.setItem("teiku_light_cache", JSON.stringify(state.cachedCatalogs)); } catch(e){}
                     
-                    if (state.currentMode === p.mode) {
-                        if (typeof rebuildProductCatalog === 'function') rebuildProductCatalog(fresh);
-                        if (typeof renderProductList === 'function') renderProductList();
+                    // 3. Бесшумно перерисовываем экран, если бариста сейчас на нем
+                    let modeCheck = state.currentMode;
+                    if (p === 'newshop') modeCheck = 'new_shop';
+                    if (p === 'stoplist') modeCheck = 'stoplist_fill';
+                    
+                    if (state.currentMode === modeCheck) {
+                        if (p === 'menu') {
+                            state.menuCatalog = Object.assign({}, fresh);
+                            if (typeof renderMenuApp === 'function') renderMenuApp();
+                        } else {
+                            if (typeof rebuildProductCatalog === 'function') rebuildProductCatalog(fresh);
+                            if (typeof renderProductList === 'function') renderProductList();
+                        }
                     }
                 }
             });
         });
-
-        // Отложенная загрузка тяжелого меню (через 4 секунды)
-        setTimeout(() => {
-            database.ref('catalogs/menu').on('value', snap => {
-                let fresh = snap.val();
-                if (fresh) {
-                    if (!state.cachedCatalogs) state.cachedCatalogs = {};
-                    state.cachedCatalogs['menu'] = fresh;
-                    
-                    try { localStorage.setItem("teiku_light_cache", JSON.stringify(state.cachedCatalogs)); } catch(e){}
-                    
-                    if (state.currentMode === 'menu') {
-                        state.menuCatalog = Object.assign({}, fresh);
-                        if (typeof renderMenuApp === 'function') renderMenuApp();
-                    }
-                }
-            });
-        }, 4000);
     }
-  
-    // ==========================================
-    // СТАРТ ПРИЛОЖЕНИЯ
-    // ==========================================
+
     window.onload = () => { 
-      try { 
-          Telegram.WebApp.ready(); 
-          Telegram.WebApp.expand(); 
-          if (Telegram.WebApp.initDataUnsafe && Telegram.WebApp.initDataUnsafe.user) {
-              globalTgUserId = String(Telegram.WebApp.initDataUnsafe.user.id);
-          } else {
-              globalTgUserId = "708179577"; 
-          }
-      } catch(e){
-          globalTgUserId = "708179577";
-      }
-      
-      state.cachedCatalogs = {};
-      state.globalOrders = [];
-      state.globalMissing = [];
-      
-      restoreMpDraft();
-      
-      // МГНОВЕННО ПОКАЗЫВАЕМ ВЫБОР КОФЕЙНИ
-      showScreen('step-1', false);
-      
-      // ⚡ Включаем магию реального времени через секунду (без лишних запросов)
-      setTimeout(() => {
-          startRealtimeUpdates(); 
-      }, 1000);
+        try { 
+            Telegram.WebApp.ready(); 
+            Telegram.WebApp.expand(); 
+            globalTgUserId = (Telegram.WebApp.initDataUnsafe && Telegram.WebApp.initDataUnsafe.user) ? String(Telegram.WebApp.initDataUnsafe.user.id) : "708179577";
+        } catch(e) { globalTgUserId = "708179577"; }
+        
+        // ⚡ ДОСТАЕМ ВСЕ ДАННЫЕ МГНОВЕННО ИЗ ПАМЯТИ ПРИ ЗАПУСКЕ
+        let localData = localStorage.getItem("teiku_light_cache");
+        if (localData) {
+            try { state.cachedCatalogs = JSON.parse(localData); } catch(e){ state.cachedCatalogs = {}; }
+        } else {
+            state.cachedCatalogs = {};
+        }
+        
+        state.globalOrders = [];
+        state.globalMissing = [];
+        restoreMpDraft();
+        
+        showScreen('step-1', false);
+        
+        // Запускаем фоновую синхронизацию, которая не тормозит экран
+        startRealtimeUpdates(); 
     };
-  
-    // ==========================================
-    // ВОССТАНОВЛЕННЫЕ ФУНКЦИИ (Черновики и Авто-стоплист)
-    // ==========================================
+
     function restoreFromDraft() { 
         let d = localStorage.getItem("draft_" + state.currentShop + "_" + state.currentMode); 
         if(d) { 

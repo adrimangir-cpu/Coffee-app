@@ -3193,19 +3193,52 @@ async function viewStopList() {
     }
     
 // ==========================================
-    // ⚡ УЛЬТРА-СКОРОСТНОЕ ЯДРО ДАННЫХ (Память телефона + Live)
+    // ⚡ ЧИСТОЕ И СВЕРХБЫСТРОЕ ЯДРО ЗАГРУЗКИ ПО СЕГМЕНТАМ (БЕЗ ДЛЯ ТЯЖЕЛОГО КОРНЯ)
     // ==========================================
     async function getCatalogs() {
-        return state.cachedCatalogs || {};
+        if (!state.cachedCatalogs) state.cachedCatalogs = {};
+        
+        // Вместо скачивания всего корня с фото, качаем только легкие рабочие ветки по отдельности
+        let lightPaths = ['order', 'newshop', 'stoplist', 'checklist'];
+        for (let p of lightPaths) {
+            if (!state.cachedCatalogs[p] || Object.keys(state.cachedCatalogs[p]).length === 0) {
+                try {
+                    let snap = await database.ref(`catalogs/${p}`).once("value");
+                    state.cachedCatalogs[p] = snap.val() || {};
+                } catch(e){
+                    console.error(`Ошибка предзагрузки ветки ${p}:`, e);
+                }
+            }
+        }
+        return state.cachedCatalogs;
     }
 
     async function getCatalog(name) {
-        // Мгновенная отдача данных из памяти (без ожидания загрузки)
-        return (state.cachedCatalogs && state.cachedCatalogs[name]) ? state.cachedCatalogs[name] : {};
+        if (!state.cachedCatalogs) state.cachedCatalogs = {};
+        
+        // 1. Если данные уже есть в памяти устройства — отдаем мгновенно
+        if (state.cachedCatalogs[name] && Object.keys(state.cachedCatalogs[name]).length > 0) {
+            return state.cachedCatalogs[name];
+        }
+        
+        // 2. Если в памяти пусто — делаем изолированный легкий запрос только по этой ветке
+        try {
+            let snap = await database.ref(`catalogs/${name}`).once("value");
+            let data = snap.val() || {};
+            state.cachedCatalogs[name] = data;
+            
+            // Сохраняем кусочек в кэш телефона
+            try { localStorage.setItem("teiku_light_cache", JSON.stringify(state.cachedCatalogs)); } catch(e){}
+            
+            return data;
+        } catch (e) {
+            console.error(`Ошибка изолированной загрузки каталога ${name}:`, e);
+            return {};
+        }
     }
-
-   // ==========================================
-    // ⚡ LIVE-ОБНОВЛЕНИЕ ДЛЯ ТЕЛЕФОНА 
+      
+    // ==========================================
+    // ⚡ СИНХРОННОЕ LIVE-ОБНОВЛЕНИЕ ДЛЯ РАБОЧИХ ЭКРАНОВ
     // ==========================================
     function startRealtimeUpdates() {
         const paths = ['order', 'newshop', 'stoplist', 'checklist', 'menu'];
@@ -3214,19 +3247,18 @@ async function viewStopList() {
             database.ref('catalogs/' + p).on('value', snap => {
                 let fresh = snap.val();
                 if (fresh) {
-                    // 1. Сохраняем в оперативную память
                     if (!state.cachedCatalogs) state.cachedCatalogs = {};
                     state.cachedCatalogs[p] = fresh;
                     
-                    // 2. Тихо сохраняем в телефон (чтобы в следующий раз открылось за 0.1 сек)
+                    // Обновляем локальный кэш устройства
                     try { localStorage.setItem("teiku_light_cache", JSON.stringify(state.cachedCatalogs)); } catch(e){}
                     
-                    // 3. ⚡ ИСПРАВЛЕНИЕ: Правильно сопоставляем скачанную базу с открытым экраном
+                    // Сопоставляем имя ветки с текущим режимом экрана
                     let targetMode = p; 
                     if (p === 'newshop') targetMode = 'new_shop';
                     if (p === 'stoplist') targetMode = 'stoplist_fill';
                     
-                    // Если бариста прямо сейчас смотрит ЭТУ ЖЕ вкладку - бесшумно перерисовываем
+                    // Если бариста прямо сейчас находится на измененной вкладке — мгновенно перерисовываем
                     if (state.currentMode === targetMode) {
                         if (p === 'menu') {
                             state.menuCatalog = Object.assign({}, fresh);
@@ -3240,30 +3272,38 @@ async function viewStopList() {
             });
         });
     }
-
+  
+    // ==========================================
+    // СТАРТ ПРИЛОЖЕНИЯ (МГНОВЕННЫЙ ЗАПУСК)
+    // ==========================================
     window.onload = () => { 
-        try { 
-            Telegram.WebApp.ready(); 
-            Telegram.WebApp.expand(); 
-            globalTgUserId = (Telegram.WebApp.initDataUnsafe && Telegram.WebApp.initDataUnsafe.user) ? String(Telegram.WebApp.initDataUnsafe.user.id) : "708179577";
-        } catch(e) { globalTgUserId = "708179577"; }
-        
-        // ⚡ ДОСТАЕМ ВСЕ ДАННЫЕ МГНОВЕННО ИЗ ПАМЯТИ ПРИ ЗАПУСКЕ
-        let localData = localStorage.getItem("teiku_light_cache");
-        if (localData) {
-            try { state.cachedCatalogs = JSON.parse(localData); } catch(e){ state.cachedCatalogs = {}; }
-        } else {
-            state.cachedCatalogs = {};
-        }
-        
-        state.globalOrders = [];
-        state.globalMissing = [];
-        restoreMpDraft();
-        
-        showScreen('step-1', false);
-        
-        // Запускаем фоновую синхронизацию, которая не тормозит экран
-        startRealtimeUpdates(); 
+      try { 
+          Telegram.WebApp.ready(); 
+          Telegram.WebApp.expand(); 
+          globalTgUserId = (Telegram.WebApp.initDataUnsafe && Telegram.WebApp.initDataUnsafe.user) ? String(Telegram.WebApp.initDataUnsafe.user.id) : "708179577";
+      } catch(e){
+          globalTgUserId = "708179577";
+      }
+      
+      // Мгновенно восстанавливаем структуру из памяти телефона (0.01 сек)
+      let localData = localStorage.getItem("teiku_light_cache");
+      if (localData) {
+          try { state.cachedCatalogs = JSON.parse(localData); } catch(e){ state.cachedCatalogs = {}; }
+      } else {
+          state.cachedCatalogs = {};
+      }
+      
+      state.globalOrders = [];
+      state.globalMissing = [];
+      restoreMpDraft();
+      
+      // Сразу открываем главный экран выбора кофейни
+      showScreen('step-1', false);
+      
+      // Запускаем фоновое слежение Firebase (не блокирует интерфейс)
+      setTimeout(() => {
+          startRealtimeUpdates(); 
+      }, 1000);
     };
 
     function restoreFromDraft() { 

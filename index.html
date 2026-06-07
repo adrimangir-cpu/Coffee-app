@@ -3238,39 +3238,58 @@ async function viewStopList() {
     }
       
     // ==========================================
-    // ⚡ СИНХРОННОЕ LIVE-ОБНОВЛЕНИЕ ДЛЯ РАБОЧИХ ЭКРАНОВ
+    // ⚡ УМНОЕ LIVE-ОБНОВЛЕНИЕ С РАЗДЕЛЕНИЕМ ТРАФИКА
     // ==========================================
     function startRealtimeUpdates() {
-        const paths = ['order', 'newshop', 'stoplist', 'checklist', 'menu'];
+        // 1. 📦 ЛЕГКИЕ РАБОЧИЕ ВТКИ (Закупка, стоп-листы, чек-листы)
+        // Они весят копейки и должны работать со скоростью пули. Включаем их ПРИ СТАРТЕ!
+        const paths = ['order', 'newshop', 'stoplist', 'checklist'];
         
         paths.forEach(p => {
             database.ref('catalogs/' + p).on('value', snap => {
                 let fresh = snap.val();
                 if (fresh) {
+                    // Сохраняем в оперативную память
                     if (!state.cachedCatalogs) state.cachedCatalogs = {};
                     state.cachedCatalogs[p] = fresh;
                     
-                    // Обновляем локальный кэш устройства
+                    // Тихо кэшируем в память телефона
                     try { localStorage.setItem("teiku_light_cache", JSON.stringify(state.cachedCatalogs)); } catch(e){}
                     
-                    // Сопоставляем имя ветки с текущим режимом экрана
+                    // Корректируем имена режимов
                     let targetMode = p; 
                     if (p === 'newshop') targetMode = 'new_shop';
                     if (p === 'stoplist') targetMode = 'stoplist_fill';
                     
-                    // Если бариста прямо сейчас находится на измененной вкладке — мгновенно перерисовываем
+                    // Если бариста прямо сейчас открыл эту вкладку — мгновенно обновляем экран
                     if (state.currentMode === targetMode) {
-                        if (p === 'menu') {
-                            state.menuCatalog = Object.assign({}, fresh);
-                            if (typeof renderMenuApp === 'function') renderMenuApp();
-                        } else {
-                            if (typeof rebuildProductCatalog === 'function') rebuildProductCatalog(fresh);
-                            if (typeof renderProductList === 'function') renderProductList();
-                        }
+                        if (typeof rebuildProductCatalog === 'function') rebuildProductCatalog(fresh);
+                        if (typeof renderProductList === 'function') renderProductList();
                     }
                 }
             });
         });
+
+        // 2. 📸 ТЯЖЕЛОЕ МЕНЮ С ФОТОГРАФИЯМИ (Base64)
+        // Полностью изолируем его. Запускаем скачивание в фоне С ЗАДЕРЖКОЙ В 7 СЕКУНД.
+        // За это время бариста спокойно зайдет в закупку, а меню докачается сзади незаметно для него.
+        setTimeout(() => {
+            database.ref('catalogs/menu').on('value', snap => {
+                let fresh = snap.val();
+                if (fresh) {
+                    if (!state.cachedCatalogs) state.cachedCatalogs = {};
+                    state.cachedCatalogs['menu'] = fresh;
+                    
+                    try { localStorage.setItem("teiku_light_cache", JSON.stringify(state.cachedCatalogs)); } catch(e){}
+                    
+                    // Если бариста прямо сейчас зашел в меню — перерисовываем
+                    if (state.currentMode === 'menu') {
+                        state.menuCatalog = Object.assign({}, fresh);
+                        if (typeof renderMenuApp === 'function') renderMenuApp();
+                    }
+                }
+            });
+        }, 7000); // 7 секунд искусственной задержки для разгрузки сети
     }
   
     // ==========================================

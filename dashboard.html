@@ -4345,6 +4345,28 @@ function renderGraphsTab() {
         currentMenu[id].blocks[bIdx][iIdx][field] = val;
     }
 
+   async function saveMenu(btn) {
+        let origText = btn.innerHTML;
+        btn.innerHTML = "⏳ СОХРАНЕНИЕ МЕНЮ...";
+        document.body.style.pointerEvents = "auto";
+        
+        try {
+            // ⚡ ФИЛЬТР МУСОРА ДЛЯ МЕНЮ
+            let safeMenu = JSON.parse(JSON.stringify(currentMenu));
+            
+            await db.ref('catalogs/menu').set(safeMenu);
+
+            btn.innerHTML = "✅ СОХРАНЕНО!";
+            setTimeout(() => {
+                if(btn) btn.innerHTML = origText;
+            }, 1500);
+        } catch(e) {
+            if(btn) btn.innerHTML = origText;
+            alert("❌ Ошибка сохранения меню: " + e.message);
+        } finally {
+            document.body.style.pointerEvents = "auto";
+        }
+    }
     
     async function exportMenuToExcel() {
         showReportOverlay("Генерация Excel...");
@@ -4720,39 +4742,28 @@ async function exportGraphsToExcel() {
 
    async function saveCatalog(btn) {
         let origText = btn.innerHTML;
-        
         btn.innerHTML = "⏳ СОХРАНЕНИЕ...";
+        
+        // 1. Снимаем любые возможные блокировки интерфейса (на всякий случай)
+        document.body.style.pointerEvents = "auto";
+        
         try { 
-            // Отправляем весь текущий справочник разом
-            await db.ref(currentPath).set(currentCatalog);
+            // 2. ⚡ ФИЛЬТР МУСОРА: Этот трюк мгновенно удаляет все "undefined" и битые массивы, 
+            // из-за которых Firebase зависает намертво.
+            let safeData = JSON.parse(JSON.stringify(currentCatalog));
+            
+            await db.ref(currentPath).set(safeData);
 
             btn.innerHTML = "✅ СОХРАНЕНО!";
             setTimeout(() => {
                 if(btn) btn.innerHTML = origText;
-                // ❌ Удалили loadTab, чтобы интерфейс больше не дергался и не сворачивался
             }, 1500);
         } catch(e) { 
             if(btn) btn.innerHTML = origText;
             alert("❌ Ошибка сохранения каталога: " + e.message); 
-        }
-    }
-
-    async function saveMenu(btn) {
-        let origText = btn.innerHTML;
-        
-        btn.innerHTML = "⏳ СОХРАНЕНИЕ МЕНЮ...";
-        try {
-            // Отправляем всё меню целиком
-            await db.ref('catalogs/menu').set(currentMenu);
-
-            btn.innerHTML = "✅ СОХРАНЕНО!";
-            setTimeout(() => {
-                if(btn) btn.innerHTML = origText;
-                // ❌ Удалили loadTab, чтобы папки оставались открытыми
-            }, 1500);
-        } catch(e) {
-            if(btn) btn.innerHTML = origText;
-            alert("❌ Ошибка сохранения меню: " + e.message);
+        } finally {
+            // Гарантированно возвращаем кликабельность странице при любом исходе
+            document.body.style.pointerEvents = "auto";
         }
     }
 

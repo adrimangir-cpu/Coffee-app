@@ -1070,12 +1070,21 @@
         document.getElementById('title').innerText = "☕ Меню и Рецепты";
         showScreen('step-menu');
         
-        // ⚡ МГНОВЕННЫЙ ВЫВОД ТЕКСТА МЕНЮ (0.1 сек)
+        // ⚡ Если меню еще не загрузилось в фоне — Форсируем мгновенную загрузку!
         if (state.cachedCatalogs && state.cachedCatalogs['menu'] && Object.keys(state.cachedCatalogs['menu']).length > 0) {
             state.menuCatalog = Object.assign({}, state.cachedCatalogs['menu']);
             renderMenuApp();
         } else {
-            document.getElementById('menu-container').innerHTML = `<div class="report-card"><div class="loading-pulse">⏳ Подготовка техкарт...</div></div>`;
+            document.getElementById('menu-container').innerHTML = `<div class="report-card"><div class="loading-pulse">⏳ Загрузка техкарт (с фото)...</div></div>`;
+            try {
+                let snap = await database.ref('catalogs/menu').once('value');
+                if (!state.cachedCatalogs) state.cachedCatalogs = {};
+                state.cachedCatalogs['menu'] = snap.val() || {};
+                if (state.currentMode === 'menu') {
+                    state.menuCatalog = Object.assign({}, state.cachedCatalogs['menu']);
+                    renderMenuApp();
+                }
+            } catch(e) {}
         }
 
         // Подкачка актуального стоп-листа для разметки меню в фоне
@@ -3183,11 +3192,11 @@ async function viewStopList() {
         }
     }
       
+    
     // ==========================================
-    // ⚡ УМНОЕ LIVE-ОБНОВЛЕНИЕ С РАЗДЕЛЕНИЕМ ТРАФИКА
+    // ⚡ УМНОЕ LIVE-ОБНОВЛЕНИЕ С ЗАЩИТОЙ ПАМЯТИ
     // ==========================================
     function startRealtimeUpdates() {
-        // Качаем строго текстовые легкие рабочие справочники за 0.1 секунды
         const paths = ['order', 'newshop', 'stoplist', 'checklist'];
         
         paths.forEach(p => {
@@ -3197,7 +3206,14 @@ async function viewStopList() {
                     if (!state.cachedCatalogs) state.cachedCatalogs = {};
                     state.cachedCatalogs[p] = fresh;
                     
-                    try { localStorage.setItem("teiku_light_cache", JSON.stringify(state.cachedCatalogs)); } catch(e){}
+                    // ⚡ ГЛАВНЫЙ ФИКС: Сохраняем ТОЛЬКО легкий текст. Это весит пару килобайт и НИКОГДА не превысит лимит телефона!
+                    let safeCache = {
+                        order: state.cachedCatalogs['order'] || {},
+                        newshop: state.cachedCatalogs['newshop'] || {},
+                        stoplist: state.cachedCatalogs['stoplist'] || {},
+                        checklist: state.cachedCatalogs['checklist'] || {}
+                    };
+                    try { localStorage.setItem("teiku_light_cache", JSON.stringify(safeCache)); } catch(e){}
                     
                     let targetMode = p; 
                     if (p === 'newshop') targetMode = 'new_shop';
@@ -3211,9 +3227,7 @@ async function viewStopList() {
             });
         });
 
-        // ⚡ ЖЕСТКАЯ ИЗОЛЯЦИЯ МЕНЮ С Base64 ФОТОГРАФИЯМИ
-        // Переносим автоматический запрос меню на 15 секунд в глубокий фон. 
-        // Если бариста просто делает закупку, тяжелое меню вообще не будет забивать интернет-канал!
+        // Тяжелое меню качается в фоне, но В КЭШ ТЕЛЕФОНА НЕ ИДЕТ
         setTimeout(() => {
             database.ref('catalogs/menu').on('value', snap => {
                 let fresh = snap.val();
@@ -3221,15 +3235,13 @@ async function viewStopList() {
                     if (!state.cachedCatalogs) state.cachedCatalogs = {};
                     state.cachedCatalogs['menu'] = fresh;
                     
-                    try { localStorage.setItem("teiku_light_cache", JSON.stringify(state.cachedCatalogs)); } catch(e){}
-                    
                     if (state.currentMode === 'menu') {
                         state.menuCatalog = Object.assign({}, fresh);
                         if (typeof renderMenuApp === 'function') renderMenuApp();
                     }
                 }
             });
-        }, 5000); // 5 секунд задержки, чтобы полностью разгрузить кассу
+        }, 5000);
     }
   
     // ==========================================

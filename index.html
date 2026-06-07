@@ -1066,69 +1066,39 @@
     // ==========================================
     async function initMenuWorkflow() {
         triggerHaptic();
-        
-        
         state.currentMode = 'menu';
-        let execMode = 'menu'; // ЗАЩИТА
-        
-        document.getElementById('title').innerText = "☕ Меню и Тех карты";
+        document.getElementById('title').innerText = "☕ Меню и Рецепты";
         showScreen('step-menu');
-        document.getElementById('menu-container').innerHTML = `<div class="report-card"><div class="loading-pulse">⏳ Подготовка...</div></div>`;
+        
+        // ⚡ МГНОВЕННЫЙ ВЫВОД ТЕКСТА МЕНЮ (0.1 сек)
+        if (state.cachedCatalogs && state.cachedCatalogs['menu'] && Object.keys(state.cachedCatalogs['menu']).length > 0) {
+            state.menuCatalog = Object.assign({}, state.cachedCatalogs['menu']);
+            renderMenuApp();
+        } else {
+            document.getElementById('menu-container').innerHTML = `<div class="report-card"><div class="loading-pulse">⏳ Подготовка техкарт...</div></div>`;
+        }
 
-        try {
-            let menuCat = await getCatalog('menu');
-            let orderCat = await getCatalog('order');
-            let checkCat = await getCatalog('checklist');
-            
-            if (state.currentMode !== execMode) return; // ЗАЩИТА
-            
-            state.menuCatalog = Object.assign({}, menuCat || {});
-            state.productCatalog = { ...(orderCat || {}), ...(checkCat || {}) };
-            
-            let globalPhotoDict = {};
-            Object.values(state.productCatalog).forEach(c => {
-                if (c && c.name && c.photo && c.photo.trim() !== "") {
-                    globalPhotoDict[cleanName(c.name)] = c.photo;
-                }
-            });
-            Object.keys(state.productCatalog).forEach(k => {
-                let item = state.productCatalog[k];
-                if (item && item.name && (!item.photo || item.photo.trim() === "")) {
-                    let sharedPhoto = globalPhotoDict[cleanName(item.name)];
-                    if (sharedPhoto) item.photo = sharedPhoto;
-                }
-            });
+        // Подкачка актуального стоп-листа для разметки меню в фоне
+        let orderCat = state.cachedCatalogs['order'] || {};
+        let checkCat = state.cachedCatalogs['checklist'] || {};
+        state.productCatalog = { ...orderCat, ...checkCat };
+        
+        database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(20).once("value")
+        .then(ordersSnap => {
+            if (state.currentMode !== 'menu') return;
+            let shopOrders = [];
+            ordersSnap.forEach(c => { let val = c.val(); if(val && val.mode === 'stoplist_fill') shopOrders.push(val); });
+            shopOrders.sort((a,b) => b.timestamp - a.timestamp);
             
             state.outOfStockItems = {};
-            renderMenuApp();
-
-            database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(50).once("value")
-            .then(ordersSnap => {
-                if (state.currentMode !== execMode) return; // ЗАЩИТА
-                
-                let shopOrders = [];
-                ordersSnap.forEach(c => {
-                    let val = c.val();
-                    if(val && val.mode === 'stoplist_fill') shopOrders.push(val);
+            if (shopOrders.length > 0) {
+                let itemsArr = Array.isArray(shopOrders[0].items) ? shopOrders[0].items : Object.values(shopOrders[0].items || {});
+                itemsArr.forEach(i => {
+                    if (i && i.name && i.qty === 'Закончилось') state.outOfStockItems[cleanName(i.name)] = shopOrders[0].timestamp;
                 });
-                shopOrders.sort((a,b) => b.timestamp - a.timestamp);
-                
-                if (shopOrders.length > 0) {
-                    let latestStoplist = shopOrders[0];
-                    let itemsArr = Array.isArray(latestStoplist.items) ? latestStoplist.items : Object.values(latestStoplist.items || {});
-                    itemsArr.forEach(i => {
-                        if (i && i.name && i.qty === 'Закончилось') {
-                            state.outOfStockItems[cleanName(i.name)] = latestStoplist.timestamp;
-                        }
-                    });
-                    
-                    renderMenuApp();
-                }
-            }).catch(e => console.log(e));
-            
-        } catch (e) {
-            document.getElementById('menu-container').innerHTML = `<div class="report-card"><div style="color:red; font-weight:bold; text-align:center;">Ошибка: ${e.message}</div></div>`;
-        }
+            }
+            renderMenuApp(); // Бесшумно размечаем стоп-ингредиенты
+        }).catch(e => console.log(e));
     }
     
     function renderMenuApp() {
@@ -1504,10 +1474,8 @@
     
     async function initWorkflow(mode) {
       triggerHaptic(); 
-      
-
       state.currentMode = mode; 
-      let execMode = mode; // ⚡ ЗАЩИТА: Запоминаем, куда нажал бариста
+      let execMode = mode; 
       
       if (mode === 'order') document.getElementById('title').innerText = "📦 Закупка";
       else if (mode === 'new_shop') document.getElementById('title').innerText = "🏗 Закупка (Новая)";
@@ -1530,116 +1498,97 @@
         mainBtn.style.display = 'none'; cartFab.style.display = 'flex'; 
       }
       
-      document.getElementById('dynamic-list-container').innerHTML = `<div class="report-card"><div class="loading-pulse">⏳ Подготовка...</div></div>`;
+      let pathKey = mode === 'checklist' ? 'checklist' : (mode === 'stoplist_fill' ? 'stoplist' : (mode === 'new_shop' ? 'newshop' : 'order'));
       
-      try {
-          loadSettings(); // Вызывается моментально
-          let pathKey = mode === 'checklist' ? 'checklist' : (mode === 'stoplist_fill' ? 'stoplist' : (mode === 'new_shop' ? 'newshop' : 'order'));
-          
-          let sourceCatalog = await getCatalog(pathKey); 
-          
-          // ⚡ ЗАЩИТА ОТ СМЕШИВАНИЯ: Если бариста уже ушел с этого экрана, прерываем процесс!
-          if (state.currentMode !== execMode) return; 
-
-          rebuildProductCatalog(sourceCatalog);
+      // ⚡ ШАГ 1: МГНОВЕННЫЙ ОТРЕНДЕР ТЕКСТА ИЗ КЭША ТЕЛЕФОНА (0.1 сек)
+      if (state.cachedCatalogs && state.cachedCatalogs[pathKey] && Object.keys(state.cachedCatalogs[pathKey]).length > 0) {
+          rebuildProductCatalog(state.cachedCatalogs[pathKey]);
           restoreFromDraft();
           renderProductList(); 
+      } else {
+          document.getElementById('dynamic-list-container').innerHTML = `<div class="report-card"><div class="loading-pulse">⏳ Загрузка товаров...</div></div>`;
+      }
+      
+      // ШАГ 2: СКАЧИВАНИЕ ОБНОВЛЕНИЙ И СТАТУСОВ СЕТИ СТРОГО В ФОНЕ
+      loadSettings();
+      
+      if (mode === 'order' || mode === 'new_shop') {
+          Promise.all([
+              database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(40).once("value"),
+              database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value")
+          ]).then(([ordersSnap, missSnap]) => {
+              if (state.currentMode !== execMode) return; 
+              
+              let shopOrders = [];
+              ordersSnap.forEach(c => { let val = c.val(); if(val) shopOrders.push(val); });
 
-          // ФОНОВАЯ ПРОВЕРКА СЕТИ (Недовозы и Корзины)
-          if (mode === 'order' || mode === 'new_shop') {
-              Promise.all([
-                  database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(100).once("value"),
-                  database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value")
-              ]).then(([ordersSnap, missSnap]) => {
-                  if (state.currentMode !== execMode) return; // ⚡ ЗАЩИТА ВТОРОГО УРОВНЯ
-                  
-                  let shopOrders = [];
-                  ordersSnap.forEach(c => { let val = c.val(); if(val && typeof val === 'object') shopOrders.push(val); });
+              let transitItems = new Set();
+              let pendingItems = new Set();
+              let hasCanceledMissings = false;
 
-                  let transitItems = new Set();
-                  let pendingItems = new Set();
-                  let hasCanceledMissings = false;
-
-                  missSnap.forEach(c => {
-                      let m = c.val();
-                      if (!m || !m.name) return;
-                      let clean = cleanName(m.name);
-                      if (m.status === 'transit' || m.status === 'pending') {
-                          transitItems.add(clean);
-                      }
-                      if (m.status === 'canceled' && !m.added_to_basket) {
-                          let qtyNum = parseFloat(m.qty) || 0;
-                          state.userBasket[m.name] = (state.userBasket[m.name] || 0) + qtyNum;
-                          let foundItem = Object.values(state.productCatalog).find(catItem => catItem && catItem.name === m.name);
-                          if(!state.userBasket["_catinfo"]) state.userBasket["_catinfo"] = {};
-                          state.userBasket["_catinfo"][m.name] = foundItem ? foundItem.cat : "Прочее";
-                          database.ref("missing_items/" + c.key).update({added_to_basket: true}); 
-                          hasCanceledMissings = true;
-                      }
-                  });
-
-                  if (hasCanceledMissings) showPopupError("Внимание", "⚠️ Отмененные администратором недовозы возвращены в вашу корзину.");
-
-                  shopOrders.forEach(o => {
-                      if (o.mode === 'order' || o.mode === 'new_shop') {
-                          if (o.ordered === true) return; 
-
-                          let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
-                          itemsArr.forEach(i => {
-                              if (i && i.name && i.name !== "НЕТ ЗАКАЗА") {
-                                  let isError = i.status === 'error' || i.bot_error === true;
-                                  let actuallyPlaced = i.status === 'ordered'; 
-                                  if (!isError && !actuallyPlaced) {
-                                      pendingItems.add(cleanName(i.name));
-                                  }
-                              }
-                          });
-                      }
-                  });
-
-                  for (let key in state.userBasket) {
-                      if (key === "_catinfo") continue;
-                      let cleanKey = cleanName(key); 
-                      if (transitItems.has(cleanKey) || pendingItems.has(cleanKey)) {
-                          delete state.userBasket[key];
-                          if (state.userBasket["_catinfo"]) delete state.userBasket["_catinfo"][key];
-                      }
+              missSnap.forEach(c => {
+                  let m = c.val(); if (!m || !m.name) return;
+                  let clean = cleanName(m.name);
+                  if (m.status === 'transit' || m.status === 'pending') transitItems.add(clean);
+                  if (m.status === 'canceled' && !m.added_to_basket) {
+                      let qtyNum = parseFloat(m.qty) || 0;
+                      state.userBasket[m.name] = (state.userBasket[m.name] || 0) + qtyNum;
+                      let foundItem = Object.values(state.productCatalog).find(catItem => catItem && catItem.name === m.name);
+                      if(!state.userBasket["_catinfo"]) state.userBasket["_catinfo"] = {};
+                      state.userBasket["_catinfo"][m.name] = foundItem ? foundItem.cat : "Прочее";
+                      database.ref("missing_items/" + c.key).update({added_to_basket: true}); 
+                      hasCanceledMissings = true;
                   }
+              });
 
-                  let latestStoplist = shopOrders.slice().reverse().find(o => o.mode === 'stoplist_fill');
-                  if (latestStoplist && latestStoplist.items) {
-                      let itemsArr = Array.isArray(latestStoplist.items) ? latestStoplist.items : Object.values(latestStoplist.items);
+              if (hasCanceledMissings) showPopupError("Внимание", "⚠️ Отмененные недовозы возвращены в корзину.");
+
+              shopOrders.forEach(o => {
+                  if (o.mode === 'order' || o.mode === 'new_shop') {
+                      if (o.ordered === true) return; 
+                      let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
                       itemsArr.forEach(i => {
-                          if (i && i.name && i.qty === 'Закончилось') {
-                              let cleanStopName = cleanName(i.name); 
-                              let catItem = Object.values(state.productCatalog).find(c => c && cleanName(c.name) === cleanStopName);
-
-                              if (catItem) {
-                                  if (!transitItems.has(cleanStopName) && !pendingItems.has(cleanStopName)) {
-                                      let exactName = catItem.name;
-                                      if (state.userBasket[exactName] === undefined) {
-                                          state.userBasket[exactName] = 1;
-                                          if (!state.userBasket["_catinfo"]) state.userBasket["_catinfo"] = {};
-                                          state.userBasket["_catinfo"][exactName] = catItem.cat || "Прочее";
-                                      }
-                                  }
+                          if (i && i.name && i.name !== "НЕТ ЗАКАЗА") {
+                              if (i.status !== 'error' && i.bot_error !== true && i.status !== 'ordered') {
+                                  pendingItems.add(cleanName(i.name));
                               }
                           }
                       });
                   }
-                  
-                  state.transitItems = transitItems;
-                  state.unprocessedItems = pendingItems;
-                  persistDraft();
-                  
-                  renderProductList(); 
-              }).catch(e => console.log("Фоновая загрузка статусов не удалась", e));
-          } else {
-              persistDraft();
-          }
+              });
 
-      } catch (err) {
-          document.getElementById('dynamic-list-container').innerHTML = `<div class="report-card"><div style="text-align:center; padding:20px; color:red; font-weight:bold;">Ошибка: ${err.message}</div></div>`;
+              for (let key in state.userBasket) {
+                  if (key === "_catinfo") continue;
+                  if (transitItems.has(cleanName(key)) || pendingItems.has(cleanName(key))) {
+                      delete state.userBasket[key];
+                      if (state.userBasket["_catinfo"]) delete state.userBasket["_catinfo"][key];
+                  }
+              }
+
+              let latestStoplist = shopOrders.slice().reverse().find(o => o.mode === 'stoplist_fill');
+              if (latestStoplist && latestStoplist.items) {
+                  let itemsArr = Array.isArray(latestStoplist.items) ? latestStoplist.items : Object.values(latestStoplist.items);
+                  itemsArr.forEach(i => {
+                      if (i && i.name && i.qty === 'Закончилось') {
+                          let cleanStopName = cleanName(i.name); 
+                          let catItem = Object.values(state.productCatalog).find(c => c && cleanName(c.name) === cleanStopName);
+                          if (catItem && !transitItems.has(cleanStopName) && !pendingItems.has(cleanStopName)) {
+                              let exactName = catItem.name;
+                              if (state.userBasket[exactName] === undefined) {
+                                  state.userBasket[exactName] = 1;
+                                  if (!state.userBasket["_catinfo"]) state.userBasket["_catinfo"] = {};
+                                  state.userBasket["_catinfo"][exactName] = catItem.cat || "Прочее";
+                              }
+                          }
+                      }
+                  });
+              }
+              
+              state.transitItems = transitItems;
+              state.unprocessedItems = pendingItems;
+              persistDraft();
+              renderProductList(); // Плавная замена данных на актуальные
+          }).catch(e => console.log(e));
       }
     }
 
@@ -2309,30 +2258,33 @@
 
     async function showMyLastOrder() {
         triggerHaptic();
+        document.getElementById('report-overlay').style.display = 'flex';
+        document.getElementById('report-header').innerText = "Последний заказ";
         
-        showReportOverlay("Считаю суммарный заказ...");
+        // ⚡ Выводим прошлый собранный HTML моментально (0.1 сек)
+        let localHtml = localStorage.getItem("cache_html_last_order_" + state.currentShop);
+        if (localHtml) {
+            document.getElementById('report-content-area').innerHTML = localHtml;
+        } else {
+            document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div class="loading-pulse">⏳ Загрузка истории...</div></div>`;
+        }
         
         try {
-            const snap = await database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(50).once("value");
+            const snap = await database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(30).once("value");
             let allOrders = [];
-            snap.forEach(child => {
-                let o = child.val();
-                if (o && (o.mode === 'order' || o.mode === 'new_shop')) allOrders.push(o);
-            });
+            snap.forEach(child => { let o = child.val(); if (o && (o.mode === 'order' || o.mode === 'new_shop')) allOrders.push(o); });
 
             if (allOrders.length === 0) {
-                 document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; padding:10px; font-weight:bold; color:#888;">Заказов не найдено.</div></div>`;
-                 return; // БОЛЬШЕ НИКАКИХ ЗАКРЫТИЙ ОКНА!
+                 document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; font-weight:bold; color:#888;">Заказов не найдено.</div></div>`;
+                 return;
             }
-
             allOrders.sort((a,b) => (b.timestamp || 0) - (a.timestamp || 0));
 
             let currentOrderObj = allOrders[0];
             let prevOrderObj = allOrders.length > 1 ? allOrders[1] : null;
 
             const aggregateSingleOrder = (o) => {
-                let aggregated = {};
-                if (!o) return aggregated;
+                let aggregated = {}; if (!o) return aggregated;
                 let items = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
                 items.forEach(i => {
                     if (i && i.name && i.name !== "НЕТ ЗАКАЗА") {
@@ -2351,28 +2303,19 @@
 
             const missSnap = await database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value");
             let activeMissing = {};
-            missSnap.forEach(c => {
-                let m = c.val();
-                if (m && m.status !== 'arrived' && m.status !== 'canceled') activeMissing[m.name] = true;
-            });
+            missSnap.forEach(c => { let m = c.val(); if (m && m.status !== 'arrived' && m.status !== 'canceled') activeMissing[m.name] = true; });
 
             if (!state.currentMyOrderTab) state.currentMyOrderTab = 'current';
             let html = `<div style="display: flex; gap: 10px; margin-bottom: 20px; background: #fff; padding: 6px; border-radius: 14px; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
-                            <button onclick="state.currentMyOrderTab = 'current'; showMyLastOrder();" style="flex: 1; padding: 12px; border: none; border-radius: 10px; font-size: 15px; font-weight: 900; transition: 0.2s; cursor: pointer; ${state.currentMyOrderTab === 'current' ? 'background: #4A148C; color: #fff;' : 'background: transparent; color: #888;'}">Текущий заказ</button>
-                            <button onclick="state.currentMyOrderTab = 'prev'; showMyLastOrder();" style="flex: 1; padding: 12px; border: none; border-radius: 10px; font-size: 15px; font-weight: 900; transition: 0.2s; cursor: pointer; ${state.currentMyOrderTab === 'prev' ? 'background: #9C27B0; color: #fff;' : 'background: transparent; color: #888;'}">Прошлый заказ</button>
+                            <button onclick="state.currentMyOrderTab = 'current'; showMyLastOrder();" style="flex: 1; padding: 12px; border: none; border-radius: 10px; font-size: 15px; font-weight: 900; ${state.currentMyOrderTab === 'current' ? 'background: #4A148C; color: #fff;' : 'background: transparent; color: #888;'}">Текущий заказ</button>
+                            <button onclick="state.currentMyOrderTab = 'prev'; showMyLastOrder();" style="flex: 1; padding: 12px; border: none; border-radius: 10px; font-size: 15px; font-weight: 900; ${state.currentMyOrderTab === 'prev' ? 'background: #9C27B0; color: #fff;' : 'background: transparent; color: #888;'}">Прошлый заказ</button>
                          </div>`;
 
             const renderOrderBlock = (aggData, dateStr, title, isMain) => {
-                if (Object.keys(aggData).length === 0) {
-                    return `<div class="report-card" style="margin-bottom:15px; border: 2px solid ${isMain ? '#7E57C2' : '#9C27B0'};">
-                                <div class="report-card-title" style="color:${isMain ? '#311b92' : '#777'}; margin-bottom:5px;">${title}</div>
-                                <div style="text-align:center; padding:20px; font-weight:bold; color:#888;">Заказ отсутствует или пуст.</div>
-                            </div>`;
-                }
+                if (Object.keys(aggData).length === 0) return `<div class="report-card"><div style="text-align:center; font-weight:bold; color:#888;">Заказ пуст.</div></div>`;
                 let blockHtml = `<div class="report-card" style="margin-bottom:15px; border: 2px solid ${isMain ? '#7E57C2' : '#9C27B0'};">
                                     <div class="report-card-title" style="color:${isMain ? '#311b92' : '#777'}; margin-bottom:5px;">${title}</div>
                                     <div style="text-align:center; color:#888; font-size:14px; margin-bottom:15px;">(от ${dateStr})</div>`;
-                
                 Object.keys(aggData).sort().forEach(name => {
                     let item = aggData[name];
                     let isError = item.is_error || activeMissing[name];
@@ -2395,9 +2338,8 @@
             html += (state.currentMyOrderTab === 'current') ? renderOrderBlock(currentAgg, currentOrderDateStr, "Текущий заказ", true) : renderOrderBlock(prevAgg, prevOrderDateStr, "Прошлый заказ", false);
 
             document.getElementById('report-content-area').innerHTML = html;
-        } catch(e) {
-            document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; color:red; font-weight:900;">Ошибка: ${e.message}</div></div>`;
-        }
+            localStorage.setItem("cache_html_last_order_" + state.currentShop, html); // Записываем свежую копию в кэш
+        } catch(e) { console.log(e); }
     }
     
     async function fetchBossReport(category) {
@@ -2561,17 +2503,24 @@
 
 async function viewStopList() {
         triggerHaptic();
-      
-
-        showReportOverlay("Загрузка актуального стоп-листа...");
+        document.getElementById('report-overlay').style.display = 'flex';
+        document.getElementById('report-header').innerText = "Актуальный стоп-лист";
         
+        // ⚡ Выводим прошлый собранный HTML моментально (0.1 сек)
+        let localHtml = localStorage.getItem("cache_html_stoplist_" + state.currentShop);
+        if (localHtml) {
+            document.getElementById('report-content-area').innerHTML = localHtml;
+        } else {
+            document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div class="loading-pulse">⏳ Загрузка стоп-листа...</div></div>`;
+        }
+
         try {
             const catalogs = await getCatalogs();
             let stopCatalog = catalogs.stoplist || {};
             let orderCatalog = catalogs.order || {};
 
             const [ordersSnap, missSnap] = await Promise.all([
-                database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(100).once("value"),
+                database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(40).once("value"),
                 database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value")
             ]);
 
@@ -2584,7 +2533,6 @@ async function viewStopList() {
             let orderCatMap = {};
             Object.values(orderCatalog).forEach(c => { if (c && c.name) orderCatMap[String(c.name).trim().toLowerCase()] = c; });
 
-            // ⚡ ИСПРАВЛЕНИЕ: Строим карту по полностью очищенным именам через cleanName()
             let stopInfoMap = {};
             Object.values(stopCatalog).forEach(c => {
                 if (c && c.name) {
@@ -2613,7 +2561,6 @@ async function viewStopList() {
                                     if (val.svod && (i.status === 'error' || i.bot_error)) stat = 'error';
                                     else if (val.svod && i.status === 'ordered') stat = 'ordered';
                                     if (val.ordered && !val.svod) stat = 'ordered';
-                                    
                                     let cleanI = String(i.name).trim().toLowerCase();
                                     if (recentOrdersMap[cleanI] !== 'ordered') recentOrdersMap[cleanI] = stat;
                                 }
@@ -2642,15 +2589,12 @@ async function viewStopList() {
                 if(!i || !i.name || i.qty !== 'Закончилось' || i.name === 'Всё в наличии') return;
                 let iNameLow = String(i.name).trim().toLowerCase();
                 let cleanedItemName = cleanName(i.name);
-                
                 if (seenNames.has(cleanedItemName)) return;
                 seenNames.add(cleanedItemName);
 
-                // ⚡ ИСПРАВЛЕНИЕ: Ищем информацию об отключениях по cleanName()
                 let stopInfo = stopInfoMap[cleanedItemName] || { sez: new Set(), main: new Set(), cat: "" };
                 let info = { sez: Array.from(stopInfo.sez).join(", "), main: Array.from(stopInfo.main).join(", "), cat: stopInfo.cat };
                 let inOrderCat = orderCatMap[iNameLow];
-                
                 let isSyrup = (info.cat && String(info.cat).toLowerCase().includes("сироп")) || (inOrderCat && inOrderCat.cat && String(inOrderCat.cat).toLowerCase().includes("сироп")) || iNameLow.includes("сироп");
 
                 let statHtml = "";
@@ -2666,7 +2610,6 @@ async function viewStopList() {
                 }
 
                 let affectedHtml = "";
-                // ⚡ ИСПРАВЛЕНИЕ: Жесткая и надежная проверка строк на пустоту перед рендером блока
                 if (info.sez.trim() !== "" || info.main.trim() !== "") {
                     affectedHtml += `<div style="font-size:13px; color:#d32f2f; margin-top:8px; padding:8px; background:#ffebee; border-radius:8px; border:1px dashed #ef9a9a; line-height:1.4;">`;
                     if (info.sez.trim() !== "") affectedHtml += `<div style="margin-bottom:4px;"><b>Отключает сезон:</b> ${info.sez}</div>`;
@@ -2687,9 +2630,8 @@ async function viewStopList() {
                 html += `<div style='margin-top: 20px; padding-top: 15px; border-top: 2px dashed #ddd; color:#7E57C2;'>🍾 <b>Сиропы на стопе:</b><br><span style="color:#333; font-size:14px; line-height:1.5;">${allSyrups.join("<br>")}</span></div>`;
             }
             document.getElementById('report-content-area').innerHTML = html + "</div>";
-        } catch (err) {
-            document.getElementById('report-content-area').innerHTML = `<div class="report-card">Ошибка: ${err.message}</div>`;
-        }
+            localStorage.setItem("cache_html_stoplist_" + state.currentShop, html); // Записываем свежую копию в кэш
+        } catch (err) { console.log(err); }
     }
   
     function toggleMissingArrived(key, nameStr, btnId) {
@@ -2793,21 +2735,27 @@ async function viewStopList() {
 
  async function showLastOrder() {
         triggerHaptic();
+        document.getElementById('report-overlay').style.display = 'flex';
+        document.getElementById('report-header').innerText = "Приемка закупки";
         
-
-        showReportOverlay("Загрузка приемки...");
+        // ⚡ Выводим прошлый собранный HTML моментально (0.1 сек)
+        let localHtml = localStorage.getItem("cache_html_receiving_" + state.currentShop);
+        if (localHtml) {
+            document.getElementById('report-content-area').innerHTML = localHtml;
+        } else {
+            document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div class="loading-pulse">⏳ Загрузка поставок...</div></div>`;
+        }
         
         try {
             const catalogs = await getCatalogs();
             let orderCatalog = catalogs.order || {};
-
-            const [ordersSnap, missSnap] = await Promise.all([
-                database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(100).once("value"),
-                database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value")
-            ]);
-
             let orderCatMapFast = {};
             Object.values(orderCatalog).forEach(c => { if (c && c.name) orderCatMapFast[c.name] = c; });
+
+            const [ordersSnap, missSnap] = await Promise.all([
+                database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(40).once("value"),
+                database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value")
+            ]);
 
             let activeMissing = [], historyMissing = [];
             missSnap.forEach(c => {
@@ -2824,23 +2772,25 @@ async function viewStopList() {
             ordersSnap.forEach(c => {
                 let val = c.val();
                 if(val && typeof val === 'object' && (val.mode === 'order' || val.mode === 'new_shop') && val.timestamp >= fifteenDaysAgo) {
-                    val.key = c.key;
-                    ordersArr.push(val);
+                    val.key = c.key; ordersArr.push(val);
                 }
             });
 
             let html = `<div style="display: flex; gap: 10px; margin-bottom: 20px; background: #fff; padding: 6px; border-radius: 14px; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
-                            <button onclick="state.currentReceivingTab = 'active'; showLastOrder();" style="flex: 1; padding: 12px; border: none; border-radius: 10px; font-size: 15px; font-weight: 900; transition: 0.2s; cursor: pointer; ${state.currentReceivingTab === 'active' || !state.currentReceivingTab ? 'background: #4A148C; color: #fff;' : 'background: transparent; color: #888;'}">🚚 Текущая приемка</button>
-                            <button onclick="state.currentReceivingTab = 'history'; showLastOrder();" style="flex: 1; padding: 12px; border: none; border-radius: 10px; font-size: 15px; font-weight: 900; transition: 0.2s; cursor: pointer; ${state.currentReceivingTab === 'history' ? 'background: #9C27B0; color: #fff;' : 'background: transparent; color: #888;'}">🕒 История (15 дней)</button>
+                            <button onclick="state.currentReceivingTab = 'active'; showLastOrder();" style="flex: 1; padding: 12px; border: none; border-radius: 10px; font-size: 15px; font-weight: 900; ${state.currentReceivingTab === 'active' || !state.currentReceivingTab ? 'background: #4A148C; color: #fff;' : 'background: transparent; color: #888;'}">🚚 Текущая приемка</button>
+                            <button onclick="state.currentReceivingTab = 'history'; showLastOrder();" style="flex: 1; padding: 12px; border: none; border-radius: 10px; font-size: 15px; font-weight: 900; ${state.currentReceivingTab === 'history' ? 'background: #9C27B0; color: #fff;' : 'background: transparent; color: #888;'}">🕒 История (15 дней)</button>
                          </div>`;
 
             if (!state.currentReceivingTab || state.currentReceivingTab === 'active') {
                 if (activeMissing.length > 0) {
-                    html += `<div class="report-card" style="border: 2px solid #FFCA28;"><div class="report-card-title" style="color:#E65100;">🚚 Ожидаемые недовозы</div>`;
+                    let missListId = "missing_active_list";
+                    html += `<div class="report-card" style="border: 2px solid #FFCA28;">
+                                <div class="report-card-title" style="color:#E65100; cursor:pointer; font-size:16px;" onclick="toggleElements('${missListId}', 'arr_${missListId}')">🚚 Ожидаемые недовозы <span id="arr_${missListId}">▼</span></div>
+                                <div class="${missListId}" style="display:none;">`;
+                    
                     activeMissing.forEach(m => {
                         let statText = m.status === 'transit' ? "В пути" : "Ожидает проверки", statColor = m.status === 'transit' ? "#1565c0" : "#ef6c00", bg = m.status === 'transit' ? "#e3f2fd" : "#fff3e0";
-                        let safeNameEsc = escapeName(m.name), btnMissArrId = `btn_miss_arr_${m.key}`, btnMissId = `btn_miss_${m.key}`;
-                        
+                        let safeNameEsc = escapeName(m.name), btnMissArrId = `btn_miss_arr_${m.key}`;
                         let isMarked = state.missingChoices && state.missingChoices[m.key] !== undefined;
 
                         html += `<div class="report-card-item" style="flex-direction:column; align-items:flex-start; border-bottom:1px solid #eee;">
@@ -2851,7 +2801,7 @@ async function viewStopList() {
                                     </div>
                                  </div>`;
                     });
-                    html += `<button onclick="finishMissingReceiving()" class="btn-mode" style="background: var(--warning-gradient) !important; margin-top:15px; padding:12px !important;">🏁 ПОДТВЕРДИТЬ НЕДОВОЗЫ</button></div>`;
+                    html += `<button onclick="finishMissingReceiving()" class="btn-mode" style="background: var(--warning-gradient) !important; margin-top:15px; padding:12px !important;">🏁 ПОДТВЕРДИТЬ НЕДОВОЗЫ</button></div></div>`;
                 }
 
                 let activeByDate = {};
@@ -2879,12 +2829,11 @@ async function viewStopList() {
                     html += `<div style="background:#ede7f6; padding:12px; border-radius:12px; font-weight:900; color:#311B92; text-align:center; font-size:16px;">🚚 Активная приемка</div>`;
                     Object.keys(activeByDate).sort((a,b) => activeByDate[b].timestamp - activeByDate[a].timestamp).forEach(dateStr => {
                         const renderList = (grpData, keysSet, vendorKey, bClass, bText) => {
-                            let names = Object.keys(grpData).sort();
-                            if(names.length === 0) return "";
+                            let names = Object.keys(grpData).sort(); if(names.length === 0) return "";
                             let listId = getSafeId(dateStr + vendorKey), kStr = Array.from(keysSet).join(',');
                             let res = `<div class="report-card" style="margin-top:10px; border-left:4px solid ${vendorKey==='ozon'?'#1565c0':'#f57f17'};">
                                         <div class="report-card-title" style="cursor:pointer; font-size:16px;" onclick="toggleElements('${listId}', 'arr_${listId}')">📅 Заказ ${bText} от ${dateStr} <span id="arr_${listId}">▼</span></div>
-                                        <div class="${listId}" style="display:block; margin-top:10px;">`;
+                                        <div class="${listId}" style="display:none; margin-top:10px;">`;
                             let expCount = 0;
                             names.forEach(name => {
                                 if(activeMissing.some(am => am.name === name)) {
@@ -2892,13 +2841,11 @@ async function viewStopList() {
                                 } else {
                                     expCount++;
                                     let bA = `ba_${listId}_${getSafeId(name)}`, bM = `bm_${listId}_${getSafeId(name)}`, choiceKey = dateStr+"_"+name;
-                                    
                                     let isA = false, isM = false;
                                     if (state.receivingChoices && state.receivingChoices[choiceKey]) {
                                         isA = state.receivingChoices[choiceKey].status === 'arrived';
                                         isM = state.receivingChoices[choiceKey].status === 'missing';
                                     }
-
                                     res += `<div class="report-card-item" style="flex-direction:column; align-items:flex-start;">
                                                 <span style="font-size:15px; margin-bottom:6px;"><b>${name}</b> (x${grpData[name].qty})</span>
                                                 <div style="display:flex; gap:8px; width:100%;">
@@ -2952,9 +2899,8 @@ async function viewStopList() {
                 }
             }
             document.getElementById('report-content-area').innerHTML = html;
-        } catch (err) {
-            document.getElementById('report-content-area').innerHTML = `<div class="report-card">Ошибка: ${err.message}</div>`;
-        }
+            localStorage.setItem("cache_html_receiving_" + state.currentShop, html); // Записываем свежую копию в кэш
+        } catch (err) { console.log(err); }
     }
     
    function setReceiveChoice(name, qty, vendor, status, btnArrId, btnMissId, dateStr) {
@@ -3241,27 +3187,22 @@ async function viewStopList() {
     // ⚡ УМНОЕ LIVE-ОБНОВЛЕНИЕ С РАЗДЕЛЕНИЕМ ТРАФИКА
     // ==========================================
     function startRealtimeUpdates() {
-        // 1. 📦 ЛЕГКИЕ РАБОЧИЕ ВТКИ (Закупка, стоп-листы, чек-листы)
-        // Они весят копейки и должны работать со скоростью пули. Включаем их ПРИ СТАРТЕ!
+        // Качаем строго текстовые легкие рабочие справочники за 0.1 секунды
         const paths = ['order', 'newshop', 'stoplist', 'checklist'];
         
         paths.forEach(p => {
             database.ref('catalogs/' + p).on('value', snap => {
                 let fresh = snap.val();
                 if (fresh) {
-                    // Сохраняем в оперативную память
                     if (!state.cachedCatalogs) state.cachedCatalogs = {};
                     state.cachedCatalogs[p] = fresh;
                     
-                    // Тихо кэшируем в память телефона
                     try { localStorage.setItem("teiku_light_cache", JSON.stringify(state.cachedCatalogs)); } catch(e){}
                     
-                    // Корректируем имена режимов
                     let targetMode = p; 
                     if (p === 'newshop') targetMode = 'new_shop';
                     if (p === 'stoplist') targetMode = 'stoplist_fill';
                     
-                    // Если бариста прямо сейчас открыл эту вкладку — мгновенно обновляем экран
                     if (state.currentMode === targetMode) {
                         if (typeof rebuildProductCatalog === 'function') rebuildProductCatalog(fresh);
                         if (typeof renderProductList === 'function') renderProductList();
@@ -3270,9 +3211,9 @@ async function viewStopList() {
             });
         });
 
-        // 2. 📸 ТЯЖЕЛОЕ МЕНЮ С ФОТОГРАФИЯМИ (Base64)
-        // Полностью изолируем его. Запускаем скачивание в фоне С ЗАДЕРЖКОЙ В 7 СЕКУНД.
-        // За это время бариста спокойно зайдет в закупку, а меню докачается сзади незаметно для него.
+        // ⚡ ЖЕСТКАЯ ИЗОЛЯЦИЯ МЕНЮ С Base64 ФОТОГРАФИЯМИ
+        // Переносим автоматический запрос меню на 15 секунд в глубокий фон. 
+        // Если бариста просто делает закупку, тяжелое меню вообще не будет забивать интернет-канал!
         setTimeout(() => {
             database.ref('catalogs/menu').on('value', snap => {
                 let fresh = snap.val();
@@ -3282,14 +3223,13 @@ async function viewStopList() {
                     
                     try { localStorage.setItem("teiku_light_cache", JSON.stringify(state.cachedCatalogs)); } catch(e){}
                     
-                    // Если бариста прямо сейчас зашел в меню — перерисовываем
                     if (state.currentMode === 'menu') {
                         state.menuCatalog = Object.assign({}, fresh);
                         if (typeof renderMenuApp === 'function') renderMenuApp();
                     }
                 }
             });
-        }, 7000); // 7 секунд искусственной задержки для разгрузки сети
+        }, 5000); // 5 секунд задержки, чтобы полностью разгрузить кассу
     }
   
     // ==========================================

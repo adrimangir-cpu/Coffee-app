@@ -3202,36 +3202,46 @@ async function viewStopList() {
     }
     
    // ==========================================
-    // УМНАЯ И БЫСТРАЯ ЗАГРУЗКА ПО ЧАСТЯМ
+    // УМНАЯ И СВЕРХБЫСТРАЯ ЗАГРУЗКА (СЕКУНДНЫЙ КЭШ)
     // ==========================================
     async function getCatalogs() {
         if (!state.cachedCatalogs) state.cachedCatalogs = {};
-        // Для админки догружаем только легкие таблицы, если их нет (БЕЗ тяжелого МЕНЮ)
+        
+        // 1. ⚡ Мгновенно достаем данные из памяти телефона (0.1 сек)
+        let localData = localStorage.getItem("teiku_light_cache");
+        if (localData) {
+            try {
+                let parsed = JSON.parse(localData);
+                state.cachedCatalogs = parsed;
+                return parsed; // Сразу отдаем бариста, чтобы не ждал!
+            } catch(e){}
+        }
+
+        // 2. Если это самый-самый первый запуск в жизни - качаем из сети легкие базы
         let paths = ['order', 'stoplist', 'newshop'];
         for (let p of paths) {
             if (!state.cachedCatalogs[p]) {
-                let snap = await database.ref(`catalogs/${p}`).once("value");
-                state.cachedCatalogs[p] = snap.val() || {};
+                try {
+                    let snap = await database.ref(`catalogs/${p}`).once("value");
+                    state.cachedCatalogs[p] = snap.val() || {};
+                } catch(e){}
             }
         }
+        
+        try { localStorage.setItem("teiku_light_cache", JSON.stringify(state.cachedCatalogs)); } catch(e){}
         return state.cachedCatalogs;
     }
 
     async function getCatalog(name) {
-        // 1. Мгновенная отдача: если Live-обновление уже скачало этот раздел
         if (state.cachedCatalogs && state.cachedCatalogs[name] && Object.keys(state.cachedCatalogs[name]).length > 0) {
             return state.cachedCatalogs[name];
         }
-
-        // 2. Если нет: качаем ТОЛЬКО нужный кусок. Закупка скачается за 0.1 сек!
         try {
             let snap = await database.ref(`catalogs/${name}`).once("value");
             if (!state.cachedCatalogs) state.cachedCatalogs = {};
             state.cachedCatalogs[name] = snap.val() || {};
             return state.cachedCatalogs[name];
-        } catch (e) {
-            return {};
-        }
+        } catch (e) { return {}; }
     }
 
     // ==========================================
@@ -3245,13 +3255,16 @@ async function viewStopList() {
             { key: 'checklist', mode: 'checklist' }
         ];
 
-        // 1. Запускаем слежение за легкими таблицами моментально
+        // Следим за базами и бесшумно перерисовываем
         paths.forEach(p => {
             database.ref('catalogs/' + p.key).on('value', snap => {
                 let fresh = snap.val();
                 if (fresh) {
                     if (!state.cachedCatalogs) state.cachedCatalogs = {};
                     state.cachedCatalogs[p.key] = fresh;
+                    
+                    // ⚡ Обновляем тихий кэш телефона
+                    try { localStorage.setItem("teiku_light_cache", JSON.stringify(state.cachedCatalogs)); } catch(e){}
                     
                     if (state.currentMode === p.mode) {
                         if (typeof rebuildProductCatalog === 'function') rebuildProductCatalog(fresh);
@@ -3261,14 +3274,15 @@ async function viewStopList() {
             });
         });
 
-        // 2. ⚡ ЗАДЕРЖКА ДЛЯ МЕНЮ: Начинаем грузить тяжелое меню только через 4 секунды, 
-        // чтобы оно не "забивало интернет" и не мешало бариста открыть Закупку.
+        // Отложенная загрузка тяжелого меню (через 4 секунды)
         setTimeout(() => {
             database.ref('catalogs/menu').on('value', snap => {
                 let fresh = snap.val();
                 if (fresh) {
                     if (!state.cachedCatalogs) state.cachedCatalogs = {};
                     state.cachedCatalogs['menu'] = fresh;
+                    
+                    try { localStorage.setItem("teiku_light_cache", JSON.stringify(state.cachedCatalogs)); } catch(e){}
                     
                     if (state.currentMode === 'menu') {
                         state.menuCatalog = Object.assign({}, fresh);

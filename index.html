@@ -3148,57 +3148,57 @@ async function viewStopList() {
     }
     
 // ==========================================
-    // ⚡ ЧИСТОЕ И СВЕРХБЫСТРОЕ ЯДРО ЗАГРУЗКИ ПО СЕГМЕНТАМ (БЕЗ ДЛЯ ТЯЖЕЛОГО КОРНЯ)
+    // 🗄️ НАДЕЖНЫЙ ВЕЧНЫЙ КЭШ (БЕЗ ЛИМИТОВ ПАМЯТИ)
+    // ==========================================
+    const DB_NAME = "CoffeeAppDB";
+    const STORE_NAME = "catalogs_store";
+
+    function getDB() {
+        return new Promise((resolve, reject) => {
+            let request = indexedDB.open(DB_NAME, 1);
+            request.onupgradeneeded = (e) => {
+                let db = e.target.result;
+                if (!db.objectStoreNames.contains(STORE_NAME)) db.createObjectStore(STORE_NAME);
+            };
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    async function saveToRealCache(key, data) {
+        try {
+            let db = await getDB();
+            db.transaction(STORE_NAME, "readwrite").objectStore(STORE_NAME).put(data, key);
+        } catch(e) {}
+    }
+
+    async function loadFromRealCache(key) {
+        try {
+            let db = await getDB();
+            return new Promise(resolve => {
+                let req = db.transaction(STORE_NAME, "readonly").objectStore(STORE_NAME).get(key);
+                req.onsuccess = () => resolve(req.result);
+                req.onerror = () => resolve(null);
+            });
+        } catch(e) { return null; }
+    }
+
+    // ==========================================
+    // ⚡ ЧИСТОЕ И СВЕРХБЫСТРОЕ ЯДРО ЗАГРУЗКИ
     // ==========================================
     async function getCatalogs() {
-        if (!state.cachedCatalogs) state.cachedCatalogs = {};
-        
-        // Вместо скачивания всего корня с фото, качаем только легкие рабочие ветки по отдельности
-        let lightPaths = ['order', 'newshop', 'stoplist', 'checklist'];
-        for (let p of lightPaths) {
-            if (!state.cachedCatalogs[p] || Object.keys(state.cachedCatalogs[p]).length === 0) {
-                try {
-                    let snap = await database.ref(`catalogs/${p}`).once("value");
-                    state.cachedCatalogs[p] = snap.val() || {};
-                } catch(e){
-                    console.error(`Ошибка предзагрузки ветки ${p}:`, e);
-                }
-            }
-        }
-        return state.cachedCatalogs;
+        return state.cachedCatalogs || {};
     }
 
     async function getCatalog(name) {
-        if (!state.cachedCatalogs) state.cachedCatalogs = {};
-        
-        // 1. Если данные уже есть в памяти устройства — отдаем мгновенно
-        if (state.cachedCatalogs[name] && Object.keys(state.cachedCatalogs[name]).length > 0) {
-            return state.cachedCatalogs[name];
-        }
-        
-        // 2. Если в памяти пусто — делаем изолированный легкий запрос только по этой ветке
-        try {
-            let snap = await database.ref(`catalogs/${name}`).once("value");
-            let data = snap.val() || {};
-            state.cachedCatalogs[name] = data;
-            
-            // Сохраняем кусочек в кэш телефона
-            try { localStorage.setItem("teiku_light_cache", JSON.stringify(state.cachedCatalogs)); } catch(e){}
-            
-            return data;
-        } catch (e) {
-            console.error(`Ошибка изолированной загрузки каталога ${name}:`, e);
-            return {};
-        }
+        return (state.cachedCatalogs && state.cachedCatalogs[name]) ? state.cachedCatalogs[name] : {};
     }
-      
-    
+
     // ==========================================
-    // ⚡ УМНОЕ LIVE-ОБНОВЛЕНИЕ С ЗАЩИТОЙ ПАМЯТИ
+    // ⚡ ДВИЖОК НУЛЕВОГО ОЖИДАНИЯ (Фоновая синхронизация)
     // ==========================================
     function startRealtimeUpdates() {
         const paths = ['order', 'newshop', 'stoplist', 'checklist'];
-        
         paths.forEach(p => {
             database.ref('catalogs/' + p).on('value', snap => {
                 let fresh = snap.val();
@@ -3206,28 +3206,14 @@ async function viewStopList() {
                     if (!state.cachedCatalogs) state.cachedCatalogs = {};
                     state.cachedCatalogs[p] = fresh;
                     
-                    // ⚡ ГЛАВНЫЙ ФИКС: Сохраняем ТОЛЬКО легкий текст. Это весит пару килобайт и НИКОГДА не превысит лимит телефона!
-                    let safeCache = {
-                        order: state.cachedCatalogs['order'] || {},
-                        newshop: state.cachedCatalogs['newshop'] || {},
-                        stoplist: state.cachedCatalogs['stoplist'] || {},
-                        checklist: state.cachedCatalogs['checklist'] || {}
-                    };
-                    try { localStorage.setItem("teiku_light_cache", JSON.stringify(safeCache)); } catch(e){}
+                    saveToRealCache(p, fresh); // ⚡ ТИХО СОХРАНЯЕМ В ВЕЧНЫЙ КЭШ ТЕЛЕФОНА
                     
-                    let targetMode = p; 
-                    if (p === 'newshop') targetMode = 'new_shop';
-                    if (p === 'stoplist') targetMode = 'stoplist_fill';
-                    
-                    if (state.currentMode === targetMode) {
-                        if (typeof rebuildProductCatalog === 'function') rebuildProductCatalog(fresh);
-                        if (typeof renderProductList === 'function') renderProductList();
-                    }
+                    triggerActiveRender(); 
                 }
             });
         });
 
-        // Тяжелое меню качается в фоне, но В КЭШ ТЕЛЕФОНА НЕ ИДЕТ
+        // Тяжелое меню с фото качается в фоне, не блокируя работу кассы
         setTimeout(() => {
             database.ref('catalogs/menu').on('value', snap => {
                 let fresh = snap.val();
@@ -3235,48 +3221,64 @@ async function viewStopList() {
                     if (!state.cachedCatalogs) state.cachedCatalogs = {};
                     state.cachedCatalogs['menu'] = fresh;
                     
+                    saveToRealCache('menu', fresh); // Меню с фото отлично помещается в IndexedDB!
+                    
                     if (state.currentMode === 'menu') {
                         state.menuCatalog = Object.assign({}, fresh);
                         if (typeof renderMenuApp === 'function') renderMenuApp();
                     }
                 }
             });
-        }, 4000);
+        }, 8000);
     }
-  
-    // ==========================================
-    // СТАРТ ПРИЛОЖЕНИЯ (МГНОВЕННЫЙ ЗАПУСК)
-    // ==========================================
-    window.onload = () => { 
-      try { 
-          Telegram.WebApp.ready(); 
-          Telegram.WebApp.expand(); 
-          globalTgUserId = (Telegram.WebApp.initDataUnsafe && Telegram.WebApp.initDataUnsafe.user) ? String(Telegram.WebApp.initDataUnsafe.user.id) : "708179577";
-      } catch(e){
-          globalTgUserId = "708179577";
-      }
-      
-      // Мгновенно восстанавливаем структуру из памяти телефона (0.01 сек)
-      let localData = localStorage.getItem("teiku_light_cache");
-      if (localData) {
-          try { state.cachedCatalogs = JSON.parse(localData); } catch(e){ state.cachedCatalogs = {}; }
-      } else {
-          state.cachedCatalogs = {};
-      }
-      
-      state.globalOrders = [];
-      state.globalMissing = [];
-      restoreMpDraft();
-      
-      // Сразу открываем главный экран выбора кофейни
-      showScreen('step-1', false);
-      
-      // Запускаем фоновое слежение Firebase (не блокирует интерфейс)
-      setTimeout(() => {
-          startRealtimeUpdates(); 
-      }, 1000);
-    };
 
+    function startShopDataSync() {
+        if (!state.currentShop) return;
+        
+        if (state.activeOrderRef) state.activeOrderRef.off();
+        if (state.activeMissingRef) state.activeMissingRef.off();
+
+        state.activeOrderRef = database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(50);
+        state.activeMissingRef = database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop);
+
+        state.activeOrderRef.on('value', snap => {
+            let shopOrders = [];
+            snap.forEach(c => { let val = c.val(); if(val) { val.key = c.key; shopOrders.push(val); } });
+            state.globalOrders = shopOrders.sort((a,b) => b.timestamp - a.timestamp);
+            triggerActiveRender();
+        });
+
+        state.activeMissingRef.on('value', snap => {
+            let missing = [];
+            snap.forEach(c => { let val = c.val(); if(val) { val.key = c.key; missing.push(val); } });
+            state.globalMissing = missing;
+            triggerActiveRender();
+        });
+    }
+
+    window.onload = async () => { 
+        try { 
+            Telegram.WebApp.ready(); Telegram.WebApp.expand(); 
+            globalTgUserId = (Telegram.WebApp.initDataUnsafe && Telegram.WebApp.initDataUnsafe.user) ? String(Telegram.WebApp.initDataUnsafe.user.id) : "708179577";
+        } catch(e){ globalTgUserId = "708179577"; }
+        
+        state.cachedCatalogs = {};
+        
+        // ⚡ МГНОВЕННО ДОСТАЕМ ВСЮ БАЗУ ИЗ ВЕЧНОГО КЭША (До показа экрана)
+        const paths = ['order', 'newshop', 'stoplist', 'checklist', 'menu'];
+        for (let p of paths) {
+            let cachedData = await loadFromRealCache(p);
+            if (cachedData) state.cachedCatalogs[p] = cachedData;
+        }
+        
+        state.globalOrders = []; state.globalMissing = [];
+        restoreMpDraft(); 
+        
+        showScreen('step-1', false);
+        
+        setTimeout(() => { startRealtimeUpdates(); }, 100);
+    };
+    
     function restoreFromDraft() { 
         let d = localStorage.getItem("draft_" + state.currentShop + "_" + state.currentMode); 
         if(d) { 

@@ -452,9 +452,11 @@
 
     const TG_ADMIN_IDS = ["708179577"];
     const TG_BOSS_IDS = ["501871781","708179577"];
-
+    
     var globalTgUserId = "";
     var state = { 
+      activeOrderRef: null,
+      activeMissingRef: null,
       currentShop: "", 
       currentMode: "", 
       productCatalog: {}, 
@@ -3082,45 +3084,11 @@ function viewStopList() {
     // ⚡ ЧИСТОЕ И СВЕРХБЫСТРОЕ ЯДРО ЗАГРУЗКИ ПО СЕГМЕНТАМ (БЕЗ ДЛЯ ТЯЖЕЛОГО КОРНЯ)
     // ==========================================
     async function getCatalogs() {
-        if (!state.cachedCatalogs) state.cachedCatalogs = {};
-        
-        // Вместо скачивания всего корня с фото, качаем только легкие рабочие ветки по отдельности
-        let lightPaths = ['order', 'newshop', 'stoplist', 'checklist'];
-        for (let p of lightPaths) {
-            if (!state.cachedCatalogs[p] || Object.keys(state.cachedCatalogs[p]).length === 0) {
-                try {
-                    let snap = await database.ref(`catalogs/${p}`).once("value");
-                    state.cachedCatalogs[p] = snap.val() || {};
-                } catch(e){
-                    console.error(`Ошибка предзагрузки ветки ${p}:`, e);
-                }
-            }
-        }
-        return state.cachedCatalogs;
+        return state.cachedCatalogs || {};
     }
 
     async function getCatalog(name) {
-        if (!state.cachedCatalogs) state.cachedCatalogs = {};
-        
-        // 1. Если данные уже есть в памяти устройства — отдаем мгновенно
-        if (state.cachedCatalogs[name] && Object.keys(state.cachedCatalogs[name]).length > 0) {
-            return state.cachedCatalogs[name];
-        }
-        
-        // 2. Если в памяти пусто — делаем изолированный легкий запрос только по этой ветке
-        try {
-            let snap = await database.ref(`catalogs/${name}`).once("value");
-            let data = snap.val() || {};
-            state.cachedCatalogs[name] = data;
-            
-            // Сохраняем кусочек в кэш телефона
-            try { localStorage.setItem("teiku_light_cache", JSON.stringify(state.cachedCatalogs)); } catch(e){}
-            
-            return data;
-        } catch (e) {
-            console.error(`Ошибка изолированной загрузки каталога ${name}:`, e);
-            return {};
-        }
+        return (state.cachedCatalogs && state.cachedCatalogs[name]) ? state.cachedCatalogs[name] : {};
     }
       
     
@@ -3168,15 +3136,24 @@ function viewStopList() {
 
     function startShopDataSync() {
         if (!state.currentShop) return;
-        // Фоново выкачиваем заказы и недовозы конкретной кофейни
-        database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(50).on('value', snap => {
+        
+        // ⚡ ЗАЩИТА: Отключаем старые прослушиватели, если бариста сменил кофейню
+        if (state.activeOrderRef) state.activeOrderRef.off();
+        if (state.activeMissingRef) state.activeMissingRef.off();
+
+        // ⚡ Сохраняем активные каналы связи
+        state.activeOrderRef = database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(50);
+        state.activeMissingRef = database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop);
+
+        // Фоново выкачиваем заказы и недовозы
+        state.activeOrderRef.on('value', snap => {
             let shopOrders = [];
             snap.forEach(c => { let val = c.val(); if(val) { val.key = c.key; shopOrders.push(val); } });
             state.globalOrders = shopOrders.sort((a,b) => b.timestamp - a.timestamp);
             triggerActiveRender();
         });
 
-        database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).on('value', snap => {
+        state.activeMissingRef.on('value', snap => {
             let missing = [];
             snap.forEach(c => { let val = c.val(); if(val) { val.key = c.key; missing.push(val); } });
             state.globalMissing = missing;

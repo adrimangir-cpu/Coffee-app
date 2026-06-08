@@ -1549,7 +1549,8 @@
             }
 
             if (!shopLentaSums[targetShop]) shopLentaSums[targetShop] = 0;
-            // ⚡ СТАТУС "УЖЕ ПРИНЯТ" ИСКЛЮЧАЕТСЯ ИЗ СУММЫ
+            
+            // ⚡ ИСКЛЮЧАЕМ ИЗ ФИНАЛЬНОГО ПОДСЧЕТА (Включая "Не надо" и "Уже принят")
             if (!isDeleted && !inTransit && itemStatus !== 'error' && itemStatus !== 'not_needed' && itemStatus !== 'already_received' && (isLenta || isAutoKuper)) {
                 shopLentaSums[targetShop] += (qty * price1);
             }
@@ -1608,7 +1609,8 @@
             let finalPrice = (isRegularKuper && price2 > 0) ? price2 : price1;
             
             let cost = finalPrice * qty;
-            // ⚡ ИСКЛЮЧАЕМ ИЗ ФИНАЛЬНОГО ПОДСЧЕТА
+            
+            // ⚡ ИСКЛЮЧАЕМ ИЗ ФИНАЛЬНОГО ПОДСЧЕТА (Включая "Не надо" и "Уже принят")
             if (inTransit || itemStatus === 'error' || itemStatus === 'not_needed' || itemStatus === 'already_received' || isDeleted) cost = 0;
             
             if (vendor.includes('лента') || vendor.includes('lenta')) {
@@ -2784,13 +2786,20 @@ function renderGraphsTab() {
         let target = getTargetDateLogic(); 
         let currentYearMonth = `${target.year}_${target.month}`;
         
+        // Гарантированно сохраняем кликабельность страницы
+        document.body.style.pointerEvents = "auto";
+        
         try {
             if(!cachedData.schedules) cachedData.schedules = {};
-            cachedData.schedules[currentYearMonth] = window.graphDraft;
+            
+            // ⚡ МАГИЯ ОЧИСТКИ ОТ МУСОРА: Удаляем все undefined, из-за которых падал Firebase
+            let safeGraphDraft = JSON.parse(JSON.stringify(window.graphDraft));
+            
+            cachedData.schedules[currentYearMonth] = safeGraphDraft;
             
             await fetch(`${FB_URL}/schedules/${currentYearMonth}.json`, { 
                 method: 'PUT', 
-                body: JSON.stringify(window.graphDraft) 
+                body: JSON.stringify(safeGraphDraft) 
             });
             
             btn.innerHTML = "✅ СОХРАНЕНО!";
@@ -2801,9 +2810,11 @@ function renderGraphsTab() {
         } catch(e) {
             if(btn) btn.innerHTML = origText;
             alert("❌ Ошибка: " + e.message);
+        } finally {
+            document.body.style.pointerEvents = "auto";
         }
     }
-
+    
     function renderMarketplaceTab() {
         const box = document.getElementById('content');
         let records = cachedData.marketplace || {};
@@ -4345,25 +4356,35 @@ function renderGraphsTab() {
         currentMenu[id].blocks[bIdx][iIdx][field] = val;
     }
 
-   async function saveMenu(btn) {
+   async function saveMenu(event, btn) {
+        // 1. Блокируем "всплытие" клика, чтобы панель не думала, что её нажали
+        if (event) {
+            event.stopPropagation();
+        }
+        
         let origText = btn.innerHTML;
-        btn.innerHTML = "⏳ СОХРАНЕНИЕ МЕНЮ...";
-        document.body.style.pointerEvents = "auto";
+        btn.innerHTML = "⏳ СОХРАНЕНИЕ...";
+        
+        // Блокируем клики по всей странице на секунду, чтобы не нажали дважды
+        document.body.style.pointerEvents = "none";
         
         try {
-            // ⚡ ФИЛЬТР МУСОРА ДЛЯ МЕНЮ
+            // 2. Отправляем всё меню целиком
             let safeMenu = JSON.parse(JSON.stringify(currentMenu));
-            
             await db.ref('catalogs/menu').set(safeMenu);
 
             btn.innerHTML = "✅ СОХРАНЕНО!";
+            
+            // 3. Возвращаем текст кнопки, не перерисовывая всю панель
             setTimeout(() => {
                 if(btn) btn.innerHTML = origText;
             }, 1500);
+            
         } catch(e) {
             if(btn) btn.innerHTML = origText;
             alert("❌ Ошибка сохранения меню: " + e.message);
         } finally {
+            // Разблокируем интерфейс
             document.body.style.pointerEvents = "auto";
         }
     }

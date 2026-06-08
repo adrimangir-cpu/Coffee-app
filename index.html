@@ -3135,13 +3135,22 @@ function viewStopList() {
                 if (fresh) {
                     if (!state.cachedCatalogs) state.cachedCatalogs = {};
                     state.cachedCatalogs[p] = fresh;
-                    try { localStorage.setItem("teiku_light_cache", JSON.stringify({ catalogs: state.cachedCatalogs })); } catch(e){}
-                    triggerActiveRender(); // Мгновенно перерисовываем экран, если данные обновились
+                    
+                    // ⚡ СОХРАНЯЕМ ВЕРНО: Пишем чистый объект напрямую
+                    let safeCache = {
+                        order: state.cachedCatalogs['order'] || {},
+                        newshop: state.cachedCatalogs['newshop'] || {},
+                        stoplist: state.cachedCatalogs['stoplist'] || {},
+                        checklist: state.cachedCatalogs['checklist'] || {}
+                    };
+                    try { localStorage.setItem("teiku_light_cache", JSON.stringify(safeCache)); } catch(e){}
+                    
+                    triggerActiveRender(); 
                 }
             });
         });
 
-        // Меню грузим с задержкой 10 секунд, чтобы не забить интернет при старте
+        // Меню грузим с задержкой 10 секунд
         setTimeout(() => {
             database.ref('catalogs/menu').on('value', snap => {
                 let fresh = snap.val();
@@ -3181,18 +3190,25 @@ function viewStopList() {
             globalTgUserId = (Telegram.WebApp.initDataUnsafe && Telegram.WebApp.initDataUnsafe.user) ? String(Telegram.WebApp.initDataUnsafe.user.id) : "708179577";
         } catch(e){ globalTgUserId = "708179577"; }
         
+        // ⚡ ЧИТАЕМ ВЕРНО: Достаем чистый объект напрямую
         let localData = localStorage.getItem("teiku_light_cache");
         if (localData) {
-            try { let parsed = JSON.parse(localData); state.cachedCatalogs = parsed.catalogs || {}; } catch(e){ state.cachedCatalogs = {}; }
-        } else { state.cachedCatalogs = {}; }
+            try { 
+                let parsed = JSON.parse(localData); 
+                // Защита от старого формата (если у кого-то завис старый кэш)
+                state.cachedCatalogs = parsed.catalogs ? parsed.catalogs : parsed; 
+            } catch(e){ state.cachedCatalogs = {}; }
+        } else { 
+            state.cachedCatalogs = {}; 
+        }
         
         state.globalOrders = []; state.globalMissing = [];
         restoreMpDraft();
         showScreen('step-1', false);
         
-        // Запуск фонового движка без блокировки экрана
-        setTimeout(() => { startRealtimeUpdates(); }, 1000);
+        setTimeout(() => { startRealtimeUpdates(); }, 100);
     };
+    
     function restoreFromDraft() { 
         let d = localStorage.getItem("draft_" + state.currentShop + "_" + state.currentMode); 
         if(d) { 

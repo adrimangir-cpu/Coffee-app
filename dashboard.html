@@ -394,6 +394,27 @@
             min-width: 110px !important;
             width: 130px !important;
         }
+
+        /* =========================================
+ЛИПКИЕ ПАНЕЛИ ДЕЙСТВИЙ (STICKY)
+========================================= */
+.sticky-tab-actions {
+  position: sticky;
+  top: 135px; /* Отступ под шапку и табы */
+  z-index: 1600;
+  background: linear-gradient(135deg, rgba(255,255,255,0.98) 0%, rgba(253,253,255,0.98) 100%);
+  backdrop-filter: blur(12px);
+  padding: 14px;
+  border-radius: 16px;
+  margin: 10px 0 15px 0;
+  box-shadow: 0 6px 25px rgba(49,27,146,0.12);
+  border: 1px solid #e1bee7;
+  transition: all 0.3s ease;
+}
+.sticky-tab-actions:hover {
+  box-shadow: 0 8px 30px rgba(49,27,146,0.18);
+}
+        
     </style>
 </head>
 <body>
@@ -2146,194 +2167,135 @@ async function renderOrdersSvod() {
     }
 
     async function saveSvodEdits() {
-        let btn = document.getElementById('svod-btn-edit'); 
-        let origText = btn.innerHTML;
-        btn.innerHTML = "⌛ СОХРАНЕНИЕ...";
-        preserveSvodInputs(); 
-        
-        try {
-            let promises = []; 
-            let moves = [];
-            let newItemsByOrder = {};
-            let newOrdersToCreate = {};
+  let btn = document.getElementById('svod-btn-edit');
+  if (!btn) return;
+  let origText = btn.innerHTML;
+  btn.innerHTML = "⌛ СОХРАНЕНИЕ...";
+  btn.disabled = true;
+  preserveSvodInputs();
+  try {
+    let promises = [];
+    let moves = [];
+    let newItemsByOrder = {};
+    let newOrdersToCreate = {};
 
-            document.querySelectorAll('.new-svod-row').forEach(row => {
-                let nameSel = row.querySelector('.new-svod-name');
-                let qtyInp = row.querySelector('.new-svod-qty');
-                let vendorSel = row.querySelector('.new-svod-vendor');
-
-                let dateStr = nameSel.getAttribute('data-date');
-                let shop = nameSel.getAttribute('data-shop');
-                if (shop.includes('&quot;')) shop = shop.replace(/&quot;/g, '"');
-                
-                let name = nameSel.value;
-                if (name.includes('&quot;')) name = name.replace(/&quot;/g, '"');
-                
-                let qty = parseFloat(qtyInp.value) || 0;
-                let vendor = vendorSel.value;
-
-                if(!name || qty <= 0) return;
-
-                let catItem = Object.values(cachedData.catalogOrder).find(c => c && c.name === name) || {};
-                let cat = catItem.cat || "Прочее";
-
-                let targetOrderKey = Object.keys(cachedData.orders).find(k => {
-                    let o = cachedData.orders[k];
-                    return o && o.shop === shop && !o.ordered && new Date(o.timestamp).toLocaleDateString('ru-RU') === dateStr;
-                });
-
-                let itemObj = { name: name, qty: qty, vendor: vendor, status: 'pending', bot_error: false, cat: cat };
-
-                if (targetOrderKey) {
-                    if(!newItemsByOrder[targetOrderKey]) newItemsByOrder[targetOrderKey] = [];
-                    newItemsByOrder[targetOrderKey].push(itemObj);
-                } else {
-                    let pseudoKey = "new_" + dateStr + "_" + shop;
-                    if(!newOrdersToCreate[pseudoKey]) {
-                        let [d, m, y] = dateStr.split('.');
-                        let ts = new Date(y, m-1, d).getTime();
-                        newOrdersToCreate[pseudoKey] = { shop: shop, mode: 'order', items: [], timestamp: ts, svod: false, ordered: false, userId: 'admin_dashboard' };
-                    }
-                    newOrdersToCreate[pseudoKey].items.push(itemObj);
-                }
-            });
-            
-            for (let k in cachedData.orders) {
-                let o = cachedData.orders[k];
-                if (o && (o.mode === 'order' || o.mode === 'new_shop') && !o.ordered) {
-                    let dKey = new Date(o.timestamp).toLocaleDateString('ru-RU');
-                    let needsUpdate = false;
-                    let itemsArr = Array.isArray(o.items) ? o.items : (typeof o.items === 'object' && o.items !== null ? Object.values(o.items) : []);
-                    let newItemsArr = [];
-                    
-                    for (let i = 0; i < itemsArr.length; i++) {
-                        let itm = itemsArr[i]; 
-                        if (!itm || !itm.name) continue;
-                        
-                        let isDeleted = svodDeletions.some(d => d.date === dKey && d.shop === o.shop && d.name === itm.name);
-                        if (isDeleted) { 
-                            needsUpdate = true; 
-                            continue; 
-                        }
-                        
-                        let updatedQty = (tempSvodQty[dKey] && tempSvodQty[dKey][o.shop] && tempSvodQty[dKey][o.shop][itm.name] !== undefined) ? tempSvodQty[dKey][o.shop][itm.name] : undefined;
-                        let updatedStatus = (tempSvodStatus[dKey] && tempSvodStatus[dKey][o.shop] && tempSvodStatus[dKey][o.shop][itm.name] !== undefined) ? tempSvodStatus[dKey][o.shop][itm.name] : undefined;
-                        let updatedVendor = (tempSvodVendor[dKey] && tempSvodVendor[dKey][o.shop] && tempSvodVendor[dKey][o.shop][itm.name]) ? tempSvodVendor[dKey][o.shop][itm.name] : undefined;
-                        let newTargetShop = (tempSvodShop[dKey] && tempSvodShop[dKey][o.shop] && tempSvodShop[dKey][o.shop][itm.name]) ? tempSvodShop[dKey][o.shop][itm.name] : o.shop;
-                        
-                        let catItem = Object.values(cachedData.catalogOrder).find(c => c && c.name === itm.name) || {};
-
-                        if (updatedVendor !== undefined && (itm.vendor || catItem.vendor || 'Лента').toLowerCase() !== updatedVendor.toLowerCase()) {
-                            needsUpdate = true;
-                            itm.vendor = updatedVendor;
-                        }
-                        
-                        let finalQty = updatedQty !== undefined ? updatedQty : itm.qty;
-                        let finalStatus = updatedStatus !== undefined ? updatedStatus : itm.status;
-                        let finalBotError = (finalStatus === 'error') ? true : itm.bot_error;
-
-                        if (newTargetShop !== o.shop) {
-                            needsUpdate = true;
-                            moves.push({
-                                date: dKey,
-                                fromShop: o.shop,
-                                toShop: newTargetShop,
-                                item: { ...itm, qty: finalQty, status: finalStatus, bot_error: finalBotError }
-                            });
-                            continue; 
-                        }
-
-                        if (updatedStatus !== undefined && itm.status !== updatedStatus) {
-                            needsUpdate = true;
-                            if (updatedStatus === 'error' && itm.status !== 'error') {
-                                let newMissing = { shop: o.shop, name: itm.name, qty: finalQty, status: 'canceled', timestamp: Date.now() };
-                                promises.push(fetch(`${FB_URL}/missing_items.json`, { method: 'POST', body: JSON.stringify(newMissing) }));
-                            }
-                            itm.status = updatedStatus; 
-                            itm.bot_error = (updatedStatus === 'error'); 
-                            itm.not_found = (updatedStatus === 'error'); 
-                            itm.error = (updatedStatus === 'error');
-                        }
-                        
-                        if (updatedQty !== undefined && String(updatedQty) !== String(itm.qty)) { 
-                            needsUpdate = true;
-                            itm.qty = updatedQty; 
-                        }
-
-                        if (parseFloat(itm.qty) > 0 || itm.name === "НЕТ ЗАКАЗА") {
-                            newItemsArr.push(itm);
-                        } else if (parseFloat(itm.qty) === 0) {
-                            needsUpdate = true;
-                        }
-                    }
-                    
-                    if (newItemsByOrder[k]) {
-                        needsUpdate = true;
-                        newItemsArr = newItemsArr.filter(i => i.name !== "НЕТ ЗАКАЗА");
-                        newItemsByOrder[k].forEach(newItem => {
-                            let existing = newItemsArr.find(i => i.name === newItem.name);
-                            if (existing) {
-                                existing.qty = parseFloat(existing.qty) + parseFloat(newItem.qty);
-                            } else {
-                                newItemsArr.push(newItem);
-                            }
-                        });
-                    }
-
-                    if (needsUpdate) {
-                        if (newItemsArr.length === 0) newItemsArr = [{name: "НЕТ ЗАКАЗА", qty: 0}];
-                        promises.push(fetch(`${FB_URL}/orders/${k}/items.json`, {method:'PUT', body: JSON.stringify(newItemsArr)}));
-                    }
-                }
-            }
-            
-            for (let pseudoKey in newOrdersToCreate) {
-                promises.push(fetch(`${FB_URL}/orders.json`, {method:'POST', body: JSON.stringify(newOrdersToCreate[pseudoKey])}));
-            }
-
-            for (let move of moves) {
-                let targetOrderKey = Object.keys(cachedData.orders).find(k => {
-                    let to = cachedData.orders[k];
-                    return to && to.shop === move.toShop && !to.ordered && new Date(to.timestamp).toLocaleDateString('ru-RU') === move.date;
-                });
-                if (targetOrderKey) {
-                    let targetOrder = cachedData.orders[targetOrderKey];
-                    let tItems = Array.isArray(targetOrder.items) ? targetOrder.items : (typeof targetOrder.items === 'object' && targetOrder.items !== null ? Object.values(targetOrder.items) : []);
-                    let existingItem = tItems.find(i => i.name === move.item.name);
-                    if (existingItem) {
-                        existingItem.qty = parseFloat(existingItem.qty) + parseFloat(move.item.qty);
-                    } else {
-                        tItems = tItems.filter(i => i.name !== "НЕТ ЗАКАЗА");
-                        tItems.push(move.item);
-                    }
-                    promises.push(fetch(`${FB_URL}/orders/${targetOrderKey}/items.json`, {method:'PUT', body: JSON.stringify(tItems)}));
-                } else {
-                    let [d, m, y] = move.date.split('.');
-                    let ts = new Date(y, m-1, d).getTime();
-                    let newOrder = { shop: move.toShop, mode: 'order', items: [move.item], timestamp: ts, svod: false, ordered: false, userId: 'admin_move' };
-                    promises.push(fetch(`${FB_URL}/orders.json`, {method:'POST', body: JSON.stringify(newOrder)}));
-                }
-            }
-
-            await Promise.all(promises);
-            isSvodEditMode = false; 
-            svodDeletions = []; 
-            tempSvodQty = {}; 
-            tempSvodStatus = {};
-            tempSvodVendor = {};
-            tempSvodShop = {};
-            tempSvodNewRows = [];
-            
-            if(btn) btn.innerHTML = "✅ СОХРАНЕНО!";
-            setTimeout(() => {
-                if(btn) btn.innerHTML = origText;
-                loadTab('orders', document.querySelector('.tab-btn.active'));
-            }, 1000);
-        } catch (e) { 
-            if(btn) btn.innerHTML = origText; 
-            alert("❌ Ошибка при сохранении: " + e.message); 
+    document.querySelectorAll('.new-svod-row').forEach(row => {
+      let nameSel = row.querySelector('.new-svod-name');
+      let qtyInp = row.querySelector('.new-svod-qty');
+      let vendorSel = row.querySelector('.new-svod-vendor');
+      let dateStr = nameSel.getAttribute('data-date');
+      let shop = nameSel.getAttribute('data-shop').replace(/&quot;/g, '"');
+      let name = nameSel.value.replace(/&quot;/g, '"');
+      let qty = parseFloat(qtyInp.value) || 0;
+      let vendor = vendorSel.value;
+      if(!name || qty <= 0) return;
+      
+      let catItem = Object.values(cachedData.catalogOrder).find(c => c && c.name === name) || {};
+      let cat = catItem.cat || "Прочее";
+      let targetOrderKey = Object.keys(cachedData.orders).find(k => {
+        let o = cachedData.orders[k];
+        return o && o.shop === shop && !o.ordered && new Date(o.timestamp).toLocaleDateString('ru-RU') === dateStr;
+      });
+      let itemObj = { name: name, qty: qty, vendor: vendor, status: 'pending', bot_error: false, cat: cat };
+      if (targetOrderKey) {
+        if(!newItemsByOrder[targetOrderKey]) newItemsByOrder[targetOrderKey] = [];
+        newItemsByOrder[targetOrderKey].push(itemObj);
+      } else {
+        let pseudoKey = "new_" + dateStr + "_" + shop;
+        if(!newOrdersToCreate[pseudoKey]) {
+          let [d, m, y] = dateStr.split('.');
+          let ts = new Date(y, m-1, d).getTime();
+          newOrdersToCreate[pseudoKey] = { shop: shop, mode: 'order', items: [], timestamp: ts, svod: false, ordered: false, userId: 'admin_dashboard' };
         }
+        newOrdersToCreate[pseudoKey].items.push(itemObj);
+      }
+    });
+
+    for (let k in cachedData.orders) {
+      let o = cachedData.orders[k];
+      if (o && (o.mode === 'order' || o.mode === 'new_shop') && !o.ordered) {
+        let dKey = new Date(o.timestamp).toLocaleDateString('ru-RU');
+        let needsUpdate = false;
+        let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
+        let newItemsArr = [];
+        for (let i = 0; i < itemsArr.length; i++) {
+          let itm = itemsArr[i];
+          if (!itm || !itm.name) continue;
+          let isDeleted = svodDeletions.some(d => d.date === dKey && d.shop === o.shop && d.name === itm.name);
+          if (isDeleted) { needsUpdate = true; continue; }
+          
+          let updatedQty = (tempSvodQty[dKey] && tempSvodQty[dKey][o.shop] && tempSvodQty[dKey][o.shop][itm.name] !== undefined) ? tempSvodQty[dKey][o.shop][itm.name] : undefined;
+          let updatedStatus = (tempSvodStatus[dKey] && tempSvodStatus[dKey][o.shop] && tempSvodStatus[dKey][o.shop][itm.name] !== undefined) ? tempSvodStatus[dKey][o.shop][itm.name] : undefined;
+          let updatedVendor = (tempSvodVendor[dKey] && tempSvodVendor[dKey][o.shop] && tempSvodVendor[dKey][o.shop][itm.name]) ? tempSvodVendor[dKey][o.shop][itm.name] : undefined;
+          let newTargetShop = (tempSvodShop[dKey] && tempSvodShop[dKey][o.shop] && tempSvodShop[dKey][o.shop][itm.name]) ? tempSvodShop[dKey][o.shop][itm.name] : o.shop;
+          
+          if (updatedVendor !== undefined && (itm.vendor || 'Лента').toLowerCase() !== updatedVendor.toLowerCase()) { needsUpdate = true; itm.vendor = updatedVendor; }
+          let finalQty = updatedQty !== undefined ? updatedQty : itm.qty;
+          let finalStatus = updatedStatus !== undefined ? updatedStatus : itm.status;
+          let finalBotError = (finalStatus === 'error');
+          
+          if (newTargetShop !== o.shop) {
+            needsUpdate = true;
+            moves.push({ date: dKey, fromShop: o.shop, toShop: newTargetShop, item: { ...itm, qty: finalQty, status: finalStatus, bot_error: finalBotError } });
+            continue;
+          }
+          if (updatedStatus !== undefined && itm.status !== updatedStatus) {
+            needsUpdate = true;
+            if (updatedStatus === 'error') {
+              let newMissing = { shop: o.shop, name: itm.name, qty: finalQty, status: 'canceled', timestamp: Date.now() };
+              promises.push(fetch(`${FB_URL}/missing_items.json`, { method: 'POST', body: JSON.stringify(newMissing) }));
+            }
+            itm.status = updatedStatus; itm.bot_error = finalBotError; itm.not_found = finalBotError; itm.error = finalBotError;
+          }
+          if (updatedQty !== undefined && String(updatedQty) !== String(itm.qty)) { needsUpdate = true; itm.qty = updatedQty; }
+          if (parseFloat(itm.qty) > 0 || itm.name === "НЕТ ЗАКАЗА") newItemsArr.push(itm);
+        }
+        if (newItemsByOrder[k]) {
+          needsUpdate = true;
+          newItemsArr = newItemsArr.filter(i => i.name !== "НЕТ ЗАКАЗА");
+          newItemsByOrder[k].forEach(newItem => {
+            let existing = newItemsArr.find(i => i.name === newItem.name);
+            existing ? existing.qty = parseFloat(existing.qty) + parseFloat(newItem.qty) : newItemsArr.push(newItem);
+          });
+        }
+        if (needsUpdate) {
+          if (newItemsArr.length === 0) newItemsArr = [{name: "НЕТ ЗАКАЗА", qty: 0}];
+          promises.push(fetch(`${FB_URL}/orders/${k}/items.json`, {method:'PUT', body: JSON.stringify(newItemsArr)}));
+        }
+      }
     }
+
+    for (let pseudoKey in newOrdersToCreate) {
+      promises.push(fetch(`${FB_URL}/orders.json`, {method:'POST', body: JSON.stringify(newOrdersToCreate[pseudoKey])}));
+    }
+    for (let move of moves) {
+      let targetOrderKey = Object.keys(cachedData.orders).find(k => {
+        let to = cachedData.orders[k];
+        return to && to.shop === move.toShop && !to.ordered && new Date(to.timestamp).toLocaleDateString('ru-RU') === move.date;
+      });
+      if (targetOrderKey) {
+        let tItems = Array.isArray(cachedData.orders[targetOrderKey].items) ? cachedData.orders[targetOrderKey].items : Object.values(cachedData.orders[targetOrderKey].items || {});
+        let existingItem = tItems.find(i => i.name === move.item.name);
+        existingItem ? existingItem.qty = parseFloat(existingItem.qty) + parseFloat(move.item.qty) : (tItems = tItems.filter(i => i.name !== "НЕТ ЗАКАЗА"), tItems.push(move.item));
+        promises.push(fetch(`${FB_URL}/orders/${targetOrderKey}/items.json`, {method:'PUT', body: JSON.stringify(tItems)}));
+      } else {
+        let [d, m, y] = move.date.split('.');
+        let ts = new Date(y, m-1, d).getTime();
+        let newOrder = { shop: move.toShop, mode: 'order', items: [move.item], timestamp: ts, svod: false, ordered: false, userId: 'admin_move' };
+        promises.push(fetch(`${FB_URL}/orders.json`, {method:'POST', body: JSON.stringify(newOrder)}));
+      }
+    }
+    await Promise.all(promises);
+    isSvodEditMode = false;
+    svodDeletions = []; tempSvodQty = {}; tempSvodStatus = {}; tempSvodVendor = {}; tempSvodShop = {}; tempSvodNewRows = [];
+    btn.innerHTML = "✅ СОХРАНЕНО!";
+    btn.disabled = true;
+    setTimeout(() => { if(btn) { btn.innerHTML = origText; btn.disabled = false; } loadTab('orders', document.querySelector('.tab-btn.active')); }, 1000);
+  } catch (e) {
+    if(btn) { btn.innerHTML = origText; btn.disabled = false; }
+    alert("❌ Ошибка при сохранении: " + e.message);
+  }
+}
 
     async function markOrdersAsPlaced() {
         if(!confirm("Все заказы оформлены? Свод будет очищен, а заказы перенесены в историю.")) return;
@@ -2779,41 +2741,27 @@ function renderGraphsTab() {
     }
 
     async function saveGraphsEdits() {
-        let btn = document.getElementById('btn-save-graphs');
-        let origText = btn.innerHTML;
-        btn.innerHTML = "⌛ СОХРАНЕНИЕ...";
-
-        let target = getTargetDateLogic(); 
-        let currentYearMonth = `${target.year}_${target.month}`;
-        
-        // Гарантированно сохраняем кликабельность страницы
-        document.body.style.pointerEvents = "auto";
-        
-        try {
-            if(!cachedData.schedules) cachedData.schedules = {};
-            
-            // ⚡ МАГИЯ ОЧИСТКИ ОТ МУСОРА: Удаляем все undefined, из-за которых падал Firebase
-            let safeGraphDraft = JSON.parse(JSON.stringify(window.graphDraft));
-            
-            cachedData.schedules[currentYearMonth] = safeGraphDraft;
-            
-            await fetch(`${FB_URL}/schedules/${currentYearMonth}.json`, { 
-                method: 'PUT', 
-                body: JSON.stringify(safeGraphDraft) 
-            });
-            
-            btn.innerHTML = "✅ СОХРАНЕНО!";
-            setTimeout(() => { 
-                if(btn) btn.innerHTML = origText; 
-                renderGraphsTab();
-            }, 1000);
-        } catch(e) {
-            if(btn) btn.innerHTML = origText;
-            alert("❌ Ошибка: " + e.message);
-        } finally {
-            document.body.style.pointerEvents = "auto";
-        }
-    }
+  let btn = document.getElementById('btn-save-graphs');
+  if (!btn) return;
+  let origText = btn.innerHTML;
+  btn.innerHTML = "⌛ СОХРАНЕНИЕ...";
+  btn.disabled = true;
+  document.body.style.pointerEvents = "auto";
+  try {
+    let target = getTargetDateLogic();
+    let currentYearMonth = `${target.year}_${target.month}`;
+    if(!cachedData.schedules) cachedData.schedules = {};
+    let safeGraphDraft = JSON.parse(JSON.stringify(window.graphDraft || {}));
+    await fetch(`${FB_URL}/schedules/${currentYearMonth}.json`, { method: 'PUT', body: JSON.stringify(safeGraphDraft) });
+    btn.innerHTML = "✅ СОХРАНЕНО!";
+    setTimeout(() => { if(btn) { btn.innerHTML = origText; btn.disabled = false; } renderGraphsTab(); }, 1000);
+  } catch(e) {
+    if(btn) { btn.innerHTML = origText; btn.disabled = false; }
+    alert("❌ Ошибка: " + e.message);
+  } finally {
+    document.body.style.pointerEvents = "auto";
+  }
+}
     
     function renderMarketplaceTab() {
         const box = document.getElementById('content');
@@ -3040,38 +2988,27 @@ function renderGraphsTab() {
     }
 
     async function saveMpEdits() {
-        let btn = document.getElementById('mp-btn-edit'); 
-        let origText = btn.innerHTML;
-        if(btn) btn.innerHTML = "⌛ СОХРАНЕНИЕ...";
-        try {
-            let promises = [];
-            mpDeletions.forEach(key => promises.push(fetch(`${FB_URL}/marketplace_records/${key}.json`, { method: 'DELETE' })));
-            
-            document.querySelectorAll('input[id^="mp_inp_"]').forEach(inp => {
-                let key = inp.id.replace("mp_inp_", "");
-                if (!mpDeletions.has(key)) {
-                    let val = parseFloat(inp.value);
-                    if (!isNaN(val) && cachedData.marketplace[key] && parseFloat(cachedData.marketplace[key].amount) !== val) {
-                        promises.push(fetch(`${FB_URL}/marketplace_records/${key}.json`, { method: 'PATCH', body: JSON.stringify({amount: val}) }));
-                    }
-                }
-            });
-
-            await Promise.all(promises);
-            
-            isMpEditMode = false; 
-            mpDeletions.clear();
-            
-            if(btn) btn.innerHTML = "✅ СОХРАНЕНО!";
-            setTimeout(() => {
-                if(btn) btn.innerHTML = origText;
-                loadTab('marketplace', document.querySelector('.tab-btn.active'));
-            }, 1000);
-        } catch(e) { 
-            if(btn) btn.innerHTML = origText; 
-            alert("❌ Ошибка: " + e.message); 
+  let btn = document.getElementById('mp-btn-edit');
+  if (!btn) return;
+  let origText = btn.innerHTML; btn.innerHTML = "⌛ Сохранение..."; btn.disabled = true;
+  try {
+    let promises = [];
+    mpDeletions.forEach(key => promises.push(fetch(`${FB_URL}/marketplace_records/${key}.json`, { method: 'DELETE' })));
+    document.querySelectorAll('input[id^="mp_inp_"]').forEach(inp => {
+      let key = inp.id.replace("mp_inp_", "");
+      if (!mpDeletions.has(key) && cachedData.marketplace[key]) {
+        let val = parseFloat(inp.value);
+        if (!isNaN(val) && parseFloat(cachedData.marketplace[key].amount) !== val) {
+          promises.push(fetch(`${FB_URL}/marketplace_records/${key}.json`, { method: 'PATCH', body: JSON.stringify({amount: val}) }));
         }
-    }
+      }
+    });
+    await Promise.all(promises);
+    isMpEditMode = false; mpDeletions.clear();
+    btn.innerHTML = "✅ Сохранено!";
+    setTimeout(() => { btn.innerHTML = origText; btn.disabled = false; loadTab('marketplace', document.querySelector('.tab-btn.active')); }, 1000);
+  } catch(e) { btn.innerHTML = origText; btn.disabled = false; alert("❌ Ошибка: " + e.message); }
+}
 
     async function sendMpSummaryToBot() {
         let confirmText = mpViewMonth === 'current' ? "Отправить итоговую сводку за ТЕКУЩИЙ месяц в Telegram?" : "Отправить итоговую сводку за ПРОШЛЫЙ месяц в Telegram?";
@@ -3139,41 +3076,26 @@ function renderGraphsTab() {
     }
 
     async function saveMissingEdits() {
-        const btn = document.getElementById('miss-btn-edit'); 
-        let origText = btn.innerHTML;
-        if(btn) btn.innerHTML = "⌛ СОХРАНЕНИЕ...";
-        try {
-            let promises = [];
-            missingDeletions.forEach(key => promises.push(fetch(`${FB_URL}/missing_items/${key}.json`, { method: 'DELETE' })));
-            
-            for (let key in tempMissingStatus) {
-                if (!missingDeletions.has(key)) {
-                    let missingItem = cachedData.missing[key]; 
-                    let newStatus = tempMissingStatus[key];
-                    if (newStatus === 'arrived' && missingItem) {
-                        await autoRemoveFromStoplist(missingItem.shop, [missingItem.name]);
-                    }
-                    promises.push(fetch(`${FB_URL}/missing_items/${key}.json`, { 
-                        method: 'PATCH', 
-                        body: JSON.stringify({status: newStatus, timestamp: Date.now()}) 
-                    }));
-                }
-            }
-            await Promise.all(promises);
-            isMissingEditMode = false; 
-            missingDeletions.clear(); 
-            tempMissingStatus = {};
-
-            if(btn) btn.innerHTML = "✅ СОХРАНЕНО!";
-            setTimeout(() => {
-                if(btn) btn.innerHTML = origText;
-                loadTab('missing', document.querySelector('.tab-btn.active'));
-            }, 1000);
-        } catch (e) { 
-            if(btn) btn.innerHTML = origText; 
-            alert("❌ Ошибка при сохранении: " + e.message); 
-        }
+  const btn = document.getElementById('miss-btn-edit');
+  if (!btn) return;
+  let origText = btn.innerHTML; btn.innerHTML = "⌛ Сохранение..."; btn.disabled = true;
+  try {
+    let promises = [];
+    missingDeletions.forEach(key => promises.push(fetch(`${FB_URL}/missing_items/${key}.json`, { method: 'DELETE' })));
+    for (let key in tempMissingStatus) {
+      if (!missingDeletions.has(key)) {
+        let missingItem = cachedData.missing[key];
+        let newStatus = tempMissingStatus[key];
+        if (newStatus === 'arrived' && missingItem) await autoRemoveFromStoplist(missingItem.shop, [missingItem.name]);
+        promises.push(fetch(`${FB_URL}/missing_items/${key}.json`, { method: 'PATCH', body: JSON.stringify({status: newStatus, timestamp: Date.now()}) }));
+      }
     }
+    await Promise.all(promises);
+    isMissingEditMode = false; missingDeletions.clear(); tempMissingStatus = {};
+    btn.innerHTML = "✅ Сохранено!";
+    setTimeout(() => { btn.innerHTML = origText; btn.disabled = false; loadTab('missing', document.querySelector('.tab-btn.active')); }, 1000);
+  } catch (e) { btn.innerHTML = origText; btn.disabled = false; alert("❌ Ошибка: " + e.message); }
+}
 
     function renderMissing() {
         const box = document.getElementById('content');
@@ -3652,47 +3574,34 @@ function renderGraphsTab() {
     }
 
     async function saveChecklistEdits() {
-        let btn = document.getElementById('chk-btn-edit'); 
-        let origText = btn.innerHTML;
-        if(btn) btn.innerHTML = "⌛ СОХРАНЕНИЕ...";
-        let inputs = document.querySelectorAll('.edit-chk-input');
-        let updates = {};
-        
-        inputs.forEach(input => {
-            let oKey = input.getAttribute('data-order'); 
-            let item = input.getAttribute('data-item'); 
-            let val = input.value.trim();
-            if(!updates[oKey]) updates[oKey] = {}; 
-            updates[oKey][item] = val;
-        });
-        
-        try {
-            for(let oKey in updates) {
-                let order = cachedData.orders[oKey]; 
-                if(!order) continue;
-                let itemsArr = Array.isArray(order.items) ? order.items : (typeof order.items === 'object' && order.items !== null ? Object.values(order.items) : []);
-                for(let item in updates[oKey]) {
-                    let found = itemsArr.find(i => i && i.name === item);
-                    if(found) { 
-                        found.qty = updates[oKey][item]; 
-                    } else { 
-                        itemsArr.push({name: item, qty: updates[oKey][item], cat: "Прочее"}); 
-                    }
-                }
-                await fetch(`${FB_URL}/orders/${oKey}/items.json`, {method:'PUT', body: JSON.stringify(itemsArr)});
-            }
-            
-            isChecklistEditMode = false;
-            if(btn) btn.innerHTML = "✅ СОХРАНЕНО!";
-            setTimeout(() => {
-                if(btn) btn.innerHTML = origText;
-                loadTab('checks_table', document.querySelector('.tab-btn.active'));
-            }, 1000);
-        } catch(e) { 
-            if(btn) btn.innerHTML = origText; 
-            alert("❌ Ошибка сохранения: " + e.message); 
-        }
+  let btn = document.getElementById('chk-btn-edit');
+  if (!btn) return;
+  let origText = btn.innerHTML; btn.innerHTML = "⌛ Сохранение..."; btn.disabled = true;
+  let inputs = document.querySelectorAll('.edit-chk-input');
+  let updates = {};
+  inputs.forEach(input => {
+    let oKey = input.getAttribute('data-order'); let item = input.getAttribute('data-item');
+    if(!oKey || !item) return;
+    let val = input.value.trim();
+    if(!updates[oKey]) updates[oKey] = {};
+    updates[oKey][item] = val;
+  });
+  try {
+    for(let oKey in updates) {
+      let order = cachedData.orders[oKey];
+      if(!order || !Array.isArray(order.items)) continue;
+      for(let item in updates[oKey]) {
+        let found = order.items.find(i => i && i.name === item);
+        if(found) found.qty = updates[oKey][item];
+        else order.items.push({name: item, qty: updates[oKey][item], cat: "Прочее"});
+      }
+      await fetch(`${FB_URL}/orders/${oKey}/items.json`, {method:'PUT', body: JSON.stringify(order.items)});
     }
+    isChecklistEditMode = false;
+    btn.innerHTML = "✅ Сохранено!";
+    setTimeout(() => { btn.innerHTML = origText; btn.disabled = false; loadTab('checks_table', document.querySelector('.tab-btn.active')); }, 1000);
+  } catch(e) { btn.innerHTML = origText; btn.disabled = false; alert("❌ Ошибка сохранения: " + e.message); }
+}
 
     function renderStats() {
         const box = document.getElementById('content');
@@ -4357,37 +4266,35 @@ function renderGraphsTab() {
     }
 
    async function saveMenu(event, btn) {
-        // 1. Блокируем "всплытие" клика, чтобы панель не думала, что её нажали
-        if (event) {
-            event.stopPropagation();
-        }
-        
-        let origText = btn.innerHTML;
-        btn.innerHTML = "⏳ СОХРАНЕНИЕ...";
-        
-        // Блокируем клики по всей странице на секунду, чтобы не нажали дважды
-        document.body.style.pointerEvents = "none";
-        
-        try {
-            // 2. Отправляем всё меню целиком
-            let safeMenu = JSON.parse(JSON.stringify(currentMenu));
-            await db.ref('catalogs/menu').set(safeMenu);
-
-            btn.innerHTML = "✅ СОХРАНЕНО!";
-            
-            // 3. Возвращаем текст кнопки, не перерисовывая всю панель
-            setTimeout(() => {
-                if(btn) btn.innerHTML = origText;
-            }, 1500);
-            
-        } catch(e) {
-            if(btn) btn.innerHTML = origText;
-            alert("❌ Ошибка сохранения меню: " + e.message);
-        } finally {
-            // Разблокируем интерфейс
-            document.body.style.pointerEvents = "auto";
-        }
+  if (event) event.stopPropagation();
+  if (!btn) return;
+  let origText = btn.innerHTML;
+  btn.innerHTML = "⌛ Сохранение...";
+  btn.disabled = true;
+  btn.style.opacity = "0.6";
+  document.body.style.pointerEvents = "auto";
+  try {
+    let cleanMenu = {};
+    for (let k in currentMenu) {
+      if (currentMenu[k] !== null && typeof currentMenu[k] === 'object') {
+        cleanMenu[k] = currentMenu[k];
+      }
     }
+    await db.ref('catalogs/menu').set(cleanMenu);
+    btn.innerHTML = "✅ Сохранено!";
+    setTimeout(() => { 
+      btn.innerHTML = origText; 
+      btn.disabled = false; 
+      btn.style.opacity = "1"; 
+    }, 1200);
+    menuChanges = {};
+  } catch (e) {
+    btn.innerHTML = "❌ Ошибка!";
+    btn.disabled = false;
+    btn.style.opacity = "1";
+    alert("Ошибка сохранения меню: " + e.message);
+  }
+}
     
     async function exportMenuToExcel() {
         showReportOverlay("Генерация Excel...");
@@ -4762,69 +4669,37 @@ async function exportGraphsToExcel() {
     }
 
    async function saveCatalog(btn) {
-        let origText = btn.innerHTML;
-        btn.innerHTML = "⏳ СОХРАНЕНИЕ...";
-        
-        // 1. Снимаем любые возможные блокировки интерфейса (на всякий случай)
-        document.body.style.pointerEvents = "auto";
-        
-        try { 
-            // 2. ⚡ ФИЛЬТР МУСОРА: Этот трюк мгновенно удаляет все "undefined" и битые массивы, 
-            // из-за которых Firebase зависает намертво.
-            let safeData = JSON.parse(JSON.stringify(currentCatalog));
-            
-            await db.ref(currentPath).set(safeData);
-
-            btn.innerHTML = "✅ СОХРАНЕНО!";
-            setTimeout(() => {
-                if(btn) btn.innerHTML = origText;
-            }, 1500);
-        } catch(e) { 
-            if(btn) btn.innerHTML = origText;
-            alert("❌ Ошибка сохранения каталога: " + e.message); 
-        } finally {
-            // Гарантированно возвращаем кликабельность странице при любом исходе
-            document.body.style.pointerEvents = "auto";
-        }
+  if (!btn) return;
+  let origText = btn.innerHTML;
+  btn.innerHTML = "⌛ Сохранение...";
+  btn.disabled = true;
+  btn.style.opacity = "0.6";
+  document.body.style.pointerEvents = "auto";
+  try {
+    // ⚡ Очищаем объект от null/undefined перед отправкой в Firebase
+    let cleanData = {};
+    let src = currentCatalog || {};
+    for (let k in src) {
+      if (src[k] !== null && typeof src[k] === 'object') {
+        cleanData[k] = src[k];
+      }
     }
-
-    // Мгновенное авто-сохранение статуса в базу (без кнопки "Сохранить")
-   // Мгновенное переключение статуса по КЛИКУ
-    async function instantStatusToggle(dateStr, shop, name, currentStatus) {
-        preserveSvodInputs(); 
-        
-        // ⚡ ЦИКЛ ПЕРЕКЛЮЧЕНИЙ СО СТАТУСОМ "УЖЕ ПРИНЯТ"
-        let newStatus = 'ordered'; 
-        if (currentStatus === 'pending' || currentStatus === 'from_stoplist' || currentStatus === 'already_received') newStatus = 'ordered';
-        else if (currentStatus === 'ordered') newStatus = 'not_needed';
-        else if (currentStatus === 'not_needed') newStatus = 'error';
-        else if (currentStatus === 'error') newStatus = 'pending';
-
-        if (!tempSvodStatus[dateStr]) tempSvodStatus[dateStr] = {};
-        if (!tempSvodStatus[dateStr][shop]) tempSvodStatus[dateStr][shop] = {};
-        tempSvodStatus[dateStr][shop][name] = newStatus;
-        
-        let targetOrderKey = Object.keys(cachedData.orders).find(k => {
-            let o = cachedData.orders[k];
-            return o && o.shop === shop && !o.ordered && new Date(o.timestamp).toLocaleDateString('ru-RU') === dateStr;
-        });
-
-        if (targetOrderKey) {
-            let order = cachedData.orders[targetOrderKey];
-            let itemsArr = Array.isArray(order.items) ? order.items : Object.values(order.items || {});
-            let itemIdx = itemsArr.findIndex(i => i && i.name === name);
-            
-            if (itemIdx !== -1) {
-                let isError = (newStatus === 'error');
-                fetch(`${FB_URL}/orders/${targetOrderKey}/items/${itemIdx}.json`, {
-                    method: 'PATCH',
-                    body: JSON.stringify({ status: newStatus, bot_error: isError, not_found: isError })
-                });
-            }
-        }
-        renderOrdersSvod(); 
-    }
-
+    await db.ref(currentPath).set(cleanData);
+    btn.innerHTML = "✅ Сохранено!";
+    setTimeout(() => { 
+      btn.innerHTML = origText; 
+      btn.disabled = false; 
+      btn.style.opacity = "1"; 
+    }, 1200);
+    catalogChanges = {}; // Сбрасываем трекер изменений
+  } catch (e) {
+    btn.innerHTML = "❌ Ошибка!";
+    btn.disabled = false;
+    btn.style.opacity = "1";
+    alert("Ошибка сохранения каталога: " + e.message);
+  }
+}
+                
     // ==========================================
     // ⚡ LIVE-ОБНОВЛЕНИЕ ДАШБОРДА В РЕАЛЬНОМ ВРЕМЕНИ
     // ==========================================

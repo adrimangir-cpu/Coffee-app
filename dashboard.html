@@ -4393,30 +4393,37 @@ function renderGraphsTab() {
   async function saveMenu(btn) {
         let origText = btn.innerHTML;
         
+        // Проверяем наличие правок в техкартах
+        if (Object.keys(menuChanges).length === 0) {
+            btn.innerHTML = "✅ ИЗМЕНЕНИЙ НЕТ";
+            setTimeout(() => { btn.innerHTML = origText; }, 1500);
+            return;
+        }
+        
         btn.disabled = true;
-        btn.innerHTML = "⏳ СОХРАНЕНИЕ МЕНЮ...";
+        btn.innerHTML = "⏳ СОХРАНЕНИЕ...";
+        
         try {
-            // ⚡ Фильтр мусора: спасает от ошибок при удалении слоев
-            let safeMenu = JSON.parse(JSON.stringify(currentMenu));
+            let promises = [];
             
-            // ⚡ Сохраняем всё меню целиком (увидит любые правки рецептов)
-            await db.ref('catalogs/menu').set(safeMenu);
+            // Отправляем на сервер только отредактированные напитки
+            for (let id in menuChanges) {
+                let safeDrink = JSON.parse(JSON.stringify(menuChanges[id]));
+                promises.push(db.ref(`catalogs/menu/${id}`).set(safeDrink));
+            }
+            
+            await Promise.all(promises);
 
+            menuChanges = {}; // Очищаем буфер изменений техкарт
             btn.innerHTML = "✅ СОХРАНЕНО!";
             
-            // Возвращаем кнопку, оставляя папки открытыми
             setTimeout(() => {
-                if(btn) {
-                    btn.innerHTML = origText;
-                    btn.disabled = false;
-                }
-            }, 1500);
-            menuChanges = {}; 
-        } catch(e) {
-            if(btn) {
                 btn.innerHTML = origText;
                 btn.disabled = false;
-            }
+            }, 1000);
+        } catch(e) {
+            btn.innerHTML = origText;
+            btn.disabled = false;
             alert("❌ Ошибка сохранения меню: " + e.message);
         }
     }
@@ -4763,8 +4770,8 @@ async function exportGraphsToExcel() {
     };
     
     function deleteItem(id) { 
-        currentCatalog[id] = null; // Помечаем для удаления в транзакции
-        catalogChanges[id] = null; // Записываем в изменения
+        currentCatalog[id] = null; 
+        catalogChanges[id] = null; // Помечаем элемент на удаление для saveCatalog
         if (currentPath.includes('order') || currentPath.includes('newshop')) renderCatalogOrder();
         else if (currentPath.includes('stoplist')) renderCatalogStoplist();
         else renderCatalogChecklist();
@@ -4796,30 +4803,44 @@ async function exportGraphsToExcel() {
    async function saveCatalog(btn) {
         let origText = btn.innerHTML;
         
-        // Блокируем только саму кнопку от случайного спама
+        // Проверяем, были ли реальные изменения на экране
+        if (Object.keys(catalogChanges).length === 0) {
+            btn.innerHTML = "✅ ИЗМЕНЕНИЙ НЕТ";
+            setTimeout(() => { btn.innerHTML = origText; }, 1500);
+            return;
+        }
+        
         btn.disabled = true;
         btn.innerHTML = "⏳ СОХРАНЕНИЕ...";
         
         try { 
-            // ⚡ Берем весь справочник целиком, очищаем от возможного мусора
-            let safeData = JSON.parse(JSON.stringify(currentCatalog));
+            let promises = [];
             
-            // ⚡ Отправляем в базу
-            await db.ref(currentPath).set(safeData);
+            // Цикл отправляет строго измененные позиции, не трогая остальную базу справочника
+            for (let id in catalogChanges) {
+                if (catalogChanges[id] === null) {
+                    // Если позиция была удалена
+                    promises.push(db.ref(`${currentPath}/${id}`).remove());
+                } else {
+                    // Очищаем конкретный объект от системного мусора и пишем в его личную ветку
+                    let safeItem = JSON.parse(JSON.stringify(catalogChanges[id]));
+                    promises.push(db.ref(`${currentPath}/${id}`).set(safeItem));
+                }
+            }
+            
+            // Ждем одновременного выполнения только наших точечных запросов
+            await Promise.all(promises);
 
+            catalogChanges = {}; // Очищаем буфер изменений справочника
             btn.innerHTML = "✅ СОХРАНЕНО!";
             
             setTimeout(() => {
-                if(btn) {
-                    btn.innerHTML = origText;
-                    btn.disabled = false;
-                }
-            }, 1500);
-        } catch(e) { 
-            if(btn) {
                 btn.innerHTML = origText;
                 btn.disabled = false;
-            }
+            }, 1000);
+        } catch(e) { 
+            btn.innerHTML = origText;
+            btn.disabled = false;
             alert("❌ Ошибка сохранения каталога: " + e.message); 
         }
     }

@@ -1847,18 +1847,18 @@ async function renderOrdersSvod() {
             svodActionBar = document.getElementById('dynamic-action-bar');
         }
         
-        let totalLenta = 0, totalOzon = 0, totalKuper = 0;
+        let totalLenta = 0;
+        let totalOzon = 0;
+        let totalKuper = 0;
         let isOrdHistOpen = expandedDivs.has('history_orders_list');
         
-        // ⚡ МГНОВЕННОЕ ЧТЕНИЕ ИЗ ПАМЯТИ: Без ожидания ответа сервера
         let missingData = cachedData.missing || {}; 
         let activeMissing = {}, returnedToBasket = {};
-        
         Object.values(missingData).forEach(m => {
             if (m && m.status !== 'arrived' && m.status !== 'canceled') { if (!activeMissing[m.shop]) activeMissing[m.shop] = {}; activeMissing[m.shop][m.name] = m.status; }
             if (m && m.status === 'canceled') { if (!returnedToBasket[m.shop]) returnedToBasket[m.shop] = {}; let ts = m.timestamp || 0; if (!returnedToBasket[m.shop][m.name] || ts > returnedToBasket[m.shop][m.name]) returnedToBasket[m.shop][m.name] = ts; }
         });
-    
+
         let vendorMap = {};
         if (cachedData.catalogOrder) Object.values(cachedData.catalogOrder).forEach(c => { if (c && c.name) vendorMap[c.name] = (c.vendor || 'Лента').toLowerCase(); });
 
@@ -1902,14 +1902,12 @@ async function renderOrdersSvod() {
                     let isInLastOrder = lastOrderItems[o.shop] && lastOrderItems[o.shop].has(cName);
                     let isMissing = activeMissing[o.shop] && activeMissing[o.shop][i.name];
                     
-                    // Если это повтор Озона, он принят, его нет в недовозах и статус еще чистый
                     if (isOzon && isInLastOrder && lastOrderOzonReceived[o.shop] && !isMissing && (!i.status || i.status === 'pending')) {
-                        i.status = 'already_received'; // ⚡ Устанавливаем новый статус
+                        i.status = 'already_received';
                         changed = true;
                     }
                 }
             });
-            
             if (changed) autoUpdates[o.key + "/items"] = itemsArr;
         });
 
@@ -1954,7 +1952,7 @@ async function renderOrdersSvod() {
                     else if (i.status === 'ordered') sd.items[i.name].status = 'ordered';
                     else if (i.status === 'not_needed') sd.items[i.name].status = 'not_needed';
                     else if (i.status === 'from_stoplist') sd.items[i.name].status = 'from_stoplist';
-                    else if (i.status === 'already_received') sd.items[i.name].status = 'already_received'; // ⚡ Читаем новый статус
+                    else if (i.status === 'already_received') sd.items[i.name].status = 'already_received';
                 }
             });
         });
@@ -1970,7 +1968,7 @@ async function renderOrdersSvod() {
                     let actualShop = (tempSvodShop[dateStr] && tempSvodShop[dateStr][shop] && tempSvodShop[dateStr][shop][name]) ? tempSvodShop[dateStr][shop][name] : shop;
                     if (!shopLentaSums[actualShop]) shopLentaSums[actualShop] = 0;
                     let itemStatus = (tempSvodStatus[dateStr] && tempSvodStatus[dateStr][shop] && tempSvodStatus[dateStr][shop][name]) ? tempSvodStatus[dateStr][shop][name] : itemsObj[name].status;
-                    // ⚡ СТАТУС "УЖЕ ПРИНЯТ" НЕ ИДЕТ В СУММУ
+                    
                     if (!svodDeletions.some(d => d.date === dateStr && d.shop === shop && d.name === name) && !(activeMissing[shop] && activeMissing[shop][name] === 'transit') && itemStatus !== 'error' && itemStatus !== 'not_needed' && itemStatus !== 'already_received' && (actualVendor.toLowerCase().includes('лента') || actualVendor.toLowerCase().includes('lenta'))) {
                         shopLentaSums[actualShop] += (((tempSvodQty[dateStr] && tempSvodQty[dateStr][shop] && tempSvodQty[dateStr][shop][name] !== undefined) ? tempSvodQty[dateStr][shop][name] : itemsObj[name].qty) * (parseFloat((Object.values(cachedData.catalogOrder || {}).find(c => c && c.name === name) || {}).price) || 0));
                     }
@@ -2042,7 +2040,6 @@ async function renderOrdersSvod() {
                             if (isInLastOrder && cancelTs > 0 && cancelTs >= lastOrdTs) isInLastOrder = false;
 
                             let isRepeat = isInLastOrder || missingStat === 'pending';
-                            let isOzon = actualVendor.toLowerCase().includes('озон') || actualVendor.toLowerCase().includes('ozon');
 
                             let price1 = parseFloat(catItem.price) || 0;
                             let price2 = parseFloat(catItem.price2) || 0;
@@ -2050,24 +2047,52 @@ async function renderOrdersSvod() {
                             let finalPrice = (isRegularKuper && price2 > 0) ? price2 : price1;
 
                             let cost = finalPrice * (isDeleted ? 0 : actualQty);
-                            // ⚡ ИСКЛЮЧАЕМ "УЖЕ ПРИНЯТ" ИЗ ТЕКСТОВЫХ СУММ
+                            
+                            // ⚡ 1. Исключаем из текстовых сумм "Не надо" и "Уже принят"
                             if (inTransit || itemStatus === 'error' || itemStatus === 'not_needed' || itemStatus === 'already_received') cost = 0; 
-                            if (actualVendor.toLowerCase().includes('лента')) totalLenta += cost; else if (actualVendor.toLowerCase().includes('озон') || actualVendor.toLowerCase().includes('ozon')) totalOzon += cost; else if (actualVendor.toLowerCase().includes('купер') || actualVendor.toLowerCase().includes('kuper')) totalKuper += cost;
+                            
+                            if (actualVendor.toLowerCase().includes('лента')) totalLenta += cost; 
+                            else if (actualVendor.toLowerCase().includes('озон') || actualVendor.toLowerCase().includes('ozon')) totalOzon += cost; 
+                            else if (actualVendor.toLowerCase().includes('купер') || actualVendor.toLowerCase().includes('kuper')) totalKuper += cost;
 
                             let linksHtml = [(catItem.link ? `<a href="${catItem.link}" target="_blank" style="color:#0288d1; font-weight:bold;">🔗 Осн</a>` : ""), (catItem.link2 ? `<a href="${catItem.link2}" target="_blank" style="color:#e53935; font-weight:bold; margin-left:8px;">🔗 Рез</a>` : "")].filter(Boolean).join(" ");
-                            let jsName = name.replace(/'/g, "\\'").replace(/"/g, '&quot;'), jsShop = shop.replace(/'/g, "\\'").replace(/"/g, '&quot;'), htmlName = name.replace(/"/g, '&quot;'), htmlShop = shop.replace(/"/g, '&quot;');
+                            let jsName = name.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+                            let jsShop = shop.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+                            let htmlName = name.replace(/"/g, '&quot;');
+                            let htmlShop = shop.replace(/"/g, '&quot;');
 
-                            let repeatBadge = "", rowBg = (itemStatus === 'error') ? `background-color: #ffebee;` : ``;
-                            if (inTransit) { repeatBadge = `<span style='color:#1565c0; font-size:12px; margin-left:5px; font-weight:bold;'>(Уже в пути 🚚)</span>`; itemStatus = 'error'; } 
-                            else if (itemStatus === 'from_stoplist') { repeatBadge = `<span style='color:#d32f2f; font-size:12px; margin-left:5px; font-weight:bold;'>⚠️ Из стоп-листа</span>`; rowBg = `background-color: #ffebee;`; } 
-                            else if (isOzon && isRepeat && itemStatus !== 'already_received') { repeatBadge = `<span style='color:#d32f2f; font-size:12px; margin-left:5px; font-weight:bold;'>⚠️ ${(missingStat === 'pending' ? "В недовозах!" : "Был в прошлой закупке!")}</span>`; rowBg = `background-color: #fff9c4;`; }
+                            // ⚡ 2. Генерируем правильный цвет и метки
+                            let repeatBadge = "";
+                            let rowBg = "";
+
+                            if (itemStatus === 'error' || inTransit) {
+                                rowBg = "background-color: #ffebee;";
+                            } else if (itemStatus === 'from_stoplist') {
+                                rowBg = "background-color: #ffcdd2;";
+                            } else if (itemStatus === 'already_received' || itemStatus === 'not_needed') {
+                                // Делаем серым и полупрозрачным, но оставляем в списке!
+                                rowBg = "background-color: #f5f5f5; opacity: 0.85;"; 
+                            } else if (isRepeat) {
+                                rowBg = "background-color: #fff9c4;";
+                            }
+
+                            if (inTransit) {
+                                repeatBadge += `<span style='color:#1565c0; font-size:12px; margin-left:5px; font-weight:bold;'>(Уже в пути 🚚)</span>`;
+                                itemStatus = 'error'; // Форсируем ошибку для расчетов
+                            } 
+                            if (itemStatus === 'from_stoplist') {
+                                repeatBadge += `<span style='color:#d32f2f; font-size:12px; margin-left:5px; font-weight:bold;'>⚠️ Из стоп-листа</span>`;
+                            } 
+                            if (isRepeat) {
+                                let repeatReason = (missingStat === 'pending') ? "В недовозах!" : "Был в прошлой закупке!";
+                                repeatBadge += `<span style='color:#e65100; font-size:12px; margin-left:5px; font-weight:bold;'>⚠️ ${repeatReason}</span>`;
+                            }
 
                             let statusText = "Ожидает ⏳", statusColor = "#f57c00", statusBg = "#fff3e0";
                             if (itemStatus === 'ordered') { statusText = "Заказано ✅"; statusColor = "#2e7d32"; statusBg = "#e8f5e9"; } 
                             else if (itemStatus === 'not_needed') { statusText = "Не надо ⛔"; statusColor = "#616161"; statusBg = "#eeeeee"; }
                             else if (itemStatus === 'error') { statusText = "Ошибка ❌"; statusColor = "#c62828"; statusBg = "#ffebee"; } 
                             else if (itemStatus === 'from_stoplist') { statusText = "Из стоп-листа 🛑"; statusColor = "#c62828"; statusBg = "#ffcdd2"; }
-                            // ⚡ ДИЗАЙН ДЛЯ НОВОГО СТАТУСА
                             else if (itemStatus === 'already_received') { statusText = "Уже принят 📦"; statusColor = "#0277bd"; statusBg = "#e3f2fd"; }
                             
                             let statusBadge = `<span style="background:${statusBg}; color:${statusColor}; padding:6px 10px; border-radius:8px; font-size:13px; font-weight:900; display:inline-block;">${statusText}</span>`;

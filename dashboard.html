@@ -1847,18 +1847,18 @@ async function renderOrdersSvod() {
             svodActionBar = document.getElementById('dynamic-action-bar');
         }
         
-        let totalLenta = 0;
-        let totalOzon = 0;
-        let totalKuper = 0;
+        let totalLenta = 0, totalOzon = 0, totalKuper = 0;
         let isOrdHistOpen = expandedDivs.has('history_orders_list');
         
-        let resMiss = await fetch(`${FB_URL}/missing_items.json`);
-        let missingData = await resMiss.json() || {}, activeMissing = {}, returnedToBasket = {};
+        // ⚡ МГНОВЕННОЕ ЧТЕНИЕ ИЗ ПАМЯТИ: Без ожидания ответа сервера
+        let missingData = cachedData.missing || {}; 
+        let activeMissing = {}, returnedToBasket = {};
+        
         Object.values(missingData).forEach(m => {
             if (m && m.status !== 'arrived' && m.status !== 'canceled') { if (!activeMissing[m.shop]) activeMissing[m.shop] = {}; activeMissing[m.shop][m.name] = m.status; }
             if (m && m.status === 'canceled') { if (!returnedToBasket[m.shop]) returnedToBasket[m.shop] = {}; let ts = m.timestamp || 0; if (!returnedToBasket[m.shop][m.name] || ts > returnedToBasket[m.shop][m.name]) returnedToBasket[m.shop][m.name] = ts; }
         });
-
+    
         let vendorMap = {};
         if (cachedData.catalogOrder) Object.values(cachedData.catalogOrder).forEach(c => { if (c && c.name) vendorMap[c.name] = (c.vendor || 'Лента').toLowerCase(); });
 
@@ -2325,16 +2325,16 @@ async function renderOrdersSvod() {
             tempSvodNewRows = [];
             
             if(btn) btn.innerHTML = "✅ СОХРАНЕНО!";
+            renderOrdersSvod(); // ⚡ Мгновенно перерисовываем без моргания экрана
             setTimeout(() => {
                 if(btn) btn.innerHTML = origText;
-                loadTab('orders', document.querySelector('.tab-btn.active'));
             }, 1000);
         } catch (e) { 
             if(btn) btn.innerHTML = origText; 
             alert("❌ Ошибка при сохранении: " + e.message); 
         }
     }
-
+    
     async function markOrdersAsPlaced() {
         if(!confirm("Все заказы оформлены? Свод будет очищен, а заказы перенесены в историю.")) return;
         let updates = {};
@@ -2358,7 +2358,7 @@ async function renderOrdersSvod() {
         if (Object.keys(updates).length > 0) {
             try {
                 await fetch(`${FB_URL}/orders.json`, { method: 'PATCH', body: JSON.stringify(updates) });
-                loadTab('orders', document.querySelector('.tab-btn.active'));
+                renderOrdersSvod(); // ⚡ Мгновенно перерисовываем
             } catch(e) { 
                 alert("❌ Ошибка: " + e.message); 
             }
@@ -3067,9 +3067,9 @@ function renderGraphsTab() {
             mpDeletions.clear();
             
             if(btn) btn.innerHTML = "✅ СОХРАНЕНО!";
+            renderMarketplaceTab(); // ⚡ Мгновенно перерисовываем
             setTimeout(() => {
                 if(btn) btn.innerHTML = origText;
-                loadTab('marketplace', document.querySelector('.tab-btn.active'));
             }, 1000);
         } catch(e) { 
             if(btn) btn.innerHTML = origText; 
@@ -3169,9 +3169,9 @@ function renderGraphsTab() {
             tempMissingStatus = {};
 
             if(btn) btn.innerHTML = "✅ СОХРАНЕНО!";
+            renderMissing(); // ⚡ Мгновенно перерисовываем
             setTimeout(() => {
                 if(btn) btn.innerHTML = origText;
-                loadTab('missing', document.querySelector('.tab-btn.active'));
             }, 1000);
         } catch (e) { 
             if(btn) btn.innerHTML = origText; 
@@ -3352,12 +3352,9 @@ function renderGraphsTab() {
         let latestStops = {}; 
         let recentOrdersMap = {}; 
 
-        let stopCatalog = {}; 
-        let missingData = {};
-        try { 
-            stopCatalog = await fetch(`${FB_URL}/catalogs/stoplist.json`).then(r=>r.json()) || {}; 
-            missingData = await fetch(`${FB_URL}/missing_items.json`).then(r=>r.json()) || {};
-        } catch(e) {}
+        // ⚡ МГНОВЕННОЕ ЧТЕНИЕ ИЗ ПАМЯТИ: Без ожидания ответа сервера
+        let stopCatalog = cachedData.catalogStoplist || {}; 
+        let missingData = cachedData.missing || {};
 
         let missingStatusMap = {};
         Object.values(missingData).forEach(m => {
@@ -3688,9 +3685,9 @@ function renderGraphsTab() {
             
             isChecklistEditMode = false;
             if(btn) btn.innerHTML = "✅ СОХРАНЕНО!";
+            renderChecksTable(); // ⚡ Мгновенно перерисовываем
             setTimeout(() => {
                 if(btn) btn.innerHTML = origText;
-                loadTab('checks_table', document.querySelector('.tab-btn.active'));
             }, 1000);
         } catch(e) { 
             if(btn) btn.innerHTML = origText; 
@@ -4856,6 +4853,7 @@ async function exportGraphsToExcel() {
         // Обновляем кэш в фоне
         cachedData.catalogOrder = { ...(cats.order || {}), ...(cats.newshop || {}) };
         cachedData.catalogChecklist = cats.checklist || {};
+        cachedData.catalogStoplist = cats.stoplist || {}; // ⚡ ДОБАВИЛИ КЭШ СТОП-ЛИСТА
         
         // Если у админа открыта какая-то из этих вкладок — мгновенно перерисовываем
         if (currentTabType === 'menu') {

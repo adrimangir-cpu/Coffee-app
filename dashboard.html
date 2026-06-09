@@ -2778,29 +2778,42 @@ function renderGraphsTab() {
 
     async function saveGraphsEdits() {
         let btn = document.getElementById('btn-save-graphs');
-        let origText = btn.innerHTML;
-        btn.innerHTML = "⌛ СОХРАНЕНИЕ...";
+        let origText = btn ? btn.innerHTML : "💾 Сохранить график";
+        
+        if(btn) {
+            btn.disabled = true;
+            btn.innerHTML = "⌛ СОХРАНЕНИЕ...";
+        }
 
         let target = getTargetDateLogic(); 
         let currentYearMonth = `${target.year}_${target.month}`;
         
         try {
             if(!cachedData.schedules) cachedData.schedules = {};
-            cachedData.schedules[currentYearMonth] = window.graphDraft;
+            
+            // ⚡ Защита графика от удаленных смен (undefined)
+            let safeGraphDraft = JSON.parse(JSON.stringify(window.graphDraft));
+            cachedData.schedules[currentYearMonth] = safeGraphDraft;
             
             await fetch(`${FB_URL}/schedules/${currentYearMonth}.json`, { 
                 method: 'PUT', 
-                body: JSON.stringify(window.graphDraft) 
+                body: JSON.stringify(safeGraphDraft) 
             });
             
-            btn.innerHTML = "✅ СОХРАНЕНО!";
+            if(btn) btn.innerHTML = "✅ СОХРАНЕНО!";
             setTimeout(() => { 
-                if(btn) btn.innerHTML = origText; 
+                if(btn) {
+                    btn.innerHTML = origText; 
+                    btn.disabled = false;
+                }
                 renderGraphsTab();
             }, 1000);
         } catch(e) {
-            if(btn) btn.innerHTML = origText;
-            alert("❌ Ошибка: " + e.message);
+            if(btn) {
+                btn.innerHTML = origText;
+                btn.disabled = false;
+            }
+            alert("❌ Ошибка сохранения графика: " + e.message);
         }
     }
 
@@ -4345,21 +4358,33 @@ function renderGraphsTab() {
         currentMenu[id].blocks[bIdx][iIdx][field] = val;
     }
 
-   async function saveMenu(btn) {
+  async function saveMenu(btn) {
         let origText = btn.innerHTML;
         
+        btn.disabled = true;
         btn.innerHTML = "⏳ СОХРАНЕНИЕ МЕНЮ...";
         try {
-            // ⚡ Отправляем всё меню целиком. Ни одна буква из техкарты больше не потеряется!
-            await db.ref('catalogs/menu').set(currentMenu);
+            // ⚡ Фильтр мусора: спасает от ошибок при удалении слоев
+            let safeMenu = JSON.parse(JSON.stringify(currentMenu));
+            
+            // ⚡ Сохраняем всё меню целиком (увидит любые правки рецептов)
+            await db.ref('catalogs/menu').set(safeMenu);
 
             btn.innerHTML = "✅ СОХРАНЕНО!";
+            
+            // Возвращаем кнопку, оставляя папки открытыми
             setTimeout(() => {
-                if(btn) btn.innerHTML = origText;
-                loadTab('menu', document.querySelector('.tab-btn.active'));
-            }, 1000);
+                if(btn) {
+                    btn.innerHTML = origText;
+                    btn.disabled = false;
+                }
+            }, 1500);
+            menuChanges = {}; 
         } catch(e) {
-            if(btn) btn.innerHTML = origText;
+            if(btn) {
+                btn.innerHTML = origText;
+                btn.disabled = false;
+            }
             alert("❌ Ошибка сохранения меню: " + e.message);
         }
     }
@@ -4738,19 +4763,32 @@ async function exportGraphsToExcel() {
 
    async function saveCatalog(btn) {
         let origText = btn.innerHTML;
-        
+        // Блокируем саму кнопку от двойного клика, но экран остается рабочим
+        btn.disabled = true;
         btn.innerHTML = "⏳ СОХРАНЕНИЕ...";
+        
         try { 
-            // ⚡ Отправляем весь текущий справочник разом (надежно сохранит любые микро-правки и удаления)
-            await db.ref(currentPath).set(currentCatalog);
+            // ⚡ Фильтр мусора: удаляет undefined, чтобы Firebase не падал
+            let safeData = JSON.parse(JSON.stringify(currentCatalog));
+            
+            // ⚡ Отправляем всё разом
+            await db.ref(currentPath).set(safeData);
 
             btn.innerHTML = "✅ СОХРАНЕНО!";
+            
+            // Возвращаем кнопку в норму без перезагрузки вкладки (панель не закроется)
             setTimeout(() => {
-                if(btn) btn.innerHTML = origText;
-                loadTab(currentTabType, document.querySelector('.tab-btn.active'));
-            }, 1000);
+                if(btn) {
+                    btn.innerHTML = origText;
+                    btn.disabled = false;
+                }
+            }, 1500);
+            catalogChanges = {}; 
         } catch(e) { 
-            if(btn) btn.innerHTML = origText;
+            if(btn) {
+                btn.innerHTML = origText;
+                btn.disabled = false;
+            }
             alert("❌ Ошибка сохранения каталога: " + e.message); 
         }
     }

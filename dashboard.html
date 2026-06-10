@@ -642,36 +642,63 @@
         let subs = document.querySelectorAll('.lvl2_' + gcId);
         if (subs.length === 0) return;
         
-        // Смотрим, была ли открыта папка
         let isClosing = subs[0].style.display !== 'none';
         updateExpanded('lvl2_' + gcId, !isClosing);
         
-        // Переворачиваем стрелочку у Глобальной категории
-        let arrowEl = document.getElementById('arrow_lvl1_' + gcId);
+        let arrowEl = document.getElementById('arrow_lvl1_' + gcId) || document.getElementById('arrow_lvl1_' + gcId.replace(/^(chksub_|stopsub_|menu_)/, ''));
         if (arrowEl) arrowEl.innerText = isClosing ? "▼" : "▲";
 
-        // Сворачиваем или разворачиваем подкатегории
         subs.forEach(el => {
             el.style.display = isClosing ? 'none' : 'table-row';
         });
 
         if (isClosing) {
-            // Если закрываем, жестко прячем все товары внутри
+            // ⚡ 1. Прячем все товары внутри
             document.querySelectorAll('.lvl3_of_' + gcId).forEach(el => el.style.display = 'none');
-        } else {
-            // Если открываем, показываем товары ТОЛЬКО у тех подкатегорий, которые были открыты
+            
+            // ⚡ 2. Жестко "забываем" состояние подкатегорий (сворачиваем их лесенкой)
             subs.forEach(sub => {
                 let onclickAttr = sub.getAttribute('onclick');
                 if (onclickAttr) {
-                    let match = onclickAttr.match(/toggleCatElements\('([^']+)'/);
-                    if (match && match[1]) {
-                        let targetClass = match[1];
-                        // Если в памяти эта подкатегория открыта — показываем её товары
-                        if (expandedDivs.has(targetClass)) {
-                            document.querySelectorAll('.' + targetClass).forEach(item => {
-                                item.style.display = 'table-row';
-                            });
-                        }
+                    let matchTarget = onclickAttr.match(/toggleCatElements\('([^']+)'/);
+                    let matchArrow = onclickAttr.match(/,\s*'([^']+)'/);
+                    if (matchTarget && matchTarget[1]) updateExpanded(matchTarget[1], false); // Стираем из памяти
+                    if (matchArrow && matchArrow[1]) {
+                        let a = document.getElementById(matchArrow[1]);
+                        if (a) a.innerText = "▼"; // Меняем стрелочку на закрытую
+                    }
+                }
+            });
+        }
+    }
+
+    // ⚡ НОВАЯ ФУНКЦИЯ: Для сворачивания "лесенкой" дат и кофеен в Своде
+    function toggleSvodDate(safeDate) {
+        let shops = document.querySelectorAll('.svodlvl2_' + safeDate);
+        if (shops.length === 0) return;
+        
+        let isClosing = shops[0].style.display !== 'none';
+        updateExpanded('svodlvl2_' + safeDate, !isClosing);
+        
+        let arrowEl = document.getElementById('arrow_sdate_' + safeDate);
+        if (arrowEl) arrowEl.innerText = isClosing ? "▼" : "▲";
+
+        shops.forEach(el => el.style.display = isClosing ? 'none' : 'table-row');
+
+        if (isClosing) {
+            // Прячем все товары этой даты
+            document.querySelectorAll('.svodlvl3_of_' + safeDate).forEach(el => el.style.display = 'none');
+            
+            // Принудительно закрываем все кофейни в памяти
+            shops.forEach(shop => {
+                let onclickAttr = shop.getAttribute('onclick');
+                if (onclickAttr) {
+                    let matchTarget = onclickAttr.match(/toggleCatElements\('([^']+)'/);
+                    let matchArrow = onclickAttr.match(/,\s*'([^']+)'/);
+                    if (matchTarget && matchTarget[1]) updateExpanded(matchTarget[1], false);
+                    if (matchArrow && matchArrow[1]) {
+                        let arr = document.getElementById(matchArrow[1]);
+                        if (arr) arr.innerText = "▼";
                     }
                 }
             });
@@ -2032,7 +2059,7 @@ async function renderOrdersSvod() {
         else {
             sortedDates.forEach(dateStr => {
                 let safeDate = getSafeId(dateStr), isDateOpen = expandedDivs.has(`svodlvl2_${safeDate}`);
-                html += `<tr class="cat-group-header" onclick="toggleCatElements('svodlvl2_${safeDate}', 'arrow_sdate_${safeDate}')"><td colspan="5" style="padding:16px; background:#D1C4E9; font-size:18px; border-bottom: 2px solid #b39ddb;">📅 <b>Закупка от ${dateStr}</b> <span id="arrow_sdate_${safeDate}" style="float:right;">${isDateOpen ? '▲' : '▼'}</span></td></tr>`;
+                html += `<tr class="cat-group-header" onclick="toggleSvodDate('${safeDate}')"><td colspan="5" style="padding:16px; background:#D1C4E9; font-size:18px; border-bottom: 2px solid #b39ddb;">📅 <b>Закупка от ${dateStr}</b> <span id="arrow_sdate_${safeDate}" style="float:right;">${isDateOpen ? '▲' : '▼'}</span></td></tr>`;
                 
                 let shopsObj = svodDataByDate[dateStr];
                 Object.keys(shopsObj).sort().forEach(shop => {

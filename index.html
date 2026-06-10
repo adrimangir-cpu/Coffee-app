@@ -3197,6 +3197,9 @@ async function viewStopList() {
     // ==========================================
     // ⚡ ДВИЖОК НУЛЕВОГО ОЖИДАНИЯ (Фоновая синхронизация)
     // ==========================================
+    // ==========================================
+    // ⚡ ДВИЖОК НУЛЕВОГО ОЖИДАНИЯ (Фоновая синхронизация)
+    // ==========================================
     function startRealtimeUpdates() {
         const paths = ['order', 'newshop', 'stoplist', 'checklist'];
         paths.forEach(p => {
@@ -3204,25 +3207,38 @@ async function viewStopList() {
                 let fresh = snap.val();
                 if (fresh) {
                     if (!state.cachedCatalogs) state.cachedCatalogs = {};
+                    
+                    // ⚡ ЗАЩИТА ОТ СКАЧКОВ ИНТЕРНЕТА: Игнорируем фейковые обновления
+                    if (JSON.stringify(state.cachedCatalogs[p]) === JSON.stringify(fresh)) return;
+                    
                     state.cachedCatalogs[p] = fresh;
                     
-                    saveToRealCache(p, fresh); // ⚡ ТИХО СОХРАНЯЕМ В ВЕЧНЫЙ КЭШ ТЕЛЕФОНА
+                    if (typeof stripPhotos === 'function') {
+                        let safeCache = {
+                            order: stripPhotos(state.cachedCatalogs['order']),
+                            newshop: stripPhotos(state.cachedCatalogs['newshop']),
+                            stoplist: stripPhotos(state.cachedCatalogs['stoplist']),
+                            checklist: stripPhotos(state.cachedCatalogs['checklist'])
+                        };
+                        try { localStorage.setItem("teiku_light_cache", JSON.stringify(safeCache)); } catch(e){}
+                    }
                     
                     triggerActiveRender(); 
                 }
             });
         });
 
-        // Тяжелое меню с фото качается в фоне, не блокируя работу кассы
+        // Меню грузим с задержкой 10 секунд
         setTimeout(() => {
             database.ref('catalogs/menu').on('value', snap => {
                 let fresh = snap.val();
                 if (fresh) {
                     if (!state.cachedCatalogs) state.cachedCatalogs = {};
+                    
+                    // ⚡ ЗАЩИТА: Не перерисовываем, если админ ничего не менял
+                    if (JSON.stringify(state.cachedCatalogs['menu']) === JSON.stringify(fresh)) return;
+                    
                     state.cachedCatalogs['menu'] = fresh;
-                    
-                    saveToRealCache('menu', fresh); // Меню с фото отлично помещается в IndexedDB!
-                    
                     if (state.currentMode === 'menu') {
                         state.menuCatalog = Object.assign({}, fresh);
                         if (typeof renderMenuApp === 'function') renderMenuApp();

@@ -1111,6 +1111,30 @@
     }
     
     function renderMenuApp() {
+        // --- ⚡ УМНАЯ ПАМЯТЬ ИНТЕРФЕЙСА ---
+        if (!state.uiMemory) state.uiMemory = { cats: new Set(), subs: new Set(), recs: new Set() };
+        let container = document.getElementById('menu-container');
+        
+        // Запоминаем, что конкретно открыто прямо сейчас
+        if (container.innerHTML.trim() !== "" && !container.innerHTML.includes("Загрузка")) {
+            state.uiMemory.cats.clear();
+            container.querySelectorAll('.category-block.open').forEach(el => {
+                let t = el.querySelector('.category-header span');
+                if (t) state.uiMemory.cats.add(t.innerText.replace('🌍 ', '').trim());
+            });
+            
+            state.uiMemory.subs.clear();
+            container.querySelectorAll('div[class^="items_id_"]').forEach(el => {
+                if (el.style.display === 'block') state.uiMemory.subs.add(el.className.split(' ')[0]);
+            });
+            
+            state.uiMemory.recs.clear();
+            container.querySelectorAll('.all-recipe-blocks').forEach(el => {
+                if (el.style.display === 'block') state.uiMemory.recs.add(el.className.split(' ')[0]);
+            });
+        }
+        // ------------------------------------------------
+
         let html = "";
         let grouped = {};
         
@@ -1126,7 +1150,10 @@
             let safeGc = getSafeId("app_menu_" + gc);
             let isMainMenu = (String(gc).trim().toLowerCase() === 'основное меню'); 
             
-            html += `<div class="category-block" style="margin-bottom:15px; border:2px solid #D1C4E9; background:#fff;">
+            // ⚡ Восстанавливаем открытую категорию
+            let catOpenClass = state.uiMemory.cats.has(gc) ? "open" : "";
+            
+            html += `<div class="category-block ${catOpenClass}" style="margin-bottom:15px; border:2px solid #D1C4E9; background:#fff;">
                         <div class="category-header" style="background:#ede7f6; color:#311b92;" onclick="handleCategoryToggle(this)">
                             <span>🌍 ${gc}</span> <span style="opacity:0.5; font-size:14px;">▼</span>
                         </div>
@@ -1134,24 +1161,43 @@
             
             Object.keys(grouped[gc]).sort().forEach(sc => {
                 let safeSc = getSafeId("app_menu_sc_" + gc + "_" + sc);
+                let subClass = `items_${safeSc}`;
+                
+                // ⚡ Восстанавливаем открытую подкатегорию
+                let subDisp = state.uiMemory.subs.has(subClass) ? "block" : "none";
+                let subArr = subDisp === "block" ? "▲" : "▼";
+
                 html += `<div style="margin-bottom:10px;">
-                            <div style="font-weight:900; color:#7E57C2; padding:8px 5px; border-bottom:2px dashed #eee; margin-bottom:5px; font-size:17px;" onclick="toggleElements('items_${safeSc}', 'arrow_sc_${safeSc}')">
-                                📂 ${sc} <span id="arrow_sc_${safeSc}" style="float:right; opacity:0.5; font-size:14px;">▼</span>
+                            <div style="font-weight:900; color:#7E57C2; padding:8px 5px; border-bottom:2px dashed #eee; margin-bottom:5px; font-size:17px;" onclick="toggleElements('${subClass}', 'arrow_sc_${safeSc}')">
+                                📂 ${sc} <span id="arrow_sc_${safeSc}" style="float:right; opacity:0.5; font-size:14px;">${subArr}</span>
                             </div>
-                            <div class="items_${safeSc}" style="display:none;">`;
+                            <div class="${subClass}" style="display:${subDisp};">`;
                 
                 grouped[gc][sc].sort((a,b) => (a.name||'').localeCompare(b.name||'')).forEach(drink => {
                     let safeDrink = getSafeId("app_drink_" + gc + "_" + sc + "_" + drink.name);
+                    let recClass = `recipe_data_${safeDrink}`;
                     
-                    let recipeHtml = `<div class="recipe_data_${safeDrink} all-recipe-blocks" style="display:none; margin-top:10px; padding:12px; background:#f9fbe7; border-radius:12px; border:1px solid #c5e1a5;">`;
+                    // ⚡ Восстанавливаем открытый рецепт
+                    let recDisp = state.uiMemory.recs.has(recClass) ? "block" : "none";
+                    let recArr = recDisp === "block" ? "▲" : "▼";
+
+                    let recipeHtml = `<div class="${recClass} all-recipe-blocks" style="display:${recDisp}; margin-top:10px; padding:12px; background:#f9fbe7; border-radius:12px; border:1px solid #c5e1a5;">`;
                     
                     // ⚡ ОПТИМИЗАЦИЯ ФОТО: Ленивая загрузка
                     if (drink.photo && drink.photo.trim() !== "") {
-                        recipeHtml += `<div style="text-align:center; margin-bottom:15px;" onclick="showDrinkPhoto('${escapeName(drink.name)}')">
-                                         <div class="lazy-placeholder" style="width:100px; height:100px; background:#ede7f6; border-radius:16px; margin:0 auto; display:flex; align-items:center; justify-content:center; color:#7E57C2; font-size:12px; font-weight:bold;">⏳ Фото...</div>
-                                         <img class="lazy-drink-img" data-src="${drink.photo}" style="width:100px; height:100px; object-fit:cover; border-radius:16px; border:2px solid #D1C4E9; box-shadow: 0 4px 10px rgba(0,0,0,0.1); cursor:pointer; display:none; margin: 0 auto;" alt="Фото напитка">
-                                         <div style="font-size:12px; color:#7E57C2; font-weight:bold; margin-top:6px;">🔍 Нажми, чтобы увеличить</div>
-                                       </div>`;
+                        // Если рецепт уже открыт, сразу загружаем фото без заглушки
+                        if (recDisp === "block") {
+                            recipeHtml += `<div style="text-align:center; margin-bottom:15px;" onclick="showDrinkPhoto('${escapeName(drink.name)}')">
+                                             <img src="${drink.photo}" style="width:100px; height:100px; object-fit:cover; border-radius:16px; border:2px solid #D1C4E9; box-shadow: 0 4px 10px rgba(0,0,0,0.1); cursor:pointer; display:block; margin: 0 auto;" alt="Фото напитка">
+                                             <div style="font-size:12px; color:#7E57C2; font-weight:bold; margin-top:6px;">🔍 Нажми, чтобы увеличить</div>
+                                           </div>`;
+                        } else {
+                            recipeHtml += `<div style="text-align:center; margin-bottom:15px;" onclick="showDrinkPhoto('${escapeName(drink.name)}')">
+                                             <div class="lazy-placeholder" style="width:100px; height:100px; background:#ede7f6; border-radius:16px; margin:0 auto; display:flex; align-items:center; justify-content:center; color:#7E57C2; font-size:12px; font-weight:bold;">⏳ Фото...</div>
+                                             <img class="lazy-drink-img" data-src="${drink.photo}" style="width:100px; height:100px; object-fit:cover; border-radius:16px; border:2px solid #D1C4E9; box-shadow: 0 4px 10px rgba(0,0,0,0.1); cursor:pointer; display:none; margin: 0 auto;" alt="Фото напитка">
+                                             <div style="font-size:12px; color:#7E57C2; font-weight:bold; margin-top:6px;">🔍 Нажми, чтобы увеличить</div>
+                                           </div>`;
+                        }
                     }
                     
                     recipeHtml += `<div style="font-size:14px; font-weight:900; color:#2e7d32; margin-bottom:8px; text-transform:uppercase;">📝 Состав:</div>`;
@@ -1200,15 +1246,15 @@
                                         let q350 = (r.qty_350 !== undefined && r.qty_350 !== "") ? r.qty_350 : '-';
                                         let q540 = (r.qty_540 !== undefined && r.qty_540 !== "") ? r.qty_540 : '-';
                                         recipeHtml += trStart + `
-                                                                <td style="padding:10px 2px; font-weight:900; color:#1976d2; vertical-align:top; width:40px;">${q250}</td>
-                                                                <td style="padding:10px 2px; font-weight:900; color:#8e24aa; vertical-align:top; width:40px;">${q350}</td>
-                                                                <td style="padding:10px 2px; font-weight:900; color:#f57c00; vertical-align:top; width:40px;">${q540}</td>
-                                                               </tr>`;
+                                                        <td style="padding:10px 2px; font-weight:900; color:#1976d2; vertical-align:top; width:40px;">${q250}</td>
+                                                        <td style="padding:10px 2px; font-weight:900; color:#8e24aa; vertical-align:top; width:40px;">${q350}</td>
+                                                        <td style="padding:10px 2px; font-weight:900; color:#f57c00; vertical-align:top; width:40px;">${q540}</td>
+                                                       </tr>`;
                                     } else {
                                         let qSingle = (r.qty !== undefined && r.qty !== "") ? r.qty : '-';
                                         recipeHtml += trStart + `
-                                                                <td style="padding:10px 2px; font-weight:900; color:#311b92; vertical-align:top; text-align:right; width:60px;">${qSingle}</td>
-                                                               </tr>`;
+                                                        <td style="padding:10px 2px; font-weight:900; color:#311b92; vertical-align:top; text-align:right; width:60px;">${qSingle}</td>
+                                                       </tr>`;
                                     }
                                 });
                             }
@@ -1233,9 +1279,9 @@
                     recipeHtml += `</div>`;
 
                     html += `<div style="background:#fff; border-radius:12px; box-shadow:0 2px 8px rgba(0,0,0,0.05); margin-bottom:8px; padding:12px; border: 1px solid #f0f0f0;">
-                                <div style="display:flex; justify-content:space-between; align-items:center; cursor:pointer;" onclick="toggleRecipeAndScroll('recipe_data_${safeDrink}', 'arr_drink_${safeDrink}', this)">
+                                <div style="display:flex; justify-content:space-between; align-items:center; cursor:pointer;" onclick="toggleRecipeAndScroll('${recClass}', 'arr_drink_${safeDrink}', this)">
                                     <span style="font-weight:900; font-size:16px; color:#311b92;">☕ ${drink.name}</span>
-                                    <span id="arr_drink_${safeDrink}" class="recipe-arrow" style="color:#888; font-size:13px; padding:5px; transition:0.2s;">▼</span>
+                                    <span id="arr_drink_${safeDrink}" class="recipe-arrow" style="color:#888; font-size:13px; padding:5px; transition:0.2s;">${recArr}</span>
                                 </div>
                                 ${recipeHtml}
                              </div>`;
@@ -1246,7 +1292,7 @@
             html += `</div></div>`;
         });
         
-        document.getElementById('menu-container').innerHTML = html || "<div class='report-card' style='text-align:center; font-weight:bold; color:#888;'>Меню пусто</div>";
+        container.innerHTML = html || "<div class='report-card' style='text-align:center; font-weight:bold; color:#888;'>Меню пусто</div>";
     }
     
     function openPhotoModal(title, photoUrl) {

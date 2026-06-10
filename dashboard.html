@@ -640,18 +640,42 @@
 
     function toggleLvl1(gcId) {
         let subs = document.querySelectorAll('.lvl2_' + gcId);
-        let isClosing = false;
+        if (subs.length === 0) return;
+        
+        // Смотрим, была ли открыта папка
+        let isClosing = subs[0].style.display !== 'none';
+        updateExpanded('lvl2_' + gcId, !isClosing);
+        
+        // Переворачиваем стрелочку у Глобальной категории
+        let arrowEl = document.getElementById('arrow_lvl1_' + gcId);
+        if (arrowEl) arrowEl.innerText = isClosing ? "▼" : "▲";
+
+        // Сворачиваем или разворачиваем подкатегории
         subs.forEach(el => {
-            if (el.style.display === 'none') {
-                el.style.display = 'table-row';
-                updateExpanded('lvl2_' + gcId, true);
-            } else {
-                el.style.display = 'none';
-                isClosing = true;
-                updateExpanded('lvl2_' + gcId, false);
-            }
+            el.style.display = isClosing ? 'none' : 'table-row';
         });
-        if (isClosing) document.querySelectorAll('.lvl3_of_' + gcId).forEach(el => el.style.display = 'none');
+
+        if (isClosing) {
+            // Если закрываем, жестко прячем все товары внутри
+            document.querySelectorAll('.lvl3_of_' + gcId).forEach(el => el.style.display = 'none');
+        } else {
+            // Если открываем, показываем товары ТОЛЬКО у тех подкатегорий, которые были открыты
+            subs.forEach(sub => {
+                let onclickAttr = sub.getAttribute('onclick');
+                if (onclickAttr) {
+                    let match = onclickAttr.match(/toggleCatElements\('([^']+)'/);
+                    if (match && match[1]) {
+                        let targetClass = match[1];
+                        // Если в памяти эта подкатегория открыта — показываем её товары
+                        if (expandedDivs.has(targetClass)) {
+                            document.querySelectorAll('.' + targetClass).forEach(item => {
+                                item.style.display = 'table-row';
+                            });
+                        }
+                    }
+                }
+            });
+        }
     }
 
     async function triggerPcBuild(cmd) {
@@ -3814,41 +3838,40 @@ function renderGraphsTab() {
         let catLabel = isNewShopCatalog ? "🏗 На новую кофейню" : "📦 Обычная закупка";
         let isActionsOpen = expandedDivs.has('cat-ord-actions');
 
-        let html = `
-        <h3 style="margin-top:0; margin-bottom:15px; font-size:24px; color:#4A148C;">🛒 Справочник Закупки</h3>
-        <div class="cat-group-header" style="padding: 12px 15px; border-radius: 12px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.05);" onclick="toggleCatElements('cat-ord-actions', 'arrow_cat_ord_actions')">
-            <span style="font-size:16px; color:#4A148C; font-weight:900;">⚡ Действия и Настройки</span>
-            <span id="arrow_cat_ord_actions">${isActionsOpen ? '▲' : '▼'}</span>
-        </div>
-        <div class="cat-ord-actions action-container" style="display: ${isActionsOpen ? 'flex' : 'none'}; flex-direction: column; margin-bottom: 20px;">
-            <div style="display:flex; gap:10px; flex-wrap:wrap; width:100%;">
-                <button class="btn-add" style="flex:1 1 auto;" onclick="addItemOrder()">➕ Добавить позицию</button>
-                <button class="btn-save" style="flex:1 1 auto; margin:0; padding:12px 18px;" onclick="saveCatalog(this)">💾 Сохранить в базу</button>
+        // ⚡ ЗАКРЕПЛЯЕМ ПАНЕЛЬ ДЕЙСТВИЙ НАВЕРХУ
+        setupUniversalActionBar(`
+            <div class="cat-group-header" style="padding: 10px 15px; border-radius: 12px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 8px rgba(0,0,0,0.05);" onclick="toggleCatElements('cat-ord-actions', 'arrow_cat_ord_actions')">
+                <span style="font-size:16px; color:#4A148C; font-weight:900;">⚡ Действия и Настройки</span>
+                <span id="arrow_cat_ord_actions">${isActionsOpen ? '▲' : '▼'}</span>
             </div>
-            <div style="display:flex; gap:10px; flex-wrap:wrap; width:100%; margin-top:5px;">
-                <button class="tab-btn ${!isNewShopCatalog ? 'active' : ''}" style="flex:1 1 auto; padding: 10px 20px; font-size: 15px;" onclick="switchOrderCatalog(false)">📦 Обычная закупка</button>
-                <button class="tab-btn ${isNewShopCatalog ? 'active' : ''}" style="flex:1 1 auto; padding: 10px 20px; font-size: 15px;" onclick="switchOrderCatalog(true)">🏗 На новую кофейню</button>
+            <div class="cat-ord-actions action-container sticky-action-panel action-panel-dropdown" style="display: ${isActionsOpen ? 'flex' : 'none'}; flex-direction: column; margin-top: 10px;">
+                <div style="display:flex; gap:10px; flex-wrap:wrap; width:100%;">
+                    <button class="btn-add" style="flex:1 1 auto;" onclick="addItemOrder()">➕ Добавить позицию</button>
+                    <button class="btn-save" style="flex:1 1 auto; margin:0; padding:12px 18px;" onclick="saveCatalog(this)">💾 Сохранить в базу</button>
+                </div>
+                <div style="display:flex; gap:10px; flex-wrap:wrap; width:100%; margin-top:5px;">
+                    <button class="tab-btn ${!isNewShopCatalog ? 'active' : ''}" style="flex:1 1 auto; padding: 10px 20px; font-size: 15px;" onclick="switchOrderCatalog(false)">📦 Обычная закупка</button>
+                    <button class="tab-btn ${isNewShopCatalog ? 'active' : ''}" style="flex:1 1 auto; padding: 10px 20px; font-size: 15px;" onclick="switchOrderCatalog(true)">🏗 На новую кофейню</button>
+                </div>
+                <div class="settings-panel" style="width:100%; margin-bottom:0; margin-top:5px; box-sizing:border-box;">
+                    <h4 style="margin-top:0; margin-bottom:0; font-size:16px; color:#d32f2f; cursor:pointer; display:flex; justify-content:space-between; align-items:center;" onclick="toggleCatElements('settings-content-div', 'arrow_settings-content-div')">
+                        <span>⚙️ Скрывать категории в приложении</span><span id="arrow_settings-content-div">${expandedDivs.has('settings-content-div') ? '▲' : '▼'}</span>
+                    </h4>
+                    <div class="settings-content-div action-container" style="display:${expandedDivs.has('settings-content-div') ? 'flex' : 'none'}; flex-wrap:wrap; gap:15px; margin-top:15px; margin-bottom:0; position:static;">
+                        <label class="toggle-label" style="color:#2e7d32; font-size:15px;"><input type="checkbox" onchange="toggleSetting('new_shop_order_active', this.checked)" ${appSettings.new_shop_order_active ? 'checked' : ''}> Кнопка "Закупка на новую кофейню"</label>
+                        ${globalCats.map(gc => !gc.includes("!!!") ? `<label class="toggle-label" style="font-size:15px;"><input type="checkbox" onchange="toggleHiddenCategory('${gc}', this.checked, 'order')" ${appSettings.hidden_categories_order && appSettings.hidden_categories_order[gc] ? 'checked' : ''}> Скрыть "${gc}"</label>` : '').join('')}
+                    </div>
+                </div>
             </div>
-            <div class="settings-panel" style="width:100%; margin-bottom:0; margin-top:5px; box-sizing:border-box;">
-                <h4 style="margin-top:0; margin-bottom:0; font-size:16px; color:#d32f2f; cursor:pointer; display:flex; justify-content:space-between; align-items:center;" onclick="toggleCatElements('settings-content-div', 'arrow_settings-content-div')">
-                    <span>⚙️ Скрывать категории в приложении</span><span id="arrow_settings-content-div">${expandedDivs.has('settings-content-div') ? '▲' : '▼'}</span>
-                </h4>
-                <div class="settings-content-div action-container" style="display:${expandedDivs.has('settings-content-div') ? 'flex' : 'none'}; flex-wrap:wrap; gap:15px; margin-top:15px; margin-bottom:0; position:static;">
-                    <label class="toggle-label" style="color:#2e7d32; font-size:15px;"><input type="checkbox" onchange="toggleSetting('new_shop_order_active', this.checked)" ${appSettings.new_shop_order_active ? 'checked' : ''}> Кнопка "Закупка на новую кофейню"</label>`;
-        
-        globalCats.forEach(gc => {
-            if(gc.includes("!!!")) return; 
-            html += `<label class="toggle-label" style="font-size:15px;"><input type="checkbox" onchange="toggleHiddenCategory('${gc}', this.checked, 'order')" ${appSettings.hidden_categories_order && appSettings.hidden_categories_order[gc] ? 'checked' : ''}> Скрыть "${gc}"</label>`;
-        });
-        html += `</div></div></div>`;
+        `, isActionsOpen, 'arrow_cat_ord_actions');
 
         let allPurchaseItems = [];
         if (cachedData.catalogOrder) allPurchaseItems.push(...Object.values(cachedData.catalogOrder).map(i => i.name));
         if (cachedData.catalogChecklist) allPurchaseItems.push(...Object.values(cachedData.catalogChecklist).map(i => i.name));
         let uniqueNames = [...new Set(allPurchaseItems.filter(Boolean))].sort((a,b) => a.localeCompare(b));
         let optionsHtml = uniqueNames.map(name => `<option value="${name.replace(/"/g, '&quot;')}">${name}</option>`).join("");
-        html += `<datalist id="order_items_list">${optionsHtml}</datalist>`;
         
+        let html = `<datalist id="order_items_list">${optionsHtml}</datalist>`;
         html += `<div style="overflow-x:auto;" class="price-input-container"><table style="min-width:1600px;"><tr><th style="width:160px;">Глоб. Категория</th><th style="width:160px;">Подкатегория</th><th style="width:200px;">Наименование</th><th style="width:150px; text-align:center;">Фотографии</th><th style="width:120px;">Поставщик</th><th style="width:120px;">Цена 1 (₽)</th><th>Ссылка 1</th><th style="width:120px;">Цена 2 (₽)</th><th>Ссылка 2</th><th style="width:60px; text-align:center;">Удалить</th></tr>`;
 
         let grouped = {};
@@ -3862,7 +3885,7 @@ function renderGraphsTab() {
             let safeGc = getSafeId(gc); let displayGc = gc.replace("!!! НОВОЕ", "Новая добавленная позиция");
             let isGcOpen = gc.includes("!!!") || expandedDivs.has(`lvl2_${safeGc}`);
             
-            html += `<tr class="cat-group-header" onclick="toggleLvl1('${safeGc}')"><td colspan="10" style="padding:18px; background:#d1c4e9; font-size:18px;">🌍 <b>${displayGc}</b> <span style="float:right;">▼</span></td></tr>`;
+            html += `<tr class="cat-group-header" onclick="toggleLvl1('${safeGc}')"><td colspan="10" style="padding:18px; background:#d1c4e9; font-size:18px;">🌍 <b>${displayGc}</b> <span id="arrow_lvl1_${safeGc}" style="float:right;">${isGcOpen ? '▲' : '▼'}</span></td></tr>`;
             
             Object.keys(grouped[gc]).sort((a,b) => { if(a.includes("!!!")) return -1; if(b.includes("!!!")) return 1; return a.localeCompare(b); }).forEach(sc => {
                 let safeSc = getSafeId(gc + "_" + sc); let displaySc = sc.replace("!!! НОВОЕ", "Заполните данные"); 
@@ -3936,40 +3959,39 @@ function renderGraphsTab() {
         let subCats = [...new Set(Object.values(currentCatalog).map(i => i.cat).filter(c => c && !c.includes("!!!")))];
         
         let isActionsOpen = expandedDivs.has('cat-chk-actions');
-        let html = `
-        <h3 style="margin-top:0; margin-bottom:15px; font-size:24px; color:#4A148C;">🛒 Справочник Чек-листа</h3>
-        <div class="cat-group-header" style="padding: 12px 15px; border-radius: 12px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.05);" onclick="toggleCatElements('cat-chk-actions', 'arrow_catchk_actions')">
-            <span style="font-size:16px; color:#4A148C; font-weight:900;">⚡ Действия и Настройки</span>
-            <span id="arrow_catchk_actions">${isActionsOpen ? '▲' : '▼'}</span>
-        </div>
-        <div class="cat-chk-actions action-container" style="display: ${isActionsOpen ? 'flex' : 'none'}; flex-direction: column; margin-bottom: 20px;">
-            <div style="display:flex; gap:10px; flex-wrap:wrap; width:100%;">
-                <button class="btn-add" style="flex:1 1 auto;" onclick="addItemChecklist()">➕ Добавить позицию</button>
-                <button class="btn-save" style="flex:1 1 auto; margin:0; padding:12px 18px;" onclick="saveCatalog(this)">💾 Сохранить в базу</button>
+
+        // ⚡ ЗАКРЕПЛЯЕМ ПАНЕЛЬ ДЕЙСТВИЙ НАВЕРХУ
+        setupUniversalActionBar(`
+            <div class="cat-group-header" style="padding: 10px 15px; border-radius: 12px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 8px rgba(0,0,0,0.05);" onclick="toggleCatElements('cat-chk-actions', 'arrow_catchk_actions')">
+                <span style="font-size:16px; color:#4A148C; font-weight:900;">⚡ Действия и Настройки</span>
+                <span id="arrow_catchk_actions">${isActionsOpen ? '▲' : '▼'}</span>
             </div>
-            
-            <div class="settings-panel" style="width:100%; margin-bottom:0; margin-top:5px; box-sizing:border-box;">
-                <h4 style="margin-top:0; margin-bottom:0; font-size:16px; color:#d32f2f; cursor:pointer; display:flex; justify-content:space-between; align-items:center;" onclick="toggleCatElements('chk-settings-content', 'arrow_chk_settings')">
-                    <span>⚙️ Скрывать категории в приложении</span><span id="arrow_chk_settings">${expandedDivs.has('chk-settings-content') ? '▲' : '▼'}</span>
-                </h4>
-                <div class="chk-settings-content action-container" style="display:${expandedDivs.has('chk-settings-content') ? 'flex' : 'none'}; flex-wrap:wrap; gap:15px; margin-top:15px; margin-bottom:0; position:static;">`;
-        
-        globalCats.forEach(gc => {
-            if(gc.includes("!!!")) return; 
-            html += `<label class="toggle-label" style="font-size:15px;"><input type="checkbox" onchange="toggleHiddenCategory('${gc}', this.checked, 'checklist')" ${appSettings.hidden_categories_checklist && appSettings.hidden_categories_checklist[gc] ? 'checked' : ''}> Скрыть "${gc}"</label>`;
-        });
-        
-        html += `</div></div></div>`;
+            <div class="cat-chk-actions action-container sticky-action-panel action-panel-dropdown" style="display: ${isActionsOpen ? 'flex' : 'none'}; flex-direction: column; margin-top: 10px;">
+                <div style="display:flex; gap:10px; flex-wrap:wrap; width:100%;">
+                    <button class="btn-add" style="flex:1 1 auto;" onclick="addItemChecklist()">➕ Добавить позицию</button>
+                    <button class="btn-save" style="flex:1 1 auto; margin:0; padding:12px 18px;" onclick="saveCatalog(this)">💾 Сохранить в базу</button>
+                </div>
+                
+                <div class="settings-panel" style="width:100%; margin-bottom:0; margin-top:5px; box-sizing:border-box;">
+                    <h4 style="margin-top:0; margin-bottom:0; font-size:16px; color:#d32f2f; cursor:pointer; display:flex; justify-content:space-between; align-items:center;" onclick="toggleCatElements('chk-settings-content', 'arrow_chk_settings')">
+                        <span>⚙️ Скрывать категории в приложении</span><span id="arrow_chk_settings">${expandedDivs.has('chk-settings-content') ? '▲' : '▼'}</span>
+                    </h4>
+                    <div class="chk-settings-content action-container" style="display:${expandedDivs.has('chk-settings-content') ? 'flex' : 'none'}; flex-wrap:wrap; gap:15px; margin-top:15px; margin-bottom:0; position:static;">
+                        ${globalCats.map(gc => !gc.includes("!!!") ? `<label class="toggle-label" style="font-size:15px;"><input type="checkbox" onchange="toggleHiddenCategory('${gc}', this.checked, 'checklist')" ${appSettings.hidden_categories_checklist && appSettings.hidden_categories_checklist[gc] ? 'checked' : ''}> Скрыть "${gc}"</label>` : '').join('')}
+                    </div>
+                </div>
+            </div>
+        `, isActionsOpen, 'arrow_catchk_actions');
 
         let allPurchaseItems = [];
         if (cachedData.catalogOrder) allPurchaseItems.push(...Object.values(cachedData.catalogOrder).map(i => i.name));
         if (cachedData.catalogChecklist) allPurchaseItems.push(...Object.values(cachedData.catalogChecklist).map(i => i.name));
         let uniqueNames = [...new Set(allPurchaseItems.filter(Boolean))].sort((a,b) => a.localeCompare(b));
         let optionsHtml = uniqueNames.map(name => `<option value="${name.replace(/"/g, '&quot;')}">${name}</option>`).join("");
-        html += `<datalist id="checklist_items_list">${optionsHtml}</datalist>`;
-
-        html += `<div style="overflow-x:auto;"><table style="min-width:1200px;">
-            <tr><th style="width:200px;">Глоб. Категория</th><th style="width:250px;">Подкатегория</th><th style="width:300px;">Наименование (из Закупки)</th><th style="width:150px; text-align:center;">Фотографии</th><th style="width:200px;">Формат ввода</th><th style="width:80px; text-align:center;">Удалить</th></tr>`;
+        
+        let html = `<datalist id="checklist_items_list">${optionsHtml}</datalist>
+                    <div style="overflow-x:auto;"><table style="min-width:1200px;">
+                    <tr><th style="width:200px;">Глоб. Категория</th><th style="width:250px;">Подкатегория</th><th style="width:300px;">Наименование (из Закупки)</th><th style="width:150px; text-align:center;">Фотографии</th><th style="width:200px;">Формат ввода</th><th style="width:80px; text-align:center;">Удалить</th></tr>`;
             
         let grouped = {};
         Object.keys(currentCatalog).forEach(k => {
@@ -3979,17 +4001,20 @@ function renderGraphsTab() {
         });
         
         Object.keys(grouped).sort((a,b) => { if(a.includes("!!!")) return -1; if(b.includes("!!!")) return 1; return a.localeCompare(b); }).forEach(gc => {
-            let safeGc = getSafeId(gc); let displayGc = gc.replace("!!! НОВОЕ", "Новая добавленная позиция");
-            let isGcOpen = gc.includes("!!!") || expandedDivs.has(`lvl2_chksub_${safeGc}`);
+            let safeGc = getSafeId("chksub_" + gc); 
+            let displayGc = gc.replace("!!! НОВОЕ", "Новая добавленная позиция");
+            let isGcOpen = gc.includes("!!!") || expandedDivs.has(`lvl2_${safeGc}`);
 
-            html += `<tr class="cat-group-header" onclick="toggleLvl1('chksub_${safeGc}')"><td colspan="6" style="padding:18px; background:#d1c4e9; font-size:20px;">🌍 <b>${displayGc}</b> <span style="float:right;">▼</span></td></tr>`;
+            // Внедрена новая стрелочка для Лесенки
+            html += `<tr class="cat-group-header" onclick="toggleLvl1('${safeGc}')"><td colspan="6" style="padding:18px; background:#d1c4e9; font-size:20px;">🌍 <b>${displayGc}</b> <span id="arrow_lvl1_${safeGc}" style="float:right;">${isGcOpen ? '▲' : '▼'}</span></td></tr>`;
             
             Object.keys(grouped[gc]).sort((a,b) => { if(a.includes("!!!")) return -1; if(b.includes("!!!")) return 1; return a.localeCompare(b); }).forEach(sc => {
-                let safeSc = getSafeId(gc + "_" + sc); let displaySc = sc.replace("!!! НОВОЕ", "Заполните данные"); 
+                let safeSc = getSafeId("chitem_" + gc + "_" + sc); 
+                let displaySc = sc.replace("!!! НОВОЕ", "Заполните данные"); 
                 let displayStyleL2 = isGcOpen ? "table-row" : "none";
-                let isScOpen = gc.includes("!!!") || expandedDivs.has(`chitem_${safeSc}`);
+                let isScOpen = gc.includes("!!!") || expandedDivs.has(`${safeSc}`);
 
-                html += `<tr class="cat-group-header lvl2_chksub_${safeGc}" style="display:${displayStyleL2};" onclick="toggleCatElements('chitem_${safeSc}', 'arrow_chkitem_${safeSc}')"><td colspan="6" style="padding:15px; padding-left:30px; font-size:18px;">📂 ${displaySc} <span id="arrow_chkitem_${safeSc}" style="float:right;">${isScOpen ? '▲' : '▼'}</span></td></tr>`;
+                html += `<tr class="cat-group-header lvl2_${safeGc}" style="display:${displayStyleL2};" onclick="toggleCatElements('${safeSc}', 'arrow_chkitem_${safeSc}')"><td colspan="6" style="padding:15px; padding-left:30px; font-size:18px;">📂 ${displaySc} <span id="arrow_chkitem_${safeSc}" style="float:right;">${isScOpen ? '▲' : '▼'}</span></td></tr>`;
                 let displayStyleL3 = (isGcOpen && isScOpen) ? "table-row" : "none";
 
                 grouped[gc][sc].sort((a,b) => (a.item.name||'').localeCompare(b.item.name||'')).forEach(data => {
@@ -4012,7 +4037,8 @@ function renderGraphsTab() {
                         photoUi = `<input type="text" style="font-size:12px; border:2px dashed #9575cd; background:#fafafa; text-align:center; cursor:pointer; width:100%; box-sizing:border-box; padding:8px 4px; border-radius:6px;" placeholder="Кликни и нажми Ctrl+V" onpaste="handleClipboardImagePaste(event, '${k}', 'check')" onchange="updateVal('${k}','photo',this.value)">`;
                     }
 
-                    html += `<tr class="chk-row chitem_${safeSc} lvl3_of_chksub_${safeGc}" style="display:${displayStyleL3};">
+                    // Обрати внимание на добавленный класс lvl3_of_${safeGc} для "Лесенки"
+                    html += `<tr class="chk-row ${safeSc} lvl3_of_${safeGc}" style="display:${displayStyleL3};">
                         <td><select onchange="updateVal('${k}','globalCat',this.value)" style="font-size:14px; width:100%; box-sizing:border-box;">${gcatOptions}</select></td>
                         <td><select onchange="updateVal('${k}','cat',this.value)" style="font-weight:bold; font-size:14px; color:#7E57C2; width:100%; box-sizing:border-box;">${catOptions}</select></td>
                         <td><input type="text" list="checklist_items_list" style="font-weight:bold; font-size:17px; color:#311b92; width:100%; box-sizing:border-box;" value="${item.name || ''}" onchange="updateVal('${k}','name',this.value)"></td>
@@ -4036,19 +4062,14 @@ function renderGraphsTab() {
         let subCats = [...new Set(Object.values(currentCatalog).map(i => i.cat).filter(c => c && !c.includes("!!!")))];
         
         let isActionsOpen = expandedDivs.has('cat-stop-actions');
-        
-        let settingsHtml = '';
-        globalCats.forEach(gc => {
-            if(gc.includes("!!!")) return; 
-            settingsHtml += `<label class="toggle-label" style="font-size:15px;"><input type="checkbox" onchange="toggleHiddenCategory('${gc}', this.checked, 'stoplist')" ${appSettings.hidden_categories_stoplist && appSettings.hidden_categories_stoplist[gc] ? 'checked' : ''}> Скрыть "${gc}"</label>`;
-        });
 
+        // ⚡ ЗАКРЕПЛЯЕМ ПАНЕЛЬ ДЕЙСТВИЙ НАВЕРХУ
         setupUniversalActionBar(`
             <div class="cat-group-header" style="padding: 10px 15px; border-radius: 12px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 8px rgba(0,0,0,0.05);" onclick="toggleCatElements('cat-stop-actions', 'arrow_catstop_actions')">
                 <span style="font-size:16px; color:#D50000; font-weight:900;">⚡ Действия и Настройки</span>
                 <span id="arrow_catstop_actions">${isActionsOpen ? '▲' : '▼'}</span>
             </div>
-            <div class="cat-stop-actions action-container sticky-action-panel action-panel-dropdown" style="display: ${isActionsOpen ? 'flex' : 'none'}; flex-direction: column; margin-bottom: 5px;">
+            <div class="cat-stop-actions action-container sticky-action-panel action-panel-dropdown" style="display: ${isActionsOpen ? 'flex' : 'none'}; flex-direction: column; margin-top: 10px;">
                 <div style="display:flex; gap:10px; flex-wrap:wrap; width:100%;">
                     <button class="btn-add" style="flex:1 1 auto; background: linear-gradient(135deg, #FF5252 0%, #D32F2F 100%);" onclick="addItemStoplist()">➕ Добавить позицию</button>
                     <button class="btn-add" style="flex:1 1 auto; background: linear-gradient(135deg, #00BCD4 0%, #0097A7 100%);" onclick="syncStoplistWithMenu()">🔄 Синхр. с Тех Картами</button>
@@ -4061,15 +4082,13 @@ function renderGraphsTab() {
                         <span>⚙️ Скрывать категории в приложении</span><span id="arrow_stop_settings">${expandedDivs.has('stop-settings-content') ? '▲' : '▼'}</span>
                     </h4>
                     <div class="stop-settings-content action-container" style="display:${expandedDivs.has('stop-settings-content') ? 'flex' : 'none'}; flex-wrap:wrap; gap:15px; margin-top:15px; margin-bottom:0; position:static;">
-                        ${settingsHtml}
+                        ${globalCats.map(gc => !gc.includes("!!!") ? `<label class="toggle-label" style="font-size:15px;"><input type="checkbox" onchange="toggleHiddenCategory('${gc}', this.checked, 'stoplist')" ${appSettings.hidden_categories_stoplist && appSettings.hidden_categories_stoplist[gc] ? 'checked' : ''}> Скрыть "${gc}"</label>` : '').join('')}
                     </div>
                 </div>
             </div>
         `, isActionsOpen, 'arrow_catstop_actions');
 
-        let html = `<h3 style="margin-top:0; margin-bottom:15px; font-size:24px; color:#D50000;">🛑 Справочник Стоп-листа</h3>`;
-
-        html += `<div style="overflow-x:auto;"><table style="min-width:1100px;">
+        let html = `<div style="overflow-x:auto;"><table style="min-width:1100px;">
             <tr><th style="width:180px;">Глоб. Категория</th><th style="width:180px;">Категория</th><th style="width:250px;">Продукт (Из Закупки)</th><th style="width:200px;">Отключает (Сезон)</th><th style="width:200px;">Отключает (Осн)</th><th style="width:80px; text-align:center;">Удалить</th></tr>`;
             
         let grouped = {};
@@ -4082,7 +4101,6 @@ function renderGraphsTab() {
             grouped[gc][sc].push({k: k, item: item});
         });
         
-        // --- ИЗМЕНЕНИЕ: СОБИРАЕМ ПРОДУКТЫ И ИЗ ЗАКУПКИ, И ИЗ ЧЕК-ЛИСТА ---
         let allPurchaseItems = [];
         let combinedCat = [];
         if (cachedData.catalogOrder) combinedCat.push(...Object.values(cachedData.catalogOrder));
@@ -4094,19 +4112,20 @@ function renderGraphsTab() {
         let optionsHtml = allPurchaseItems.map(name => `<option value="${name.replace(/"/g, '&quot;')}">${name}</option>`).join("");
         
         Object.keys(grouped).sort((a,b) => { if(a.includes("!!!")) return -1; if(b.includes("!!!")) return 1; return a.localeCompare(b); }).forEach(gc => {
-            let safeGc = getSafeId("stop_" + gc); 
+            let safeGc = getSafeId("stopsub_" + gc); 
             let displayGc = gc.replace("!!! НОВОЕ", "Новая добавленная позиция");
-            let isGcOpen = gc.includes("!!!") || expandedDivs.has(`lvl2_stopsub_${safeGc}`);
+            let isGcOpen = gc.includes("!!!") || expandedDivs.has(`lvl2_${safeGc}`);
 
-            html += `<tr class="cat-group-header" onclick="toggleLvl1('stopsub_${safeGc}')"><td colspan="6" style="padding:18px; background:#d1c4e9; font-size:20px;">🌍 <b>${displayGc}</b> <span style="float:right;">▼</span></td></tr>`;
+            // Внедрена новая стрелочка для Лесенки
+            html += `<tr class="cat-group-header" onclick="toggleLvl1('${safeGc}')"><td colspan="6" style="padding:18px; background:#d1c4e9; font-size:20px;">🌍 <b>${displayGc}</b> <span id="arrow_lvl1_${safeGc}" style="float:right;">${isGcOpen ? '▲' : '▼'}</span></td></tr>`;
             
             Object.keys(grouped[gc]).sort((a,b) => { if(a.includes("!!!")) return -1; if(b.includes("!!!")) return 1; return a.localeCompare(b); }).forEach(sc => {
-                let safeSc = getSafeId("stop_" + gc + "_" + sc); 
+                let safeSc = getSafeId("stopitem_" + gc + "_" + sc); 
                 let displaySc = sc.replace("!!! НОВОЕ", "Заполните данные"); 
                 let displayStyleL2 = isGcOpen ? "table-row" : "none";
-                let isScOpen = gc.includes("!!!") || expandedDivs.has(`stopitem_${safeSc}`);
+                let isScOpen = gc.includes("!!!") || expandedDivs.has(`${safeSc}`);
 
-                html += `<tr class="cat-group-header lvl2_stopsub_${safeGc}" style="display:${displayStyleL2};" onclick="toggleCatElements('stopitem_${safeSc}', 'arrow_stopitem_${safeSc}')"><td colspan="6" style="padding:15px; padding-left:30px; font-size:18px;">📂 ${displaySc} <span id="arrow_stopitem_${safeSc}" style="float:right;">${isScOpen ? '▲' : '▼'}</span></td></tr>`;
+                html += `<tr class="cat-group-header lvl2_${safeGc}" style="display:${displayStyleL2};" onclick="toggleCatElements('${safeSc}', 'arrow_stopitem_${safeSc}')"><td colspan="6" style="padding:15px; padding-left:30px; font-size:18px;">📂 ${displaySc} <span id="arrow_stopitem_${safeSc}" style="float:right;">${isScOpen ? '▲' : '▼'}</span></td></tr>`;
                 
                 let displayStyleL3 = (isGcOpen && isScOpen) ? "table-row" : "none";
 
@@ -4121,7 +4140,8 @@ function renderGraphsTab() {
                     subCats.forEach(c => { if(c !== item.cat) catOptions += `<option value="${c}">${c}</option>`; });
                     catOptions += `<option value="НОВАЯ КАТЕГОРИЯ">-- Создать --</option>`;
                     
-                    html += `<tr class="chk-row stopitem_${safeSc} lvl3_of_stopsub_${safeGc}" style="display:${displayStyleL3};">
+                    // Обрати внимание на добавленный класс lvl3_of_${safeGc} для "Лесенки"
+                    html += `<tr class="chk-row ${safeSc} lvl3_of_${safeGc}" style="display:${displayStyleL3};">
                         <td><select onchange="updateVal('${k}','globalCat',this.value)" style="font-size:14px; width:100%; box-sizing:border-box;">${gcatOptions}</select></td>
                         <td><select onchange="updateVal('${k}','cat',this.value)" style="font-size:14px; width:100%; box-sizing:border-box;">${catOptions}</select></td>
                         <td><select style="font-weight:bold; color:#311b92; width:100%; box-sizing:border-box; font-size:15px;" onchange="updateVal('${k}','name',this.value)"><option value="${item.name || ''}">${item.name || '--- Выберите из закупки ---'}</option>${optionsHtml}</select></td>
@@ -4195,19 +4215,18 @@ function renderGraphsTab() {
         let subCats = [...new Set(Object.values(currentMenu).map(i => i.cat).filter(Boolean))];
         let isActionsOpen = expandedDivs.has('menu-actions');
 
-        let html = `
-        <h3 style="margin-top:0; margin-bottom:15px; font-size:24px; color:#4A148C;">☕ Меню и Тех карты</h3>
-        <div class="cat-group-header" style="padding: 12px 15px; border-radius: 12px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.05);" onclick="toggleCatElements('menu-actions', 'arrow_menu_actions')">
-            <span style="font-size:16px; color:#4A148C; font-weight:900;">⚡ Действия</span>
-            <span id="arrow_menu_actions">${isActionsOpen ? '▲' : '▼'}</span>
-        </div>
-        <div class="menu-actions action-container" style="display: ${isActionsOpen ? 'flex' : 'none'}; flex-direction: column; margin-bottom: 20px;">
-            <div style="display:flex; gap:10px; flex-wrap:wrap; width:100%;">
+        // ⚡ ЗАКРЕПЛЯЕМ ПАНЕЛЬ ДЕЙСТВИЙ НАВЕРХУ
+        setupUniversalActionBar(`
+            <div class="cat-group-header" style="padding: 10px 15px; border-radius: 12px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 8px rgba(0,0,0,0.05);" onclick="toggleCatElements('menu-actions', 'arrow_menu_actions')">
+                <span style="font-size:16px; color:#4A148C; font-weight:900;">⚡ Действия</span>
+                <span id="arrow_menu_actions">${isActionsOpen ? '▲' : '▼'}</span>
+            </div>
+            <div class="menu-actions action-container sticky-action-panel action-panel-dropdown" style="display: ${isActionsOpen ? 'flex' : 'none'}; flex-wrap:wrap; margin-top:10px;">
                 <button class="btn-add" style="flex:1 1 auto;" onclick="addMenuItem()">➕ Добавить напиток</button>
                 <button class="btn-save" style="flex:1 1 auto; background: linear-gradient(135deg, #FF9800 0%, #F57C00 100%);" onclick="exportMenuToExcel()">📊 Экспорт в Excel (Техкарты)</button>
                 <button class="btn-save" style="flex:1 1 auto; margin:0;" onclick="saveMenu(this)">💾 Сохранить меню</button>
             </div>
-        </div>`;
+        `, isActionsOpen, 'arrow_menu_actions');
 
         let allPurchaseItems = [];
         let catalogDict = {};
@@ -4216,10 +4235,10 @@ function renderGraphsTab() {
 
         allPurchaseItems.sort((a,b) => a.localeCompare(b));
         let prodOptionsHtml = allPurchaseItems.map(name => `<option value="${name.replace(/"/g, '&quot;')}">${name}</option>`).join("");
-        html += `<datalist id="menu_ingredients_list">${prodOptionsHtml}</datalist>`;
-
-        html += `<div style="overflow-x:auto;"><table style="min-width:1200px;">
-        <tr><th style="width:160px;">Категория</th><th style="width:160px;">Подкатегория</th><th style="width:200px;">Напиток</th><th style="width:120px;">Цена (₽)</th><th>Тех. Карта (Слои, Ингредиенты, Доп. расход)</th><th style="width:60px; text-align:center;">Удалить</th></tr>`;
+        
+        let html = `<datalist id="menu_ingredients_list">${prodOptionsHtml}</datalist>
+                    <div style="overflow-x:auto;"><table style="min-width:1200px;">
+                    <tr><th style="width:160px;">Категория</th><th style="width:160px;">Подкатегория</th><th style="width:200px;">Напиток</th><th style="width:120px;">Цена (₽)</th><th>Тех. Карта (Слои, Ингредиенты, Доп. расход)</th><th style="width:60px; text-align:center;">Удалить</th></tr>`;
 
         let grouped = {};
         let sortedKeys = Object.keys(currentMenu).sort((a,b) => (currentMenu[b].timestamp || 0) - (currentMenu[a].timestamp || 0));
@@ -4231,16 +4250,18 @@ function renderGraphsTab() {
 
         Object.keys(grouped).forEach(gc => {
             let safeGc = getSafeId("menu_" + gc);
-            let isGcOpen = expandedDivs.has(`menulvl2_${safeGc}`);
+            let isGcOpen = expandedDivs.has(`lvl2_${safeGc}`);
             let isMainMenu = (String(gc).trim().toLowerCase() === 'основное меню'); 
             
-            html += `<tr class="cat-group-header" onclick="toggleCatElements('menulvl2_${safeGc}', 'arrow_menulvl2_${safeGc}')"><td colspan="6" style="padding:18px; background:#d1c4e9; font-size:18px;">🌍 <b>${gc}</b> <span id="arrow_menulvl2_${safeGc}" style="float:right;">${isGcOpen?'▲':'▼'}</span></td></tr>`;
+            // Внедрена новая стрелочка id="arrow_lvl1_${safeGc}" для Лесенки
+            html += `<tr class="cat-group-header" onclick="toggleLvl1('${safeGc}')"><td colspan="6" style="padding:18px; background:#d1c4e9; font-size:18px;">🌍 <b>${gc}</b> <span id="arrow_lvl1_${safeGc}" style="float:right;">${isGcOpen?'▲':'▼'}</span></td></tr>`;
+            
             Object.keys(grouped[gc]).forEach(sc => {
                 let safeSc = getSafeId("menu_" + gc + "_" + sc);
                 let displayStyleL2 = isGcOpen ? "table-row" : "none";
                 let isScOpen = expandedDivs.has(`menulvl3_${safeSc}`);
                 
-                html += `<tr class="cat-group-header menulvl2_${safeGc}" style="display:${displayStyleL2};" onclick="toggleCatElements('menulvl3_${safeSc}', 'arrow_menulvl3_${safeSc}')"><td colspan="6" style="padding:15px; padding-left:30px; font-size:16px; background:#ede7f6;">📂 ${sc} <span id="arrow_menulvl3_${safeSc}" style="float:right;">${isScOpen?'▲':'▼'}</span></td></tr>`;
+                html += `<tr class="cat-group-header lvl2_${safeGc}" style="display:${displayStyleL2};" onclick="toggleCatElements('menulvl3_${safeSc}', 'arrow_menulvl3_${safeSc}')"><td colspan="6" style="padding:15px; padding-left:30px; font-size:16px; background:#ede7f6;">📂 ${sc} <span id="arrow_menulvl3_${safeSc}" style="float:right;">${isScOpen?'▲':'▼'}</span></td></tr>`;
                 let displayStyleL3 = (isGcOpen && isScOpen) ? "table-row" : "none";
                 
                 grouped[gc][sc].forEach(data => {
@@ -4264,14 +4285,13 @@ function renderGraphsTab() {
                             if (block.length > 0) {
                                 block.forEach((r, iIdx) => {
                                     let inputsHtml = "";
-                                    
                                     if (isMainMenu) {
                                         let q250 = r.qty_250 !== undefined ? r.qty_250 : (r.qty || '');
                                         let q350 = r.qty_350 !== undefined ? r.qty_350 : '';
                                         let q540 = r.qty_540 !== undefined ? r.qty_540 : '';
-                                        inputsHtml = `<input type="text" value="${q250}" style="width:65px; font-size:13px; text-align:center; padding:6px; border-radius:6px; border:1px solid #90caf9; background:#e3f2fd;" placeholder="250 мл" title="Объем 250 мл" onchange="updateMenuRecipe('${k}', ${bIdx}, ${iIdx}, 'qty_250', this.value)">
-                                                      <input type="text" value="${q350}" style="width:65px; font-size:13px; text-align:center; padding:6px; border-radius:6px; border:1px solid #ce93d8; background:#f3e5f5;" placeholder="350 мл" title="Объем 350 мл" onchange="updateMenuRecipe('${k}', ${bIdx}, ${iIdx}, 'qty_350', this.value)">
-                                                      <input type="text" value="${q540}" style="width:65px; font-size:13px; text-align:center; padding:6px; border-radius:6px; border:1px solid #ffb74d; background:#fff3e0;" placeholder="450/540" title="Объем 450/540 мл" onchange="updateMenuRecipe('${k}', ${bIdx}, ${iIdx}, 'qty_540', this.value)">`;
+                                        inputsHtml = `<input type="text" value="${q250}" style="width:65px; font-size:13px; text-align:center; padding:6px; border-radius:6px; border:1px solid #90caf9; background:#e3f2fd;" placeholder="250 мл" onchange="updateMenuRecipe('${k}', ${bIdx}, ${iIdx}, 'qty_250', this.value)">
+                                                      <input type="text" value="${q350}" style="width:65px; font-size:13px; text-align:center; padding:6px; border-radius:6px; border:1px solid #ce93d8; background:#f3e5f5;" placeholder="350 мл" onchange="updateMenuRecipe('${k}', ${bIdx}, ${iIdx}, 'qty_350', this.value)">
+                                                      <input type="text" value="${q540}" style="width:65px; font-size:13px; text-align:center; padding:6px; border-radius:6px; border:1px solid #ffb74d; background:#fff3e0;" placeholder="450/540" onchange="updateMenuRecipe('${k}', ${bIdx}, ${iIdx}, 'qty_540', this.value)">`;
                                     } else {
                                         let qSingle = r.qty !== undefined ? r.qty : '';
                                         inputsHtml = `<input type="text" value="${qSingle}" style="width:80px; font-size:13px; text-align:center; padding:6px; border-radius:6px; border:1px solid #ccc;" placeholder="Грамм/мл" onchange="updateMenuRecipe('${k}', ${bIdx}, ${iIdx}, 'qty', this.value)">`;
@@ -4307,7 +4327,8 @@ function renderGraphsTab() {
                         photoUi = `<input type="text" style="font-size:12px; border:2px dashed #9575cd; background:#fafafa; text-align:center; cursor:pointer; width:100%; box-sizing:border-box; padding:8px 4px; border-radius:6px;" placeholder="Кликни и нажми Ctrl+V" onpaste="handleClipboardImagePaste(event, '${k}', 'menu_photo')" onchange="updateMenuVal('${k}','photo',this.value)">`;
                     }
 
-                    html += `<tr class="chk-row menulvl3_${safeSc} menulvl3_of_${safeGc}" style="display:${displayStyleL3}; background:#fff;">
+                    // Обрати внимание на добавленный класс lvl3_of_${safeGc} для "Лесенки"
+                    html += `<tr class="chk-row menulvl3_${safeSc} lvl3_of_${safeGc}" style="display:${displayStyleL3}; background:#fff;">
                         <td style="padding:10px;"><select onchange="updateMenuVal('${k}','globalCat',this.value)" style="font-size:13px; width:100%; box-sizing:border-box;">${gcatOptions}</select></td>
                         <td style="padding:10px;"><select onchange="updateMenuVal('${k}','cat',this.value)" style="font-size:13px; width:100%; box-sizing:border-box;">${catOptions}</select></td>
                         <td style="padding:10px; vertical-align:top;">

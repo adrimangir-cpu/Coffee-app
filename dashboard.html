@@ -1006,15 +1006,15 @@
     async function uploadFileToFirebase(file, itemId, type) {
         showReportOverlay("⏳ Быстрое сжатие фото...");
         try {
-            // Получаем сжатую картинку
             let compressedBase64 = await compressImageToBase64(file, 600, 0.7);
             
-            // Сохраняем её прямо в Дашборд
             if (type === 'menu_photo') {
                 currentMenu[itemId].photo = compressedBase64;
+                menuChanges[itemId] = currentMenu[itemId]; // ⚡ ДОБАВЛЕНО
                 renderMenuTab();
             } else {
                 currentCatalog[itemId].photo = compressedBase64;
+                catalogChanges[itemId] = currentCatalog[itemId]; // ⚡ ДОБАВЛЕНО
                 if (currentPath.includes('order')) renderCatalogOrder();
                 else renderCatalogChecklist();
             }
@@ -4432,6 +4432,7 @@ function renderGraphsTab() {
     function addMenuItem() {
         let id = "menu_" + Date.now();
         currentMenu[id] = { globalCat: "Основное меню", cat: "Новая категория", name: "Новый напиток", price: 0, blocks: [[]], techPrep: "", timestamp: Date.now() };
+        menuChanges[id] = currentMenu[id]; // ⚡ ДОБАВЛЕНО
         renderMenuTab();
     }
     
@@ -4448,16 +4449,15 @@ function renderGraphsTab() {
             let newCat = prompt("Введите название новой категории:");
             if (newCat) {
                 currentMenu[id][field] = newCat;
+                menuChanges[id] = currentMenu[id]; // ⚡ Размечаем ДО рендера
                 renderMenuTab();
             } else {
                 renderMenuTab();
-                return;
             }
         } else {
             currentMenu[id][field] = val;
+            menuChanges[id] = currentMenu[id]; // ⚡ Размечаем
         }
-        // Размечаем измененный напиток для точечной отправки
-        menuChanges[id] = currentMenu[id];
     }
 
     function addMenuRecipeBlock(id) {
@@ -4763,11 +4763,12 @@ async function exportGraphsToExcel() {
         }
     }
     
-    function updateVal(id, field, val) { 
+   function updateVal(id, field, val) { 
         if (val === "НОВАЯ ГЛОБАЛЬНАЯ" || val === "НОВАЯ КАТЕГОРИЯ") {
             let newCat = prompt("Введите название новой категории:");
             if (newCat) {
                 currentCatalog[id][field] = newCat;
+                catalogChanges[id] = currentCatalog[id]; // ⚡ Размечаем ДО рендера
                 if (currentPath.includes('order')) renderCatalogOrder();
                 else if (currentPath.includes('stoplist')) renderCatalogStoplist();
                 else renderCatalogChecklist();
@@ -4775,30 +4776,31 @@ async function exportGraphsToExcel() {
                 if (currentPath.includes('order')) renderCatalogOrder();
                 else if (currentPath.includes('stoplist')) renderCatalogStoplist();
                 else renderCatalogChecklist();
-                return;
             }
         } else {
             currentCatalog[id][field] = val; 
+            catalogChanges[id] = currentCatalog[id]; // ⚡ Размечаем
         }
-        // ⚡ Запоминаем измененную позицию для PATCH-сохранения
-        catalogChanges[id] = currentCatalog[id];
     }
     
     function addItemOrder() { 
         let id = "item_" + Date.now(); 
         currentCatalog[id] = { globalCat: "!!! НОВОЕ", cat: "!!! НОВОЕ", name: "Новая позиция", photo: "", vendor: "Лента", price: 0, price2: 0, link: "", link2: "", fallback: "" }; 
+        catalogChanges[id] = currentCatalog[id]; // ⚡ ДОБАВЛЕНО
         renderCatalogOrder();
     }
     
     function addItemChecklist() { 
         let id = "item_" + Date.now(); 
         currentCatalog[id] = { globalCat: "!!! НОВОЕ", cat: "!!! НОВОЕ", name: "Новая позиция", photo: "", unit: "текст" }; 
+        catalogChanges[id] = currentCatalog[id]; // ⚡ ДОБАВЛЕНО
         renderCatalogChecklist();
     }
 
     function addItemStoplist() { 
         let id = "stop_" + Date.now(); 
         currentCatalog[id] = { globalCat: "Основное меню", cat: "Новая", name: "", sez: "", main: "" }; 
+        catalogChanges[id] = currentCatalog[id]; // ⚡ ДОБАВЛЕНО
         renderCatalogStoplist();
     }
 
@@ -4810,12 +4812,11 @@ async function exportGraphsToExcel() {
     window.removePhoto = function(id) {
         if(!confirm("Удалить это фото?")) return;
         
-        // Удаляем из рабочей переменной
         if (typeof currentCatalog !== 'undefined' && currentCatalog && currentCatalog[id]) {
             currentCatalog[id].photo = "";
+            catalogChanges[id] = currentCatalog[id]; // ⚡ ДОБАВЛЕНО
         }
         
-        // Удаляем из кэша (чтобы умная синхронизация не вернула его обратно)
         if (typeof cachedData !== 'undefined' && cachedData) {
             if (cachedData.catalogOrder && cachedData.catalogOrder[id]) cachedData.catalogOrder[id].photo = "";
             if (cachedData.catalogChecklist && cachedData.catalogChecklist[id]) cachedData.catalogChecklist[id].photo = "";
@@ -4823,7 +4824,6 @@ async function exportGraphsToExcel() {
             if (cachedData.newshop && cachedData.newshop[id]) cachedData.newshop[id].photo = "";
         }
 
-        // Перерисовываем нужную вкладку
         if (currentPath.includes('order') || currentPath.includes('newshop')) {
             if (typeof renderCatalogOrder === 'function') renderCatalogOrder();
         } else if (currentPath.includes('stoplist')) {
@@ -4833,26 +4833,22 @@ async function exportGraphsToExcel() {
         }
     };
 
-    // 2. Для Меню и Тех карт
     window.removeMenuPhoto = function(id) {
         if (!confirm("Удалить фото напитка?")) return;
         
-        // Удаляем из рабочей переменной
         if (typeof currentMenu !== 'undefined' && currentMenu && currentMenu[id]) {
             currentMenu[id].photo = "";
+            menuChanges[id] = currentMenu[id]; // ⚡ ДОБАВЛЕНО
         }
         
-        // Страховка: удаляем из общей переменной, если она используется
         if (typeof currentCatalog !== 'undefined' && currentCatalog && currentCatalog[id]) {
             currentCatalog[id].photo = "";
         }
         
-        // Удаляем из кэша
         if (typeof cachedData !== 'undefined' && cachedData && cachedData.menu && cachedData.menu[id]) {
             cachedData.menu[id].photo = "";
         }
 
-        // Перерисовываем вкладку Меню
         if (typeof renderMenuTab === 'function') {
             renderMenuTab();
         }

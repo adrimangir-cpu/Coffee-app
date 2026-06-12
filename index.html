@@ -2788,174 +2788,158 @@ async function viewStopList() {
         }
     }
 
- async function showLastOrder() {
+ function showLastOrder() {
         triggerHaptic();
+        state.currentMode = 'receiving';
         document.getElementById('report-overlay').style.display = 'flex';
         document.getElementById('report-header').innerText = "Приемка закупки";
-        
-        // ⚡ Выводим прошлый собранный HTML моментально (0.1 сек)
-        let localHtml = localStorage.getItem("cache_html_receiving_" + state.currentShop);
-        if (localHtml) {
-            document.getElementById('report-content-area').innerHTML = localHtml;
-        } else {
-            document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div class="loading-pulse">⏳ Загрузка поставок...</div></div>`;
-        }
-        
-        try {
-            const catalogs = await getCatalogs();
-            let orderCatalog = catalogs.order || {};
-            let orderCatMapFast = {};
-            Object.values(orderCatalog).forEach(c => { if (c && c.name) orderCatMapFast[c.name] = c; });
 
-            const [ordersSnap, missSnap] = await Promise.all([
-                database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(40).once("value"),
-                database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value")
-            ]);
+        let orderCatalog = (state.cachedCatalogs && state.cachedCatalogs.order) ? state.cachedCatalogs.order : {};
+        let orderCatMapFast = {};
+        Object.values(orderCatalog).forEach(c => { if (c && c.name) orderCatMapFast[c.name] = c; });
 
-            let activeMissing = [], historyMissing = [];
-            missSnap.forEach(c => {
-                let m = c.val();
-                if(m && m.name) {
-                    m.key = c.key;
-                    if(m.status !== 'arrived' && m.status !== 'canceled') activeMissing.push(m);
-                    else if (m.status === 'arrived') historyMissing.push(m);
-                }
-            });
+        let activeMissing = [], historyMissing = [];
+        state.globalMissing.forEach(m => {
+            if(m && m.name) {
+                if(m.status !== 'arrived' && m.status !== 'canceled') activeMissing.push(m);
+                else if (m.status === 'arrived') historyMissing.push(m);
+            }
+        });
 
-            let fifteenDaysAgo = Date.now() - (15 * 24 * 60 * 60 * 1000);
-            let ordersArr = [];
-            ordersSnap.forEach(c => {
-                let val = c.val();
-                if(val && typeof val === 'object' && (val.mode === 'order' || val.mode === 'new_shop') && val.timestamp >= fifteenDaysAgo) {
-                    val.key = c.key; ordersArr.push(val);
-                }
-            });
+        let fifteenDaysAgo = Date.now() - (15 * 24 * 60 * 60 * 1000);
+        let ordersArr = [];
+        state.globalOrders.forEach(val => {
+            if(val && typeof val === 'object' && (val.mode === 'order' || val.mode === 'new_shop') && val.timestamp >= fifteenDaysAgo) ordersArr.push(val);
+        });
 
-            let html = `<div style="display: flex; gap: 10px; margin-bottom: 20px; background: #fff; padding: 6px; border-radius: 14px; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
-                            <button onclick="state.currentReceivingTab = 'active'; showLastOrder();" style="flex: 1; padding: 12px; border: none; border-radius: 10px; font-size: 15px; font-weight: 900; ${state.currentReceivingTab === 'active' || !state.currentReceivingTab ? 'background: #4A148C; color: #fff;' : 'background: transparent; color: #888;'}">🚚 Текущая приемка</button>
-                            <button onclick="state.currentReceivingTab = 'history'; showLastOrder();" style="flex: 1; padding: 12px; border: none; border-radius: 10px; font-size: 15px; font-weight: 900; ${state.currentReceivingTab === 'history' ? 'background: #9C27B0; color: #fff;' : 'background: transparent; color: #888;'}">🕒 История (15 дней)</button>
-                         </div>`;
+        let html = `<div style="display: flex; gap: 10px; margin-bottom: 20px; background: #fff; padding: 6px; border-radius: 14px; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
+                        <button onclick="state.currentReceivingTab = 'active'; showLastOrder();" style="flex: 1; padding: 12px; border: none; border-radius: 10px; font-size: 15px; font-weight: 900; ${state.currentReceivingTab === 'active' || !state.currentReceivingTab ? 'background: #4A148C; color: #fff;' : 'background: transparent; color: #888;'}">🚚 Текущая приемка</button>
+                        <button onclick="state.currentReceivingTab = 'history'; showLastOrder();" style="flex: 1; padding: 12px; border: none; border-radius: 10px; font-size: 15px; font-weight: 900; ${state.currentReceivingTab === 'history' ? 'background: #9C27B0; color: #fff;' : 'background: transparent; color: #888;'}">🕒 История (15 дней)</button>
+                     </div>`;
 
-            if (!state.currentReceivingTab || state.currentReceivingTab === 'active') {
-                if (activeMissing.length > 0) {
-                    let missListId = "missing_active_list";
-                    html += `<div class="report-card" style="border: 2px solid #FFCA28;">
-                                <div class="report-card-title" style="color:#E65100; cursor:pointer; font-size:16px;" onclick="toggleElements('${missListId}', 'arr_${missListId}')">🚚 Ожидаемые недовозы <span id="arr_${missListId}">▼</span></div>
-                                <div class="${missListId}" style="display:none;">`;
+        if (!state.currentReceivingTab || state.currentReceivingTab === 'active') {
+            if (activeMissing.length > 0) {
+                let missListId = "missing_active_list";
+                html += `<div class="report-card" style="border: 2px solid #FFCA28;">
+                            <div class="report-card-title" style="color:#E65100; cursor:pointer; font-size:16px;" onclick="toggleElements('${missListId}', 'arr_${missListId}')">🚚 Ожидаемые недовозы <span id="arr_${missListId}">▼</span></div>
+                            <div class="${missListId}" style="display:none;">`;
+                activeMissing.forEach(m => {
+                    let statText = m.status === 'transit' ? "В пути" : "Ожидает проверки", statColor = m.status === 'transit' ? "#1565c0" : "#ef6c00", bg = m.status === 'transit' ? "#e3f2fd" : "#fff3e0";
+                    let safeNameEsc = escapeName(m.name), btnMissArrId = `btn_miss_arr_${m.key}`, btnMissId = `btn_miss_${m.key}`;
+                    let isMarked = state.missingChoices && state.missingChoices[m.key] !== undefined;
+
+                    html += `<div class="report-card-item" style="flex-direction:column; align-items:flex-start; border-bottom:1px solid #eee;">
+                                <span style="margin-bottom:8px; font-size:16px;"><b>${m.name}</b> (x${m.qty})</span>
+                                <div style="display:flex; justify-content:space-between; width:100%; align-items:center;">
+                                    <span style="background:${bg}; color:${statColor}; padding:4px 8px; border-radius:8px; font-size:12px; font-weight:900;">${statText}</span>
+                                    <button id="${btnMissArrId}" onclick="toggleMissingArrived('${m.key}', '${safeNameEsc}', '${btnMissArrId}')" style="border:${isMarked ? '2px solid #2e7d32' : '1px solid #ccc'}; background:${isMarked ? '#e8f5e9' : '#fafafa'}; color:${isMarked ? '#2e7d32' : '#888'}; padding:8px 15px; border-radius:10px; font-weight:900; font-size:14px; cursor:pointer;">Доехал ✅</button>
+                                </div>
+                             </div>`;
+                });
+                html += `<button onclick="finishMissingReceiving()" class="btn-mode" style="background: var(--warning-gradient) !important; margin-top:15px; padding:12px !important;">🏁 ПОДТВЕРДИТЬ НЕДОВОЗЫ</button></div></div>`;
+            }
+
+            let activeByDate = {};
+            ordersArr.forEach(o => {
+                let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
+                let orderDate = new Date(o.timestamp).toLocaleDateString('ru-RU');
+                itemsArr.forEach(i => {
+                    if (!i || !i.name || i.name === "НЕТ ЗАКАЗА") return;
                     
-                    activeMissing.forEach(m => {
-                        let statText = m.status === 'transit' ? "В пути" : "Ожидает проверки", statColor = m.status === 'transit' ? "#1565c0" : "#ef6c00", bg = m.status === 'transit' ? "#e3f2fd" : "#fff3e0";
-                        let safeNameEsc = escapeName(m.name), btnMissArrId = `btn_miss_arr_${m.key}`;
-                        let isMarked = state.missingChoices && state.missingChoices[m.key] !== undefined;
+                    // ⚡ ЗАЩИТА: Если статус "Уже принят" (already_received) или "Не надо" (not_needed), товар в приемке не выводится!
+                    if (i.status === 'ordered' && i.bot_error !== true) {
+                        let catItem = orderCatMapFast[i.name] || {};
+                        let vendor = (catItem.vendor || 'Лента').toLowerCase() === 'озон' ? 'ozon' : 'lenta';
+                        if ((vendor === 'ozon' && !o.ozon_received) || (vendor === 'lenta' && !o.lenta_received)) {
+                            if (!activeByDate[orderDate]) activeByDate[orderDate] = { lenta: { items: {}, keys: new Set() }, ozon: { items: {}, keys: new Set() }, timestamp: o.timestamp };
+                            let targetGroup = vendor === 'ozon' ? activeByDate[orderDate].ozon : activeByDate[orderDate].lenta;
+                            if(!targetGroup.items[i.name]) targetGroup.items[i.name] = {qty: 0};
+                            targetGroup.items[i.name].qty += parseFloat(i.qty) || 0;
+                            targetGroup.keys.add(o.key);
+                        }
+                    }
+                });
+            });
 
-                        html += `<div class="report-card-item" style="flex-direction:column; align-items:flex-start; border-bottom:1px solid #eee;">
-                                    <span style="margin-bottom:8px; font-size:16px;"><b>${m.name}</b> (x${m.qty})</span>
-                                    <div style="display:flex; justify-content:space-between; width:100%; align-items:center;">
-                                        <span style="background:${bg}; color:${statColor}; padding:4px 8px; border-radius:8px; font-size:12px; font-weight:900;">${statText}</span>
-                                        <button id="${btnMissArrId}" onclick="toggleMissingArrived('${m.key}', '${safeNameEsc}', '${btnMissArrId}')" style="border:${isMarked ? '2px solid #2e7d32' : '1px solid #ccc'}; background:${isMarked ? '#e8f5e9' : '#fafafa'}; color:${isMarked ? '#2e7d32' : '#888'}; padding:8px 15px; border-radius:10px; font-weight:900; font-size:14px; cursor:pointer;">Доехал ✅</button>
-                                    </div>
-                                 </div>`;
-                    });
-                    html += `<button onclick="finishMissingReceiving()" class="btn-mode" style="background: var(--warning-gradient) !important; margin-top:15px; padding:12px !important;">🏁 ПОДТВЕРДИТЬ НЕДОВОЗЫ</button></div></div>`;
-                }
-
-                let activeByDate = {};
-                ordersArr.forEach(o => {
-                    let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
-                    let orderDate = new Date(o.timestamp).toLocaleDateString('ru-RU');
+            if (Object.keys(activeByDate).length === 0) html += `<div class="report-card"><div style="text-align:center; font-weight:900;">Нет активных приемок.</div></div>`;
+            else {
+                html += `<div style="background:#ede7f6; padding:12px; border-radius:12px; font-weight:900; color:#311B92; text-align:center; font-size:16px;">🚚 Активная приемка</div>`;
+                Object.keys(activeByDate).sort((a,b) => activeByDate[b].timestamp - activeByDate[a].timestamp).forEach(dateStr => {
+                    const renderList = (grpData, keysSet, vendorKey, bClass, bText) => {
+                        let names = Object.keys(grpData).sort(); if(names.length === 0) return "";
+                        let listId = getSafeId(dateStr + vendorKey), kStr = Array.from(keysSet).join(',');
+                        let res = `<div class="report-card" style="margin-top:10px; border-left:4px solid ${vendorKey==='ozon'?'#1565c0':'#f57f17'};">
+                                    <div class="report-card-title" style="cursor:pointer; font-size:16px;" onclick="toggleElements('${listId}', 'arr_${listId}')">📅 Заказ ${bText} от ${dateStr} <span id="arr_${listId}">▼</span></div>
+                                    <div class="${listId}" style="display:none; margin-top:10px;">`;
+                        let expCount = 0;
+                        names.forEach(name => {
+                            if(activeMissing.some(am => am.name === name)) {
+                                res += `<div class="report-card-item"><span><b>${name}</b></span><span style="color:#ef6c00; font-size:12px;">Уже в недовозах</span></div>`;
+                            } else {
+                                expCount++;
+                                let bA = `ba_${listId}_${getSafeId(name)}`, bM = `bm_${listId}_${getSafeId(name)}`, choiceKey = dateStr+"_"+name;
+                                let isA = false, isM = false;
+                                if (state.receivingChoices && state.receivingChoices[choiceKey]) {
+                                    isA = state.receivingChoices[choiceKey].status === 'arrived';
+                                    isM = state.receivingChoices[choiceKey].status === 'missing';
+                                }
+                                res += `<div class="report-card-item" style="flex-direction:column; align-items:flex-start;">
+                                            <span style="font-size:15px; margin-bottom:6px;"><b>${name}</b> (x${grpData[name].qty})</span>
+                                            <div style="display:flex; gap:8px; width:100%;">
+                                                <button id="${bA}" onclick="setReceiveChoice('${escapeName(name)}', ${grpData[name].qty}, '${vendorKey}', 'arrived', '${bA}', '${bM}', '${dateStr}')" style="flex:1; padding:6px; border-radius:6px; border:${isA?'2px solid #2e7d32':'1px solid #ccc'}; background:${isA?'#e8f5e9':'#fafafa'}; color:${isA?'#2e7d32':'#777'}; font-weight:bold; transition:0.2s;">✅ Принято</button>
+                                                <button id="${bM}" onclick="setReceiveChoice('${escapeName(name)}', ${grpData[name].qty}, '${vendorKey}', 'missing', '${bA}', '${bM}', '${dateStr}')" style="flex:1; padding:6px; border-radius:6px; border:${isM?'2px solid #c62828':'1px solid #ccc'}; background:${isM?'#ffebee':'#fafafa'}; color:${isM?'#c62828':'#777'}; font-weight:bold; transition:0.2s;">❌ Недовоз</button>
+                                            </div>
+                                        </div>`;
+                            }
+                        });
+                        return res + `<button onclick="finishReceiving('${vendorKey}', '${kStr}', ${expCount}, '${dateStr}')" class="btn-mode" style="background:var(--btn-stop-grad)!important; margin-top:10px; padding:10px!important; font-size:14px!important;">🏁 ЗАВЕРШИТЬ ПРИЕМКУ</button></div></div>`;
+                    };
+                    html += renderList(activeByDate[dateStr].lenta.items, activeByDate[dateStr].lenta.keys, "lenta", "vendor-lenta", "ЛЕНТА");
+                    html += renderList(activeByDate[dateStr].ozon.items, activeByDate[dateStr].ozon.keys, "ozon", "vendor-ozon", "ОЗОН");
+                });
+            }
+        } else {
+            let historyByDate = {};
+            ordersArr.forEach(o => {
+                let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
+                const processHist = (typeKey, flag) => {
+                    if(!flag) return;
+                    let dateStr = new Date(o[typeKey+'_received_ts'] || o.timestamp).toLocaleDateString('ru-RU');
+                    if(!historyByDate[dateStr]) historyByDate[dateStr] = { items: [], ts: o.timestamp };
                     itemsArr.forEach(i => {
-                        if (!i || !i.name || i.name === "НЕТ ЗАКАЗА") return;
-                        if (i.status === 'ordered' && i.bot_error !== true) {
-                            let catItem = orderCatMapFast[i.name] || {};
-                            let vendor = (catItem.vendor || 'Лента').toLowerCase() === 'озон' ? 'ozon' : 'lenta';
-                            if ((vendor === 'ozon' && !o.ozon_received) || (vendor === 'lenta' && !o.lenta_received)) {
-                                if (!activeByDate[orderDate]) activeByDate[orderDate] = { lenta: { items: {}, keys: new Set() }, ozon: { items: {}, keys: new Set() }, timestamp: o.timestamp };
-                                let targetGroup = vendor === 'ozon' ? activeByDate[orderDate].ozon : activeByDate[orderDate].lenta;
-                                if(!targetGroup.items[i.name]) targetGroup.items[i.name] = {qty: 0};
-                                targetGroup.items[i.name].qty += parseFloat(i.qty) || 0;
-                                targetGroup.keys.add(o.key);
+                        // ⚡ УЧИТЫВАЕМ "УЖЕ ПРИНЯТ" В ИСТОРИИ!
+                        if(i && i.name && (i.status === 'ordered' || i.status === 'already_received')) {
+                            let vendor = (orderCatMapFast[i.name]?.vendor || 'Лента').toLowerCase() === 'озон' ? 'ozon' : 'lenta';
+                            if(vendor === typeKey) {
+                                let isAlready = i.status === 'already_received';
+                                historyByDate[dateStr].items.push({ name: i.name, qty: i.qty, vendor: typeKey, bot_error: i.bot_error, already: isAlready });
                             }
                         }
                     });
-                });
+                };
+                processHist('lenta', o.lenta_received); processHist('ozon', o.ozon_received);
+            });
+            historyMissing.forEach(m => {
+                let dateStr = new Date(m.timestamp).toLocaleDateString('ru-RU');
+                if(!historyByDate[dateStr]) historyByDate[dateStr] = { items: [], ts: m.timestamp };
+                historyByDate[dateStr].items.push({ name: m.name, qty: m.qty, vendor: 'missing_arrived' });
+            });
 
-                if (Object.keys(activeByDate).length === 0) html += `<div class="report-card"><div style="text-align:center; font-weight:900;">Нет активных приемок.</div></div>`;
-                else {
-                    html += `<div style="background:#ede7f6; padding:12px; border-radius:12px; font-weight:900; color:#311B92; text-align:center; font-size:16px;">🚚 Активная приемка</div>`;
-                    Object.keys(activeByDate).sort((a,b) => activeByDate[b].timestamp - activeByDate[a].timestamp).forEach(dateStr => {
-                        const renderList = (grpData, keysSet, vendorKey, bClass, bText) => {
-                            let names = Object.keys(grpData).sort(); if(names.length === 0) return "";
-                            let listId = getSafeId(dateStr + vendorKey), kStr = Array.from(keysSet).join(',');
-                            let res = `<div class="report-card" style="margin-top:10px; border-left:4px solid ${vendorKey==='ozon'?'#1565c0':'#f57f17'};">
-                                        <div class="report-card-title" style="cursor:pointer; font-size:16px;" onclick="toggleElements('${listId}', 'arr_${listId}')">📅 Заказ ${bText} от ${dateStr} <span id="arr_${listId}">▼</span></div>
-                                        <div class="${listId}" style="display:none; margin-top:10px;">`;
-                            let expCount = 0;
-                            names.forEach(name => {
-                                if(activeMissing.some(am => am.name === name)) {
-                                    res += `<div class="report-card-item"><span><b>${name}</b></span><span style="color:#ef6c00; font-size:12px;">Уже в недовозах</span></div>`;
-                                } else {
-                                    expCount++;
-                                    let bA = `ba_${listId}_${getSafeId(name)}`, bM = `bm_${listId}_${getSafeId(name)}`, choiceKey = dateStr+"_"+name;
-                                    let isA = false, isM = false;
-                                    if (state.receivingChoices && state.receivingChoices[choiceKey]) {
-                                        isA = state.receivingChoices[choiceKey].status === 'arrived';
-                                        isM = state.receivingChoices[choiceKey].status === 'missing';
-                                    }
-                                    res += `<div class="report-card-item" style="flex-direction:column; align-items:flex-start;">
-                                                <span style="font-size:15px; margin-bottom:6px;"><b>${name}</b> (x${grpData[name].qty})</span>
-                                                <div style="display:flex; gap:8px; width:100%;">
-                                                    <button id="${bA}" onclick="setReceiveChoice('${escapeName(name)}', ${grpData[name].qty}, '${vendorKey}', 'arrived', '${bA}', '${bM}', '${dateStr}')" style="flex:1; padding:6px; border-radius:6px; border:${isA?'2px solid #2e7d32':'1px solid #ccc'}; background:${isA?'#e8f5e9':'#fafafa'}; color:${isA?'#2e7d32':'#777'}; font-weight:bold; transition:0.2s;">✅ Принято</button>
-                                                    <button id="${bM}" onclick="setReceiveChoice('${escapeName(name)}', ${grpData[name].qty}, '${vendorKey}', 'missing', '${bA}', '${bM}', '${dateStr}')" style="flex:1; padding:6px; border-radius:6px; border:${isM?'2px solid #c62828':'1px solid #ccc'}; background:${isM?'#ffebee':'#fafafa'}; color:${isM?'#c62828':'#777'}; font-weight:bold; transition:0.2s;">❌ Недовоз</button>
-                                                </div>
-                                            </div>`;
-                                }
-                            });
-                            return res + `<button onclick="finishReceiving('${vendorKey}', '${kStr}', ${expCount}, '${dateStr}')" class="btn-mode" style="background:var(--btn-stop-grad)!important; margin-top:10px; padding:10px!important; font-size:14px!important;">🏁 ЗАВЕРШИТЬ ПРИЕМКУ</button></div></div>`;
-                        };
-                        html += renderList(activeByDate[dateStr].lenta.items, activeByDate[dateStr].lenta.keys, "lenta", "vendor-lenta", "ЛЕНТА");
-                        html += renderList(activeByDate[dateStr].ozon.items, activeByDate[dateStr].ozon.keys, "ozon", "vendor-ozon", "ОЗОН");
-                    });
-                }
-            } else {
-                let historyByDate = {};
-                ordersArr.forEach(o => {
-                    let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
-                    const processHist = (typeKey, flag) => {
-                        if(!flag) return;
-                        let dateStr = new Date(o[typeKey+'_received_ts'] || o.timestamp).toLocaleDateString('ru-RU');
-                        if(!historyByDate[dateStr]) historyByDate[dateStr] = { items: [], ts: o.timestamp };
-                        itemsArr.forEach(i => {
-                            if(i && i.name && i.status === 'ordered') {
-                                let vendor = (orderCatMapFast[i.name]?.vendor || 'Лента').toLowerCase() === 'озон' ? 'ozon' : 'lenta';
-                                if(vendor === typeKey) historyByDate[dateStr].items.push({ name: i.name, qty: i.qty, vendor: typeKey, bot_error: i.bot_error });
-                            }
-                        });
-                    };
-                    processHist('lenta', o.lenta_received); processHist('ozon', o.ozon_received);
+            let sortedHist = Object.keys(historyByDate).sort((a,b) => historyByDate[b].ts - historyByDate[a].ts);
+            if(sortedHist.length === 0) html += `<div class="report-card"><div style="text-align:center; color:#888;">История пуста</div></div>`;
+            else {
+                sortedHist.forEach(dateStr => {
+                    let sId = getSafeId("h_"+dateStr);
+                    html += `<div class="report-card" style="padding:12px; margin-bottom:8px;">
+                                <div style="cursor:pointer; font-weight:bold; font-size:15px; color:#4A148C;" onclick="toggleElements('${sId}', 'arr_${sId}')">📅 Архив за ${dateStr} <span id="arr_${sId}" style="float:right;">▼</span></div>
+                                <div class="${sId}" style="display:none; margin-top:10px; font-size:14px; line-height:1.4;">
+                                    ${historyByDate[dateStr].items.map(i => `▪️ ${i.name} (x${i.qty}) — ${i.vendor==='missing_arrived'?'<span style="color:#4caf50">Доехал</span>':(i.already ? '<span style="color:#0277bd">Был принят ранее</span>' : '<span style="color:#2e7d32">Принят</span>')}`).join("<br>")}
+                                </div>
+                             </div>`;
                 });
-                historyMissing.forEach(m => {
-                    let dateStr = new Date(m.timestamp).toLocaleDateString('ru-RU');
-                    if(!historyByDate[dateStr]) historyByDate[dateStr] = { items: [], ts: m.timestamp };
-                    historyByDate[dateStr].items.push({ name: m.name, qty: m.qty, vendor: 'missing_arrived' });
-                });
-
-                let sortedHist = Object.keys(historyByDate).sort((a,b) => historyByDate[b].ts - historyByDate[a].ts);
-                if(sortedHist.length === 0) html += `<div class="report-card"><div style="text-align:center; color:#888;">История пуста</div></div>`;
-                else {
-                    sortedHist.forEach(dateStr => {
-                        let sId = getSafeId("h_"+dateStr);
-                        html += `<div class="report-card" style="padding:12px; margin-bottom:8px;">
-                                    <div style="cursor:pointer; font-weight:bold; font-size:15px; color:#4A148C;" onclick="toggleElements('${sId}', 'arr_${sId}')">📅 Архив за ${dateStr} <span id="arr_${sId}" style="float:right;">▼</span></div>
-                                    <div class="${sId}" style="display:none; margin-top:10px; font-size:14px; line-height:1.4;">
-                                        ${historyByDate[dateStr].items.map(i => `▪️ ${i.name} (x${i.qty}) — ${i.vendor==='missing_arrived'?'<span style="color:#4caf50">Доехал</span>':'<span style="color:#2e7d32">Принят</span>'}`).join("<br>")}
-                                    </div>
-                                 </div>`;
-                    });
-                }
             }
-            document.getElementById('report-content-area').innerHTML = html;
-            localStorage.setItem("cache_html_receiving_" + state.currentShop, html); // Записываем свежую копию в кэш
-        } catch (err) { console.log(err); }
+        }
+        document.getElementById('report-content-area').innerHTML = html;
     }
     
    function setReceiveChoice(name, qty, vendor, status, btnArrId, btnMissId, dateStr) {

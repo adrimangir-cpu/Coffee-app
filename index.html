@@ -1577,13 +1577,26 @@
     // ==========================================
     // ⚡ ГЛАВНЫЙ РЕНДЕР И ЛОГИКА БЛОКИРОВОК
     // ==========================================
+    // ==========================================
+    // ⚡ ГЛАВНЫЙ РЕНДЕР И ЛОГИКА БЛОКИРОВОК
+    // ==========================================
     function triggerActiveRender() {
         if (['order', 'new_shop', 'checklist', 'stoplist_fill'].includes(state.currentMode)) {
+            // ⚡ ЖЕЛЕЗНАЯ СИНХРОНИЗАЦИЯ: Автоматически собирает каталог из свежих сетевых данных при первом запуске или обновлении
+            let pathKey = state.currentMode === 'checklist' ? 'checklist' : (state.currentMode === 'stoplist_fill' ? 'stoplist' : (state.currentMode === 'new_shop' ? 'newshop' : 'order'));
+            if (state.cachedCatalogs && state.cachedCatalogs[pathKey]) {
+                rebuildProductCatalog(state.cachedCatalogs[pathKey]);
+            }
+
             let transitItems = new Set();
             let pendingItems = new Set();
             
+            // ⚡ СОХРАНЯЕМ ФОКУС: Запоминаем, где стоял курсор
+            let focusedId = document.activeElement ? document.activeElement.id : null;
+            let focusedValue = document.activeElement ? document.activeElement.value : null;
+            
             if (state.currentMode === 'order' || state.currentMode === 'new_shop') {
-                let cutoffTime = Date.now() - (20 * 24 * 60 * 60 * 1000); 
+                let cutoffTime = Date.now() - (20 * 24 * 60 * 60 * 1000); // 20 дней
 
                 state.globalMissing.forEach(m => {
                     if (!m || !m.name) return;
@@ -1652,13 +1665,30 @@
             // Проверяем, печатает ли сейчас бариста. Если да - откладываем перерисовку!
             let isTyping = document.activeElement && (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA');
             if (isTyping) {
-                state.needsRender = true; // Ставим галочку "обновить позже"
-                updateBadgeUI(); // Тихо обновляем цифру на корзине, не ломая верстку
+                state.needsRender = true; 
+                updateBadgeUI(); 
             } else {
                 renderProductList();
                 state.needsRender = false;
             }
             
+            // ⚡ ВОССТАНАВЛИВАЕМ ФОКУС
+            if (focusedId) {
+                setTimeout(() => {
+                    let el = document.getElementById(focusedId);
+                    if (el) {
+                        el.focus();
+                        if (focusedValue !== null && el.value === "") {
+                            el.value = focusedValue; 
+                            el.dispatchEvent(new Event('change')); 
+                        }
+                        try {
+                            let len = el.value.length;
+                            el.setSelectionRange(len, len); 
+                        } catch(e) {}
+                    }
+                }, 50);
+            }
         } else if (state.currentMode === 'receiving') { showLastOrder(); } 
         else if (state.currentMode === 'stoplist_view') { viewStopList(); } 
         else if (state.currentMode === 'my_last_order') { showMyLastOrder(); }
@@ -3255,9 +3285,7 @@ async function viewStopList() {
         return (state.cachedCatalogs && state.cachedCatalogs[name]) ? state.cachedCatalogs[name] : {};
     }
 
-    // ==========================================
-    // ⚡ ДВИЖОК НУЛЕВОГО ОЖИДАНИЯ (Фоновая синхронизация)
-    // ==========================================
+    
     // ==========================================
     // ⚡ ДВИЖОК НУЛЕВОГО ОЖИДАНИЯ (Фоновая синхронизация)
     // ==========================================
@@ -3269,44 +3297,39 @@ async function viewStopList() {
                 if (fresh) {
                     if (!state.cachedCatalogs) state.cachedCatalogs = {};
                     
-                    // ⚡ ЗАЩИТА ОТ СКАЧКОВ ИНТЕРНЕТА: Игнорируем фейковые обновления
                     if (JSON.stringify(state.cachedCatalogs[p]) === JSON.stringify(fresh)) return;
                     
                     state.cachedCatalogs[p] = fresh;
                     
-                    if (typeof stripPhotos === 'function') {
-                        let safeCache = {
-                            order: stripPhotos(state.cachedCatalogs['order']),
-                            newshop: stripPhotos(state.cachedCatalogs['newshop']),
-                            stoplist: stripPhotos(state.cachedCatalogs['stoplist']),
-                            checklist: stripPhotos(state.cachedCatalogs['checklist'])
-                        };
-                        try { localStorage.setItem("teiku_light_cache", JSON.stringify(safeCache)); } catch(e){}
-                    }
+                    // ⚡ ВКЛЮЧАЕМ ЗАПИСЬ: Сохраняем чистые данные в вечную память IndexedDB устройства
+                    saveToRealCache(p, fresh);
                     
                     triggerActiveRender(); 
                 }
             });
         });
 
-        // Меню грузим с задержкой 10 секунд
+        // Меню грузим с задержкой 8 секунд
         setTimeout(() => {
             database.ref('catalogs/menu').on('value', snap => {
                 let fresh = snap.val();
                 if (fresh) {
                     if (!state.cachedCatalogs) state.cachedCatalogs = {};
                     
-                    // ⚡ ЗАЩИТА: Не перерисовываем, если админ ничего не менял
                     if (JSON.stringify(state.cachedCatalogs['menu']) === JSON.stringify(fresh)) return;
                     
                     state.cachedCatalogs['menu'] = fresh;
+                    
+                    // ⚡ ВКЛЮЧАЕМ ЗАПИСЬ ДЛЯ МЕНЮ
+                    saveToRealCache('menu', fresh);
+                    
                     if (state.currentMode === 'menu') {
                         state.menuCatalog = Object.assign({}, fresh);
                         if (typeof renderMenuApp === 'function') renderMenuApp();
                     }
                 }
             });
-        }, 8000);
+        }, 6000);
     }
 
     function startShopDataSync() {

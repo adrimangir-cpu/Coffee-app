@@ -1889,6 +1889,53 @@
             alert("❌ Ошибка объединения: " + e.message);
         }
     }
+
+    // ⚡ Функция полного удаления заказов (За день или за конкретную кофейню)
+    async function deleteOrdersFromSvod(event, dateStr, shop = null) {
+        event.stopPropagation(); // ⚡ Блокируем сворачивание папки при клике на кнопку
+        
+        let confirmMsg = shop 
+            ? `Вы уверены, что хотите БЕЗВОЗВРАТНО УДАЛИТЬ заказ кофейни "${shop}" за ${dateStr}?` 
+            : `🚨 ВНИМАНИЕ! 🚨\n\nВы уверены, что хотите БЕЗВОЗВРАТНО УДАЛИТЬ вообще ВСЕ заказы (весь день) за ${dateStr}?`;
+            
+        if (!confirm(confirmMsg)) return;
+
+        showReportOverlay("Удаляем заказы...");
+        try {
+            let ordersToDelete = [];
+            for (let k in cachedData.orders) {
+                let o = cachedData.orders[k];
+                // Ищем только неоформленные заказы (которые висят в Своде)
+                if (o && (o.mode === 'order' || o.mode === 'new_shop') && !o.ordered) {
+                    let dKey = new Date(o.timestamp).toLocaleDateString('ru-RU');
+                    if (dKey === dateStr) {
+                        if (!shop || o.shop === shop) {
+                            ordersToDelete.push(k);
+                        }
+                    }
+                }
+            }
+
+            if (ordersToDelete.length === 0) {
+                hideReportOverlay();
+                alert("Заказы не найдены.");
+                return;
+            }
+
+            // Удаляем сразу всё массивом (параллельно) для скорости
+            let promises = ordersToDelete.map(k => fetch(`${FB_URL}/orders/${k}.json`, { method: 'DELETE' }));
+            await Promise.all(promises);
+
+            // Удаляем из локальной памяти, чтобы пропало с экрана мгновенно
+            ordersToDelete.forEach(k => delete cachedData.orders[k]);
+
+            hideReportOverlay();
+            renderOrdersSvod(); // ⚡ Мгновенно перерисовываем
+        } catch (e) {
+            hideReportOverlay();
+            alert("❌ Ошибка при удалении: " + e.message);
+        }
+    }
     
 async function renderOrdersSvod() {
       try {
@@ -2059,12 +2106,13 @@ async function renderOrdersSvod() {
         else {
             sortedDates.forEach(dateStr => {
                 let safeDate = getSafeId(dateStr), isDateOpen = expandedDivs.has(`svodlvl2_${safeDate}`);
-                html += `<tr class="cat-group-header" onclick="toggleSvodDate('${safeDate}')"><td colspan="5" style="padding:16px; background:#D1C4E9; font-size:18px; border-bottom: 2px solid #b39ddb;">📅 <b>Закупка от ${dateStr}</b> <span id="arrow_sdate_${safeDate}" style="float:right;">${isDateOpen ? '▲' : '▼'}</span></td></tr>`;
+                html += `<tr class="cat-group-header" onclick="toggleSvodDate('${safeDate}')"><td colspan="5" style="padding:16px; background:#D1C4E9; font-size:18px; border-bottom: 2px solid #b39ddb;">📅 <b>Закупка от ${dateStr}</b> <span id="arrow_sdate_${safeDate}" style="float:right; margin-left:15px;">${isDateOpen ? '▲' : '▼'}</span><button onclick="deleteOrdersFromSvod(event, '${dateStr}')" style="float:right; background:#e53935; color:white; border:none; border-radius:6px; padding:4px 10px; font-size:13px; font-weight:bold; cursor:pointer; box-shadow:0 2px 4px rgba(0,0,0,0.2);">🗑 Удалить день</button></td></tr>`;
                 
                 let shopsObj = svodDataByDate[dateStr];
                 Object.keys(shopsObj).sort().forEach(shop => {
                     let safeShopDate = getSafeId(dateStr + shop), isShopOpen = expandedDivs.has(`svoditem_${safeShopDate}`), displayShop = (isDateOpen && isShopOpen) ? 'table-row' : 'none';
-                    html += `<tr class="cat-group-header svodlvl2_${safeDate}" onclick="toggleCatElements('svoditem_${safeShopDate}', 'arrow_sshop_${safeShopDate}')" style="display:${isDateOpen ? 'table-row' : 'none'};"><td colspan="5" style="background:#ede7f6; padding:14px; padding-left:30px; font-size:16px; color:#311B92; border-bottom: 1px solid #d1c4e9;"><b>📍 ${shop === 'Красноказарменная' ? 'МЭИ' : shop}</b> <span id="arrow_sshop_${safeShopDate}" style="float:right;">${isShopOpen ? '▲' : '▼'}</span></td></tr>`;
+                   let escShop = shop.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+         html += `<tr class="cat-group-header svodlvl2_${safeDate}" onclick="toggleCatElements('svoditem_${safeShopDate}', 'arrow_sshop_${safeShopDate}')" style="display:${isDateOpen ? 'table-row' : 'none'};"><td colspan="5" style="background:#ede7f6; padding:14px; padding-left:30px; font-size:16px; color:#311B92; border-bottom: 1px solid #d1c4e9;"><b>📍 ${shop === 'Красноказарменная' ? 'МЭИ' : shop}</b> <span id="arrow_sshop_${safeShopDate}" style="float:right; margin-left:15px;">${isShopOpen ? '▲' : '▼'}</span><button onclick="deleteOrdersFromSvod(event, '${dateStr}', '${escShop}')" style="float:right; background:#e53935; color:white; border:none; border-radius:6px; padding:3px 8px; font-size:12px; font-weight:bold; cursor:pointer; box-shadow:0 2px 4px rgba(0,0,0,0.2);">🗑 Удалить заказ</button></td></tr>`;
                              
                     let sortedItemNames = Object.keys(shopsObj[shop].items).sort((a,b) => { let vA = vendorMap[a] || 'лента', vB = vendorMap[b] || 'лента'; return vA < vB ? -1 : (vA > vB ? 1 : a.localeCompare(b)); });
                     if (sortedItemNames.length === 0 && shopsObj[shop].no_order) html += `<tr class="svoditem_${safeShopDate} svodlvl3_of_${safeDate}" style="display:${displayShop}; background:#f1f8e9;"><td colspan="5" style="padding:15px; padding-left:45px; font-weight:bold; color:#2e7d32; text-align:center; font-size:15px;">➖ Заказ на эту дату не требуется</td></tr>`;

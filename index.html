@@ -1649,14 +1649,21 @@
 // ==========================================
     // ⚡ ГЛАВНЫЙ РЕНДЕР И ЛОГИКА БЛОКИРОВОК
     // ==========================================
+    // ==========================================
+    // ⚡ ГЛАВНЫЙ РЕНДЕР И ЛОГИКА БЛОКИРОВОК
+    // ==========================================
     function triggerActiveRender() {
         if (['order', 'new_shop', 'checklist', 'stoplist_fill'].includes(state.currentMode)) {
             let transitItems = new Set();
             let pendingItems = new Set();
             
             if (state.currentMode === 'order' || state.currentMode === 'new_shop') {
+                let cutoffTime = Date.now() - (20 * 24 * 60 * 60 * 1000); 
+
                 state.globalMissing.forEach(m => {
                     if (!m || !m.name) return;
+                    if (m.timestamp && m.timestamp < cutoffTime) return; 
+                    
                     let clean = cleanName(m.name);
                     if (m.status === 'transit' || m.status === 'pending') transitItems.add(clean);
                     if (m.status === 'canceled' && !m.added_to_basket) {
@@ -1666,23 +1673,18 @@
                     }
                 });
 
-                // ⚡ ЗАЩИТА ОТ "ПРИЗРАКОВ": Игнорируем древние незакрытые заказы (старше 20 дней)
-                let cutoffTime = Date.now() - (20 * 24 * 60 * 60 * 1000);
-
                 state.globalOrders.forEach(o => {
                     if (o.mode === 'order' || o.mode === 'new_shop') {
-                        // Если заказ уже оформлен или он слишком старый - пропускаем
                         if (o.ordered === true || o.timestamp < cutoffTime) return; 
                         
                         let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
                         itemsArr.forEach(i => {
                             if (i && i.name && i.name !== "НЕТ ЗАКАЗА") {
-                                // ⚡ ИСКЛЮЧАЕМ НОВЫЕ СТАТУСЫ ИЗ БЛОКИРОВКИ
                                 if (i.status !== 'error' && 
                                     i.bot_error !== true && 
                                     i.status !== 'ordered' && 
-                                    i.status !== 'not_needed' &&        // "Не надо" - не блокирует
-                                    i.status !== 'already_received') {  // "Уже принят" - не блокирует
+                                    i.status !== 'not_needed' &&
+                                    i.status !== 'already_received') {
                                     pendingItems.add(cleanName(i.name));
                                 }
                             }
@@ -1720,7 +1722,18 @@
                 state.transitItems = transitItems;
                 state.unprocessedItems = pendingItems;
             }
-            renderProductList();
+            
+            // ⚡ УМНАЯ СТАБИЛИЗАЦИЯ ИНТЕРФЕЙСА:
+            // Проверяем, печатает ли сейчас бариста. Если да - откладываем перерисовку!
+            let isTyping = document.activeElement && (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA');
+            if (isTyping) {
+                state.needsRender = true; // Ставим галочку "обновить позже"
+                updateBadgeUI(); // Тихо обновляем цифру на корзине, не ломая верстку
+            } else {
+                renderProductList();
+                state.needsRender = false;
+            }
+            
         } else if (state.currentMode === 'receiving') { showLastOrder(); } 
         else if (state.currentMode === 'stoplist_view') { viewStopList(); } 
         else if (state.currentMode === 'my_last_order') { showMyLastOrder(); }
@@ -1806,7 +1819,7 @@
               if (sVal === undefined || sVal === null) sVal = "-";
 
               if(sVal !== "-" && sVal !== "Полная" && sVal !== "Половина" && sVal !== "Меньше половины" && String(sVal) !== "0" && sVal !== "CUSTOM") {
-                  html += `<input type="text" class="qty-input" style="width:80px; border-bottom:2px solid #7E57C2;" value="${sVal}" onchange="registerInputChange('${escName}', this.value, '${cat}')" onfocus="handleInputFocus(this)">
+                  html += `<input type="text" class="qty-input" style="width:80px; border-bottom:2px solid #7E57C2;" value="${sVal}" onchange="registerInputChange('${escName}', this.value, '${cat}')" onfocus="handleInputFocus(this)" onblur="handleInputBlur()">
                            <button class="reset-btn" onclick="registerInputChange('${escName}', '-', '${cat}'); renderProductList();">✕</button>`;
               } else {
                   html += `<select class="vol-select" onchange="handleVolumeSelection(this, '${escName}', '${cat}', '${safeId}')">
@@ -1824,7 +1837,7 @@
               if (val === undefined || val === null || val === "-") val = (state.currentMode === 'checklist' ? "-" : "0");
 
               html += `<button class="qty-btn" onclick="adjustQuantity('${escName}', -1, '${cat}', '${safeId}')">−</button>
-                       <input type="text" class="qty-input" id="input-${safeId}" value="${val}" onchange="registerInputChange('${escName}', this.value, '${cat}')" onfocus="handleInputFocus(this)">
+                       <input type="text" class="qty-input" id="input-${safeId}" value="${val}" onchange="registerInputChange('${escName}', this.value, '${cat}')" onfocus="handleInputFocus(this)" onblur="handleInputBlur()">
                        <button class="qty-btn" onclick="adjustQuantity('${escName}', 1, '${cat}', '${safeId}')">+</button>`;
           }
           html += `</div></div>`;
@@ -1850,6 +1863,16 @@
 
         setTimeout(scrollToInput, 300);
         setTimeout(scrollToInput, 600); 
+    }
+    
+    // ⚡ Обновляем экран, когда бариста убрал курсор из поля ввода
+    function handleInputBlur() {
+        setTimeout(() => {
+            if (state.needsRender) {
+                state.needsRender = false;
+                renderProductList();
+            }
+        }, 100);
     }
 
     function handleVolumeSelection(select, name, cat, safeId) {
@@ -2988,7 +3011,11 @@ async function viewStopList() {
                     itemsArr.forEach(i => {
                         // ⚡ УЧИТЫВАЕМ "УЖЕ ПРИНЯТ" В ИСТОРИИ!
                         if(i && i.name && (i.status === 'ordered' || i.status === 'already_received')) {
-                            let vendor = (orderCatMapFast[i.name]?.vendor || 'Лента').toLowerCase() === 'озон' ? 'ozon' : 'lenta';
+                            // ⚡ ИСПРАВЛЕНИЕ: Убрали опасный символ '?.', который крашил Телеграм!
+                            let catItem = orderCatMapFast[i.name];
+                            let vRaw = (catItem && catItem.vendor) ? catItem.vendor : 'Лента';
+                            let vendor = vRaw.toLowerCase() === 'озон' ? 'ozon' : 'lenta';
+                            
                             if(vendor === typeKey) {
                                 let isAlready = i.status === 'already_received';
                                 historyByDate[dateStr].items.push({ name: i.name, qty: i.qty, vendor: typeKey, bot_error: i.bot_error, already: isAlready });

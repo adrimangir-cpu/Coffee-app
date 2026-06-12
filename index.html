@@ -1646,7 +1646,86 @@
           }).catch(e => console.log(e));
       }
     }
+// ==========================================
+    // ⚡ ГЛАВНЫЙ РЕНДЕР И ЛОГИКА БЛОКИРОВОК
+    // ==========================================
+    function triggerActiveRender() {
+        if (['order', 'new_shop', 'checklist', 'stoplist_fill'].includes(state.currentMode)) {
+            let transitItems = new Set();
+            let pendingItems = new Set();
+            
+            if (state.currentMode === 'order' || state.currentMode === 'new_shop') {
+                state.globalMissing.forEach(m => {
+                    if (!m || !m.name) return;
+                    let clean = cleanName(m.name);
+                    if (m.status === 'transit' || m.status === 'pending') transitItems.add(clean);
+                    if (m.status === 'canceled' && !m.added_to_basket) {
+                        let qtyNum = parseFloat(m.qty) || 0;
+                        state.userBasket[m.name] = (state.userBasket[m.name] || 0) + qtyNum;
+                        database.ref("missing_items/" + m.key).update({added_to_basket: true}); 
+                    }
+                });
 
+                // ⚡ ЗАЩИТА ОТ "ПРИЗРАКОВ": Игнорируем древние незакрытые заказы (старше 20 дней)
+                let cutoffTime = Date.now() - (20 * 24 * 60 * 60 * 1000);
+
+                state.globalOrders.forEach(o => {
+                    if (o.mode === 'order' || o.mode === 'new_shop') {
+                        // Если заказ уже оформлен или он слишком старый - пропускаем
+                        if (o.ordered === true || o.timestamp < cutoffTime) return; 
+                        
+                        let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
+                        itemsArr.forEach(i => {
+                            if (i && i.name && i.name !== "НЕТ ЗАКАЗА") {
+                                // ⚡ ИСКЛЮЧАЕМ НОВЫЕ СТАТУСЫ ИЗ БЛОКИРОВКИ
+                                if (i.status !== 'error' && 
+                                    i.bot_error !== true && 
+                                    i.status !== 'ordered' && 
+                                    i.status !== 'not_needed' &&        // "Не надо" - не блокирует
+                                    i.status !== 'already_received') {  // "Уже принят" - не блокирует
+                                    pendingItems.add(cleanName(i.name));
+                                }
+                            }
+                        });
+                    }
+                });
+
+                for (let key in state.userBasket) {
+                    if (key === "_catinfo") continue;
+                    if (transitItems.has(cleanName(key)) || pendingItems.has(cleanName(key))) {
+                        delete state.userBasket[key];
+                        if (state.userBasket["_catinfo"]) delete state.userBasket["_catinfo"][key];
+                    }
+                }
+
+                let latestStoplist = state.globalOrders.slice().reverse().find(o => o.mode === 'stoplist_fill');
+                if (latestStoplist && latestStoplist.items) {
+                    let itemsArr = Array.isArray(latestStoplist.items) ? latestStoplist.items : Object.values(latestStoplist.items);
+                    itemsArr.forEach(i => {
+                        if (i && i.name && i.qty === 'Закончилось') {
+                            let cleanStopName = cleanName(i.name); 
+                            let catItem = Object.values(state.productCatalog).find(c => c && cleanName(c.name) === cleanStopName);
+                            if (catItem && !transitItems.has(cleanStopName) && !pendingItems.has(cleanStopName)) {
+                                let exactName = catItem.name;
+                                if (state.userBasket[exactName] === undefined) {
+                                    state.userBasket[exactName] = 1;
+                                    if (!state.userBasket["_catinfo"]) state.userBasket["_catinfo"] = {};
+                                    state.userBasket["_catinfo"][exactName] = catItem.cat || "Прочее";
+                                }
+                            }
+                        }
+                    });
+                }
+                
+                state.transitItems = transitItems;
+                state.unprocessedItems = pendingItems;
+            }
+            renderProductList();
+        } else if (state.currentMode === 'receiving') { showLastOrder(); } 
+        else if (state.currentMode === 'stoplist_view') { viewStopList(); } 
+        else if (state.currentMode === 'my_last_order') { showMyLastOrder(); }
+    }
+    
     function renderProductList() {
       var html = "";
       

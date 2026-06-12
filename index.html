@@ -634,13 +634,15 @@
         return String(str).replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/"/g, '&quot;');
     }
 
-   async function handleShopSelection(name) {
+  async function handleShopSelection(name) {
       triggerHaptic(); 
       state.currentShop = name; 
       document.getElementById('title').innerText = name == 'Красноказарменная' ? 'МЭИ' : name;
       state.screenHistory = []; 
       showScreen('step-2');
       loadSettings();
+      // ⚡ Запускаем живую синхронизацию заказов при выборе кофейни!
+      startShopDataSync(); 
     }
     
     // ⚡ ДОБАВЛЯЕМ НОВУЮ ФУНКЦИЮ: Сверхбыстрый и точный загрузчик для кнопок
@@ -1530,7 +1532,6 @@
     async function initWorkflow(mode) {
       triggerHaptic(); 
       state.currentMode = mode; 
-      let execMode = mode; 
       
       if (mode === 'order') document.getElementById('title').innerText = "📦 Закупка";
       else if (mode === 'new_shop') document.getElementById('title').innerText = "🏗 Закупка (Новая)";
@@ -1555,100 +1556,24 @@
       
       let pathKey = mode === 'checklist' ? 'checklist' : (mode === 'stoplist_fill' ? 'stoplist' : (mode === 'new_shop' ? 'newshop' : 'order'));
       
-      // ⚡ ШАГ 1: МГНОВЕННЫЙ ОТРЕНДЕР ТЕКСТА ИЗ КЭША ТЕЛЕФОНА (0.1 сек)
+      // ⚡ Мгновенный рендер каталога из кэша
       if (state.cachedCatalogs && state.cachedCatalogs[pathKey] && Object.keys(state.cachedCatalogs[pathKey]).length > 0) {
           rebuildProductCatalog(state.cachedCatalogs[pathKey]);
           restoreFromDraft();
-          renderProductList(); 
       } else {
           document.getElementById('dynamic-list-container').innerHTML = `<div class="report-card"><div class="loading-pulse">⏳ Загрузка товаров...</div></div>`;
       }
       
-      // ШАГ 2: СКАЧИВАНИЕ ОБНОВЛЕНИЙ И СТАТУСОВ СЕТИ СТРОГО В ФОНЕ
       loadSettings();
       
       if (mode === 'order' || mode === 'new_shop') {
-          Promise.all([
-              database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(40).once("value"),
-              database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value")
-          ]).then(([ordersSnap, missSnap]) => {
-              if (state.currentMode !== execMode) return; 
-              
-              let shopOrders = [];
-              ordersSnap.forEach(c => { let val = c.val(); if(val) shopOrders.push(val); });
-
-              let transitItems = new Set();
-              let pendingItems = new Set();
-              let hasCanceledMissings = false;
-
-              missSnap.forEach(c => {
-                  let m = c.val(); if (!m || !m.name) return;
-                  let clean = cleanName(m.name);
-                  if (m.status === 'transit' || m.status === 'pending') transitItems.add(clean);
-                  if (m.status === 'canceled' && !m.added_to_basket) {
-                      let qtyNum = parseFloat(m.qty) || 0;
-                      state.userBasket[m.name] = (state.userBasket[m.name] || 0) + qtyNum;
-                      let foundItem = Object.values(state.productCatalog).find(catItem => catItem && catItem.name === m.name);
-                      if(!state.userBasket["_catinfo"]) state.userBasket["_catinfo"] = {};
-                      state.userBasket["_catinfo"][m.name] = foundItem ? foundItem.cat : "Прочее";
-                      database.ref("missing_items/" + c.key).update({added_to_basket: true}); 
-                      hasCanceledMissings = true;
-                  }
-              });
-
-              if (hasCanceledMissings) showPopupError("Внимание", "⚠️ Отмененные недовозы возвращены в корзину.");
-
-              shopOrders.forEach(o => {
-                  if (o.mode === 'order' || o.mode === 'new_shop') {
-                      if (o.ordered === true) return; 
-                      let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
-                      itemsArr.forEach(i => {
-                          if (i && i.name && i.name !== "НЕТ ЗАКАЗА") {
-                              if (i.status !== 'error' && i.bot_error !== true && i.status !== 'ordered') {
-                                  pendingItems.add(cleanName(i.name));
-                              }
-                          }
-                      });
-                  }
-              });
-
-              for (let key in state.userBasket) {
-                  if (key === "_catinfo") continue;
-                  if (transitItems.has(cleanName(key)) || pendingItems.has(cleanName(key))) {
-                      delete state.userBasket[key];
-                      if (state.userBasket["_catinfo"]) delete state.userBasket["_catinfo"][key];
-                  }
-              }
-
-              let latestStoplist = shopOrders.slice().reverse().find(o => o.mode === 'stoplist_fill');
-              if (latestStoplist && latestStoplist.items) {
-                  let itemsArr = Array.isArray(latestStoplist.items) ? latestStoplist.items : Object.values(latestStoplist.items);
-                  itemsArr.forEach(i => {
-                      if (i && i.name && i.qty === 'Закончилось') {
-                          let cleanStopName = cleanName(i.name); 
-                          let catItem = Object.values(state.productCatalog).find(c => c && cleanName(c.name) === cleanStopName);
-                          if (catItem && !transitItems.has(cleanStopName) && !pendingItems.has(cleanStopName)) {
-                              let exactName = catItem.name;
-                              if (state.userBasket[exactName] === undefined) {
-                                  state.userBasket[exactName] = 1;
-                                  if (!state.userBasket["_catinfo"]) state.userBasket["_catinfo"] = {};
-                                  state.userBasket["_catinfo"][exactName] = catItem.cat || "Прочее";
-                              }
-                          }
-                      }
-                  });
-              }
-              
-              state.transitItems = transitItems;
-              state.unprocessedItems = pendingItems;
-              persistDraft();
-              renderProductList(); // Плавная замена данных на актуальные
-          }).catch(e => console.log(e));
+          // ⚡ Больше никаких зависаний и старых данных! Используем готовый живой кэш.
+          triggerActiveRender();
+      } else {
+          renderProductList();
       }
     }
-// ==========================================
-    // ⚡ ГЛАВНЫЙ РЕНДЕР И ЛОГИКА БЛОКИРОВОК
-    // ==========================================
+
     // ==========================================
     // ⚡ ГЛАВНЫЙ РЕНДЕР И ЛОГИКА БЛОКИРОВОК
     // ==========================================

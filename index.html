@@ -1556,27 +1556,32 @@
       
       let pathKey = mode === 'checklist' ? 'checklist' : (mode === 'stoplist_fill' ? 'stoplist' : (mode === 'new_shop' ? 'newshop' : 'order'));
       
-      // ⚡ Мгновенный рендер каталога из кэша
-      if (state.cachedCatalogs && state.cachedCatalogs[pathKey] && Object.keys(state.cachedCatalogs[pathKey]).length > 0) {
-          rebuildProductCatalog(state.cachedCatalogs[pathKey]);
-          restoreFromDraft();
-      } else {
-          document.getElementById('dynamic-list-container').innerHTML = `<div class="report-card"><div class="loading-pulse">⏳ Загрузка товаров...</div></div>`;
-      }
-      
       loadSettings();
-      
-      if (mode === 'order' || mode === 'new_shop') {
-          // ⚡ Больше никаких зависаний и старых данных! Используем готовый живой кэш.
-          triggerActiveRender();
-      } else {
-          renderProductList();
-      }
-    }
 
-    // ==========================================
-    // ⚡ ГЛАВНЫЙ РЕНДЕР И ЛОГИКА БЛОКИРОВОК
-    // ==========================================
+      // ⚡ ГАРАНТИРОВАННАЯ ЗАГРУЗКА ИЗ БАЗЫ:
+      // Если память телефона пуста, мы не ждем чуда от фона, а принудительно скачиваем каталог!
+      if (!state.cachedCatalogs || !state.cachedCatalogs[pathKey] || Object.keys(state.cachedCatalogs[pathKey]).length === 0) {
+          document.getElementById('dynamic-list-container').innerHTML = `<div class="report-card"><div class="loading-pulse" style="text-align:center; font-weight:bold; color:#7E57C2;">⏳ Скачиваю базу данных...</div></div>`;
+          try {
+              let snap = await database.ref('catalogs/' + pathKey).once('value');
+              let fresh = snap.val() || {};
+              if (!state.cachedCatalogs) state.cachedCatalogs = {};
+              state.cachedCatalogs[pathKey] = fresh;
+              
+              // Сразу сохраняем в вечную память
+              if (typeof saveToRealCache === 'function') saveToRealCache(pathKey, fresh);
+          } catch(e) {
+              console.error("Ошибка загрузки:", e);
+          }
+      }
+      
+      // Восстанавливаем черновик, если он был
+      restoreFromDraft();
+      
+      // Запускаем умную отрисовку
+      triggerActiveRender();
+    }
+    
     // ==========================================
     // ⚡ ГЛАВНЫЙ РЕНДЕР И ЛОГИКА БЛОКИРОВОК
     // ==========================================

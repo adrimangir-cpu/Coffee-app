@@ -1963,6 +1963,7 @@ async function renderOrdersSvod() {
         let lastOrderItems = {};
         let lastOrderTimestamp = {};
         let lastOrderOzonReceived = {}; 
+        let lastOrderLentaReceived = {}; // ⚡ Добавили отслеживание Ленты
         
         let todaysOrders = [];
         let historyOrdersList = [];
@@ -1978,6 +1979,7 @@ async function renderOrdersSvod() {
                         lastOrderItems[o.shop] = new Set(); 
                         lastOrderTimestamp[o.shop] = o.timestamp || 0; 
                         lastOrderOzonReceived[o.shop] = !!o.ozon_received; 
+                        lastOrderLentaReceived[o.shop] = !!o.lenta_received; // ⚡ Сохраняем статус Ленты
                         let itemsArr = Array.isArray(o.items) ? o.items : (typeof o.items === 'object' && o.items !== null ? Object.values(o.items) : []); 
                         itemsArr.forEach(i => { if(i && i.name) lastOrderItems[o.shop].add(cleanName(i.name)); }); 
                     }
@@ -1985,33 +1987,7 @@ async function renderOrdersSvod() {
             }
         });
 
-        // ⚡ АВТОМАТИЗАЦИЯ "УЖЕ ПРИНЯТ" ДЛЯ ОЗОНА
-        let autoUpdates = {};
-        todaysOrders.forEach(o => {
-            let itemsArr = Array.isArray(o.items) ? o.items : (typeof o.items === 'object' && o.items !== null ? Object.values(o.items) : []);
-            let changed = false;
-            
-            itemsArr.forEach(i => {
-                if (i && i.name && i.name !== "НЕТ ЗАКАЗА") {
-                    let cName = cleanName(i.name);
-                    let vendor = (i.vendor || vendorMap[i.name] || 'Лента').toLowerCase();
-                    let isOzon = vendor.includes('озон') || vendor.includes('ozon');
-                    
-                    let isInLastOrder = lastOrderItems[o.shop] && lastOrderItems[o.shop].has(cName);
-                    let isMissing = activeMissing[o.shop] && activeMissing[o.shop][i.name];
-                    
-                    if (isOzon && isInLastOrder && lastOrderOzonReceived[o.shop] && !isMissing && (!i.status || i.status === 'pending')) {
-                        i.status = 'already_received';
-                        changed = true;
-                    }
-                }
-            });
-            if (changed) autoUpdates[o.key + "/items"] = itemsArr;
-        });
-
-        if (Object.keys(autoUpdates).length > 0) {
-            fetch(`${FB_URL}/orders.json`, { method: 'PATCH', body: JSON.stringify(autoUpdates) }).catch(e => console.error(e));
-        }
+        // ⚡ ВЫРЕЗАН БЛОК АГРЕССИВНОГО AUTO-UPDATES. ТЕПЕРЬ СТАТУСЫ НЕ БУДУТ СБРАСЫВАТЬСЯ!
 
         historyOrdersList = historyOrdersList.slice(0, 150); 
         let keysToDelete = [], shopHasRealOrder = {};
@@ -2133,7 +2109,7 @@ async function renderOrdersSvod() {
                             
                             let missingStat = activeMissing[shop] ? activeMissing[shop][name] : null;
                             let inTransit = missingStat === 'transit';
-                            let isInLastOrder = lastOrderItems[shop] && lastOrderItems[shop].has(name);
+                            let isInLastOrder = lastOrderItems[shop] && lastOrderItems[shop].has(cleanName(name));
                             let cancelTs = returnedToBasket[shop] ? returnedToBasket[shop][name] : 0;
                             let lastOrdTs = lastOrderTimestamp[shop] || 0;
                             if (isInLastOrder && cancelTs > 0 && cancelTs >= lastOrdTs) isInLastOrder = false;
@@ -2147,7 +2123,6 @@ async function renderOrdersSvod() {
 
                             let cost = finalPrice * (isDeleted ? 0 : actualQty);
                             
-                            // ⚡ 1. Исключаем из текстовых сумм "Не надо" и "Уже принят"
                             if (inTransit || itemStatus === 'error' || itemStatus === 'not_needed' || itemStatus === 'already_received') cost = 0; 
                             
                             if (actualVendor.toLowerCase().includes('лента')) totalLenta += cost; 
@@ -2160,7 +2135,7 @@ async function renderOrdersSvod() {
                             let htmlName = name.replace(/"/g, '&quot;');
                             let htmlShop = shop.replace(/"/g, '&quot;');
 
-                            // ⚡ 2. Генерируем правильный цвет и метки
+                            // ⚡ УМНАЯ СИСТЕМА ПРЕДУПРЕЖДЕНИЙ О ПОВТОРАХ
                             let repeatBadge = "";
                             let rowBg = "";
 
@@ -2169,7 +2144,6 @@ async function renderOrdersSvod() {
                             } else if (itemStatus === 'from_stoplist') {
                                 rowBg = "background-color: #ffcdd2;";
                             } else if (itemStatus === 'already_received' || itemStatus === 'not_needed') {
-                                // Делаем серым и полупрозрачным, но оставляем в списке!
                                 rowBg = "background-color: #f5f5f5; opacity: 0.85;"; 
                             } else if (isRepeat) {
                                 rowBg = "background-color: #fff9c4;";
@@ -2177,14 +2151,35 @@ async function renderOrdersSvod() {
 
                             if (inTransit) {
                                 repeatBadge += `<span style='color:#1565c0; font-size:12px; margin-left:5px; font-weight:bold;'>(Уже в пути 🚚)</span>`;
-                                itemStatus = 'error'; // Форсируем ошибку для расчетов
+                                itemStatus = 'error'; 
                             } 
                             if (itemStatus === 'from_stoplist') {
                                 repeatBadge += `<span style='color:#d32f2f; font-size:12px; margin-left:5px; font-weight:bold;'>⚠️ Из стоп-листа</span>`;
                             } 
+                            
                             if (isRepeat) {
-                                let repeatReason = (missingStat === 'pending') ? "В недовозах!" : "Был в прошлой закупке!";
-                                repeatBadge += `<span style='color:#e65100; font-size:12px; margin-left:5px; font-weight:bold;'>⚠️ ${repeatReason}</span>`;
+                                let repeatReason = "";
+                                let badgeColor = "#e65100";
+                                if (missingStat === 'pending') {
+                                    repeatReason = "В недовозах!";
+                                    badgeColor = "#d32f2f";
+                                } else {
+                                    let isOzon = actualVendor.toLowerCase().includes('озон') || actualVendor.toLowerCase().includes('ozon');
+                                    let isLenta = actualVendor.toLowerCase().includes('лента') || actualVendor.toLowerCase().includes('lenta');
+                                    let isReceived = false;
+                                    
+                                    if (isOzon && lastOrderOzonReceived[shop]) isReceived = true;
+                                    if (isLenta && lastOrderLentaReceived[shop]) isReceived = true;
+                                    
+                                    if (isReceived) {
+                                        repeatReason = "Был в прошлом (УЖЕ ПРИНЯТ ✅)";
+                                        badgeColor = "#0277bd";
+                                    } else {
+                                        repeatReason = "Был в прошлом (ЕЩЕ В ПУТИ 🚚)";
+                                        badgeColor = "#e65100";
+                                    }
+                                }
+                                repeatBadge += `<span style='color:${badgeColor}; font-size:12px; margin-left:5px; font-weight:bold;'>⚠️ ${repeatReason}</span>`;
                             }
 
                             let statusText = "Ожидает ⏳", statusColor = "#f57c00", statusBg = "#fff3e0";

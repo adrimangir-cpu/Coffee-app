@@ -1950,7 +1950,7 @@ async function renderOrdersSvod() {
         let totalKuper = 0;
         let isOrdHistOpen = expandedDivs.has('history_orders_list');
         
-        // ⚡ Собираем даты приемки товаров (когда сотрудник нажал "Доехал")
+        // ⚡ Собираем даты приемки товаров (когда сотрудник нажал "Доехал" в недовозах)
         let missingData = cachedData.missing || {}; 
         let arrivedItems = {};
         Object.values(missingData).forEach(m => {
@@ -1958,7 +1958,10 @@ async function renderOrdersSvod() {
                 if (!arrivedItems[m.shop]) arrivedItems[m.shop] = {};
                 let ts = m.timestamp || 0;
                 if (!arrivedItems[m.shop][cleanName(m.name)] || ts > arrivedItems[m.shop][cleanName(m.name)].ts) {
-                    arrivedItems[m.shop][cleanName(m.name)] = { ts: ts, date: new Date(ts).toLocaleDateString('ru-RU') };
+                    arrivedItems[m.shop][cleanName(m.name)] = { 
+                        ts: ts, 
+                        date: new Date(ts).toLocaleDateString('ru-RU', {day: '2-digit', month: '2-digit'}) 
+                    };
                 }
             }
         });
@@ -1967,7 +1970,10 @@ async function renderOrdersSvod() {
         if (cachedData.catalogOrder) Object.values(cachedData.catalogOrder).forEach(c => { if (c && c.name) vendorMap[c.name] = (c.vendor || 'Лента').toLowerCase(); });
 
         let lastOrderItems = {};
+        let lastOrderTimestamp = {};
         let lastOrderOzonReceived = {}; 
+        let lastOrderOzonReceivedTs = {}; 
+        let lastOrderLentaReceived = {};
         
         let todaysOrders = [];
         let historyOrdersList = [];
@@ -1982,9 +1988,18 @@ async function renderOrdersSvod() {
                     if ((o.timestamp || 0) >= cutoffMonth) historyOrdersList.push(o);
                     if (!lastOrderItems[o.shop]) { 
                         lastOrderItems[o.shop] = new Set(); 
+                        lastOrderTimestamp[o.shop] = o.timestamp || 0; 
                         lastOrderOzonReceived[o.shop] = !!o.ozon_received; 
+                        lastOrderOzonReceivedTs[o.shop] = o.ozon_received_ts || o.timestamp || 0;
+                        lastOrderLentaReceived[o.shop] = !!o.lenta_received; 
+                        
                         let itemsArr = Array.isArray(o.items) ? o.items : (typeof o.items === 'object' && o.items !== null ? Object.values(o.items) : []); 
-                        itemsArr.forEach(i => { if(i && i.name) lastOrderItems[o.shop].add(cleanName(i.name)); }); 
+                        itemsArr.forEach(i => { 
+                            // ⚡ ГЛАВНОЕ ИСПРАВЛЕНИЕ: Добавляем в проверку повторов ТОЛЬКО те товары, которые АДМИН РЕАЛЬНО ЗАКАЗАЛ
+                            if(i && i.name && (i.status === 'ordered' || i.status === 'already_received')) {
+                                lastOrderItems[o.shop].add(cleanName(i.name)); 
+                            } 
+                        }); 
                     }
                 }
             }
@@ -2112,32 +2127,42 @@ async function renderOrdersSvod() {
                                 baseStatus = 'pending';
                             }
 
-                            // ⚡ ЛОГИКА ТОЛЬКО ДЛЯ ОЗОНА: Проверка на повторы и приемку из последнего заказа
+                            // ⚡ ЛОГИКА ТОЛЬКО ДЛЯ ОЗОНА: Проверка на повторы и приемку ИСКЛЮЧИТЕЛЬНО из того, что ты заказала
                             let repeatBadge = "";
                             let rowBg = "";
                             let isRepeat = false;
-                            let forceStatus = null; // Статус, который бот предложит, если админ еще не трогал товар
+                            let forceStatus = null; 
+                            let itemArrDate = ""; 
 
                             if (isOzon) {
+                                // Проверяем, был ли этот товар в твоей последней РЕАЛЬНОЙ закупке
                                 let isInLastOrder = lastOrderItems[shop] && lastOrderItems[shop].has(cleanName(name));
                                 if (isInLastOrder) {
                                     isRepeat = true;
                                     let arrInfo = arrivedItems[shop] && arrivedItems[shop][cleanName(name)];
-                                    let isReceived = lastOrderOzonReceived[shop] || arrInfo;
+                                    
+                                    // ⚡ Убеждаемся, что статус "Доехал" был поставлен ПОСЛЕ того, как ты сделала заказ (а не месяц назад)
+                                    let validArrInfo = (arrInfo && arrInfo.ts >= (lastOrderTimestamp[shop] - 86400000)) ? arrInfo : null;
+                                    
+                                    let isReceived = lastOrderOzonReceived[shop] || validArrInfo;
 
                                     if (isReceived) {
-                                        let arrDate = arrInfo ? arrInfo.date : "Недавно";
-                                        repeatBadge = `<span style='color:#0277bd; font-size:12px; margin-left:5px; font-weight:bold;'>⚠️ Повтор (Принят ${arrDate} ✅)</span>`;
-                                        forceStatus = 'already_received'; // Товар уже приехал, выкидываем из суммы
+                                        if (validArrInfo) {
+                                            itemArrDate = validArrInfo.date;
+                                        } else {
+                                            let ts = lastOrderOzonReceivedTs[shop];
+                                            if (ts) itemArrDate = new Date(ts).toLocaleDateString('ru-RU', {day: '2-digit', month: '2-digit'});
+                                        }
+                                        let dateDisplay = itemArrDate ? ` ${itemArrDate}` : "";
+                                        
+                                        repeatBadge = `<span style='color:#0277bd; font-size:12px; margin-left:5px; font-weight:bold;'>⚠️ Повтор (Принят${dateDisplay} ✅)</span>`;
+                                        forceStatus = 'already_received'; 
                                     } else {
                                         repeatBadge = `<span style='color:#e65100; font-size:12px; margin-left:5px; font-weight:bold;'>⚠️ Повтор (Ещё не принят 🚚)</span>`;
-                                        // Оставляем forceStatus пустым -> останется pending -> добавится в сумму
                                     }
                                 }
                             }
 
-                            // ⚡ Если бот видит, что товар УЖЕ ПРИНЯТ, а статус всё еще "Ожидает", он меняет его.
-                            // НО если админ поменяет статус вручную, то ручной статус всегда перекроет бота!
                             if (forceStatus && baseStatus === 'pending') {
                                 baseStatus = forceStatus;
                             }
@@ -2152,7 +2177,6 @@ async function renderOrdersSvod() {
 
                             let cost = finalPrice * (isDeleted ? 0 : actualQty);
                             
-                            // ⚡ ФИНАЛЬНАЯ СУММА: Выкидываем уже принятые товары и ошибки из итоговой суммы
                             if (itemStatus === 'error' || itemStatus === 'not_needed' || itemStatus === 'already_received') cost = 0; 
                             
                             if (isLenta) totalLenta += cost; 
@@ -2165,7 +2189,6 @@ async function renderOrdersSvod() {
                             let htmlName = name.replace(/"/g, '&quot;');
                             let htmlShop = shop.replace(/"/g, '&quot;');
 
-                            // Цвета строк
                             if (itemStatus === 'error') {
                                 rowBg = "background-color: #ffebee;";
                             } else if (itemStatus === 'from_stoplist') {
@@ -2185,7 +2208,12 @@ async function renderOrdersSvod() {
                             else if (itemStatus === 'not_needed') { statusText = "Не надо ⛔"; statusColor = "#616161"; statusBg = "#eeeeee"; }
                             else if (itemStatus === 'error') { statusText = "Ошибка ❌"; statusColor = "#c62828"; statusBg = "#ffebee"; } 
                             else if (itemStatus === 'from_stoplist') { statusText = "Из стоп-листа 🛑"; statusColor = "#c62828"; statusBg = "#ffcdd2"; }
-                            else if (itemStatus === 'already_received') { statusText = "Уже принят 📦"; statusColor = "#0277bd"; statusBg = "#e3f2fd"; }
+                            else if (itemStatus === 'already_received') { 
+                                let dText = itemArrDate ? ` ${itemArrDate}` : "";
+                                statusText = `Принят${dText} 📦`; 
+                                statusColor = "#0277bd"; 
+                                statusBg = "#e3f2fd"; 
+                            }
                             
                             let statusBadge = `<span style="background:${statusBg}; color:${statusColor}; padding:6px 10px; border-radius:8px; font-size:13px; font-weight:900; display:inline-block;">${statusText}</span>`;
 

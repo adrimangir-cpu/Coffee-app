@@ -2282,7 +2282,7 @@
                   });
               }
 
-              // ⚡ ИСПРАВЛЕНИЕ: Мгновенное сохранение черновика без скачивания всей базы
+              // ⚡ ИСПРАВЛЕНИЕ: Мгновенное сохранение черновика с ЖЕСТКИМ ФИЛЬТРОМ
               if (state.currentMode === 'stoplist_fill') {
                   let activeItems = new Set();
                   state.globalMissing.forEach(m => {
@@ -2297,6 +2297,11 @@
                       }
                   });
 
+                  // ⚡ ДОСТАЕМ СПРАВОЧНИК ЗАКУПКИ ИЗ ПАМЯТИ
+                  let orderCat = (state.cachedCatalogs && state.cachedCatalogs['order']) ? Object.values(state.cachedCatalogs['order']) : [];
+                  let newCat = (state.cachedCatalogs && state.cachedCatalogs['newshop']) ? Object.values(state.cachedCatalogs['newshop']) : [];
+                  let combinedCatalog = orderCat.concat(newCat);
+
                   let draft = JSON.parse(localStorage.getItem("draft_" + state.currentShop + "_order")) || {basket:{}, time: Date.now()};
                   if(!draft.basket["_catinfo"]) draft.basket["_catinfo"] = {};
                   
@@ -2304,8 +2309,12 @@
                       if (item.qty === 'Закончилось') { 
                           let safeName = cleanName(item.name);
                           if (!activeItems.has(safeName)) {
-                              draft.basket[item.name] = 1; 
-                              draft.basket["_catinfo"][item.name] = item.cat || "Прочее"; 
+                              // ⚡ ЖЕСТКАЯ ПРОВЕРКА: Только если товар есть в справочнике ЗАКУПКИ!
+                              let foundItem = combinedCatalog.find(c => c && cleanName(c.name) === safeName);
+                              if (foundItem) {
+                                  draft.basket[foundItem.name] = 1; 
+                                  draft.basket["_catinfo"][foundItem.name] = foundItem.cat || "Прочее"; 
+                              }
                           }
                       }
                   });

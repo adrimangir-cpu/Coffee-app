@@ -757,6 +757,7 @@
 
     function changeScheduleMonth(offset) {
         triggerHaptic();
+        showGlobalLoader("Переключение месяца..."); // ⚡
         state.scheduleMonthOffset = offset;
         document.getElementById('btn-month-0').style.background = offset === 0 ? 'var(--admin-gradient)' : '#ccc';
         document.getElementById('btn-month-0').style.color = offset === 0 ? '#fff' : '#333';
@@ -769,9 +770,10 @@
 
     function initScheduleWorkflow() {
         triggerHaptic();
+        showGlobalLoader("Подготовка графика..."); // ⚡
         state.currentMode = 'schedule';
         document.getElementById('title').innerText = "График на следующий месяц";
-        state.scheduleMonthOffset = 0; // Сбрасываем на текущий месяц по умолчанию
+        state.scheduleMonthOffset = 0; 
         
         document.getElementById('btn-month-0').style.background = 'var(--admin-gradient)';
         document.getElementById('btn-month-0').style.color = '#fff';
@@ -782,6 +784,7 @@
         if (savedName) document.getElementById('schedule-name-input').value = savedName;
         
         showScreen('step-schedule-name');
+        hideGlobalLoader(); // ⚡
     }
 
     function goToScheduleCalendar() {
@@ -926,26 +929,22 @@
     async function submitSchedule() {
         triggerHaptic();
         let target = getTargetDateLogic();
-        
         let payload = { ...state.schedule.days };
         let comment = document.getElementById('schedule-comment').value.trim();
-        if (comment) {
-            payload.comment = comment; 
-        }
+        if (comment) payload.comment = comment; 
 
-        showReportOverlay("Сохранение графика...");
+        showGlobalLoader("Сохранение графика..."); // ⚡
         try {
             await database.ref(`schedules/${target.year}_${target.month}/${state.schedule.name}`).set(payload);
-            hideReportOverlay();
+            hideGlobalLoader(); // ⚡
             
             document.getElementById('success-screen').style.display = 'flex';
             setTimeout(() => {
                 document.getElementById('success-screen').style.display = 'none';
                 showScreen('step-2', false);
             }, 2000);
-            
         } catch(e) {
-            hideReportOverlay();
+            hideGlobalLoader(); // ⚡
             showPopupError("Ошибка", "Не удалось сохранить график: " + e.message);
         }
     }
@@ -1114,16 +1113,15 @@
     // ==========================================
     async function initMenuWorkflow() {
         triggerHaptic();
+        showGlobalLoader("Загрузка меню..."); // ⚡
         state.currentMode = 'menu';
         document.getElementById('title').innerText = "☕ Меню и Рецепты";
         showScreen('step-menu');
         
-        // ⚡ Если меню еще не загрузилось в фоне — Форсируем мгновенную загрузку!
         if (state.cachedCatalogs && state.cachedCatalogs['menu'] && Object.keys(state.cachedCatalogs['menu']).length > 0) {
             state.menuCatalog = Object.assign({}, state.cachedCatalogs['menu']);
             renderMenuApp();
         } else {
-            document.getElementById('menu-container').innerHTML = `<div class="report-card"><div class="loading-pulse">⏳ Загрузка техкарт (с фото)...</div></div>`;
             try {
                 let snap = await database.ref('catalogs/menu').once('value');
                 if (!state.cachedCatalogs) state.cachedCatalogs = {};
@@ -1135,11 +1133,6 @@
             } catch(e) {}
         }
 
-        // Подкачка актуального стоп-листа для разметки меню в фоне
-        let orderCat = state.cachedCatalogs['order'] || {};
-        let checkCat = state.cachedCatalogs['checklist'] || {};
-        state.productCatalog = { ...orderCat, ...checkCat };
-        
         database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(20).once("value")
         .then(ordersSnap => {
             if (state.currentMode !== 'menu') return;
@@ -1154,8 +1147,10 @@
                     if (i && i.name && i.qty === 'Закончилось') state.outOfStockItems[cleanName(i.name)] = shopOrders[0].timestamp;
                 });
             }
-            renderMenuApp(); // Бесшумно размечаем стоп-ингредиенты
+            renderMenuApp(); 
         }).catch(e => console.log(e));
+        
+        hideGlobalLoader(); // ⚡
     }
     
     function renderMenuApp() {
@@ -1577,6 +1572,7 @@
     
     async function initWorkflow(mode) {
       triggerHaptic(); 
+      showGlobalLoader("Подготовка..."); // ⚡ Моментальная блокировка экрана
       state.currentMode = mode; 
       
       if (mode === 'order') document.getElementById('title').innerText = "📦 Закупка";
@@ -1601,31 +1597,24 @@
       }
       
       let pathKey = mode === 'checklist' ? 'checklist' : (mode === 'stoplist_fill' ? 'stoplist' : (mode === 'new_shop' ? 'newshop' : 'order'));
-      
       loadSettings();
 
-      // ⚡ ГАРАНТИРОВАННАЯ ЗАГРУЗКА ИЗ БАЗЫ:
-      // Если память телефона пуста, мы не ждем чуда от фона, а принудительно скачиваем каталог!
       if (!state.cachedCatalogs || !state.cachedCatalogs[pathKey] || Object.keys(state.cachedCatalogs[pathKey]).length === 0) {
-          document.getElementById('dynamic-list-container').innerHTML = `<div class="report-card"><div class="loading-pulse" style="text-align:center; font-weight:bold; color:#7E57C2;">⏳ Скачиваю базу данных...</div></div>`;
+          showGlobalLoader("Скачиваю базу..."); // ⚡ Смена текста при скачивании
           try {
               let snap = await database.ref('catalogs/' + pathKey).once('value');
               let fresh = snap.val() || {};
               if (!state.cachedCatalogs) state.cachedCatalogs = {};
               state.cachedCatalogs[pathKey] = fresh;
-              
-              // Сразу сохраняем в вечную память
               if (typeof saveToRealCache === 'function') saveToRealCache(pathKey, fresh);
           } catch(e) {
               console.error("Ошибка загрузки:", e);
           }
       }
       
-      // Восстанавливаем черновик, если он был
       restoreFromDraft();
-      
-      // Запускаем умную отрисовку
       triggerActiveRender();
+      hideGlobalLoader(); // ⚡ Снимаем загрузчик
     }
     
     // ==========================================
@@ -2084,20 +2073,20 @@
       setTimeout(() => { banner.style.display = 'none'; }, 6000);
     }
 
-    async function validateAndSubmit(isFromModal) {
+   async function validateAndSubmit(isFromModal) {
       if (!isFromModal && (state.currentMode === 'order' || state.currentMode === 'new_shop' || state.currentMode === 'marketplace')) { toggleCartModal(true); return; }
       if (state.isProcessing) return;
 
       if (state.currentMode === 'marketplace') {
           if (state.mpBasket.length === 0) return showPopupError("Внимание", "Корзина пуста!");
-          if (state.isMpEditMode) return showPopupError("Внимание", "Сначала сохраните изменения (кнопка 'Сохранить изменения')");
+          if (state.isMpEditMode) return showPopupError("Внимание", "Сначала сохраните изменения");
           
           state.isProcessing = true;
           let btn = document.getElementById('modal-submit-button'); btn.innerText = "ОТПРАВЛЯЮ...";
+          showGlobalLoader("Отправка в базу..."); // ⚡ Блокируем экран
           
           try {
               let submitTimestamp = firebase.database.ServerValue.TIMESTAMP;
-              
               if (state.mpMonthOption === 'prev') {
                   let now = new Date();
                   let prevMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
@@ -2119,6 +2108,7 @@
               state.mpBasket = [];
               localStorage.removeItem("draft_marketplace");
           } catch(e) {
+              hideGlobalLoader(); // ⚡
               showPopupError("Ошибка", e.message);
               state.isProcessing = false; btn.innerText = "ПОДТВЕРДИТЬ И ОТПРАВИТЬ";
               return;
@@ -2141,7 +2131,7 @@
             if (totalMissing > 0) {
               triggerHaptic(); 
               let catList = Array.from(missingCategories).join(', ');
-              showPopupError("Чек-лист заполнен не полностью!", `Осталось позиций: ${totalMissing}.<br><small>Пожалуйста, проверьте категории: ${catList}</small>`);
+              showPopupError("Чек-лист заполнен не полностью!", `Осталось позиций: ${totalMissing}.<br><small>Пожалуйста, проверьте: ${catList}</small>`);
               return;
             }
           }
@@ -2155,7 +2145,6 @@
                   let itemExists = Object.values(state.productCatalog).some(c => c && c.name === n);
                   if (!itemExists) return false;
               }
-              
               return true;
           }).map(([n,q]) => {
                 let catName = (state.userBasket["_catinfo"] && state.userBasket["_catinfo"][n]) || (state.productCatalog[n] ? state.productCatalog[n].cat : "Прочее");
@@ -2167,6 +2156,7 @@
           state.isProcessing = true;
           let btn = document.getElementById('modal-submit-button'); if(btn) btn.innerText = "ОТПРАВЛЯЮ...";
           let mainBtn = document.getElementById('main-action-button'); if(mainBtn) mainBtn.innerText = "ОТПРАВЛЯЮ...";
+          showGlobalLoader("Отправка данных..."); // ⚡ Блокируем экран
 
           try {
               if (state.currentMode === 'order' || state.currentMode === 'new_shop') {
@@ -2202,7 +2192,6 @@
                   };
 
                   if (pendingKeyToUpdate) {
-                      // ⚡ ТРАНЗАКЦИЯ ДЛЯ ЗАКУПКИ
                       await database.ref(`orders/${pendingKeyToUpdate}`).transaction((currentOrder) => {
                           if (currentOrder) {
                               let mergedItems = {};
@@ -2242,7 +2231,6 @@
                   }
                   
               } else {
-                  // ⚡ ТРАНЗАКЦИЯ ДЛЯ ЧЕК-ЛИСТА И СТОП-ЛИСТА
                   let newRecordKey = database.ref("orders").push().key;
                   let recordPayload = {
                       shop: state.currentShop,
@@ -2263,7 +2251,6 @@
                   });
               }
 
-              // Дальше идет обработка стоп-листа (без изменений)
               if (state.currentMode === 'stoplist_fill') {
                   let [orderCatSnap, newCatSnap, ordersSnap, missSnap] = await Promise.all([
                       database.ref("catalogs/order").once("value"),
@@ -2326,6 +2313,7 @@
 
               localStorage.removeItem("draft_" + state.currentShop + "_" + state.currentMode);
           } catch(e) {
+              hideGlobalLoader(); // ⚡ Снимаем блокировку при ошибке
               showPopupError("Ошибка", "Произошла ошибка при отправке.");
               state.isProcessing = false;
               if(btn) btn.innerText = "ПОДТВЕРДИТЬ И ОТПРАВИТЬ";
@@ -2334,6 +2322,7 @@
           }
       } 
 
+      hideGlobalLoader(); // ⚡ Успешная отправка, снимаем лоадер
       toggleCartModal(false);
       document.getElementById('success-screen').style.display = 'flex';
       
@@ -2412,13 +2401,14 @@
 
     function showReportOverlay(msg) { 
         document.getElementById('report-overlay').style.display = 'flex'; 
-        document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div class="loading-pulse">${msg}</div></div>`; 
+        document.getElementById('report-content-area').innerHTML = ""; // Очищаем старое
+        showGlobalLoader(msg); // ⚡ Вызываем интерактивный спиннер
     }
     
     function hideReportOverlay() { 
         document.getElementById('report-overlay').style.display = 'none'; 
+        hideGlobalLoader(); // ⚡ Убираем спиннер
     }
-
     async function showMyLastOrder() {
         triggerHaptic();
         document.getElementById('report-overlay').style.display = 'flex';

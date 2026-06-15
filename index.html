@@ -547,6 +547,18 @@
       if (target) target.style.display = 'block';
       scrollToTop();
       updateNavButtons(screenId);
+
+      // ⚡ АВТО-ВОССТАНОВЛЕНИЕ ЗАГОЛОВКА
+      // Теперь шапка всегда будет правильной, откуда бы мы ни вернулись
+      if (screenId === 'step-1') {
+          document.getElementById('title').innerText = "Выбор кофейни";
+          state.currentMode = "";
+      } else if (screenId === 'step-2') {
+          document.getElementById('title').innerText = state.currentShop === 'Красноказарменная' ? 'МЭИ' : state.currentShop;
+          state.currentMode = "";
+      } else if (screenId === 'step-panel') {
+          document.getElementById('title').innerText = TG_BOSS_IDS.includes(String(globalTgUserId)) ? "Кабинет Босса" : "Админ-панель";
+      }
     }
 
     function goBack() {
@@ -554,23 +566,8 @@
         if (state.screenHistory.length > 0) {
             let prevScreen = state.screenHistory.pop();
             showScreen(prevScreen, false);
-            
-            // ⚡ Если мы вернулись в меню кофейни, сбрасываем рабочий режим
-            if (prevScreen === 'step-2' || prevScreen === 'step-1') {
-                state.currentMode = ""; 
-            }
-            
-            if (prevScreen === 'step-1') {
-                document.getElementById('title').innerText = "Выбор кофейни";
-            } else if (prevScreen === 'step-2') {
-                document.getElementById('title').innerText = state.currentShop === 'Красноказарменная' ? 'МЭИ' : state.currentShop;
-            } else if (prevScreen === 'step-panel') {
-                document.getElementById('title').innerText = TG_BOSS_IDS.includes(String(globalTgUserId)) ? "Кабинет Босса" : "Админ-панель";
-            }
         } else {
-            state.currentMode = "";
             showScreen('step-1', false);
-            document.getElementById('title').innerText = "Выбор кофейни";
         }
     }
 
@@ -1119,28 +1116,35 @@
     // ==========================================
     // 💡 БЛОК: МЕНЮ И ТЕХ КАРТЫ
     // ==========================================
-   async function initMenuWorkflow() {
+  async function initMenuWorkflow() {
         triggerHaptic();
-        showGlobalLoader("Загрузка меню..."); 
         state.currentMode = 'menu';
         document.getElementById('title').innerText = "☕ Меню и Рецепты";
-        showScreen('step-menu');
         
-        // 1. Ждем скачивания меню (если его нет в кэше)
+        // ⚡ ЕСЛИ МЕНЮ ЕСТЬ В КЭШЕ - ПОКАЗЫВАЕМ МГНОВЕННО БЕЗ АНИМАЦИИ ЗАГРУЗКИ
         if (state.cachedCatalogs && state.cachedCatalogs['menu'] && Object.keys(state.cachedCatalogs['menu']).length > 0) {
             state.menuCatalog = Object.assign({}, state.cachedCatalogs['menu']);
+            showScreen('step-menu');
+            renderMenuApp();
         } else {
+            showGlobalLoader("Загрузка меню..."); 
+            showScreen('step-menu');
             try {
                 let snap = await database.ref('catalogs/menu').once('value');
                 if (!state.cachedCatalogs) state.cachedCatalogs = {};
                 state.cachedCatalogs['menu'] = snap.val() || {};
-                state.menuCatalog = Object.assign({}, state.cachedCatalogs['menu']);
+                if (state.currentMode === 'menu') {
+                    state.menuCatalog = Object.assign({}, state.cachedCatalogs['menu']);
+                    renderMenuApp();
+                }
             } catch(e) {}
+            hideGlobalLoader(); 
         }
 
-        // 2. Ждем скачивания стоп-листа (чтобы повесить плашки)
-        try {
-            let ordersSnap = await database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(20).once("value");
+        // ⚡ ТИХО В ФОНЕ (без блокировки экрана) качаем стоп-лист, чтобы повесить красные плашки
+        database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(20).once("value")
+        .then(ordersSnap => {
+            if (state.currentMode !== 'menu') return;
             let shopOrders = [];
             ordersSnap.forEach(c => { let val = c.val(); if(val && val.mode === 'stoplist_fill') shopOrders.push(val); });
             shopOrders.sort((a,b) => b.timestamp - a.timestamp);
@@ -1152,13 +1156,8 @@
                     if (i && i.name && i.qty === 'Закончилось') state.outOfStockItems[cleanName(i.name)] = shopOrders[0].timestamp;
                 });
             }
-        } catch(e) { console.log(e); }
-        
-        // 3. ⚡ Только когда ВСЁ скачалось - рисуем 1 раз и снимаем лоадер! Никаких внезапных перерисовок.
-        if (state.currentMode === 'menu') {
-            renderMenuApp(); 
-        }
-        hideGlobalLoader(); 
+            renderMenuApp(); // Умная память сама сохранит открытые вкладки, чтобы экран не "прыгал"
+        }).catch(e => console.log(e));
     }
     
     function renderMenuApp() {
@@ -1580,7 +1579,6 @@
     
     async function initWorkflow(mode) {
       triggerHaptic(); 
-      showGlobalLoader("Подготовка..."); // ⚡ Моментальная блокировка экрана
       state.currentMode = mode; 
       
       if (mode === 'order') document.getElementById('title').innerText = "📦 Закупка";
@@ -1607,8 +1605,9 @@
       let pathKey = mode === 'checklist' ? 'checklist' : (mode === 'stoplist_fill' ? 'stoplist' : (mode === 'new_shop' ? 'newshop' : 'order'));
       loadSettings();
 
+      // ⚡ ПОКАЗЫВАЕМ АНИМАЦИЮ ТОЛЬКО ЕСЛИ НЕТ КЭША (ЕСЛИ КЭШ ЕСТЬ - ГРУЗИМ МГНОВЕННО)
       if (!state.cachedCatalogs || !state.cachedCatalogs[pathKey] || Object.keys(state.cachedCatalogs[pathKey]).length === 0) {
-          showGlobalLoader("Скачиваю базу..."); // ⚡ Смена текста при скачивании
+          showGlobalLoader("Скачиваю базу..."); 
           try {
               let snap = await database.ref('catalogs/' + pathKey).once('value');
               let fresh = snap.val() || {};
@@ -1618,11 +1617,11 @@
           } catch(e) {
               console.error("Ошибка загрузки:", e);
           }
+          hideGlobalLoader(); 
       }
       
       restoreFromDraft();
       triggerActiveRender();
-      hideGlobalLoader(); // ⚡ Снимаем загрузчик
     }
     
     // ==========================================

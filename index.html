@@ -619,7 +619,7 @@
     }
 
     function toggleRecipeAndScroll(contentId, arrowId, headerEl) {
-        triggerHaptic();
+        triggerHaptic(); 
         
         let targetEl = document.querySelector('.' + contentId);
         if (!targetEl) return;
@@ -633,13 +633,19 @@
             // ⚡ МАГИЯ МГНОВЕННОЙ СТИМУЛЯЦИИ ФОТО ПО КЛИКУ
             let img = targetEl.querySelector('.lazy-drink-img');
             let placeholder = targetEl.querySelector('.lazy-placeholder');
+            
             if (img && img.getAttribute('data-src')) {
-                img.src = img.getAttribute('data-src'); // Перекидываем Base64 в src строго при открытии!
+                img.src = img.getAttribute('data-src'); // Перекидываем Base64 в src
                 img.removeAttribute('data-src');
-                img.onload = function() {
+                
+                let revealImg = () => {
                     img.style.display = 'block';
                     if (placeholder) placeholder.style.display = 'none';
                 };
+                
+                img.onload = revealImg;
+                // ⚡ ЖЕСТКАЯ СТРАХОВКА: Если браузер "проглотил" onload, принудительно показываем через 50мс
+                setTimeout(revealImg, 50); 
             }
         }
         
@@ -1121,7 +1127,6 @@
         state.currentMode = 'menu';
         document.getElementById('title').innerText = "☕ Меню и Рецепты";
         
-        // ⚡ ЕСЛИ МЕНЮ ЕСТЬ В КЭШЕ - ПОКАЗЫВАЕМ МГНОВЕННО БЕЗ АНИМАЦИИ ЗАГРУЗКИ
         if (state.cachedCatalogs && state.cachedCatalogs['menu'] && Object.keys(state.cachedCatalogs['menu']).length > 0) {
             state.menuCatalog = Object.assign({}, state.cachedCatalogs['menu']);
             showScreen('step-menu');
@@ -1141,7 +1146,14 @@
             hideGlobalLoader(); 
         }
 
-        // ⚡ ТИХО В ФОНЕ (без блокировки экрана) качаем стоп-лист, чтобы повесить красные плашки
+        // ⚡ ТИХО В ФОНЕ подкачиваем справочник продуктов (чтобы в рецептах открывались фото ингредиентов)
+        if (!state.cachedCatalogs['order']) {
+            database.ref('catalogs/order').once('value').then(s => {
+                if(!state.cachedCatalogs) state.cachedCatalogs = {};
+                state.cachedCatalogs['order'] = s.val() || {};
+            }).catch(e => console.log(e));
+        }
+
         database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(20).once("value")
         .then(ordersSnap => {
             if (state.currentMode !== 'menu') return;
@@ -1156,7 +1168,7 @@
                     if (i && i.name && i.qty === 'Закончилось') state.outOfStockItems[cleanName(i.name)] = shopOrders[0].timestamp;
                 });
             }
-            renderMenuApp(); // Умная память сама сохранит открытые вкладки, чтобы экран не "прыгал"
+            renderMenuApp(); 
         }).catch(e => console.log(e));
     }
     
@@ -1366,8 +1378,20 @@
 
     function showIngredientPhoto(ingName) {
         let clean = cleanName(ingName);
-        let found = Object.values(state.productCatalog).find(c => c && cleanName(c.name) === clean && c.photo && c.photo.trim() !== "");
+        
+        // ⚡ УМНЫЙ ПОИСК: Ищем во всех доступных каталогах приложения
+        let allItems = [];
+        if (state.cachedCatalogs) {
+            if (state.cachedCatalogs['order']) allItems = allItems.concat(Object.values(state.cachedCatalogs['order']));
+            if (state.cachedCatalogs['newshop']) allItems = allItems.concat(Object.values(state.cachedCatalogs['newshop']));
+            if (state.cachedCatalogs['checklist']) allItems = allItems.concat(Object.values(state.cachedCatalogs['checklist']));
+        }
+        if (state.productCatalog) allItems = allItems.concat(Object.values(state.productCatalog));
+
+        // Ищем первое попавшееся совпадение с картинкой
+        let found = allItems.find(c => c && cleanName(c.name) === clean && c.photo && c.photo.trim() !== "");
         let photoUrl = found ? found.photo : null;
+        
         openPhotoModal(ingName, photoUrl);
     }
 

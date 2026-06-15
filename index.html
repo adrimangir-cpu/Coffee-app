@@ -555,7 +555,11 @@
             let prevScreen = state.screenHistory.pop();
             showScreen(prevScreen, false);
             
-            // ⚡ ВОЗВРАЩАЕМ ПРАВИЛЬНЫЙ ЗАГОЛОВОК ПРИ ШАГЕ НАЗАД
+            // ⚡ Если мы вернулись в меню кофейни, сбрасываем рабочий режим
+            if (prevScreen === 'step-2' || prevScreen === 'step-1') {
+                state.currentMode = ""; 
+            }
+            
             if (prevScreen === 'step-1') {
                 document.getElementById('title').innerText = "Выбор кофейни";
             } else if (prevScreen === 'step-2') {
@@ -564,6 +568,7 @@
                 document.getElementById('title').innerText = TG_BOSS_IDS.includes(String(globalTgUserId)) ? "Кабинет Босса" : "Админ-панель";
             }
         } else {
+            state.currentMode = "";
             showScreen('step-1', false);
             document.getElementById('title').innerText = "Выбор кофейни";
         }
@@ -660,29 +665,31 @@
 
   async function handleShopSelection(name) {
       triggerHaptic(); 
-      // ⚡ Включаем анимацию загрузки перед тем, как начать скачивать базу
       showGlobalLoader("Синхронизация..."); 
       
       state.currentShop = name; 
+      state.currentMode = ""; // ⚡ Сбрасываем старый режим
       document.getElementById('title').innerText = name == 'Красноказарменная' ? 'МЭИ' : name;
       state.screenHistory = []; 
       
       startShopDataSync(); 
       
-      // ⚡ УМНОЕ ОЖИДАНИЕ: Ждем, пока скачается база именно этой кофейни
+      let checkTimeout; // Переменная для таймера
+      
       let checkInterval = setInterval(() => {
           if (state.ordersLoaded && state.missingLoaded) {
               clearInterval(checkInterval);
-              hideGlobalLoader(); // Выключаем загрузку
+              clearTimeout(checkTimeout); // ⚡ УБИВАЕМ таймер, чтобы он не выстрелил в спину!
+              hideGlobalLoader(); 
               showScreen('step-2');
               loadSettings();
           }
       }, 100);
       
-      // Защита от бесконечной загрузки (если интернет совсем пропал, пускаем через 5 сек)
-      setTimeout(() => {
+      // Таймер на 5 секунд
+      checkTimeout = setTimeout(() => {
           clearInterval(checkInterval);
-          if (document.getElementById('step-2').style.display !== 'block') {
+          if (state.currentShop === name) { // ⚡ Переходим только если не ушли в другую кофейню
               hideGlobalLoader();
               showScreen('step-2');
               loadSettings();
@@ -717,6 +724,7 @@
     function clearShopAndReturn() {
       triggerHaptic(); 
       state.currentShop = "";
+      state.currentMode = ""; // ⚡ Сбрасываем режим, чтобы приемка не открывалась сама
       document.getElementById('title').innerText = "Выбор кофейни"; 
       state.screenHistory = [];
       showScreen('step-1');
@@ -1111,31 +1119,28 @@
     // ==========================================
     // 💡 БЛОК: МЕНЮ И ТЕХ КАРТЫ
     // ==========================================
-    async function initMenuWorkflow() {
+   async function initMenuWorkflow() {
         triggerHaptic();
-        showGlobalLoader("Загрузка меню..."); // ⚡
+        showGlobalLoader("Загрузка меню..."); 
         state.currentMode = 'menu';
         document.getElementById('title').innerText = "☕ Меню и Рецепты";
         showScreen('step-menu');
         
+        // 1. Ждем скачивания меню (если его нет в кэше)
         if (state.cachedCatalogs && state.cachedCatalogs['menu'] && Object.keys(state.cachedCatalogs['menu']).length > 0) {
             state.menuCatalog = Object.assign({}, state.cachedCatalogs['menu']);
-            renderMenuApp();
         } else {
             try {
                 let snap = await database.ref('catalogs/menu').once('value');
                 if (!state.cachedCatalogs) state.cachedCatalogs = {};
                 state.cachedCatalogs['menu'] = snap.val() || {};
-                if (state.currentMode === 'menu') {
-                    state.menuCatalog = Object.assign({}, state.cachedCatalogs['menu']);
-                    renderMenuApp();
-                }
+                state.menuCatalog = Object.assign({}, state.cachedCatalogs['menu']);
             } catch(e) {}
         }
 
-        database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(20).once("value")
-        .then(ordersSnap => {
-            if (state.currentMode !== 'menu') return;
+        // 2. Ждем скачивания стоп-листа (чтобы повесить плашки)
+        try {
+            let ordersSnap = await database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(20).once("value");
             let shopOrders = [];
             ordersSnap.forEach(c => { let val = c.val(); if(val && val.mode === 'stoplist_fill') shopOrders.push(val); });
             shopOrders.sort((a,b) => b.timestamp - a.timestamp);
@@ -1147,10 +1152,13 @@
                     if (i && i.name && i.qty === 'Закончилось') state.outOfStockItems[cleanName(i.name)] = shopOrders[0].timestamp;
                 });
             }
-            renderMenuApp(); 
-        }).catch(e => console.log(e));
+        } catch(e) { console.log(e); }
         
-        hideGlobalLoader(); // ⚡
+        // 3. ⚡ Только когда ВСЁ скачалось - рисуем 1 раз и снимаем лоадер! Никаких внезапных перерисовок.
+        if (state.currentMode === 'menu') {
+            renderMenuApp(); 
+        }
+        hideGlobalLoader(); 
     }
     
     function renderMenuApp() {
@@ -1735,6 +1743,18 @@
     }
     
     function renderProductList() {
+      // ⚡ УМНАЯ ПАМЯТЬ КАТЕГОРИЙ (ЧТОБЫ НЕ СВОРАЧИВАЛОСЬ ПРИ ОБНОВЛЕНИИ В ФОНЕ)
+      if (!state.uiMemoryOrders) state.uiMemoryOrders = new Set();
+      let container = document.getElementById('dynamic-list-container');
+      
+      if (container.innerHTML.trim() !== "" && !container.innerHTML.includes("Загрузка") && !container.innerHTML.includes("не найдены")) {
+          state.uiMemoryOrders.clear();
+          container.querySelectorAll('.category-block.open').forEach(el => {
+              let t = el.querySelector('.category-header span');
+              if (t) state.uiMemoryOrders.add(t.innerText.trim());
+          });
+      }
+
       var html = "";
       
       const catOrderArr = ["Стаканы и крышки", "Расходники", "Пищевые расходники", "Зерно", "Бабл ти", "Пищевые порошки", "Сиропы"];
@@ -1749,7 +1769,9 @@
 
       categories.forEach(cat => {
         let safeCatId = getSafeId(cat);
-        html += `<div class="category-block" id="block-${safeCatId}">
+        let isOpen = (state.uiMemoryOrders && state.uiMemoryOrders.has(cat)) ? "open" : "";
+        
+        html += `<div class="category-block ${isOpen}" id="block-${safeCatId}">
                     <div class="category-header" onclick="handleCategoryToggle(this)">
                       <span>${cat}</span>
                       <span style="opacity:0.5; font-size:14px;">▼</span>
@@ -2407,31 +2429,39 @@
     
     function hideReportOverlay() { 
         document.getElementById('report-overlay').style.display = 'none'; 
-        hideGlobalLoader(); // ⚡ Убираем спиннер
+        hideGlobalLoader(); 
+        state.currentMode = ""; // ⚡ Сбрасываем режим после закрытия приемки/отчета
     }
-    async function showMyLastOrder() {
+    
+   function showMyLastOrder() {
         triggerHaptic();
+        state.currentMode = 'my_last_order'; // ⚡ Чтобы экран обновлялся сам при изменениях в фоне
         document.getElementById('report-overlay').style.display = 'flex';
         document.getElementById('report-header').innerText = "Последний заказ";
         
-        // ⚡ Выводим прошлый собранный HTML моментально (0.1 сек)
-        let localHtml = localStorage.getItem("cache_html_last_order_" + state.currentShop);
-        if (localHtml) {
-            document.getElementById('report-content-area').innerHTML = localHtml;
-        } else {
-            document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div class="loading-pulse">⏳ Загрузка истории...</div></div>`;
+        // ⚡ Если данные еще скачиваются при старте — показываем красивый лоадер, а не зависаем
+        if (!state.ordersLoaded || !state.missingLoaded) {
+            document.getElementById('report-content-area').innerHTML = `
+                <div class="report-card">
+                    <div class="loading-pulse" style="text-align:center; font-weight:900; color:#7E57C2; padding: 20px;">
+                        ⏳ Синхронизация с базой...<br>
+                        <span style="font-size:13px; color:#888; margin-top:10px; display:block;">Загружаю ваши заказы, секундочку...</span>
+                    </div>
+                </div>`;
+            return; // Ждем фоновой загрузки
         }
         
         try {
-            const snap = await database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(30).once("value");
+            // ⚡ МГНОВЕННО берем заказы из кэша (никаких await database.ref!)
             let allOrders = [];
-            snap.forEach(child => { let o = child.val(); if (o && (o.mode === 'order' || o.mode === 'new_shop')) allOrders.push(o); });
+            state.globalOrders.forEach(o => { 
+                if (o && (o.mode === 'order' || o.mode === 'new_shop')) allOrders.push(o); 
+            });
 
             if (allOrders.length === 0) {
                  document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; font-weight:bold; color:#888;">Заказов не найдено.</div></div>`;
                  return;
             }
-            allOrders.sort((a,b) => (b.timestamp || 0) - (a.timestamp || 0));
 
             let currentOrderObj = allOrders[0];
             let prevOrderObj = allOrders.length > 1 ? allOrders[1] : null;
@@ -2454,11 +2484,14 @@
             let currentAgg = aggregateSingleOrder(currentOrderObj);
             let prevAgg = aggregateSingleOrder(prevOrderObj);
 
-            const missSnap = await database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value");
+            // Мгновенно берем недовозы из кэша
             let activeMissing = {};
-            missSnap.forEach(c => { let m = c.val(); if (m && m.status !== 'arrived' && m.status !== 'canceled') activeMissing[m.name] = true; });
+            state.globalMissing.forEach(m => { 
+                if (m && m.status !== 'arrived' && m.status !== 'canceled') activeMissing[m.name] = true; 
+            });
 
             if (!state.currentMyOrderTab) state.currentMyOrderTab = 'current';
+            
             let html = `<div style="display: flex; gap: 10px; margin-bottom: 20px; background: #fff; padding: 6px; border-radius: 14px; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
                             <button onclick="state.currentMyOrderTab = 'current'; showMyLastOrder();" style="flex: 1; padding: 12px; border: none; border-radius: 10px; font-size: 15px; font-weight: 900; ${state.currentMyOrderTab === 'current' ? 'background: #4A148C; color: #fff;' : 'background: transparent; color: #888;'}">Текущий заказ</button>
                             <button onclick="state.currentMyOrderTab = 'prev'; showMyLastOrder();" style="flex: 1; padding: 12px; border: none; border-radius: 10px; font-size: 15px; font-weight: 900; ${state.currentMyOrderTab === 'prev' ? 'background: #9C27B0; color: #fff;' : 'background: transparent; color: #888;'}">Прошлый заказ</button>
@@ -2491,8 +2524,10 @@
             html += (state.currentMyOrderTab === 'current') ? renderOrderBlock(currentAgg, currentOrderDateStr, "Текущий заказ", true) : renderOrderBlock(prevAgg, prevOrderDateStr, "Прошлый заказ", false);
 
             document.getElementById('report-content-area').innerHTML = html;
-            localStorage.setItem("cache_html_last_order_" + state.currentShop, html); // Записываем свежую копию в кэш
-        } catch(e) { console.log(e); }
+        } catch(e) { 
+            console.log(e); 
+            document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; color:red; font-weight:bold;">Ошибка загрузки</div></div>`;
+        }
     }
     
     async function fetchBossReport(category) {

@@ -1695,15 +1695,17 @@
                             if (statusMap[cName]) return; 
                             
                             let catItem = Object.values(state.productCatalog).find(c => c && cleanName(c.name) === cName);
-                            let vendor = catItem ? (catItem.vendor || 'Лента').toLowerCase() : 'лента';
-                            let isOzon = vendor.includes('озон') || vendor.includes('ozon');
-                            let isReceived = isOzon ? o.ozon_received : o.lenta_received;
                             
-                            // ⚡ ИСПРАВЛЕНИЕ: Смотрим ТОЛЬКО на индивидуальный статус товара! 
+                            // ⚡ РАСПОЗНАЕМ КУПЕР
+                            let vRaw = (i.vendor || (catItem ? catItem.vendor : 'Лента') || 'Лента').toLowerCase();
+                            let isOzon = vRaw.includes('озон') || vRaw.includes('ozon');
+                            let isKuper = vRaw.includes('купер') || vRaw.includes('kuper');
+                            let isReceived = isOzon ? o.ozon_received : (isKuper ? o.kuper_received : o.lenta_received);
+                            
                             let isOrderedByAdmin = (i.status === 'ordered' || i.status === 'from_stoplist');
 
                             if (i.status === 'error' || i.bot_error === true || i.status === 'not_needed') {
-                                // Товар свободен для заказа
+                                // Товар свободен
                             } else if (isOrderedByAdmin && !isReceived) {
                                 statusMap[cName] = { locked: true, text: 'Оформлено (В пути) 🚚', color: '#2e7d32' };
                             } else if (!isOrderedByAdmin && !isReceived) {
@@ -2864,7 +2866,7 @@ async function viewStopList() {
     }
     
 
- function showLastOrder() {
+function showLastOrder() {
         triggerHaptic();
         hideGlobalLoader(); 
         state.currentMode = 'receiving';
@@ -2934,15 +2936,21 @@ async function viewStopList() {
                 itemsArr.forEach(i => {
                     if (!i || !i.name || i.name === "НЕТ ЗАКАЗА") return;
                     
-                    // ⚡ ИСПРАВЛЕНИЕ: Только индивидуальный статус (без o.ordered === true)
                     let isItemOrdered = (i.status === 'ordered' || i.status === 'from_stoplist');
                     
                     if (isItemOrdered && i.status !== 'already_received' && i.status !== 'not_needed' && i.status !== 'error' && i.bot_error !== true) {
                         let catItem = orderCatMapFast[i.name] || {};
-                        let vendor = (catItem.vendor || 'Лента').toLowerCase() === 'озон' ? 'ozon' : 'lenta';
-                        if ((vendor === 'ozon' && !o.ozon_received) || (vendor === 'lenta' && !o.lenta_received)) {
-                            if (!activeByDate[orderDate]) activeByDate[orderDate] = { lenta: { items: {}, keys: new Set() }, ozon: { items: {}, keys: new Set() }, timestamp: o.timestamp };
-                            let targetGroup = vendor === 'ozon' ? activeByDate[orderDate].ozon : activeByDate[orderDate].lenta;
+                        // ⚡ РАСПОЗНАЕМ КУПЕР И БЕРЕМ VENDOR ПРЯМО ИЗ ТОВАРА
+                        let vRaw = (i.vendor || catItem.vendor || 'Лента').toLowerCase();
+                        let vendor = 'lenta';
+                        if (vRaw.includes('озон') || vRaw.includes('ozon')) vendor = 'ozon';
+                        else if (vRaw.includes('купер') || vRaw.includes('kuper')) vendor = 'kuper';
+
+                        let isReceived = vendor === 'ozon' ? o.ozon_received : (vendor === 'kuper' ? o.kuper_received : o.lenta_received);
+
+                        if (!isReceived) {
+                            if (!activeByDate[orderDate]) activeByDate[orderDate] = { lenta: { items: {}, keys: new Set() }, ozon: { items: {}, keys: new Set() }, kuper: { items: {}, keys: new Set() }, timestamp: o.timestamp };
+                            let targetGroup = activeByDate[orderDate][vendor];
                             if(!targetGroup.items[i.name]) targetGroup.items[i.name] = {qty: 0};
                             targetGroup.items[i.name].qty += parseFloat(i.qty) || 0;
                             targetGroup.keys.add(o.key);
@@ -2958,7 +2966,10 @@ async function viewStopList() {
                     const renderList = (grpData, keysSet, vendorKey, bClass, bText) => {
                         let names = Object.keys(grpData).sort(); if(names.length === 0) return "";
                         let listId = getSafeId(dateStr + vendorKey), kStr = Array.from(keysSet).join(',');
-                        let res = `<div class="report-card" style="margin-top:10px; border-left:4px solid ${vendorKey==='ozon'?'#1565c0':'#f57f17'};">
+                        // ⚡ Цвета поставщиков (синий Озон, зеленый Купер, оранжевая Лента)
+                        let borderColor = vendorKey === 'ozon' ? '#1565c0' : (vendorKey === 'kuper' ? '#2e7d32' : '#f57f17');
+                        
+                        let res = `<div class="report-card" style="margin-top:10px; border-left:4px solid ${borderColor};">
                                     <div class="report-card-title" style="cursor:pointer; font-size:16px;" onclick="toggleElements('${listId}', 'arr_${listId}')">📅 Заказ ${bText} от ${dateStr} <span id="arr_${listId}">▼</span></div>
                                     <div class="${listId}" style="display:none; margin-top:10px;">`;
                         let expCount = 0;
@@ -2986,6 +2997,7 @@ async function viewStopList() {
                     };
                     html += renderList(activeByDate[dateStr].lenta.items, activeByDate[dateStr].lenta.keys, "lenta", "vendor-lenta", "ЛЕНТА");
                     html += renderList(activeByDate[dateStr].ozon.items, activeByDate[dateStr].ozon.keys, "ozon", "vendor-ozon", "ОЗОН");
+                    html += renderList(activeByDate[dateStr].kuper.items, activeByDate[dateStr].kuper.keys, "kuper", "vendor-kuper", "КУПЕР");
                 });
             }
         } else {
@@ -2997,12 +3009,13 @@ async function viewStopList() {
                     let dateStr = new Date(o[typeKey+'_received_ts'] || o.timestamp).toLocaleDateString('ru-RU');
                     if(!historyByDate[dateStr]) historyByDate[dateStr] = { items: [], ts: o.timestamp };
                     itemsArr.forEach(i => {
-                        // ⚡ ИСПРАВЛЕНИЕ: Только индивидуальный статус
                         let isItemOrderedHist = (i.status === 'ordered' || i.status === 'from_stoplist' || i.status === 'already_received');
                         if(isItemOrderedHist && i.status !== 'error' && i.status !== 'not_needed' && i.bot_error !== true) {
                             let catItem = orderCatMapFast[i.name];
-                            let vRaw = (catItem && catItem.vendor) ? catItem.vendor : 'Лента';
-                            let vendor = vRaw.toLowerCase() === 'озон' ? 'ozon' : 'lenta';
+                            let vRaw = (i.vendor || (catItem ? catItem.vendor : 'Лента') || 'Лента').toLowerCase();
+                            let vendor = 'lenta';
+                            if (vRaw.includes('озон') || vRaw.includes('ozon')) vendor = 'ozon';
+                            else if (vRaw.includes('купер') || vRaw.includes('kuper')) vendor = 'kuper';
                             
                             if(vendor === typeKey) {
                                 let isAlready = i.status === 'already_received';
@@ -3011,7 +3024,9 @@ async function viewStopList() {
                         }
                     });
                 };
-                processHist('lenta', o.lenta_received); processHist('ozon', o.ozon_received);
+                processHist('lenta', o.lenta_received); 
+                processHist('ozon', o.ozon_received);
+                processHist('kuper', o.kuper_received);
             });
             historyMissing.forEach(m => {
                 let dateStr = new Date(m.timestamp).toLocaleDateString('ru-RU');

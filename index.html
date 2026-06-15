@@ -1629,7 +1629,7 @@
     // ==========================================
     function triggerActiveRender() {
         if (['order', 'new_shop', 'checklist', 'stoplist_fill'].includes(state.currentMode)) {
-            // ⚡ ЖЕЛЕЗНАЯ СИНХРОНИЗАЦИЯ: Автоматически собирает каталог из свежих сетевых данных при первом запуске или обновлении
+            // ⚡ ЖЕЛЕЗНАЯ СИНХРОНИЗАЦИЯ
             let pathKey = state.currentMode === 'checklist' ? 'checklist' : (state.currentMode === 'stoplist_fill' ? 'stoplist' : (state.currentMode === 'new_shop' ? 'newshop' : 'order'));
             if (state.cachedCatalogs && state.cachedCatalogs[pathKey]) {
                 rebuildProductCatalog(state.cachedCatalogs[pathKey]);
@@ -1638,7 +1638,7 @@
             let transitItems = new Set();
             let pendingItems = new Set();
             
-            // ⚡ СОХРАНЯЕМ ФОКУС: Запоминаем, где стоял курсор
+            // ⚡ СОХРАНЯЕМ ФОКУС
             let focusedId = document.activeElement ? document.activeElement.id : null;
             let focusedValue = document.activeElement ? document.activeElement.value : null;
             
@@ -1651,9 +1651,25 @@
                     
                     let clean = cleanName(m.name);
                     if (m.status === 'transit' || m.status === 'pending') transitItems.add(clean);
+                    
+                    // ⚡ ИСПРАВЛЕННАЯ ЛОГИКА ВОЗВРАТА ТОВАРА В КОРЗИНУ (НЕДОВОЗ -> ОТМЕНЕН)
                     if (m.status === 'canceled' && !m.added_to_basket) {
-                        let qtyNum = parseFloat(m.qty) || 0;
-                        state.userBasket[m.name] = (state.userBasket[m.name] || 0) + qtyNum;
+                        let catItem = Object.values(state.productCatalog).find(c => c && cleanName(c.name) === clean);
+                        if (catItem) {
+                            let exactName = catItem.name;
+                            let exactCat = catItem.cat || "Прочее";
+                            let qtyNum = parseFloat(m.qty) || 0;
+                            
+                            if (qtyNum > 0) {
+                                state.userBasket[exactName] = (parseFloat(state.userBasket[exactName]) || 0) + qtyNum;
+                                if (!state.userBasket["_catinfo"]) state.userBasket["_catinfo"] = {};
+                                state.userBasket["_catinfo"][exactName] = exactCat;
+                                
+                                persistDraft(); // ⚡ Железно сохраняем возвращенный товар в черновик кофейни
+                                updateBadgeUI(); // Обновляем кружочек над корзиной
+                            }
+                        }
+                        // Ставим галочку в базе, что товар возвращен, чтобы избежать бесконечного дублирования
                         database.ref("missing_items/" + m.key).update({added_to_basket: true}); 
                     }
                 });
@@ -1708,8 +1724,7 @@
                 state.unprocessedItems = pendingItems;
             }
             
-            // ⚡ УМНАЯ СТАБИЛИЗАЦИЯ ИНТЕРФЕЙСА:
-            // Проверяем, печатает ли сейчас бариста. Если да - откладываем перерисовку!
+            // ⚡ УМНАЯ СТАБИЛИЗАЦИЯ ИНТЕРФЕЙСА
             let isTyping = document.activeElement && (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA');
             if (isTyping) {
                 state.needsRender = true; 

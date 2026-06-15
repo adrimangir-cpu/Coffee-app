@@ -2842,15 +2842,14 @@ async function viewStopList() {
         if (!itemNamesArray || itemNamesArray.length === 0) return;
         try {
             let shopOrders = [];
+            // Шаг 1: Ищем последний заполненный стоп-лист кофейни
             try {
-                // План А: Быстрый индекс
                 let snap = await database.ref("orders").orderByChild("shop").equalTo(shop).limitToLast(50).once("value");
                 snap.forEach(c => {
                     let val = c.val();
                     if (val && val.mode === 'stoplist_fill') { val.key = c.key; shopOrders.push(val); }
                 });
             } catch (e) {
-                // План Б: Фолбэк
                 let snap = await database.ref("orders").limitToLast(600).once("value");
                 snap.forEach(c => {
                     let val = c.val();
@@ -2866,14 +2865,43 @@ async function viewStopList() {
             let itemsArr = Array.isArray(latestStoplist.items) ? latestStoplist.items : Object.values(latestStoplist.items);
             itemsArr = itemsArr.filter(i => i !== null && i !== undefined);
 
-            // Используем cleanName, чтобы стереть разницу в граммовках
-            let namesToRemove = itemNamesArray.map(n => cleanName(n));
+            // Шаг 2: Достаем справочник связей "Продукт -> Напитки"
+            let stopCatalog = (state.cachedCatalogs && state.cachedCatalogs.stoplist) ? state.cachedCatalogs.stoplist : {};
+            
+            // Создаем умное множество для удаления (туда полетят и продукты, и напитки)
+            let namesToRemove = new Set();
+            
+            itemNamesArray.forEach(productName => {
+                let cleanProd = cleanName(productName);
+                namesToRemove.add(cleanProd); // Добавляем сам продукт в очередь на вылет
+                
+                // Ищем этот продукт в каталоге связей, чтобы найти его напитки
+                Object.values(stopCatalog).forEach(c => {
+                    if (c && c.name && cleanName(c.name) === cleanProd) {
+                        // Извлекаем привязанные сезонные напитки напитка
+                        if (c.sez) {
+                            c.sez.split(',').forEach(s => {
+                                if (s.trim()) namesToRemove.add(cleanName(s.trim()));
+                            });
+                        }
+                        // Извлекаем привязанные основные напитки напитка
+                        if (c.main) {
+                            c.main.split(',').forEach(s => {
+                                if (s.trim()) namesToRemove.add(cleanName(s.trim()));
+                            });
+                        }
+                    }
+                });
+            });
+
+            // Шаг 3: Фильтруем стоп-лист, удаляя совпадения по продуктам и напиткам
             let newItems = itemsArr.filter(i => {
                 if (!i || !i.name) return false;
-                let iName = cleanName(i.name);
-                return !namesToRemove.includes(iName); // Оставляем те, которые НЕ приехали
+                let iNameClean = cleanName(i.name);
+                return !namesToRemove.has(iNameClean); // Удаляем, если имя есть в нашем черном списке
             });
             
+            // Шаг 4: Если изменения произошли — сохраняем обновленный стоп-лист в базу
             if (newItems.length !== itemsArr.length) {
                 if (newItems.length === 0) {
                     await database.ref(`orders/${latestStoplist.key}/items`).set([{name: "Всё в наличии", qty: "В наличии"}]);

@@ -2857,6 +2857,16 @@ async function viewStopList() {
         document.getElementById('report-overlay').style.display = 'flex';
         document.getElementById('report-header').innerText = "Приемка закупки";
 
+        // ⚡ ИСПРАВЛЕНИЕ 2: Моментальный показ экрана из кэша (чтобы не было 40 сек загрузки)
+        let cacheKey = "cache_html_receiving_" + state.currentShop + "_" + (state.currentReceivingTab || 'active');
+        let localHtml = localStorage.getItem(cacheKey);
+        
+        if (localHtml) {
+            document.getElementById('report-content-area').innerHTML = localHtml;
+        } else {
+            document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div class="loading-pulse">⏳ Синхронизация с базой...</div></div>`;
+        }
+
         let orderCatalog = (state.cachedCatalogs && state.cachedCatalogs.order) ? state.cachedCatalogs.order : {};
         let orderCatMapFast = {};
         Object.values(orderCatalog).forEach(c => { if (c && c.name) orderCatMapFast[c.name] = c; });
@@ -2869,16 +2879,16 @@ async function viewStopList() {
             }
         });
 
-        // ⚡ ИСПРАВЛЕНИЕ: Держим приемку на экране 30 дней вместо 15-ти
-        let thirtyDaysAgo = Date.now() - (30 * 24 * 60 * 60 * 1000);
+        // ⚡ ИСПРАВЛЕНИЕ 3: Возвращаем 14 дней
+        let fourteenDaysAgo = Date.now() - (14 * 24 * 60 * 60 * 1000);
         let ordersArr = [];
         state.globalOrders.forEach(val => {
-            if(val && typeof val === 'object' && (val.mode === 'order' || val.mode === 'new_shop') && val.timestamp >= thirtyDaysAgo) ordersArr.push(val);
+            if(val && typeof val === 'object' && (val.mode === 'order' || val.mode === 'new_shop') && val.timestamp >= fourteenDaysAgo) ordersArr.push(val);
         });
 
         let html = `<div style="display: flex; gap: 10px; margin-bottom: 20px; background: #fff; padding: 6px; border-radius: 14px; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
                         <button onclick="state.currentReceivingTab = 'active'; showLastOrder();" style="flex: 1; padding: 12px; border: none; border-radius: 10px; font-size: 15px; font-weight: 900; ${state.currentReceivingTab === 'active' || !state.currentReceivingTab ? 'background: #4A148C; color: #fff;' : 'background: transparent; color: #888;'}">🚚 Текущая приемка</button>
-                        <button onclick="state.currentReceivingTab = 'history'; showLastOrder();" style="flex: 1; padding: 12px; border: none; border-radius: 10px; font-size: 15px; font-weight: 900; ${state.currentReceivingTab === 'history' ? 'background: #9C27B0; color: #fff;' : 'background: transparent; color: #888;'}">🕒 История (30 дней)</button>
+                        <button onclick="state.currentReceivingTab = 'history'; showLastOrder();" style="flex: 1; padding: 12px; border: none; border-radius: 10px; font-size: 15px; font-weight: 900; ${state.currentReceivingTab === 'history' ? 'background: #9C27B0; color: #fff;' : 'background: transparent; color: #888;'}">🕒 История (14 дней)</button>
                      </div>`;
 
         if (!state.currentReceivingTab || state.currentReceivingTab === 'active') {
@@ -3004,7 +3014,10 @@ async function viewStopList() {
                 });
             }
         }
+        
+        // ⚡ ИСПРАВЛЕНИЕ 4: Отрисовываем и сразу записываем в кэш для следующего раза
         document.getElementById('report-content-area').innerHTML = html;
+        localStorage.setItem(cacheKey, html);
     }
     
    function setReceiveChoice(name, qty, vendor, status, btnArrId, btnMissId, dateStr) {
@@ -3342,7 +3355,7 @@ async function viewStopList() {
         if (state.activeOrderRef) state.activeOrderRef.off();
         if (state.activeMissingRef) state.activeMissingRef.off();
 
-        // ⚡ ИСПРАВЛЕНИЕ: Увеличиваем лимит с 50 до 300, чтобы чек-листы не вытесняли закупку!
+        // ⚡ ИСПРАВЛЕНИЕ 1: Увеличиваем лимит с 50 до 300, чтобы чек-листы не вытесняли приемку!
         state.activeOrderRef = database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(300);
         state.activeMissingRef = database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop);
 

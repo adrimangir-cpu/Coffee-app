@@ -183,7 +183,18 @@
   </style>
 </head>
 <body>
-
+  
+<div id="global-loader" style="position:fixed; inset:0; background:rgba(255,255,255,0.9); z-index:99999; display:none; flex-direction:column; align-items:center; justify-content:center; backdrop-filter:blur(5px);">
+      <style>
+          @keyframes spin-circle { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+          @keyframes pulse-text { 0% { opacity: 0.5; } 50% { opacity: 1; } 100% { opacity: 0.5; } }
+          .g-spinner { width: 60px; height: 60px; border: 6px solid #ede7f6; border-top: 6px solid #7E57C2; border-radius: 50%; animation: spin-circle 1s linear infinite; margin-bottom: 20px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
+          .g-text { color: #4A148C; font-weight: 900; font-size: 18px; text-transform: uppercase; text-align: center; letter-spacing: 1px; animation: pulse-text 1.5s infinite; }
+      </style>
+      <div class="g-spinner"></div>
+      <div id="g-loader-text" class="g-text">Загрузка...</div>
+  </div>
+  
   <div id="success-screen">
     <div class="check-mark">✅</div>
     <h2 style="font-weight: 900; margin: 0; color: #4caf50;">ГОТОВО!</h2>
@@ -636,13 +647,34 @@
 
   async function handleShopSelection(name) {
       triggerHaptic(); 
+      // ⚡ Включаем анимацию загрузки перед тем, как начать скачивать базу
+      showGlobalLoader("Синхронизация..."); 
+      
       state.currentShop = name; 
       document.getElementById('title').innerText = name == 'Красноказарменная' ? 'МЭИ' : name;
       state.screenHistory = []; 
-      showScreen('step-2');
-      loadSettings();
-      // ⚡ Запускаем живую синхронизацию заказов при выборе кофейни!
+      
       startShopDataSync(); 
+      
+      // ⚡ УМНОЕ ОЖИДАНИЕ: Ждем, пока скачается база именно этой кофейни
+      let checkInterval = setInterval(() => {
+          if (state.ordersLoaded && state.missingLoaded) {
+              clearInterval(checkInterval);
+              hideGlobalLoader(); // Выключаем загрузку
+              showScreen('step-2');
+              loadSettings();
+          }
+      }, 100);
+      
+      // Защита от бесконечной загрузки (если интернет совсем пропал, пускаем через 5 сек)
+      setTimeout(() => {
+          clearInterval(checkInterval);
+          if (document.getElementById('step-2').style.display !== 'block') {
+              hideGlobalLoader();
+              showScreen('step-2');
+              loadSettings();
+          }
+      }, 5000);
     }
     
     // ⚡ ДОБАВЛЯЕМ НОВУЮ ФУНКЦИЮ: Сверхбыстрый и точный загрузчик для кнопок
@@ -2857,14 +2889,16 @@ async function viewStopList() {
         document.getElementById('report-overlay').style.display = 'flex';
         document.getElementById('report-header').innerText = "Приемка закупки";
 
-        // ⚡ ИСПРАВЛЕНИЕ 2: Моментальный показ экрана из кэша (чтобы не было 40 сек загрузки)
-        let cacheKey = "cache_html_receiving_" + state.currentShop + "_" + (state.currentReceivingTab || 'active');
-        let localHtml = localStorage.getItem(cacheKey);
-        
-        if (localHtml) {
-            document.getElementById('report-content-area').innerHTML = localHtml;
-        } else {
-            document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div class="loading-pulse">⏳ Синхронизация с базой...</div></div>`;
+        // ⚡ ГЛАВНОЕ ИСПРАВЛЕНИЕ: Если данные еще качаются из базы - показываем загрузку, а не "Пусто" (и никакого кэша!)
+        if (!state.ordersLoaded || !state.missingLoaded) {
+            document.getElementById('report-content-area').innerHTML = `
+                <div class="report-card">
+                    <div class="loading-pulse" style="text-align:center; font-weight:900; color:#7E57C2; padding: 20px;">
+                        ⏳ Поиск приемок в базе данных...<br>
+                        <span style="font-size:13px; color:#888; margin-top:10px; display:block;">Загружаю актуальную информацию, пожалуйста подождите...</span>
+                    </div>
+                </div>`;
+            return; // Прерываем функцию. Как только база скачается, triggerActiveRender вызовет ее снова!
         }
 
         let orderCatalog = (state.cachedCatalogs && state.cachedCatalogs.order) ? state.cachedCatalogs.order : {};
@@ -2879,7 +2913,6 @@ async function viewStopList() {
             }
         });
 
-        // ⚡ ИСПРАВЛЕНИЕ 3: Возвращаем 14 дней
         let fourteenDaysAgo = Date.now() - (14 * 24 * 60 * 60 * 1000);
         let ordersArr = [];
         state.globalOrders.forEach(val => {
@@ -3014,10 +3047,7 @@ async function viewStopList() {
                 });
             }
         }
-        
-        // ⚡ ИСПРАВЛЕНИЕ 4: Отрисовываем и сразу записываем в кэш для следующего раза
         document.getElementById('report-content-area').innerHTML = html;
-        localStorage.setItem(cacheKey, html);
     }
     
    function setReceiveChoice(name, qty, vendor, status, btnArrId, btnMissId, dateStr) {
@@ -3349,53 +3379,61 @@ async function viewStopList() {
         }, 6000);
     }
 
-   function startShopDataSync() {
+  function startShopDataSync() {
         if (!state.currentShop) return;
         
         if (state.activeOrderRef) state.activeOrderRef.off();
         if (state.activeMissingRef) state.activeMissingRef.off();
 
-        // ⚡ ИСПРАВЛЕНИЕ 1: Увеличиваем лимит с 50 до 300, чтобы чек-листы не вытесняли приемку!
+        // ⚡ МГНОВЕННАЯ ЗАГРУЗКА ИЗ ПАМЯТИ ТЕЛЕФОНА (JSON ДАННЫЕ)
+        // Это гарантирует, что массивы не будут пустыми при старте
+        let cachedOrders = localStorage.getItem("data_orders_" + state.currentShop);
+        let cachedMissing = localStorage.getItem("data_missing_" + state.currentShop);
+        
+        if (cachedOrders) {
+            state.globalOrders = JSON.parse(cachedOrders);
+            state.ordersLoaded = true; // Сразу снимаем блокировку загрузки
+        } else {
+            state.globalOrders = [];
+            state.ordersLoaded = false;
+        }
+
+        if (cachedMissing) {
+            state.globalMissing = JSON.parse(cachedMissing);
+            state.missingLoaded = true; // Сразу снимаем блокировку загрузки
+        } else {
+            state.globalMissing = [];
+            state.missingLoaded = false;
+        }
+
+        // Подключаемся к базе (лимит 300 операций, чтобы закупка не затиралась чек-листами)
         state.activeOrderRef = database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(300);
         state.activeMissingRef = database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop);
 
+        // Фоновая прослушка изменений в реальном времени
         state.activeOrderRef.on('value', snap => {
             let shopOrders = [];
             snap.forEach(c => { let val = c.val(); if(val) { val.key = c.key; shopOrders.push(val); } });
             state.globalOrders = shopOrders.sort((a,b) => b.timestamp - a.timestamp);
-            triggerActiveRender();
+            state.ordersLoaded = true;
+            
+            // Тихо сохраняем свежие данные в память для следующего раза
+            try { localStorage.setItem("data_orders_" + state.currentShop, JSON.stringify(state.globalOrders)); } catch(e){}
+            
+            triggerActiveRender(); // Перерисовываем экран (бариста этого даже не заметит, если ничего не изменилось)
         });
 
         state.activeMissingRef.on('value', snap => {
             let missing = [];
             snap.forEach(c => { let val = c.val(); if(val) { val.key = c.key; missing.push(val); } });
             state.globalMissing = missing;
+            state.missingLoaded = true;
+            
+            try { localStorage.setItem("data_missing_" + state.currentShop, JSON.stringify(state.globalMissing)); } catch(e){}
+            
             triggerActiveRender();
         });
     }
-
-    window.onload = async () => { 
-        try { 
-            Telegram.WebApp.ready(); Telegram.WebApp.expand(); 
-            globalTgUserId = (Telegram.WebApp.initDataUnsafe && Telegram.WebApp.initDataUnsafe.user) ? String(Telegram.WebApp.initDataUnsafe.user.id) : "708179577";
-        } catch(e){ globalTgUserId = "708179577"; }
-        
-        state.cachedCatalogs = {};
-        
-        // ⚡ МГНОВЕННО ДОСТАЕМ ВСЮ БАЗУ ИЗ ВЕЧНОГО КЭША (До показа экрана)
-        const paths = ['order', 'newshop', 'stoplist', 'checklist', 'menu'];
-        for (let p of paths) {
-            let cachedData = await loadFromRealCache(p);
-            if (cachedData) state.cachedCatalogs[p] = cachedData;
-        }
-        
-        state.globalOrders = []; state.globalMissing = [];
-        restoreMpDraft(); 
-        
-        showScreen('step-1', false);
-        
-        setTimeout(() => { startRealtimeUpdates(); }, 100);
-    };
     
     function restoreFromDraft() { 
         let d = localStorage.getItem("draft_" + state.currentShop + "_" + state.currentMode); 

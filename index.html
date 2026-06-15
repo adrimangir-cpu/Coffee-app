@@ -1666,18 +1666,18 @@
             let focusedValue = document.activeElement ? document.activeElement.value : null;
             
             if (state.currentMode === 'order' || state.currentMode === 'new_shop') {
-                // ⚡ Защита от вечно "зависших" заказов (помним только 14 дней)
                 let cutoffTime = Date.now() - (14 * 24 * 60 * 60 * 1000); 
 
                 state.globalMissing.forEach(m => {
                     if (!m || !m.name) return;
                     let clean = cleanName(m.name);
                     
-                    if (m.status === 'transit' || m.status === 'pending') {
+                    // ⚡ БЛОКИРУЕМ ТОЛЬКО ЕСЛИ ТОВАР РЕАЛЬНО ЕДЕТ ОТ ПОСТАВЩИКА.
+                    // Если статус pending (Недовоз ждет проверки), бариста МОЖЕТ заказать его снова!
+                    if (m.status === 'transit') {
                         transitItems.add(clean);
                     }
                     
-                    // ⚡ Возврат отмененного недовоза в корзину
                     if (m.status === 'canceled' && !m.added_to_basket) {
                         let catItem = Object.values(state.productCatalog).find(c => c && cleanName(c.name) === clean);
                         if (catItem) {
@@ -1707,23 +1707,22 @@
                             if (i && i.name && i.name !== "НЕТ ЗАКАЗА") {
                                 let cName = cleanName(i.name);
                                 
-                                // 1. Товар в текущей корзине или ждет сборки свода
-                                if (!o.ordered && i.status !== 'error' && i.bot_error !== true && i.status !== 'not_needed' && i.status !== 'already_received') {
-                                    pendingItems.add(cName);
-                                }
+                                let catItem = Object.values(state.productCatalog).find(c => c && cleanName(c.name) === cName);
+                                let vendor = catItem ? (catItem.vendor || 'Лента').toLowerCase() : 'лента';
+                                let isOzon = vendor.includes('озон') || vendor.includes('ozon');
+                                let isReceived = isOzon ? o.ozon_received : o.lenta_received;
                                 
-                                // 2. ⚡ Товар ИМЕННО СЕЙЧАС В ПУТИ (заказан, но еще не принят баристой)
-                                if (o.ordered && !isOld) {
-                                    let catItem = Object.values(state.productCatalog).find(c => c && cleanName(c.name) === cName);
-                                    let vendor = catItem ? (catItem.vendor || 'Лента').toLowerCase() : 'лента';
-                                    let isOzon = vendor.includes('озон') || vendor.includes('ozon');
-                                    
-                                    // Проверяем, принят ли этот заказ кофейней
-                                    let isReceived = isOzon ? o.ozon_received : o.lenta_received;
-                                    
-                                    if (i.status === 'ordered' && !isReceived) {
-                                        recentlyOrderedItems.add(cName);
-                                    }
+                                // ⚡ АВТО-ОПРЕДЕЛЕНИЕ СТАТУСА:
+                                let isItemOrdered = (i.status === 'ordered' || i.status === 'from_stoplist' || o.ordered === true);
+
+                                // 1. Товар ЗАКАЗАН (ботом/админом) и еще не принят. Он В ПУТИ (даже если директор не нажал кнопку)
+                                if (isItemOrdered && i.status !== 'error' && i.bot_error !== true && !isReceived && !isOld) {
+                                    transitItems.add(cName);
+                                    recentlyOrderedItems.add(cName);
+                                }
+                                // 2. Товар ОЖИДАЕТ ОФОРМЛЕНИЯ (в корзине, не ошибка, не отменен)
+                                else if (!isItemOrdered && i.status !== 'error' && i.bot_error !== true && i.status !== 'not_needed' && !isReceived && !isOld) {
+                                    pendingItems.add(cName);
                                 }
                             }
                         });
@@ -1733,14 +1732,12 @@
                 for (let key in state.userBasket) {
                     if (key === "_catinfo") continue;
                     let cleanKey = cleanName(key);
-                    // Вычищаем из корзины товары, если они уже ждут оформления или едут как недовоз
                     if (transitItems.has(cleanKey) || pendingItems.has(cleanKey)) {
                         delete state.userBasket[key];
                         if (state.userBasket["_catinfo"]) delete state.userBasket["_catinfo"][key];
                     }
                 }
 
-                // ⚡ ИСПРАВЛЕНИЕ БАГА: Убрали .reverse(), теперь мы берем самый СВЕЖИЙ стоп-лист!
                 let latestStoplist = state.globalOrders.find(o => o.mode === 'stoplist_fill');
                 if (latestStoplist && latestStoplist.items) {
                     let itemsArr = Array.isArray(latestStoplist.items) ? latestStoplist.items : Object.values(latestStoplist.items);
@@ -1748,8 +1745,6 @@
                         if (i && i.name && i.qty === 'Закончилось') {
                             let cleanStopName = cleanName(i.name); 
                             let catItem = Object.values(state.productCatalog).find(c => c && cleanName(c.name) === cleanStopName);
-                            
-                            // ⚡ Добавляем в корзину только если товара НЕТ в недовозах, он НЕ ждет отправки и НЕ едет прямо сейчас
                             if (catItem && !transitItems.has(cleanStopName) && !pendingItems.has(cleanStopName) && !recentlyOrderedItems.has(cleanStopName)) {
                                 let exactName = catItem.name;
                                 if (state.userBasket[exactName] === undefined) {
@@ -2924,47 +2919,14 @@ async function viewStopList() {
         }
     }
     
-   async function finishMissingReceiving() {
-        if (!state.missingChoices || Object.keys(state.missingChoices).length === 0) {
-            showPopupError("Внимание", "Вы не отметили ни одного недовоза как 'Доехал'.");
-            return;
-        }
-
-        triggerHaptic();
-        showReportOverlay("Сохранение данных...");
-        
-        try {
-            let namesToRemove = [];
-            for (let key in state.missingChoices) {
-                // ⚡ ТРАНЗАКЦИЯ ДЛЯ ЗАКРЫТИЯ НЕДОВОЗОВ
-                await database.ref("missing_items/" + key).transaction((currentMissing) => {
-                    if (currentMissing) {
-                        currentMissing.status = 'arrived';
-                        currentMissing.timestamp = Date.now();
-                        return currentMissing;
-                    }
-                    return currentMissing;
-                });
-                namesToRemove.push(state.missingChoices[key]);
-            }
-            
-            await autoRemoveFromStoplist(state.currentShop, namesToRemove);
-            
-            state.missingChoices = {};
-            showLastOrder(); 
-        } catch(e) {
-            showPopupError("Ошибка", e.message);
-            showLastOrder();
-        }
-    }
 
  function showLastOrder() {
         triggerHaptic();
+        hideGlobalLoader(); // ⚡ Скрываем лоадер на случай подвисания
         state.currentMode = 'receiving';
         document.getElementById('report-overlay').style.display = 'flex';
         document.getElementById('report-header').innerText = "Приемка закупки";
 
-        // ⚡ ГЛАВНОЕ ИСПРАВЛЕНИЕ: Если данные еще качаются из базы - показываем загрузку, а не "Пусто" (и никакого кэша!)
         if (!state.ordersLoaded || !state.missingLoaded) {
             document.getElementById('report-content-area').innerHTML = `
                 <div class="report-card">
@@ -2973,7 +2935,7 @@ async function viewStopList() {
                         <span style="font-size:13px; color:#888; margin-top:10px; display:block;">Загружаю актуальную информацию, пожалуйста подождите...</span>
                     </div>
                 </div>`;
-            return; // Прерываем функцию. Как только база скачается, triggerActiveRender вызовет ее снова!
+            return; 
         }
 
         let orderCatalog = (state.cachedCatalogs && state.cachedCatalogs.order) ? state.cachedCatalogs.order : {};
@@ -3028,7 +2990,10 @@ async function viewStopList() {
                 itemsArr.forEach(i => {
                     if (!i || !i.name || i.name === "НЕТ ЗАКАЗА") return;
                     
-                    if (i.status !== 'already_received' && i.status !== 'not_needed' && i.status !== 'error' && i.bot_error !== true) {
+                    // ⚡ ИСПРАВЛЕНИЕ: В приемку попадают ТОЛЬКО заказанные товары (бот или кнопка админа)
+                    let isItemOrdered = (i.status === 'ordered' || i.status === 'from_stoplist' || o.ordered === true);
+                    
+                    if (isItemOrdered && i.status !== 'already_received' && i.status !== 'not_needed' && i.status !== 'error' && i.bot_error !== true) {
                         let catItem = orderCatMapFast[i.name] || {};
                         let vendor = (catItem.vendor || 'Лента').toLowerCase() === 'озон' ? 'ozon' : 'lenta';
                         if ((vendor === 'ozon' && !o.ozon_received) || (vendor === 'lenta' && !o.lenta_received)) {
@@ -3088,7 +3053,8 @@ async function viewStopList() {
                     let dateStr = new Date(o[typeKey+'_received_ts'] || o.timestamp).toLocaleDateString('ru-RU');
                     if(!historyByDate[dateStr]) historyByDate[dateStr] = { items: [], ts: o.timestamp };
                     itemsArr.forEach(i => {
-                        if(i && i.name && i.status !== 'error' && i.status !== 'not_needed' && i.bot_error !== true) {
+                        let isItemOrderedHist = (i.status === 'ordered' || i.status === 'from_stoplist' || i.status === 'already_received' || o.ordered === true);
+                        if(isItemOrderedHist && i.status !== 'error' && i.status !== 'not_needed' && i.bot_error !== true) {
                             let catItem = orderCatMapFast[i.name];
                             let vRaw = (catItem && catItem.vendor) ? catItem.vendor : 'Лента';
                             let vendor = vRaw.toLowerCase() === 'озон' ? 'ozon' : 'lenta';
@@ -3122,7 +3088,10 @@ async function viewStopList() {
                 });
             }
         }
+        
         document.getElementById('report-content-area').innerHTML = html;
+        let cacheKey = "cache_html_receiving_" + state.currentShop + "_" + (state.currentReceivingTab || 'active');
+        localStorage.setItem(cacheKey, html);
     }
     
    function setReceiveChoice(name, qty, vendor, status, btnArrId, btnMissId, dateStr) {
@@ -3173,11 +3142,10 @@ async function viewStopList() {
         try {
             let keys = keysStr.split(',');
             
-            // ⚡ ТРАНЗАКЦИЯ ДЛЯ ПРИЕМКИ ОЗОН/ЛЕНТА
             for (let k of keys) {
                 await database.ref(`orders/${k}`).transaction((currentOrder) => {
                     if (currentOrder) {
-                        if (currentOrder[vendorKey + '_received'] === true) return; // Если уже приняли - отмена
+                        if (currentOrder[vendorKey + '_received'] === true) return; 
                         currentOrder[vendorKey + '_received'] = true;
                         currentOrder[vendorKey + '_received_ts'] = Date.now();
                         return currentOrder;
@@ -3203,13 +3171,50 @@ async function viewStopList() {
                 }
             }
 
+            hideGlobalLoader(); // ⚡ Снимаем лоадер!
             showLastOrder(); 
         } catch(e) {
+            hideGlobalLoader(); // ⚡ Снимаем лоадер!
             showPopupError("Ошибка", e.message);
             showLastOrder();
         }
     }
-    
+
+    async function finishMissingReceiving() {
+        if (!state.missingChoices || Object.keys(state.missingChoices).length === 0) {
+            showPopupError("Внимание", "Вы не отметили ни одного недовоза как 'Доехал'.");
+            return;
+        }
+
+        triggerHaptic();
+        showReportOverlay("Сохранение данных...");
+        
+        try {
+            let namesToRemove = [];
+            for (let key in state.missingChoices) {
+                await database.ref("missing_items/" + key).transaction((currentMissing) => {
+                    if (currentMissing) {
+                        currentMissing.status = 'arrived';
+                        currentMissing.timestamp = Date.now();
+                        return currentMissing;
+                    }
+                    return currentMissing;
+                });
+                namesToRemove.push(state.missingChoices[key]);
+            }
+            
+            await autoRemoveFromStoplist(state.currentShop, namesToRemove);
+            
+            state.missingChoices = {};
+            hideGlobalLoader(); // ⚡ Снимаем лоадер!
+            showLastOrder(); 
+        } catch(e) {
+            hideGlobalLoader(); // ⚡ Снимаем лоадер!
+            showPopupError("Ошибка", e.message);
+            showLastOrder();
+        }
+    }
+
     async function saveAllMissingChanges() {
         triggerHaptic();
         let selects = document.querySelectorAll('.missing-status-select');
@@ -3249,8 +3254,10 @@ async function viewStopList() {
                 await autoRemoveFromStoplist(shop, arrivedByShop[shop]);
             }
 
+            hideGlobalLoader(); // ⚡ Снимаем лоадер!
             openMissingAdmin();
         } catch(e) {
+            hideGlobalLoader(); // ⚡ Снимаем лоадер!
             showPopupError("Ошибка", e.message);
             openMissingAdmin();
         }

@@ -650,24 +650,25 @@
         let ordersArr = [];
         let missingArr = [];
         try {
-            // Мгновенный запрос по настроенным индексам
+            // ⚡ ИСПРАВЛЕНИЕ: Увеличиваем лимит загрузки
             let [oSnap, mSnap] = await Promise.all([
-                database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(80).once("value"),
+                database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(300).once("value"),
                 database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value")
             ]);
             oSnap.forEach(c => { let v = c.val(); if(v) { v.key = c.key; ordersArr.push(v); } });
             mSnap.forEach(c => { let v = c.val(); if(v) { v.key = c.key; missingArr.push(v); } });
         } catch (e) {
-            // Резервный маршрут на случай сбоя
+            // Резервный маршрут
             let [oSnap, mSnap] = await Promise.all([
-                database.ref("orders").limitToLast(300).once("value"),
-                database.ref("missing_items").limitToLast(200).once("value")
+                database.ref("orders").limitToLast(800).once("value"),
+                database.ref("missing_items").limitToLast(400).once("value")
             ]);
             oSnap.forEach(c => { let v = c.val(); if(v && v.shop === state.currentShop) { v.key = c.key; ordersArr.push(v); } });
             mSnap.forEach(c => { let v = c.val(); if(v && v.shop === state.currentShop) { v.key = c.key; missingArr.push(v); } });
         }
         return { orders: ordersArr.sort((a,b) => b.timestamp - a.timestamp), missing: missingArr };
     }
+    
     function clearShopAndReturn() {
       triggerHaptic(); 
       state.currentShop = "";
@@ -2868,15 +2869,16 @@ async function viewStopList() {
             }
         });
 
-        let fifteenDaysAgo = Date.now() - (15 * 24 * 60 * 60 * 1000);
+        // ⚡ ИСПРАВЛЕНИЕ: Держим приемку на экране 30 дней вместо 15-ти
+        let thirtyDaysAgo = Date.now() - (30 * 24 * 60 * 60 * 1000);
         let ordersArr = [];
         state.globalOrders.forEach(val => {
-            if(val && typeof val === 'object' && (val.mode === 'order' || val.mode === 'new_shop') && val.timestamp >= fifteenDaysAgo) ordersArr.push(val);
+            if(val && typeof val === 'object' && (val.mode === 'order' || val.mode === 'new_shop') && val.timestamp >= thirtyDaysAgo) ordersArr.push(val);
         });
 
         let html = `<div style="display: flex; gap: 10px; margin-bottom: 20px; background: #fff; padding: 6px; border-radius: 14px; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
                         <button onclick="state.currentReceivingTab = 'active'; showLastOrder();" style="flex: 1; padding: 12px; border: none; border-radius: 10px; font-size: 15px; font-weight: 900; ${state.currentReceivingTab === 'active' || !state.currentReceivingTab ? 'background: #4A148C; color: #fff;' : 'background: transparent; color: #888;'}">🚚 Текущая приемка</button>
-                        <button onclick="state.currentReceivingTab = 'history'; showLastOrder();" style="flex: 1; padding: 12px; border: none; border-radius: 10px; font-size: 15px; font-weight: 900; ${state.currentReceivingTab === 'history' ? 'background: #9C27B0; color: #fff;' : 'background: transparent; color: #888;'}">🕒 История (15 дней)</button>
+                        <button onclick="state.currentReceivingTab = 'history'; showLastOrder();" style="flex: 1; padding: 12px; border: none; border-radius: 10px; font-size: 15px; font-weight: 900; ${state.currentReceivingTab === 'history' ? 'background: #9C27B0; color: #fff;' : 'background: transparent; color: #888;'}">🕒 История (30 дней)</button>
                      </div>`;
 
         if (!state.currentReceivingTab || state.currentReceivingTab === 'active') {
@@ -2908,7 +2910,6 @@ async function viewStopList() {
                 itemsArr.forEach(i => {
                     if (!i || !i.name || i.name === "НЕТ ЗАКАЗА") return;
                     
-                    // ⚡ ИСПРАВЛЕНИЕ: Выводим товары независимо от того, нажал админ "Заказы оформлены" или нет
                     if (i.status !== 'already_received' && i.status !== 'not_needed' && i.status !== 'error' && i.bot_error !== true) {
                         let catItem = orderCatMapFast[i.name] || {};
                         let vendor = (catItem.vendor || 'Лента').toLowerCase() === 'озон' ? 'ozon' : 'lenta';
@@ -2969,7 +2970,6 @@ async function viewStopList() {
                     let dateStr = new Date(o[typeKey+'_received_ts'] || o.timestamp).toLocaleDateString('ru-RU');
                     if(!historyByDate[dateStr]) historyByDate[dateStr] = { items: [], ts: o.timestamp };
                     itemsArr.forEach(i => {
-                        // ⚡ ИСПРАВЛЕНИЕ: Для истории тоже отбрасываем только мусор
                         if(i && i.name && i.status !== 'error' && i.status !== 'not_needed' && i.bot_error !== true) {
                             let catItem = orderCatMapFast[i.name];
                             let vRaw = (catItem && catItem.vendor) ? catItem.vendor : 'Лента';
@@ -3336,13 +3336,14 @@ async function viewStopList() {
         }, 6000);
     }
 
-    function startShopDataSync() {
+   function startShopDataSync() {
         if (!state.currentShop) return;
         
         if (state.activeOrderRef) state.activeOrderRef.off();
         if (state.activeMissingRef) state.activeMissingRef.off();
 
-        state.activeOrderRef = database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(50);
+        // ⚡ ИСПРАВЛЕНИЕ: Увеличиваем лимит с 50 до 300, чтобы чек-листы не вытесняли закупку!
+        state.activeOrderRef = database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(300);
         state.activeMissingRef = database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop);
 
         state.activeOrderRef.on('value', snap => {

@@ -1651,7 +1651,13 @@
     // ==========================================
     // ⚡ ГЛАВНЫЙ РЕНДЕР И ЛОГИКА БЛОКИРОВОК
     // ==========================================
-   function triggerActiveRender() {
+   // Маленькая вспомогательная функция для точечного матчинга статусов
+    function getStatusKey(name) {
+        if (!name) return "";
+        return String(name).trim().toLowerCase().replace(/ё/g, 'е');
+    }
+
+    function triggerActiveRender() {
         if (['order', 'new_shop', 'checklist', 'stoplist_fill'].includes(state.currentMode)) {
             let pathKey = state.currentMode === 'checklist' ? 'checklist' : (state.currentMode === 'stoplist_fill' ? 'stoplist' : (state.currentMode === 'new_shop' ? 'newshop' : 'order'));
             if (state.cachedCatalogs && state.cachedCatalogs[pathKey]) {
@@ -1662,19 +1668,19 @@
             let seenInOrders = new Set();
             let cutoffTime = Date.now() - (14 * 24 * 60 * 60 * 1000); // 14 дней
 
-            // 1. Проверяем недовозы (У них приоритет)
+            // Шаг 1: Актуальные недовозы
             state.globalMissing.forEach(m => {
                 if (!m || !m.name || m.timestamp < cutoffTime) return;
-                let clean = cleanName(m.name);
+                let pKey = getStatusKey(m.name);
                 
                 if (m.status === 'transit') {
-                    statusMap[clean] = { locked: true, text: 'В пути (Недовоз) 🚚', color: '#1565C0' };
-                    seenInOrders.add(clean);
+                    statusMap[pKey] = { locked: true, text: 'В пути (Недовоз) 🚚', color: '#1565C0' };
+                    seenInOrders.add(pKey);
                 } else if (m.status === 'pending') {
-                    statusMap[clean] = { locked: true, text: 'Проверка админом ⏳', color: '#E65100' };
-                    seenInOrders.add(clean);
+                    statusMap[pKey] = { locked: true, text: 'Проверка админом ⏳', color: '#E65100' };
+                    seenInOrders.add(pKey);
                 } else if (m.status === 'canceled' && !m.added_to_basket) {
-                    let catItem = Object.values(state.productCatalog).find(c => c && cleanName(c.name) === clean);
+                    let catItem = Object.values(state.productCatalog).find(c => c && getStatusKey(c.name) === pKey);
                     if (catItem && (state.currentMode === 'order' || state.currentMode === 'new_shop')) {
                         let qtyNum = parseFloat(m.qty) || 0;
                         if (qtyNum > 0) {
@@ -1689,20 +1695,19 @@
                 }
             });
 
-            // 2. Проверяем последние заказы (Только самое свежее состояние товара)
+            // Шаг 2: Обработка заказов (Отслеживаем статус каждого товара индивидуально)
             state.globalOrders.forEach(o => {
                 if ((o.mode === 'order' || o.mode === 'new_shop') && o.timestamp >= cutoffTime) {
                     let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
                     
                     itemsArr.forEach(i => {
                         if (i && i.name && i.name !== "НЕТ ЗАКАЗА") {
-                            let cName = cleanName(i.name);
+                            let pKey = getStatusKey(i.name);
                             
-                            // ⚡ ЗАЩИТА: Если мы уже определили статус товара из более нового заказа, старые игнорируем!
-                            if (seenInOrders.has(cName)) return; 
-                            seenInOrders.add(cName);
+                            if (seenInOrders.has(pKey)) return; // Нас интересует только самое последнее состояние товара
+                            seenInOrders.add(pKey);
                             
-                            let catItem = Object.values(state.productCatalog).find(c => c && cleanName(c.name) === cName);
+                            let catItem = Object.values(state.productCatalog).find(c => c && getStatusKey(c.name) === pKey);
                             let vRaw = (i.vendor || (catItem ? catItem.vendor : 'Лента') || 'Лента').toLowerCase();
                             let isOzon = vRaw.includes('озон') || vRaw.includes('ozon');
                             let isKuper = vRaw.includes('купер') || vRaw.includes('kuper');
@@ -1711,11 +1716,11 @@
                             let isOrderedByAdmin = (i.status === 'ordered' || i.status === 'from_stoplist');
 
                             if (i.status === 'error' || i.bot_error === true || i.status === 'not_needed') {
-                                // Товар свободен, статус не вешаем
+                                // Товар отменен или ошибочный — доступен заново
                             } else if (isOrderedByAdmin && !isReceived) {
-                                statusMap[cName] = { locked: true, text: 'Оформлено (В пути) 🚚', color: '#2e7d32' };
+                                statusMap[pKey] = { locked: true, text: 'Оформлено (В пути) 🚚', color: '#2e7d32' };
                             } else if (!isOrderedByAdmin && !isReceived) {
-                                statusMap[cName] = { locked: true, text: 'Ожидает оформления ⏳', color: '#F57C00' };
+                                statusMap[pKey] = { locked: true, text: 'Ожидает оформления ⏳', color: '#F57C00' };
                             }
                         }
                     });
@@ -1724,29 +1729,28 @@
 
             state.itemStatusMap = statusMap; 
 
-            // 3. Динамическая сборка корзины
+            // Шаг 3: Наполнение корзины закупки
             if (state.currentMode === 'order' || state.currentMode === 'new_shop') {
-                // Вычищаем из черновика товары, которые уже едут или ждут оформления
+                // Если товар заблокирован (в пути или ожидает у админа) — вычищаем его из активного выбора
                 for (let key in state.userBasket) {
                     if (key === "_catinfo") continue;
-                    let cKey = cleanName(key);
-                    if (statusMap[cKey] && statusMap[cKey].locked) {
+                    if (statusMap[getStatusKey(key)] && statusMap[getStatusKey(key)].locked) {
                         delete state.userBasket[key];
                         if (state.userBasket["_catinfo"]) delete state.userBasket["_catinfo"][key];
                     }
                 }
 
-                // ⚡ ДИНАМИЧЕСКИ переносим свежий стоп-лист (Без сохранения в локальный черновик!)
-                let latestStoplist = state.globalOrders.find(o => o.mode === 'stoplist_fill');
+                // Перенос актуального стоп-листа
+                let latestStoplist = state.globalOrders.find(o => o && o.mode === 'stoplist_fill');
                 if (latestStoplist && latestStoplist.items) {
                     let itemsArr = Array.isArray(latestStoplist.items) ? latestStoplist.items : Object.values(latestStoplist.items);
                     itemsArr.forEach(i => {
-                        if (i && i.name && i.qty === 'Закончилось') {
-                            let cleanStopName = cleanName(i.name); 
-                            let catItem = Object.values(state.productCatalog).find(c => c && cleanName(c.name) === cleanStopName);
+                        if (i && i.name && i.qty === 'Закончилось' && i.name !== "Всё в наличии") {
+                            let pKey = getStatusKey(i.name);
+                            let catItem = Object.values(state.productCatalog).find(c => c && getStatusKey(c.name) === pKey);
                             
-                            // Добавляем только если товара нет в блокировках (statusMap)
-                            if (catItem && (!statusMap[cleanStopName] || !statusMap[cleanStopName].locked)) {
+                            // Попадает в корзину только если он не заблокирован текущими статусами
+                            if (catItem && (!statusMap[pKey] || !statusMap[pKey].locked)) {
                                 if (state.userBasket[catItem.name] === undefined) {
                                     state.userBasket[catItem.name] = 1;
                                     if (!state.userBasket["_catinfo"]) state.userBasket["_catinfo"] = {};
@@ -1781,7 +1785,6 @@
     }
     
     function renderProductList() {
-      // ⚡ УМНАЯ ПАМЯТЬ КАТЕГОРИЙ (ЧТОБЫ НЕ СВОРАЧИВАЛОСЬ ПРИ ОБНОВЛЕНИИ В ФОНЕ)
       if (!state.uiMemoryOrders) state.uiMemoryOrders = new Set();
       let container = document.getElementById('dynamic-list-container');
       
@@ -1794,15 +1797,13 @@
       }
 
       var html = "";
-      
       const catOrderArr = ["Стаканы и крышки", "Расходники", "Пищевые расходники", "Зерно", "Бабл ти", "Пищевые порошки", "Сиропы"];
       var categories = [...new Set(Object.values(state.productCatalog).map(i => (i && i.cat) ? String(i.cat).trim() : "Прочее"))];
       
       categories.sort((a, b) => {
           let ia = catOrderArr.indexOf(a); let ib = catOrderArr.indexOf(b);
           if (ia === -1) ia = 999; if (ib === -1) ib = 999;
-          if (ia !== ib) return ia - ib;
-          return a.localeCompare(b);
+          return (ia !== ib) ? (ia - ib) : a.localeCompare(b);
       });
 
       categories.forEach(cat => {
@@ -1811,10 +1812,8 @@
         
         html += `<div class="category-block ${isOpen}" id="block-${safeCatId}">
                     <div class="category-header" onclick="handleCategoryToggle(this)">
-                      <span>${cat}</span>
-                      <span style="opacity:0.5; font-size:14px;">▼</span>
-                    </div>
-                    <div class="category-content">`;
+                      <span>${cat}</span><span style="opacity:0.5; font-size:14px;">▼</span>
+                    </div><div class="category-content">`;
         
         let itemsInCatKeys = Object.keys(state.productCatalog).filter(k => {
             let i = state.productCatalog[k];
@@ -1834,36 +1833,26 @@
 
           let safeId = getSafeId(itemName);
           let escName = escapeName(itemName);
+          let pKey = getStatusKey(itemName); 
           
-          let clean = cleanName(itemName); 
+          let statusObj = state.itemStatusMap ? state.itemStatusMap[pKey] : null;
+          let isLocked = statusObj && statusObj.locked && (state.currentMode === 'order' || state.currentMode === 'new_shop');
           
-          let isPending = state.unprocessedItems && state.unprocessedItems.has(clean);
-          let isTransit = state.transitItems && state.transitItems.has(clean);
-          
-          let repeatClass = "";
-          let repeatLabel = "";
-          let borderStyle = "";
+          let repeatClass = ""; let repeatLabel = ""; let borderStyle = "";
 
-          if (isTransit) {
+          if (isLocked) {
               repeatClass = "repeat-item";
-              borderStyle = "border-left: 4px solid #1976D2;";
-              repeatLabel = `<span class="repeat-item-text" style="color:#1565C0;">Уже в пути 🚚</span>`;
-          } else if (isPending) {
-              repeatClass = "repeat-item";
-              borderStyle = "border-left: 4px solid #F57C00;";
-              repeatLabel = `<span class="repeat-item-text" style="color:#E65100;">Ожидает оформления ⏳</span>`;
+              borderStyle = `border-left: 4px solid ${statusObj.color};`;
+              repeatLabel = `<span class="repeat-item-text" style="color:${statusObj.color};">${statusObj.text}</span>`;
           }
 
           html += `<div class="item ${repeatClass}" style="${borderStyle}">
-                    <div style="flex:1; padding-right:15px; opacity:${(isTransit || isPending) ? '0.6' : '1'};">${repeatLabel}<span style="font-weight: 700; font-size: 15px; line-height: 1.3;">${itemName}</span></div>
+                    <div style="flex:1; padding-right:15px; opacity:${isLocked ? '0.6' : '1'};">${repeatLabel}<span style="font-weight: 700; font-size: 15px; line-height: 1.3;">${itemName}</span></div>
                     <div class="controls" id="controls-${safeId}">`;
-          
-          let isLocked = (isTransit || isPending) && (state.currentMode === 'order' || state.currentMode === 'new_shop');
 
           if (isLocked) {
-              let lockText = isTransit ? 'В пути' : 'Ожидает оформления';
-              let lockColor = isTransit ? '#1565C0' : '#E65100';
-              html += `<div style="font-size:14px; font-weight:bold; color:${lockColor}; padding:10px;">${lockText}</div>`;
+              let cleanText = statusObj.text.replace(/[^а-яА-Яa-zA-Z\s]/g, '').trim(); 
+              html += `<div style="font-size:14px; font-weight:bold; color:${statusObj.color}; padding:10px;">${cleanText}</div>`;
           }
           else if (state.currentMode === 'stoplist_fill') {
               let isStopped = state.userBasket[itemName] === 'Закончилось';
@@ -1904,7 +1893,7 @@
       categories.forEach(c => updateCategoryHighlight(c));
       updateBadgeUI();
     }
-
+    
     function handleInputFocus(input) {
         if (!input) return;
         try { input.select(); } catch(e){}
@@ -2665,12 +2654,12 @@ async function viewStopList() {
             let stopCatalog = (state.cachedCatalogs && state.cachedCatalogs.stoplist) ? state.cachedCatalogs.stoplist : {};
             let orderCatalog = (state.cachedCatalogs && state.cachedCatalogs.order) ? state.cachedCatalogs.order : {};
             let orderCatMap = {};
-            Object.values(orderCatalog).forEach(c => { if (c && c.name) orderCatMap[cleanName(c.name)] = c; });
+            Object.values(orderCatalog).forEach(c => { if (c && c.name) orderCatMap[getStatusKey(c.name)] = c; });
 
             let stopInfoMap = {};
             Object.values(stopCatalog).forEach(c => {
                 if (c && c.name) {
-                    let nameClean = cleanName(c.name); 
+                    let nameClean = getStatusKey(c.name); 
                     if (!stopInfoMap[nameClean]) stopInfoMap[nameClean] = { sez: new Set(), main: new Set(), cat: c.cat || "" };
                     if (c.sez) c.sez.split(',').forEach(s => { if (s.trim()) stopInfoMap[nameClean].sez.add(s.trim()); });
                     if (c.main) c.main.split(',').forEach(s => { if (s.trim()) stopInfoMap[nameClean].main.add(s.trim()); });
@@ -2701,14 +2690,13 @@ async function viewStopList() {
 
             itemsArr.forEach(i => {
                 if(!i || !i.name || i.qty !== 'Закончилось' || i.name === 'Всё в наличии') return;
-                let cleanedItemName = cleanName(i.name);
+                let cleanedItemName = getStatusKey(i.name);
                 if (seenNames.has(cleanedItemName)) return;
                 seenNames.add(cleanedItemName);
 
                 let stopInfo = stopInfoMap[cleanedItemName] || { sez: new Set(), main: new Set(), cat: "" };
                 let info = { sez: Array.from(stopInfo.sez).join(", "), main: Array.from(stopInfo.main).join(", "), cat: stopInfo.cat };
                 let inOrderCat = orderCatMap[cleanedItemName];
-                let isSyrup = (info.cat && String(info.cat).toLowerCase().includes("сироп")) || (inOrderCat && inOrderCat.cat && String(inOrderCat.cat).toLowerCase().includes("сироп")) || cleanedItemName.includes("сироп");
 
                 let statHtml = "";
                 if (inOrderCat) {
@@ -2720,6 +2708,8 @@ async function viewStopList() {
                         statHtml = `<span style="background:#f5f5f5; color:#888; padding:2px 5px; border-radius:4px; font-size:11px; font-weight:900; margin-left:5px;">Не заказано ➖</span>`;
                     }
                 }
+
+                let isSyrup = (info.cat && String(info.cat).toLowerCase().includes("сироп")) || cleanedItemName.includes("сироп");
 
                 let affectedHtml = "";
                 if (info.sez.trim() !== "" || info.main.trim() !== "") {
@@ -2766,67 +2756,33 @@ async function viewStopList() {
     async function autoRemoveFromStoplist(shop, itemNamesArray) {
         if (!itemNamesArray || itemNamesArray.length === 0) return;
         try {
-            let shopOrders = [];
-            // Шаг 1: Ищем последний заполненный стоп-лист кофейни
-            try {
-                let snap = await database.ref("orders").orderByChild("shop").equalTo(shop).limitToLast(50).once("value");
-                snap.forEach(c => {
-                    let val = c.val();
-                    if (val && val.mode === 'stoplist_fill') { val.key = c.key; shopOrders.push(val); }
-                });
-            } catch (e) {
-                let snap = await database.ref("orders").limitToLast(600).once("value");
-                snap.forEach(c => {
-                    let val = c.val();
-                    if (val && val.shop === shop && val.mode === 'stoplist_fill') { val.key = c.key; shopOrders.push(val); }
-                });
-            }
+            // ⚡ НУЛЕВОЕ ОЖИДАНИЕ: Достаем стоп-лист прямо из загруженного массива
+            let latestStoplist = state.globalOrders.find(o => o && o.mode === 'stoplist_fill');
+            if (!latestStoplist || !latestStoplist.key) return;
             
-            if (shopOrders.length === 0) return;
-            shopOrders.sort((a,b) => b.timestamp - a.timestamp);
-            let latestStoplist = shopOrders[0];
-            if (!latestStoplist.items) return;
-            
-            let itemsArr = Array.isArray(latestStoplist.items) ? latestStoplist.items : Object.values(latestStoplist.items);
+            let itemsArr = Array.isArray(latestStoplist.items) ? latestStoplist.items : Object.values(latestStoplist.items || {});
             itemsArr = itemsArr.filter(i => i !== null && i !== undefined);
 
-            // Шаг 2: Достаем справочник связей "Продукт -> Напитки"
             let stopCatalog = (state.cachedCatalogs && state.cachedCatalogs.stoplist) ? state.cachedCatalogs.stoplist : {};
-            
-            // Создаем умное множество для удаления (туда полетят и продукты, и напитки)
             let namesToRemove = new Set();
             
             itemNamesArray.forEach(productName => {
-                let cleanProd = cleanName(productName);
-                namesToRemove.add(cleanProd); // Добавляем сам продукт в очередь на вылет
+                let pNameKey = getStatusKey(productName);
+                namesToRemove.add(pNameKey);
                 
-                // Ищем этот продукт в каталоге связей, чтобы найти его напитки
                 Object.values(stopCatalog).forEach(c => {
-                    if (c && c.name && cleanName(c.name) === cleanProd) {
-                        // Извлекаем привязанные сезонные напитки напитка
-                        if (c.sez) {
-                            c.sez.split(',').forEach(s => {
-                                if (s.trim()) namesToRemove.add(cleanName(s.trim()));
-                            });
-                        }
-                        // Извлекаем привязанные основные напитки напитка
-                        if (c.main) {
-                            c.main.split(',').forEach(s => {
-                                if (s.trim()) namesToRemove.add(cleanName(s.trim()));
-                            });
-                        }
+                    if (c && c.name && getStatusKey(c.name) === pNameKey) {
+                        if (c.sez) c.sez.split(',').forEach(s => { if (s.trim()) namesToRemove.add(getStatusKey(s.trim())); });
+                        if (c.main) c.main.split(',').forEach(s => { if (s.trim()) namesToRemove.add(getStatusKey(s.trim())); });
                     }
                 });
             });
 
-            // Шаг 3: Фильтруем стоп-лист, удаляя совпадения по продуктам и напиткам
             let newItems = itemsArr.filter(i => {
                 if (!i || !i.name) return false;
-                let iNameClean = cleanName(i.name);
-                return !namesToRemove.has(iNameClean); // Удаляем, если имя есть в нашем черном списке
+                return !namesToRemove.has(getStatusKey(i.name));
             });
             
-            // Шаг 4: Если изменения произошли — сохраняем обновленный стоп-лист в базу
             if (newItems.length !== itemsArr.length) {
                 if (newItems.length === 0) {
                     await database.ref(`orders/${latestStoplist.key}/items`).set([{name: "Всё в наличии", qty: "В наличии"}]);
@@ -3075,23 +3031,25 @@ function showLastOrder() {
         
         try {
             let keys = keysStr.split(',');
+            let promises = [];
             
-            // ⚡ ИСПРАВЛЕНИЕ: Используем .update() вместо .transaction()
-            // Это полностью решает проблему "пропадающего списка" и ошибок disconnect
+            // ⚡ СВЕРХБЫСТРЫЙ ПАКЕТ: Отправляем все обновления в базу одновременно
             for (let k of keys) {
                 let updates = {};
                 updates[vendorKey + '_received'] = true;
                 updates[vendorKey + '_received_ts'] = Date.now();
-                await database.ref(`orders/${k}`).update(updates);
+                promises.push(database.ref(`orders/${k}`).update(updates));
             }
 
             for(let name in missingMap) {
-                await database.ref("missing_items").push({ 
+                promises.push(database.ref("push_items_missing").push({ 
                     shop: state.currentShop, name: name, qty: missingMap[name], 
                     status: "pending", timestamp: Date.now() 
-                });
+                }));
             }
             
+            await Promise.all(promises); // Ждем завершения всех сетевых задач за один миг
+
             if (arrivedItemsToClear.length > 0) {
                 await autoRemoveFromStoplist(state.currentShop, arrivedItemsToClear);
             }

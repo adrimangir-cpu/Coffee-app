@@ -3076,16 +3076,13 @@ function showLastOrder() {
         try {
             let keys = keysStr.split(',');
             
+            // ⚡ ИСПРАВЛЕНИЕ: Используем .update() вместо .transaction()
+            // Это полностью решает проблему "пропадающего списка" и ошибок disconnect
             for (let k of keys) {
-                await database.ref(`orders/${k}`).transaction((currentOrder) => {
-                    if (currentOrder) {
-                        if (currentOrder[vendorKey + '_received'] === true) return; 
-                        currentOrder[vendorKey + '_received'] = true;
-                        currentOrder[vendorKey + '_received_ts'] = Date.now();
-                        return currentOrder;
-                    }
-                    return currentOrder;
-                });
+                let updates = {};
+                updates[vendorKey + '_received'] = true;
+                updates[vendorKey + '_received_ts'] = Date.now();
+                await database.ref(`orders/${k}`).update(updates);
             }
 
             for(let name in missingMap) {
@@ -3105,10 +3102,10 @@ function showLastOrder() {
                 }
             }
 
-            hideGlobalLoader(); // ⚡ Снимаем лоадер!
+            hideGlobalLoader(); 
             showLastOrder(); 
         } catch(e) {
-            hideGlobalLoader(); // ⚡ Снимаем лоадер!
+            hideGlobalLoader(); 
             showPopupError("Ошибка", e.message);
             showLastOrder();
         }
@@ -3126,24 +3123,23 @@ function showLastOrder() {
         try {
             let namesToRemove = [];
             for (let key in state.missingChoices) {
-                await database.ref("missing_items/" + key).transaction((currentMissing) => {
-                    if (currentMissing) {
-                        currentMissing.status = 'arrived';
-                        currentMissing.timestamp = Date.now();
-                        return currentMissing;
-                    }
-                    return currentMissing;
+                
+                // ⚡ ИСПРАВЛЕНИЕ: Гладкое сохранение через .update()
+                await database.ref("missing_items/" + key).update({
+                    status: 'arrived',
+                    timestamp: Date.now()
                 });
+                
                 namesToRemove.push(state.missingChoices[key]);
             }
             
             await autoRemoveFromStoplist(state.currentShop, namesToRemove);
             
             state.missingChoices = {};
-            hideGlobalLoader(); // ⚡ Снимаем лоадер!
+            hideGlobalLoader(); 
             showLastOrder(); 
         } catch(e) {
-            hideGlobalLoader(); // ⚡ Снимаем лоадер!
+            hideGlobalLoader(); 
             showPopupError("Ошибка", e.message);
             showLastOrder();
         }

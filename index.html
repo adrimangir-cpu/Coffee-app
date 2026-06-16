@@ -1651,7 +1651,7 @@
     // ==========================================
     // ⚡ ГЛАВНЫЙ РЕНДЕР И ЛОГИКА БЛОКИРОВОК
     // ==========================================
-    function triggerActiveRender() {
+   function triggerActiveRender() {
         if (['order', 'new_shop', 'checklist', 'stoplist_fill'].includes(state.currentMode)) {
             let pathKey = state.currentMode === 'checklist' ? 'checklist' : (state.currentMode === 'stoplist_fill' ? 'stoplist' : (state.currentMode === 'new_shop' ? 'newshop' : 'order'));
             if (state.cachedCatalogs && state.cachedCatalogs[pathKey]) {
@@ -1659,16 +1659,20 @@
             }
 
             let statusMap = {}; 
-            let cutoffTime = Date.now() - (20 * 24 * 60 * 60 * 1000); 
+            let seenInOrders = new Set();
+            let cutoffTime = Date.now() - (14 * 24 * 60 * 60 * 1000); // 14 дней
 
+            // 1. Проверяем недовозы (У них приоритет)
             state.globalMissing.forEach(m => {
                 if (!m || !m.name || m.timestamp < cutoffTime) return;
                 let clean = cleanName(m.name);
                 
                 if (m.status === 'transit') {
                     statusMap[clean] = { locked: true, text: 'В пути (Недовоз) 🚚', color: '#1565C0' };
+                    seenInOrders.add(clean);
                 } else if (m.status === 'pending') {
                     statusMap[clean] = { locked: true, text: 'Проверка админом ⏳', color: '#E65100' };
+                    seenInOrders.add(clean);
                 } else if (m.status === 'canceled' && !m.added_to_basket) {
                     let catItem = Object.values(state.productCatalog).find(c => c && cleanName(c.name) === clean);
                     if (catItem && (state.currentMode === 'order' || state.currentMode === 'new_shop')) {
@@ -1685,6 +1689,7 @@
                 }
             });
 
+            // 2. Проверяем последние заказы (Только самое свежее состояние товара)
             state.globalOrders.forEach(o => {
                 if ((o.mode === 'order' || o.mode === 'new_shop') && o.timestamp >= cutoffTime) {
                     let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
@@ -1692,11 +1697,12 @@
                     itemsArr.forEach(i => {
                         if (i && i.name && i.name !== "НЕТ ЗАКАЗА") {
                             let cName = cleanName(i.name);
-                            if (statusMap[cName]) return; 
+                            
+                            // ⚡ ЗАЩИТА: Если мы уже определили статус товара из более нового заказа, старые игнорируем!
+                            if (seenInOrders.has(cName)) return; 
+                            seenInOrders.add(cName);
                             
                             let catItem = Object.values(state.productCatalog).find(c => c && cleanName(c.name) === cName);
-                            
-                            // ⚡ РАСПОЗНАЕМ КУПЕР
                             let vRaw = (i.vendor || (catItem ? catItem.vendor : 'Лента') || 'Лента').toLowerCase();
                             let isOzon = vRaw.includes('озон') || vRaw.includes('ozon');
                             let isKuper = vRaw.includes('купер') || vRaw.includes('kuper');
@@ -1705,7 +1711,7 @@
                             let isOrderedByAdmin = (i.status === 'ordered' || i.status === 'from_stoplist');
 
                             if (i.status === 'error' || i.bot_error === true || i.status === 'not_needed') {
-                                // Товар свободен
+                                // Товар свободен, статус не вешаем
                             } else if (isOrderedByAdmin && !isReceived) {
                                 statusMap[cName] = { locked: true, text: 'Оформлено (В пути) 🚚', color: '#2e7d32' };
                             } else if (!isOrderedByAdmin && !isReceived) {
@@ -1718,15 +1724,19 @@
 
             state.itemStatusMap = statusMap; 
 
+            // 3. Динамическая сборка корзины
             if (state.currentMode === 'order' || state.currentMode === 'new_shop') {
+                // Вычищаем из черновика товары, которые уже едут или ждут оформления
                 for (let key in state.userBasket) {
                     if (key === "_catinfo") continue;
-                    if (statusMap[cleanName(key)] && statusMap[cleanName(key)].locked) {
+                    let cKey = cleanName(key);
+                    if (statusMap[cKey] && statusMap[cKey].locked) {
                         delete state.userBasket[key];
                         if (state.userBasket["_catinfo"]) delete state.userBasket["_catinfo"][key];
                     }
                 }
 
+                // ⚡ ДИНАМИЧЕСКИ переносим свежий стоп-лист (Без сохранения в локальный черновик!)
                 let latestStoplist = state.globalOrders.find(o => o.mode === 'stoplist_fill');
                 if (latestStoplist && latestStoplist.items) {
                     let itemsArr = Array.isArray(latestStoplist.items) ? latestStoplist.items : Object.values(latestStoplist.items);
@@ -1735,6 +1745,7 @@
                             let cleanStopName = cleanName(i.name); 
                             let catItem = Object.values(state.productCatalog).find(c => c && cleanName(c.name) === cleanStopName);
                             
+                            // Добавляем только если товара нет в блокировках (statusMap)
                             if (catItem && (!statusMap[cleanStopName] || !statusMap[cleanStopName].locked)) {
                                 if (state.userBasket[catItem.name] === undefined) {
                                     state.userBasket[catItem.name] = 1;
@@ -2229,7 +2240,7 @@
                   let finalDataToSave = {
                       shop: state.currentShop, mode: state.currentMode, items: flatData,
                       comment: mergedComments.join(" | "), timestamp: Date.now(), userId: globalTgUserId,
-                      svod: false, ordered: false, lenta_received: false, ozon_received: false
+                      svod: false, ordered: false, lenta_received: false, ozon_received: false, kuper_received: false
                   };
 
                   if (pendingKeyToUpdate) {
@@ -2273,7 +2284,7 @@
                       shop: state.currentShop, mode: state.currentMode, items: flatData,
                       comment: document.getElementById('comment') ? document.getElementById('comment').value : "",
                       timestamp: Date.now(), userId: globalTgUserId, svod: false, ordered: false,
-                      lenta_received: false, ozon_received: false
+                      lenta_received: false, ozon_received: false, kuper_received: false
                   };
 
                   await database.ref(`orders/${newRecordKey}`).transaction((currentRecord) => {
@@ -2282,45 +2293,8 @@
                   });
               }
 
-              // ⚡ ИСПРАВЛЕНИЕ: Мгновенное сохранение черновика с ЖЕСТКИМ ФИЛЬТРОМ
-              if (state.currentMode === 'stoplist_fill') {
-                  let activeItems = new Set();
-                  state.globalMissing.forEach(m => {
-                      if (m && m.status !== 'arrived' && m.status !== 'canceled') activeItems.add(cleanName(m.name));
-                  });
-                  state.globalOrders.forEach(o => {
-                      if (o && (o.mode === 'order' || o.mode === 'new_shop')) {
-                          let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
-                          itemsArr.forEach(i => {
-                              if (i && i.name && i.status !== 'error') activeItems.add(cleanName(i.name));
-                          });
-                      }
-                  });
-
-                  // ⚡ ДОСТАЕМ СПРАВОЧНИК ЗАКУПКИ ИЗ ПАМЯТИ
-                  let orderCat = (state.cachedCatalogs && state.cachedCatalogs['order']) ? Object.values(state.cachedCatalogs['order']) : [];
-                  let newCat = (state.cachedCatalogs && state.cachedCatalogs['newshop']) ? Object.values(state.cachedCatalogs['newshop']) : [];
-                  let combinedCatalog = orderCat.concat(newCat);
-
-                  let draft = JSON.parse(localStorage.getItem("draft_" + state.currentShop + "_order")) || {basket:{}, time: Date.now()};
-                  if(!draft.basket["_catinfo"]) draft.basket["_catinfo"] = {};
-                  
-                  flatData.forEach(item => {
-                      if (item.qty === 'Закончилось') { 
-                          let safeName = cleanName(item.name);
-                          if (!activeItems.has(safeName)) {
-                              // ⚡ ЖЕСТКАЯ ПРОВЕРКА: Только если товар есть в справочнике ЗАКУПКИ!
-                              let foundItem = combinedCatalog.find(c => c && cleanName(c.name) === safeName);
-                              if (foundItem) {
-                                  draft.basket[foundItem.name] = 1; 
-                                  draft.basket["_catinfo"][foundItem.name] = foundItem.cat || "Прочее"; 
-                              }
-                          }
-                      }
-                  });
-                  draft.time = Date.now();
-                  localStorage.setItem("draft_" + state.currentShop + "_order", JSON.stringify(draft));
-              }
+              // ⚡ МЫ ПОЛНОСТЬЮ УДАЛИЛИ БЛОК ПРИНУДИТЕЛЬНОЙ ЗАПИСИ СТОП-ЛИСТА В ЧЕРНОВИК!
+              // Теперь Стоп-лист работает быстро и не засоряет память телефона.
 
               localStorage.removeItem("draft_" + state.currentShop + "_" + state.currentMode);
           } catch(e) {

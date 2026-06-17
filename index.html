@@ -1629,7 +1629,6 @@
       let pathKey = mode === 'checklist' ? 'checklist' : (mode === 'stoplist_fill' ? 'stoplist' : (mode === 'new_shop' ? 'newshop' : 'order'));
       loadSettings();
 
-      // ⚡ ПОКАЗЫВАЕМ АНИМАЦИЮ ТОЛЬКО ЕСЛИ НЕТ КЭША (ЕСЛИ КЭШ ЕСТЬ - ГРУЗИМ МГНОВЕННО)
       if (!state.cachedCatalogs || !state.cachedCatalogs[pathKey] || Object.keys(state.cachedCatalogs[pathKey]).length === 0) {
           showGlobalLoader("Скачиваю базу..."); 
           try {
@@ -1637,12 +1636,19 @@
               let fresh = snap.val() || {};
               if (!state.cachedCatalogs) state.cachedCatalogs = {};
               state.cachedCatalogs[pathKey] = fresh;
-              if (typeof saveToRealCache === 'function') saveToRealCache(pathKey, fresh);
-          } catch(e) {
-              console.error("Ошибка загрузки:", e);
-          }
+              saveToRealCache(pathKey, fresh);
+          } catch(e) { console.error("Ошибка загрузки:", e); }
           hideGlobalLoader(); 
       }
+      
+      database.ref('catalogs/' + pathKey).on('value', snap => {
+          let fresh = snap.val();
+          if (fresh && state.cachedCatalogs) {
+              state.cachedCatalogs[pathKey] = fresh;
+              saveToRealCache(pathKey, fresh);
+              triggerActiveRender();
+          }
+      });
       
       restoreFromDraft();
       triggerActiveRender();
@@ -2474,12 +2480,12 @@
         }
     }
     
-   async function fetchBossReport(category) {
+  async function fetchBossReport(category) {
       showReportOverlay("Формирование отчета: " + category + "...");
       
       try {
-          // ⚡ ИСПРАВЛЕНИЕ: Ставим жесткий лимит limitToLast(120), чтобы база не читала прошлый год
-          const ordersSnap = await database.ref("orders").orderByKey().limitToLast(120).once("value");
+          // ⚡ ИСПРАВЛЕНИЕ: limitToLast(150) — база выдаст срез за секунды без лагов
+          const ordersSnap = await database.ref("orders").orderByKey().limitToLast(150).once("value");
           
           let latestChecklists = {}; 
           ordersSnap.forEach(child => {
@@ -2538,10 +2544,11 @@
           let html = `<div class="report-card"><div class="report-card-title">${category.toUpperCase()}</div>`;
           for (let s in reportByShop) {
             let dateStr = new Date(reportByShop[s].date).toLocaleDateString('ru-RU');
+            let displayName = s === 'Красноказарменная' ? 'МЭИ' : s;
             if(isSyrupReq) {
-                html += `<div style="margin-bottom:12px; font-size:16px;"><b style="font-size:17px; color:#311B92;">${s} <span style="font-size:13px; color:#888;">(${dateStr})</span></b>: ${reportByShop[s].items.join(", ")}</div>`;
+                html += `<div style="margin-bottom:12px; font-size:16px;"><b style="font-size:17px; color:#311B92;">${displayName} <span style="font-size:13px; color:#888;">(${dateStr})</span></b>: ${reportByShop[s].items.join(", ")}</div>`;
             } else {
-                html += `<div style="margin-bottom:15px; font-size:16px;"><b style="font-size:17px; color:#311B92;">${s} <span style="font-size:13px; color:#888;">(${dateStr})</span></b>:<br>${reportByShop[s].items.join("<br>")}</div>`;
+                html += `<div style="margin-bottom:15px; font-size:16px;"><b style="font-size:17px; color:#311B92;">${displayName} <span style="font-size:13px; color:#888;">(${dateStr})</span></b>:<br>${reportByShop[s].items.join("<br>")}</div>`;
             }
           }
           document.getElementById('report-content-area').innerHTML = html + `</div>`;
@@ -2584,8 +2591,8 @@
             let isBossView = (cmd === 'status_checklist_boss');
             
             try {
-                // ⚡ ИСПРАВЛЕНИЕ: Ставим лимит limitToLast(120) вместо бесконечной выгрузки
-                let snap = await database.ref("orders").orderByKey().limitToLast(120).once("value"); 
+                // ⚡ ИСПРАВЛЕНИЕ: Изменен лимит до 150 записей для мгновенного ответа базы
+                let snap = await database.ref("orders").orderByKey().limitToLast(150).once("value"); 
                 let filledChecklist = new Set();
                 let filledOrder = {}; 
                 
@@ -2645,7 +2652,6 @@
             }
         }
     }
-  
 
 async function viewStopList() {
         triggerHaptic();
@@ -3479,8 +3485,8 @@ function showLastOrder() {
  // ==========================================
     // ⚡ ГЛАВНЫЙ СТАРТ ПРИЛОЖЕНИЯ (КЛЮЧ ЗАЖИГАНИЯ)
     // ==========================================
-    window.onload = async () => { 
-        showGlobalLoader("Запуск приложения..."); // ⚡ Анимация при самом первом входе
+   window.onload = async () => { 
+        showGlobalLoader("Запуск приложения..."); 
         try { 
             Telegram.WebApp.ready(); Telegram.WebApp.expand(); 
             globalTgUserId = (Telegram.WebApp.initDataUnsafe && Telegram.WebApp.initDataUnsafe.user) ? String(Telegram.WebApp.initDataUnsafe.user.id) : "708179577";
@@ -3488,7 +3494,7 @@ function showLastOrder() {
         
         state.cachedCatalogs = {};
         
-        // ⚡ МГНОВЕННО ДОСТАЕМ ВСЮ БАЗУ ИЗ ВЕЧНОГО КЭША
+        // Мгновенно поднимаем локальный кэш, если он есть
         const paths = ['order', 'newshop', 'stoplist', 'checklist', 'menu'];
         for (let p of paths) {
             let cachedData = await loadFromRealCache(p);
@@ -3498,10 +3504,9 @@ function showLastOrder() {
         state.globalOrders = []; state.globalMissing = [];
         restoreMpDraft(); 
         
-        hideGlobalLoader(); // ⚡ Выключаем загрузчик, показываем кофейни
+        hideGlobalLoader(); 
         showScreen('step-1', false);
         
-        setTimeout(() => { startRealtimeUpdates(); }, 100);
     };
     
   </script>

@@ -1117,10 +1117,22 @@
             }
             else if (type === 'missing') {
                 isMissingEditMode = false; missingDeletions.clear(); tempMissingStatus = {};
-                cachedData.missing = await fetchOptimistic('missing_items');
+                // ⚡ ИСПРАВЛЕНИЕ: Подтягиваем недостающие базы, чтобы вкладе было с чем работать
+                let [resMiss, resOrd, resCat, resCatNew] = await Promise.all([
+                    fetchOptimistic('missing_items'),
+                    fetchOptimistic('orders'),
+                    fetchOptimistic('catalogs/order'),
+                    fetchOptimistic('catalogs/newshop')
+                ]);
                 if (currentTabType !== fetchId) return;
+                
+                cachedData.missing = resMiss;
+                cachedData.orders = resOrd;
+                cachedData.catalogOrder = { ...(resCat || {}), ...(resCatNew || {}) };
+                
                 renderMissing();
             }
+                
             else if (type === 'stoplists') {
                 cachedData.orders = await fetchOptimistic('orders');
                 if (currentTabType !== fetchId) return;
@@ -3330,7 +3342,8 @@ function renderGraphsTab() {
         let btnEditText = isMissingEditMode ? "💾 Сохранить изменения" : "✏️ Редактировать";
 
         let latestOrderMap = {};
-        Object.values(cachedData.orders).forEach(o => {
+        // ⚡ ИСПРАВЛЕНИЕ 1: Железный щит || {} от падения, если заказы не успели загрузиться
+        Object.values(cachedData.orders || {}).forEach(o => {
             if (o && (o.mode === 'order' || o.mode === 'new_shop')) {
                 if (!latestOrderMap[o.shop]) latestOrderMap[o.shop] = {};
                 let itemsArr = Array.isArray(o.items) ? o.items : (typeof o.items === 'object' && o.items !== null ? Object.values(o.items) : []);
@@ -3364,7 +3377,10 @@ function renderGraphsTab() {
         let hasActive = false; 
         let hasHistory = false; 
         let cutoff = Date.now() - (30 * 24 * 60 * 60 * 1000);
-        let missingArr = Object.keys(cachedData.missing).map(k => ({key: k, ...cachedData.missing[k]}));
+        
+        // ⚡ ИСПРАВЛЕНИЕ 2: Щит || {} для базы недовозов
+        let missingData = cachedData.missing || {};
+        let missingArr = Object.keys(missingData).map(k => ({key: k, ...missingData[k]}));
         
         missingArr.sort((a,b) => (b.timestamp || 0) - (a.timestamp || 0));
 
@@ -3453,7 +3469,7 @@ function renderGraphsTab() {
             <div class='card' style='text-align:center; font-weight:900; color:#888; margin-bottom:20px;'>Нет активных недовозов.</div>`;
         }
         
-        let html = activeHtml + `<p style='margin-top:0px; margin-bottom:30px; font-size:15px; color:#777; background:#fff9c4; padding:15px; border-radius:10px;'>💡 <b>Подсказка:</b> Если выбрать статус <b>"НЕТ В НАЛИЧИИ"</b>, товар вернется в корзину сотруднику в мини-приложении.</p>`;
+        let html = activeHtml + `<p style='margin-top:0px; margin-bottom:30px; font-size:15px; color:#777; background:#fff9c4; padding:15px; border-radius:10px;'>💡 <b>Подсказка:</b> Если выбрать статус <b>"НЕТ В НАЛИЧИИ"</b> (ОТМЕНЕН), товар вернется в корзину сотруднику в мини-приложении.</p>`;
         
         if (hasHistory) {
             let isHistOpen = expandedDivs.has('miss-history-container');

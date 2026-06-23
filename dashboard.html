@@ -705,6 +705,55 @@
         }
     }
 
+    // ⚡ ГЛОБАЛЬНАЯ, СТРОГАЯ ЛОГИКА ДЛЯ СВЕРКИ ОЗОНА! (Используется и в Своде, и в Стоп-листах)
+    window.getOzonRepeatStatus = function(shop, itemName, cachedData) {
+        // 1. Находим последний реальный (отправленный админом) заказ кофейни
+        let allOrders = Object.values(cachedData.orders || {})
+            .filter(o => o && (o.mode === 'order' || o.mode === 'new_shop') && o.ordered)
+            .sort((a,b) => b.timestamp - a.timestamp);
+        
+        let lastOrder = allOrders.find(o => o.shop === shop);
+        if (!lastOrder) return { isRepeat: false, isReceived: false, dateStr: "" };
+
+        let lastOrderItems = Array.isArray(lastOrder.items) ? lastOrder.items : (typeof lastOrder.items === 'object' && lastOrder.items !== null ? Object.values(lastOrder.items) : []);
+        
+        // 2. СТРОГОЕ СОВПАДЕНИЕ ПО ИМЕНИ (Без удаления цифр, чтобы не путать разные товары)
+        let exactNameLow = String(itemName).trim().toLowerCase();
+        let itemInLast = lastOrderItems.find(i => 
+            i && String(i.name).trim().toLowerCase() === exactNameLow && 
+            (i.status === 'ordered' || i.status === 'already_received' || i.status === 'from_stoplist')
+        );
+        
+        if (!itemInLast) return { isRepeat: false, isReceived: false, dateStr: "" };
+
+        // 3. Товар ТОЧНО был в прошлом заказе. Проверяем, нажимали ли приемку.
+        let isReceived = false;
+        let dateStr = "";
+
+        // Проверяем недовозы по этому товару (строго после даты прошлого заказа)
+        let missingData = cachedData.missing || {};
+        let missingItem = Object.values(missingData)
+            .sort((a,b) => b.timestamp - a.timestamp)
+            .find(m => m && m.shop === shop && String(m.name).trim().toLowerCase() === exactNameLow && m.timestamp >= (lastOrder.timestamp - 5000));
+
+        if (missingItem) {
+            // Если падал в недовоз, верим ТОЛЬКО кнопке "Доехал"
+            if (missingItem.status === 'arrived') {
+                isReceived = true;
+                dateStr = new Date(missingItem.timestamp).toLocaleDateString('ru-RU', {day: '2-digit', month: '2-digit'});
+            }
+        } else {
+            // Если в недовоз не падал, верим кнопке приемки всего заказа Озона
+            if (lastOrder.ozon_received) {
+                isReceived = true;
+                let ts = lastOrder.ozon_received_ts || lastOrder.timestamp;
+                dateStr = new Date(ts).toLocaleDateString('ru-RU', {day: '2-digit', month: '2-digit'});
+            }
+        }
+        
+        return { isRepeat: true, isReceived: isReceived, dateStr: dateStr };
+    };
+    
     async function triggerPcBuild(cmd) {
         if (!confirm(`Отправить команду ${cmd} на ПК?`)) return;
         try {
@@ -1961,58 +2010,21 @@ async function renderOrdersSvod() {
         let totalOzon = 0;
         let totalKuper = 0;
         let isOrdHistOpen = expandedDivs.has('history_orders_list');
-        
-        // ⚡ Собираем даты приемки товаров (когда сотрудник нажал "Доехал" в недовозах)
-        let missingData = cachedData.missing || {}; 
-        let arrivedItems = {};
-        Object.values(missingData).forEach(m => {
-            if (m && m.status === 'arrived') {
-                if (!arrivedItems[m.shop]) arrivedItems[m.shop] = {};
-                let ts = m.timestamp || 0;
-                if (!arrivedItems[m.shop][cleanName(m.name)] || ts > arrivedItems[m.shop][cleanName(m.name)].ts) {
-                    arrivedItems[m.shop][cleanName(m.name)] = { 
-                        ts: ts, 
-                        date: new Date(ts).toLocaleDateString('ru-RU', {day: '2-digit', month: '2-digit'}) 
-                    };
-                }
-            }
-        });
 
         let vendorMap = {};
         if (cachedData.catalogOrder) Object.values(cachedData.catalogOrder).forEach(c => { if (c && c.name) vendorMap[c.name] = (c.vendor || 'Лента').toLowerCase(); });
 
-        let lastOrderItems = {};
-        let lastOrderTimestamp = {};
-        let lastOrderOzonReceived = {}; 
-        let lastOrderOzonReceivedTs = {}; 
-        let lastOrderLentaReceived = {};
-        
         let todaysOrders = [];
         let historyOrdersList = [];
         let allOrders = Object.values(cachedData.orders || {}).sort((a,b) => (b.timestamp || 0) - (a.timestamp || 0));
         let cutoffMonth = Date.now() - (30 * 24 * 60 * 60 * 1000); 
 
-        // Ищем только последний заказ для проверки Озона
+        // ⚡ Убрана старая мусорная логика, просто делим заказы
         allOrders.forEach(o => {
             if (o && (o.mode === 'order' || o.mode === 'new_shop')) {
                 if (!o.ordered) todaysOrders.push(o);
-                else {
-                    if ((o.timestamp || 0) >= cutoffMonth) historyOrdersList.push(o);
-                    if (!lastOrderItems[o.shop]) { 
-                        lastOrderItems[o.shop] = new Set(); 
-                        lastOrderTimestamp[o.shop] = o.timestamp || 0; 
-                        lastOrderOzonReceived[o.shop] = !!o.ozon_received; 
-                        lastOrderOzonReceivedTs[o.shop] = o.ozon_received_ts || o.timestamp || 0;
-                        lastOrderLentaReceived[o.shop] = !!o.lenta_received; 
-                        
-                        let itemsArr = Array.isArray(o.items) ? o.items : (typeof o.items === 'object' && o.items !== null ? Object.values(o.items) : []); 
-                        itemsArr.forEach(i => { 
-                            // ⚡ ГЛАВНОЕ ИСПРАВЛЕНИЕ: Добавляем в проверку повторов ТОЛЬКО те товары, которые АДМИН РЕАЛЬНО ЗАКАЗАЛ
-                            if(i && i.name && (i.status === 'ordered' || i.status === 'already_received')) {
-                                lastOrderItems[o.shop].add(cleanName(i.name)); 
-                            } 
-                        }); 
-                    }
+                else if ((o.timestamp || 0) >= cutoffMonth) {
+                    historyOrdersList.push(o);
                 }
             }
         });
@@ -2139,7 +2151,7 @@ async function renderOrdersSvod() {
                                 baseStatus = 'pending';
                             }
 
-                            // ⚡ ЛОГИКА ТОЛЬКО ДЛЯ ОЗОНА: Проверка на повторы и приемку ИСКЛЮЧИТЕЛЬНО из того, что ты заказала
+                            // ⚡ ЛОГИКА ТОЛЬКО ДЛЯ ОЗОНА: Строгая проверка через единую функцию
                             let repeatBadge = "";
                             let rowBg = "";
                             let isRepeat = false;
@@ -2147,26 +2159,12 @@ async function renderOrdersSvod() {
                             let itemArrDate = ""; 
 
                             if (isOzon) {
-                                // Проверяем, был ли этот товар в твоей последней РЕАЛЬНОЙ закупке
-                                let isInLastOrder = lastOrderItems[shop] && lastOrderItems[shop].has(cleanName(name));
-                                if (isInLastOrder) {
+                                let ozonStat = window.getOzonRepeatStatus(shop, name, cachedData);
+                                if (ozonStat.isRepeat) {
                                     isRepeat = true;
-                                    let arrInfo = arrivedItems[shop] && arrivedItems[shop][cleanName(name)];
-                                    
-                                    // ⚡ Убеждаемся, что статус "Доехал" был поставлен ПОСЛЕ того, как ты сделала заказ (а не месяц назад)
-                                    let validArrInfo = (arrInfo && arrInfo.ts >= (lastOrderTimestamp[shop] - 86400000)) ? arrInfo : null;
-                                    
-                                    let isReceived = lastOrderOzonReceived[shop] || validArrInfo;
-
-                                    if (isReceived) {
-                                        if (validArrInfo) {
-                                            itemArrDate = validArrInfo.date;
-                                        } else {
-                                            let ts = lastOrderOzonReceivedTs[shop];
-                                            if (ts) itemArrDate = new Date(ts).toLocaleDateString('ru-RU', {day: '2-digit', month: '2-digit'});
-                                        }
+                                    if (ozonStat.isReceived) {
+                                        itemArrDate = ozonStat.dateStr;
                                         let dateDisplay = itemArrDate ? ` ${itemArrDate}` : "";
-                                        
                                         repeatBadge = `<span style='color:#0277bd; font-size:12px; margin-left:5px; font-weight:bold;'>⚠️ Повтор (Принят${dateDisplay} ✅)</span>`;
                                         forceStatus = 'already_received'; 
                                     } else {
@@ -2180,7 +2178,7 @@ async function renderOrdersSvod() {
                             }
 
                             let itemStatus = (tempSvodStatus[dateStr] && tempSvodStatus[dateStr][shop] && tempSvodStatus[dateStr][shop][name]) 
-                                                ? tempSvodStatus[dateStr][shop][name] : baseStatus;
+                                            ? tempSvodStatus[dateStr][shop][name] : baseStatus;
                             
                             let price1 = parseFloat(catItem.price) || 0;
                             let price2 = parseFloat(catItem.price2) || 0;
@@ -3102,7 +3100,8 @@ function renderGraphsTab() {
                         <td>`;
                         
                     if (isMpEditMode) {
-                        html += `<input type="number" id="mp_inp_${r.key}" value="${displayAmt}" ${isDeleted ? 'disabled' : ''} style="width:120px; text-align:right; font-weight:bold; color:${amtColor}; border:2px solid #ce93d8;" oninput="renderMarketplaceTab()">`;
+                        // ⚡ ИСПРАВЛЕНИЕ: type="text" inputmode="decimal" вызывает цифровую клавиатуру без ползунков
+                        html += `<input type="text" inputmode="decimal" id="mp_inp_${r.key}" value="${displayAmt}" ${isDeleted ? 'disabled' : ''} style="width:120px; text-align:right; font-weight:bold; color:${amtColor}; border:2px solid #ce93d8;" oninput="renderMarketplaceTab()">`;
                     } else {
                         html += `<b style="color:${amtColor}; font-size:18px;">${displayAmt}</b>`;
                     }
@@ -3178,7 +3177,7 @@ function renderGraphsTab() {
                     <tr style="${rowOp}">
                         <td>${d}</td>
                         <td>${badge}</td>
-                        <td>${isMpEditMode ? `<input type="number" id="mp_inp_${r.key}" value="${r.amount}" ${isDeleted ? 'disabled' : ''} style="width:100px;">` : `<b>${r.amount}</b>`}</td>
+                        <td>${isMpEditMode ? `<input type="text" inputmode="decimal" id="mp_inp_${r.key}" value="${r.amount}" ${isDeleted ? 'disabled' : ''} style="width:100px;">` : `<b>${r.amount}</b>`}</td>
                         <td style="text-align:center;">${isMpEditMode ? `<button class="btn-del" ${isDeleted ? 'disabled' : ''} onclick="markMpDelete('${r.key}')">🗑</button>` : ''}</td>
                     </tr>`;
                 });
@@ -3188,6 +3187,7 @@ function renderGraphsTab() {
         }
         box.innerHTML = html;
     }
+   
 
     function toggleMpEdit() { 
         isMpEditMode = true; 
@@ -3515,7 +3515,6 @@ function renderGraphsTab() {
         let latestStops = {}; 
         let recentOrdersMap = {}; 
 
-        // ⚡ МГНОВЕННОЕ ЧТЕНИЕ ИЗ ПАМЯТИ: Без ожидания ответа сервера
         let stopCatalog = cachedData.catalogStoplist || {}; 
         let missingData = cachedData.missing || {};
 
@@ -3612,13 +3611,22 @@ function renderGraphsTab() {
                     if (inOrderCat) {
                         let missingStat = missingStatusMap[s] ? missingStatusMap[s][cleanedItemName] : null;
                         let orderInfo = recentOrdersMap[s] ? recentOrdersMap[s][cleanedItemName] : null;
+                        let itemStatus = orderInfo ? orderInfo.stat : null;
+
+                        // ⚡ ЖЕЛЕЗНАЯ ЛОГИКА ДЛЯ ОЗОНА: Сверка со Стоп-листами через глобальную функцию
+                        let isOzonProd = (inOrderCat.vendor || "").toLowerCase().includes("озон") || (inOrderCat.vendor || "").toLowerCase().includes("ozon");
+                        if (isOzonProd) {
+                            let ozonStat = window.getOzonRepeatStatus(s, i.name, cachedData);
+                            if (ozonStat.isRepeat && ozonStat.isReceived) {
+                                itemStatus = 'already_received';
+                            }
+                        }
 
                         if (missingStat === 'pending' || missingStat === 'transit') {
                             statHtml = `<span style="background:#e3f2fd; color:#1565c0; padding:3px 6px; border-radius:6px; font-size:12px; font-weight:900; margin-right:8px;">В пути 🚚</span>`;
                         } else {
-                            let itemStatus = orderInfo ? orderInfo.stat : null;
-                            
                             if (itemStatus === 'ordered') statHtml = `<span style="background:#e8f5e9; color:#2e7d32; padding:3px 6px; border-radius:6px; font-size:12px; font-weight:900; margin-right:8px;">Заказано ✅</span>`;
+                            else if (itemStatus === 'already_received') statHtml = `<span style="background:#e3f2fd; color:#0277bd; padding:3px 6px; border-radius:6px; font-size:12px; font-weight:900; margin-right:8px;">Принят ✅</span>`;
                             else if (itemStatus === 'pending') statHtml = `<span style="background:#fff3e0; color:#f57c00; padding:3px 6px; border-radius:6px; font-size:12px; font-weight:900; margin-right:8px;">В корзине ⏳</span>`;
                             else if (itemStatus === 'error') statHtml = `<span style="background:#ffebee; color:#c62828; padding:3px 6px; border-radius:6px; font-size:12px; font-weight:900; margin-right:8px;">Ошибка ❌</span>`;
                             else if (itemStatus === 'from_stoplist') statHtml = `<span style="background:#ffcdd2; color:#c62828; padding:3px 6px; border-radius:6px; font-size:12px; font-weight:900; margin-right:8px;">Из стоп-листа 🛑</span>`;

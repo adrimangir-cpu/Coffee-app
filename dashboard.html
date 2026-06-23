@@ -3207,25 +3207,42 @@ function renderGraphsTab() {
         if(btn) btn.innerHTML = "⌛ СОХРАНЕНИЕ...";
         try {
             let promises = [];
-            mpDeletions.forEach(key => promises.push(fetch(`${FB_URL}/marketplace_records/${key}.json`, { method: 'DELETE' })));
             
+            // 1. МГНОВЕННОЕ УДАЛЕНИЕ: Стираем из локальной памяти и готовим запрос на сервер
+            mpDeletions.forEach(key => {
+                promises.push(fetch(`${FB_URL}/marketplace_records/${key}.json`, { method: 'DELETE' }));
+                if (cachedData.marketplace && cachedData.marketplace[key]) {
+                    delete cachedData.marketplace[key]; // Удаляем из кэша устройства
+                }
+            });
+            
+            // 2. МГНОВЕННОЕ ОБНОВЛЕНИЕ: Записываем новые цифры в кэш и готовим запрос
             document.querySelectorAll('input[id^="mp_inp_"]').forEach(inp => {
                 let key = inp.id.replace("mp_inp_", "");
                 if (!mpDeletions.has(key)) {
                     let val = parseFloat(inp.value);
-                    if (!isNaN(val) && cachedData.marketplace[key] && parseFloat(cachedData.marketplace[key].amount) !== val) {
-                        promises.push(fetch(`${FB_URL}/marketplace_records/${key}.json`, { method: 'PATCH', body: JSON.stringify({amount: val}) }));
+                    if (!isNaN(val) && cachedData.marketplace && cachedData.marketplace[key]) {
+                        if (parseFloat(cachedData.marketplace[key].amount) !== val) {
+                            promises.push(fetch(`${FB_URL}/marketplace_records/${key}.json`, { method: 'PATCH', body: JSON.stringify({amount: val}) }));
+                            
+                            // ⚡ МАГИЯ: Синхронизируем локальную память устройства на лету
+                            cachedData.marketplace[key].amount = val;
+                        }
                     }
                 }
             });
 
+            // Отправляем пакет запросов на сервер в фоновом режиме
             await Promise.all(promises);
             
             isMpEditMode = false; 
             mpDeletions.clear();
             
             if(btn) btn.innerHTML = "✅ СОХРАНЕНО!";
-            renderMarketplaceTab(); // ⚡ Мгновенно перерисовываем
+            
+            // ⚡ ТЕПЕРЬ ОНО ЛЕТАЕТ: Перерисовка мгновенно покажет чистые новые данные!
+            renderMarketplaceTab(); 
+            
             setTimeout(() => {
                 if(btn) btn.innerHTML = origText;
             }, 1000);

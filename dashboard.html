@@ -769,17 +769,18 @@
         const box = document.getElementById('content');
         setupUniversalActionBar('', false, ''); // очищаем панель действий
         
-        let html = `<h3 style="color:#311B92; font-size:24px; margin-top:0; margin-bottom:15px;">🚚 Контроль невыполненных приемок</h3>`;
+        let orders = Object.values(cachedData.orders || {}).filter(o => o && o.ordered).sort((a,b) => b.timestamp - a.timestamp);
+        let missing = Object.values(cachedData.missing || {}).sort((a,b) => b.timestamp - a.timestamp);
         
-        let allOrders = Object.values(cachedData.orders || {}).filter(o => o && (o.mode === 'order' || o.mode === 'new_shop') && o.ordered).sort((a,b) => b.timestamp - a.timestamp);
+        let html = `<h3 style="color:#311B92; font-size:24px; margin-top:0; margin-bottom:15px;">🚚 Актуальные Приемки и Недовозы</h3>`;
         
-        // Группируем непринятые поставки по кофейням
         let alertByShop = {};
         shopListAll.forEach(s => alertByShop[s] = []);
         
-        allOrders.forEach(o => {
+        // 1. Сбор заказов, которые не приняты более 16 часов
+        orders.forEach(o => {
             let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
-            itemsArr = itemsArr.filter(i => i && i.name !== "НЕТ ЗАКАЗА" && i.status !== 'error' && i.status !== 'not_needed');
+            itemsArr = itemsArr.filter(i => i && i.name !== "НЕТ ЗАКАЗА" && i.status !== 'error' && i.status !== 'not_needed' && i.status !== 'already_received');
             if(itemsArr.length === 0) return;
             
             let missingVendors = [];
@@ -789,7 +790,6 @@
             
             if (missingVendors.length > 0) {
                 let daysPast = Math.floor((Date.now() - o.timestamp) / (1000 * 60 * 60 * 24));
-                // Показываем накладные, которые висят непринятыми больше 16 часов
                 if (Date.now() - o.timestamp > 16 * 60 * 60 * 1000) {
                     alertByShop[o.shop].push({
                         key: o.key,
@@ -803,40 +803,63 @@
         });
         
         let hasAnyDebts = false;
-        
         for (let shop in alertByShop) {
-            if (alertByShop[shop].length === 0) continue;
-            hasAnyDebts = true;
-            let safeShopId = getSafeId("rec_ctrl_" + shop);
-            let isOpen = expandedDivs.has(`box_${safeShopId}`);
-            let displayName = shop === 'Красноказарменная' ? 'МЭИ' : shop;
-            
-            html += `
-                <div class="cat-group-header" style="margin-top:12px; padding:15px; background:#ffebee; border:1px solid #ffcdd2; border-radius:12px; font-size:17px; display:flex; justify-content:space-between; align-items:center;" onclick="toggleCatElements('box_${safeShopId}', 'arrow_${safeShopId}')">
-                    <span style="color:#c62828; font-weight:900;">📍 ${displayName} (Долгов по приемкам: ${alertByShop[shop].length})</span>
-                    <span id="arrow_${safeShopId}">${isOpen ? '▲' : '▼'}</span>
-                </div>
-                <div class="box_${safeShopId}" style="display:${isOpen ? 'block' : 'none'}; padding:15px; background:white; border:1px solid #ffcdd2; border-top:none; border-radius:0 0 12px 12px; margin-bottom:15px;">
-                    <table style="margin-top:0; min-width:100%;">
-                        <tr style="background:#fff5f5;"><th>Дата накладной</th><th>Поставщик</th><th>Просрочка</th><th>Что зависло внутри поставки (Список товаров)</th></tr>`;
-                        
-            alertByShop[shop].forEach(task => {
-                let badColor = task.days >= 3 ? "color:#c62828; font-size:16px;" : "color:#ef6c00;";
-                html += `
-                        <tr>
-                            <td style="width:180px; font-weight:bold; color:#555;">${task.dateStr}</td>
-                            <td style="width:180px;"><span class="vendor-badge vendor-ozon" style="font-size:13px;">${task.vendors}</span></td>
-                            <td style="width:120px; font-weight:900; ${badColor}">${task.days} дн.</td>
-                            <td style="font-size:14px; line-height:1.5; padding:10px; background:#fafafa; border-radius:6px;">${task.items}</td>
+            if (alertByShop[shop].length > 0) hasAnyDebts = true;
+        }
+
+        html += `<div class="card" style="margin-bottom: 20px;">
+                    <h4 style="color:#c62828; margin-top:0;">📦 Ожидают приемки (Заказы висят более 16 часов)</h4>`;
+        
+        if (hasAnyDebts) {
+            html += `<table style="margin-top:0; min-width:100%;">
+                        <tr style="background:#fff5f5;"><th>Кофейня</th><th>Дата накладной</th><th>Поставщик</th><th>Просрочка</th><th>Список товаров</th></tr>`;
+            for (let shop in alertByShop) {
+                alertByShop[shop].forEach(task => {
+                    let badColor = task.days >= 3 ? "color:#c62828; font-size:16px;" : "color:#ef6c00;";
+                    html += `<tr>
+                                <td><b>${shop === 'Красноказарменная' ? 'МЭИ' : shop}</b></td>
+                                <td style="width:150px; font-weight:bold; color:#555;">${task.dateStr}</td>
+                                <td style="width:120px;"><span class="vendor-badge vendor-ozon" style="font-size:12px;">${task.vendors}</span></td>
+                                <td style="width:100px; font-weight:900; ${badColor}">${task.days} дн.</td>
+                                <td style="font-size:13px; line-height:1.4; padding:8px; background:#fafafa; border-radius:6px;">${task.items}</td>
+                            </tr>`;
+                });
+            }
+            html += `</table>`;
+        } else {
+            html += `<div style="text-align:center; padding:20px; font-size:16px; color:#2e7d32; font-weight:bold;">🎉 Долгов по приемкам нет. Все кофейни закрыты вовремя!</div>`;
+        }
+        html += `</div>`;
+
+        // 2. Сбор актуальных недовозов у сотрудников
+        let activeMissing = missing.filter(m => m && m.status !== 'arrived' && m.status !== 'canceled');
+        
+        html += `<div class="card">
+                    <h4 style="color:#e65100; margin-top:0;">‼️ Актуальные Недовозы (То, что видят сотрудники)</h4>`;
+        if (activeMissing.length > 0) {
+            html += `<table style="margin-top:0; min-width:100%;">
+                        <tr style="background:#fff3e0;"><th>Кофейня</th><th>Дата</th><th>Товар</th><th>Кол-во</th><th>Статус</th></tr>`;
+            activeMissing.forEach(m => {
+                let dStr = m.timestamp ? new Date(m.timestamp).toLocaleDateString('ru-RU') : '';
+                let statText = "Ожидает проверки"; 
+                let statColor = "#ef6c00";
+                if(m.status === 'transit') { statText = "В пути (от поставщика)"; statColor = "#1565c0"; }
+                else if(m.status === 'reorder') { statText = "Отменен (Админ закажет)"; statColor = "#888"; }
+                
+                html += `<tr>
+                            <td><b>${m.shop === 'Красноказарменная' ? 'МЭИ' : m.shop}</b></td>
+                            <td style="color:#666; font-size:13px;">${dStr}</td>
+                            <td style="font-weight:bold;">${m.name}</td>
+                            <td style="text-align:center; font-weight:bold; font-size:16px;">${m.qty}</td>
+                            <td style="font-weight:bold; color:${statColor}; font-size:13px;">${statText}</td>
                         </tr>`;
             });
-            html += `</table></div>`;
+            html += `</table>`;
+        } else {
+            html += `<div style="text-align:center; padding:20px; font-size:16px; color:#888; font-weight:bold;">Нет активных недовозов.</div>`;
         }
-        
-        if (!hasAnyDebts) {
-            html += `<div class="card" style="text-align:center; padding:40px; font-size:18px; color:#2e7d32; font-weight:bold;">🎉 Салют! Ни одного долга по приемкам во всей сети. Все кофейни закрыты вовремя!</div>`;
-        }
-        
+        html += `</div>`;
+
         box.innerHTML = html;
     }
 
@@ -5122,7 +5145,7 @@ async function exportGraphsToExcel() {
         renderOrdersSvod(); 
     }
 
-                    function renderInvoiceProducts() {
+        function renderInvoiceProducts() {
         const box = document.getElementById('content');
         let isActionsOpen = expandedDivs.has('inv-prod-actions');
         
@@ -5132,7 +5155,9 @@ async function exportGraphsToExcel() {
                 <span id="arrow_inv_actions">${isActionsOpen ? '▲' : '▼'}</span>
             </div>
             <div class="inv-prod-actions action-container sticky-action-panel action-panel-dropdown" style="display: ${isActionsOpen ? 'flex' : 'none'}; gap:10px; margin-top:10px;">
-                <button class="btn-add" onclick="addInvoiceItemUI()">➕ Добавить позицию из накладной</button>
+                <button class="btn-add" onclick="addInvoiceItemUI()">➕ Добавить позицию вручную</button>
+                <input type="file" id="invoice-upload" accept=".xlsx, .xls" style="display:none;" onchange="processInvoiceFile(event)">
+                <button class="btn-add" style="background: linear-gradient(135deg, #43a047 0%, #00695c 100%);" onclick="document.getElementById('invoice-upload').click()">📂 Загрузить Excel накладную</button>
                 <button class="btn-save" onclick="saveInvoiceCatalog(this)">💾 Сохранить и объединить базу</button>
             </div>
         `, isActionsOpen, 'arrow_inv_actions');
@@ -5152,7 +5177,7 @@ async function exportGraphsToExcel() {
         let sortedCats = Object.keys(grouped).sort((a,b) => a.localeCompare(b));
         
         if(sortedCats.length === 0) {
-            html += `<tr><td colspan="5" style="text-align:center; padding:30px; font-weight:bold; color:#888;">База накладных товаров пуста. Нажмите кнопку выше, чтобы загрузить первую накладную.</td></tr>`;
+            html += `<tr><td colspan="5" style="text-align:center; padding:30px; font-weight:bold; color:#888;">База накладных товаров пуста. Загрузите Excel накладную или добавьте позицию вручную.</td></tr>`;
         }
 
         sortedCats.forEach(cat => {
@@ -5169,7 +5194,7 @@ async function exportGraphsToExcel() {
                 
                 let photoUi = "";
                 if (item.photo && item.photo.startsWith("data:image")) {
-                    photoUi = `<div style="position:relative; display:inline-block;"><img src="${item.photo}" style="width:45px; height:45px; border-radius:6px; object-fit:cover;"><button onclick="deleteInvoicePhoto('${k}')" style="position:absolute; top:-5px; right:-5px; background:#d32f2f; color:white; border:none; border-radius:50%; width:18px; height:1228px; font-size:10px; cursor:pointer; display:flex; align-items:center; justify-content:center;">✕</button></div>`;
+                    photoUi = `<div style="position:relative; display:inline-block;"><img src="${item.photo}" style="width:45px; height:45px; border-radius:6px; object-fit:cover;"><button onclick="deleteInvoicePhoto('${k}')" style="position:absolute; top:-5px; right:-5px; background:#d32f2f; color:white; border:none; border-radius:50%; width:18px; height:22px; font-size:10px; cursor:pointer; display:flex; align-items:center; justify-content:center;">✕</button></div>`;
                 } else {
                     photoUi = `<input type="text" placeholder="Вставить фото (Ctrl+V)" style="font-size:11px; padding:6px; border:1px dashed #7E57C2; text-align:center;" onpaste="handleInvoicePhotoPaste(event, '${k}')">`;
                 }
@@ -5187,6 +5212,74 @@ async function exportGraphsToExcel() {
         box.innerHTML = html + "</table></div>";
     }
 
+    async function processInvoiceFile(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+        
+        showReportOverlay("Анализ Excel накладной...");
+        
+        const reader = new FileReader();
+        reader.onload = async (evt) => {
+            try {
+                const data = new Uint8Array(evt.target.result);
+                const workbook = XLSX.read(data, {type: 'array'});
+                const sheet = workbook.Sheets[workbook.SheetNames[0]];
+                const rows = XLSX.utils.sheet_to_json(sheet, {header: 1});
+                
+                let addedCount = 0;
+                let updatedCount = 0;
+
+                if (!window.invoiceChanges) window.invoiceChanges = {};
+                if (!currentCatalog) currentCatalog = {};
+                
+                // Пропускаем первую строку (заголовки: A-Категория, B-Наименование, C-Цена)
+                for (let i = 1; i < rows.length; i++) {
+                    let cat = rows[i][0];
+                    let name = rows[i][1];
+                    let price = parseFloat(rows[i][2]) || 0;
+                    
+                    if (!name) continue; 
+                    
+                    let cName = cleanName(name);
+                    
+                    // Ищем существующий товар (без учета регистра)
+                    let existingId = Object.keys(currentCatalog).find(k => 
+                        currentCatalog[k] && cleanName(currentCatalog[k].name) === cName
+                    );
+                    
+                    if (existingId) {
+                        // Товар найден: обновляем цену и категорию (оставляем старое фото)
+                        currentCatalog[existingId].price = price;
+                        if (cat) currentCatalog[existingId].cat = cat;
+                        window.invoiceChanges[existingId] = currentCatalog[existingId];
+                        updatedCount++;
+                    } else {
+                        // Товар не найден: создаем новый
+                        let newId = "inv_goods_" + Date.now() + i + Math.floor(Math.random()*1000);
+                        currentCatalog[newId] = {
+                            cat: cat || "Прочее",
+                            name: name,
+                            price: price,
+                            photo: ""
+                        };
+                        window.invoiceChanges[newId] = currentCatalog[newId];
+                        addedCount++;
+                    }
+                }
+                
+                hideReportOverlay();
+                alert(`✅ Накладная загружена!\nДобавлено позиций: ${addedCount}\nОбновлено цен: ${updatedCount}\n\nНе забудьте нажать "💾 Сохранить и объединить базу".`);
+                renderInvoiceProducts();
+                
+            } catch (err) {
+                hideReportOverlay();
+                alert("❌ Ошибка чтения Excel: " + err.message);
+            }
+            e.target.value = "";
+        };
+        reader.readAsArrayBuffer(file);
+    }
+    
     function updateInvoiceVal(id, field, val) {
         if (!window.invoiceChanges) window.invoiceChanges = {};
         if (!currentCatalog[id]) currentCatalog[id] = {};

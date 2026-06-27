@@ -436,7 +436,7 @@
    // ==========================================
     // ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ И ПОДКЛЮЧЕНИЕ
     // ==========================================
-    const FB_URL = "https://project-lenta22-default-rtdb.firebaseio.com"; 
+    const FB_URL = "https://project-lenta22-default-rtdb.firebaseio.com"; // ⚡ ВОЗВРАЩАЕМ ЭТУ СТРОЧКУ!
     const ADMIN_CHAT_ID = "708179577"; 
     const BOSS_CHAT_ID = "634812312";   
     let catalogChanges = {}; // Трекер изменений для закупки/чек-листов
@@ -767,19 +767,19 @@
 
     function renderReceivingsControl() {
         const box = document.getElementById('content');
-        setupUniversalActionBar('', false, ''); 
+        setupUniversalActionBar('', false, ''); // очищаем панель действий
         
-        let orders = Object.values(cachedData.orders || {}).filter(o => o && o.ordered).sort((a,b) => b.timestamp - a.timestamp);
-        let missing = Object.values(cachedData.missing || {}).sort((a,b) => b.timestamp - a.timestamp);
+        let html = `<h3 style="color:#311B92; font-size:24px; margin-top:0; margin-bottom:15px;">🚚 Контроль невыполненных приемок</h3>`;
         
-        let html = `<h3 style="color:#311B92; font-size:24px; margin-top:0; margin-bottom:15px;">🚚 Актуальные Приемки и Недовозы</h3>`;
+        let allOrders = Object.values(cachedData.orders || {}).filter(o => o && (o.mode === 'order' || o.mode === 'new_shop') && o.ordered).sort((a,b) => b.timestamp - a.timestamp);
         
+        // Группируем непринятые поставки по кофейням
         let alertByShop = {};
         shopListAll.forEach(s => alertByShop[s] = []);
         
-        orders.forEach(o => {
+        allOrders.forEach(o => {
             let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
-            itemsArr = itemsArr.filter(i => i && i.name !== "НЕТ ЗАКАЗА" && i.status !== 'error' && i.status !== 'not_needed' && i.status !== 'already_received');
+            itemsArr = itemsArr.filter(i => i && i.name !== "НЕТ ЗАКАЗА" && i.status !== 'error' && i.status !== 'not_needed');
             if(itemsArr.length === 0) return;
             
             let missingVendors = [];
@@ -789,6 +789,7 @@
             
             if (missingVendors.length > 0) {
                 let daysPast = Math.floor((Date.now() - o.timestamp) / (1000 * 60 * 60 * 24));
+                // Показываем накладные, которые висят непринятыми больше 16 часов
                 if (Date.now() - o.timestamp > 16 * 60 * 60 * 1000) {
                     alertByShop[o.shop].push({
                         key: o.key,
@@ -802,62 +803,40 @@
         });
         
         let hasAnyDebts = false;
+        
         for (let shop in alertByShop) {
-            if (alertByShop[shop].length > 0) hasAnyDebts = true;
-        }
-
-        html += `<div class="card" style="margin-bottom: 20px;">
-                    <h4 style="color:#c62828; margin-top:0;">📦 Ожидают приемки (Заказы висят более 16 часов)</h4>`;
-        
-        if (hasAnyDebts) {
-            html += `<table style="margin-top:0; min-width:100%;">
-                        <tr style="background:#fff5f5;"><th>Кофейня</th><th>Дата накладной</th><th>Поставщик</th><th>Просрочка</th><th>Список товаров</th></tr>`;
-            for (let shop in alertByShop) {
-                alertByShop[shop].forEach(task => {
-                    let badColor = task.days >= 3 ? "color:#c62828; font-size:16px;" : "color:#ef6c00;";
-                    html += `<tr>
-                                <td><b>${shop === 'Красноказарменная' ? 'МЭИ' : shop}</b></td>
-                                <td style="width:150px; font-weight:bold; color:#555;">${task.dateStr}</td>
-                                <td style="width:120px;"><span class="vendor-badge vendor-ozon" style="font-size:12px;">${task.vendors}</span></td>
-                                <td style="width:100px; font-weight:900; ${badColor}">${task.days} дн.</td>
-                                <td style="font-size:13px; line-height:1.4; padding:8px; background:#fafafa; border-radius:6px;">${task.items}</td>
-                            </tr>`;
-                });
-            }
-            html += `</table>`;
-        } else {
-            html += `<div style="text-align:center; padding:20px; font-size:16px; color:#2e7d32; font-weight:bold;">🎉 Долгов по приемкам нет. Все кофейни закрыты вовремя!</div>`;
-        }
-        html += `</div>`;
-
-        let activeMissing = missing.filter(m => m && m.status !== 'arrived' && m.status !== 'canceled');
-        
-        html += `<div class="card">
-                    <h4 style="color:#e65100; margin-top:0;">‼️ Актуальные Недовозы (То, что видят сотрудники)</h4>`;
-        if (activeMissing.length > 0) {
-            html += `<table style="margin-top:0; min-width:100%;">
-                        <tr style="background:#fff3e0;"><th>Кофейня</th><th>Дата</th><th>Товар</th><th>Кол-во</th><th>Статус</th></tr>`;
-            activeMissing.forEach(m => {
-                let dStr = m.timestamp ? new Date(m.timestamp).toLocaleDateString('ru-RU') : '';
-                let statText = "Ожидает проверки"; 
-                let statColor = "#ef6c00";
-                if(m.status === 'transit') { statText = "В пути (от поставщика)"; statColor = "#1565c0"; }
-                else if(m.status === 'reorder') { statText = "Отменен (Админ закажет)"; statColor = "#888"; }
-                
-                html += `<tr>
-                            <td><b>${m.shop === 'Красноказарменная' ? 'МЭИ' : m.shop}</b></td>
-                            <td style="color:#666; font-size:13px;">${dStr}</td>
-                            <td style="font-weight:bold;">${m.name}</td>
-                            <td style="text-align:center; font-weight:bold; font-size:16px;">${m.qty}</td>
-                            <td style="font-weight:bold; color:${statColor}; font-size:13px;">${statText}</td>
+            if (alertByShop[shop].length === 0) continue;
+            hasAnyDebts = true;
+            let safeShopId = getSafeId("rec_ctrl_" + shop);
+            let isOpen = expandedDivs.has(`box_${safeShopId}`);
+            let displayName = shop === 'Красноказарменная' ? 'МЭИ' : shop;
+            
+            html += `
+                <div class="cat-group-header" style="margin-top:12px; padding:15px; background:#ffebee; border:1px solid #ffcdd2; border-radius:12px; font-size:17px; display:flex; justify-content:space-between; align-items:center;" onclick="toggleCatElements('box_${safeShopId}', 'arrow_${safeShopId}')">
+                    <span style="color:#c62828; font-weight:900;">📍 ${displayName} (Долгов по приемкам: ${alertByShop[shop].length})</span>
+                    <span id="arrow_${safeShopId}">${isOpen ? '▲' : '▼'}</span>
+                </div>
+                <div class="box_${safeShopId}" style="display:${isOpen ? 'block' : 'none'}; padding:15px; background:white; border:1px solid #ffcdd2; border-top:none; border-radius:0 0 12px 12px; margin-bottom:15px;">
+                    <table style="margin-top:0; min-width:100%;">
+                        <tr style="background:#fff5f5;"><th>Дата накладной</th><th>Поставщик</th><th>Просрочка</th><th>Что зависло внутри поставки (Список товаров)</th></tr>`;
+                        
+            alertByShop[shop].forEach(task => {
+                let badColor = task.days >= 3 ? "color:#c62828; font-size:16px;" : "color:#ef6c00;";
+                html += `
+                        <tr>
+                            <td style="width:180px; font-weight:bold; color:#555;">${task.dateStr}</td>
+                            <td style="width:180px;"><span class="vendor-badge vendor-ozon" style="font-size:13px;">${task.vendors}</span></td>
+                            <td style="width:120px; font-weight:900; ${badColor}">${task.days} дн.</td>
+                            <td style="font-size:14px; line-height:1.5; padding:10px; background:#fafafa; border-radius:6px;">${task.items}</td>
                         </tr>`;
             });
-            html += `</table>`;
-        } else {
-            html += `<div style="text-align:center; padding:20px; font-size:16px; color:#888; font-weight:bold;">Нет активных недовозов.</div>`;
+            html += `</table></div>`;
         }
-        html += `</div>`;
-
+        
+        if (!hasAnyDebts) {
+            html += `<div class="card" style="text-align:center; padding:40px; font-size:18px; color:#2e7d32; font-weight:bold;">🎉 Салют! Ни одного долга по приемкам во всей сети. Все кофейни закрыты вовремя!</div>`;
+        }
+        
         box.innerHTML = html;
     }
 
@@ -2760,7 +2739,7 @@ function renderGraphsTab() {
             let borderBottom = (dayOfWeek === 0) ? "border-bottom: 3px solid #ffb74d;" : "border-bottom: 1px solid #eee;";
             
            let dayShifts = [];
-           
+            
             let rowHtml = `<tr class="graph-row" style="${rowBg} ${borderBottom}">
                 <td class="meta-cell" style="border:1px solid #ccc; padding:4px; text-align:center; font-weight:bold; background-color:${isWeekend?'#ffcc80':'#f5f5f5'}; color:${isWeekend?'#d84315':'#333'};">${d}</td>
                 <td class="meta-cell" style="border:1px solid #ccc; padding:4px; text-align:center; font-weight:bold; text-transform:uppercase; background-color:${isWeekend?'#ffcc80':'#f5f5f5'}; color:${isWeekend?'#d84315':'#555'};">${dayNames[dayOfWeek]}</td>`;
@@ -3314,7 +3293,7 @@ function renderGraphsTab() {
         }
         box.innerHTML = html;
     }
-    
+   
 
     function toggleMpEdit() { 
         isMpEditMode = true; 
@@ -3917,6 +3896,8 @@ function renderGraphsTab() {
             <h3 style="color:#1a237e; font-size:24px; margin-top:0; margin-bottom:15px;">✅ Сводная Таблица Чек-листов (Актуальные данные)</h3>
             <p style="font-size:15px; color:#7E57C2; font-weight:bold;">Нажмите на категорию, чтобы развернуть список товаров.</p>
         `;
+        
+        html += `<div id="checks-table-container" style="background:white; padding:10px; border-radius:12px; overflow-x:auto;"><table style="min-width:1200px;"><tr><th style="width:250px;">Товар</th>`;
         
         html += `<div id="checks-table-container" style="background:white; padding:10px; border-radius:12px; overflow-x:auto;"><table style="min-width:1200px;"><tr><th style="width:250px;">Товар</th>`;
         shops.forEach(s => {
@@ -5072,6 +5053,519 @@ async function exportGraphsToExcel() {
         saveToCache('settings', appSettings); // ⚡ СОХРАНЯЕМ СКРЫТИЕ В ПАМЯТЬ ДАШБОРДА
     }
 
+
+
+    async function saveMenu(btn) {
+        let origText = btn.innerHTML;
+        
+        btn.disabled = true;
+        btn.innerHTML = "⏳ СОХРАНЕНИЕ МЕНЮ...";
+        
+        try {
+            // ⚡ Берем всё меню с техкартами целиком
+            let safeMenu = JSON.parse(JSON.stringify(currentMenu));
+            
+            // ⚡ Отправляем в базу
+            await db.ref('catalogs/menu').set(safeMenu);
+
+            btn.innerHTML = "✅ СОХРАНЕНО!";
+            
+            setTimeout(() => {
+                if(btn) {
+                    btn.innerHTML = origText;
+                    btn.disabled = false;
+                }
+            }, 1500);
+        } catch(e) {
+            if(btn) {
+                btn.innerHTML = origText;
+                btn.disabled = false;
+            }
+            alert("❌ Ошибка сохранения меню: " + e.message);
+        }
+    }
+
+    // Мгновенное авто-сохранение статуса в базу (без кнопки "Сохранить")
+   // Мгновенное переключение статуса по КЛИКУ
+    async function instantStatusToggle(dateStr, shop, name, currentStatus) {
+        preserveSvodInputs(); 
+        
+        // ⚡ ЦИКЛ ПЕРЕКЛЮЧЕНИЙ СО СТАТУСОМ "УЖЕ ПРИНЯТ"
+        let newStatus = 'ordered'; 
+        if (currentStatus === 'pending' || currentStatus === 'from_stoplist' || currentStatus === 'already_received') newStatus = 'ordered';
+        else if (currentStatus === 'ordered') newStatus = 'not_needed';
+        else if (currentStatus === 'not_needed') newStatus = 'error';
+        else if (currentStatus === 'error') newStatus = 'pending';
+
+        if (!tempSvodStatus[dateStr]) tempSvodStatus[dateStr] = {};
+        if (!tempSvodStatus[dateStr][shop]) tempSvodStatus[dateStr][shop] = {};
+        tempSvodStatus[dateStr][shop][name] = newStatus;
+        
+        let targetOrderKey = Object.keys(cachedData.orders).find(k => {
+            let o = cachedData.orders[k];
+            return o && o.shop === shop && !o.ordered && new Date(o.timestamp).toLocaleDateString('ru-RU') === dateStr;
+        });
+
+        if (targetOrderKey) {
+            let order = cachedData.orders[targetOrderKey];
+            let itemsArr = Array.isArray(order.items) ? order.items : Object.values(order.items || {});
+            let itemIdx = itemsArr.findIndex(i => i && i.name === name);
+            
+            if (itemIdx !== -1) {
+                let isError = (newStatus === 'error');
+                fetch(`${FB_URL}/orders/${targetOrderKey}/items/${itemIdx}.json`, {
+                    method: 'PATCH',
+                    body: JSON.stringify({ status: newStatus, bot_error: isError, not_found: isError })
+                });
+            }
+        }
+        renderOrdersSvod(); 
+    }
+
+                    function renderInvoiceProducts() {
+        const box = document.getElementById('content');
+        let isActionsOpen = expandedDivs.has('inv-prod-actions');
+        
+        setupUniversalActionBar(`
+            <div class="cat-group-header" style="padding: 10px 15px; border-radius: 12px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 8px rgba(0,0,0,0.05);" onclick="toggleCatElements('inv-prod-actions', 'arrow_inv_actions')">
+                <span style="font-size:16px; color:#4A148C; font-weight:900;">⚡ Управление накладными товарами</span>
+                <span id="arrow_inv_actions">${isActionsOpen ? '▲' : '▼'}</span>
+            </div>
+            <div class="inv-prod-actions action-container sticky-action-panel action-panel-dropdown" style="display: ${isActionsOpen ? 'flex' : 'none'}; gap:10px; margin-top:10px;">
+                <button class="btn-add" onclick="addInvoiceItemUI()">➕ Добавить позицию из накладной</button>
+                <button class="btn-save" onclick="saveInvoiceCatalog(this)">💾 Сохранить и объединить базу</button>
+            </div>
+        `, isActionsOpen, 'arrow_inv_actions');
+
+        let html = `<h3 style="color:#4A148C; font-size:24px; margin-top:0; margin-bottom:15px;">📦 База товаров по накладным поставщиков</h3>`;
+        html += `<div style="overflow-x:auto;"><table style="min-width:1000px;" id="invoice-goods-table">
+                    <tr><th>Категория товара</th><th>Наименование товара (Строгое имя)</th><th style="width:150px; text-align:center;">Фотография</th><th style="width:160px;">Актуальная цена (₽)</th><th style="width:80px; text-align:center;">Удалить</th></tr>`;
+
+        let grouped = {};
+        Object.keys(currentCatalog || {}).forEach(k => {
+            let item = currentCatalog[k]; if(!item) return;
+            let cat = item.cat || "Прочее";
+            if (!grouped[cat]) grouped[cat] = [];
+            grouped[cat].push({id: k, data: item});
+        });
+
+        let sortedCats = Object.keys(grouped).sort((a,b) => a.localeCompare(b));
+        
+        if(sortedCats.length === 0) {
+            html += `<tr><td colspan="5" style="text-align:center; padding:30px; font-weight:bold; color:#888;">База накладных товаров пуста. Нажмите кнопку выше, чтобы загрузить первую накладную.</td></tr>`;
+        }
+
+        sortedCats.forEach(cat => {
+            let safeCatId = getSafeId("inv_cat_" + cat);
+            let isCatOpen = expandedDivs.has(`invlvl3_${safeCatId}`);
+            
+            html += `<tr class="cat-group-header" onclick="toggleCatElements('invlvl3_${safeCatId}', 'arrow_invcat_${safeCatId}')">
+                        <td colspan="5" style="padding:14px; font-size:17px; background:#e1bee7; color:#4A148C;">📂 <b>${cat}</b> <span id="arrow_invcat_${safeCatId}" style="float:right; opacity:0.6;">${isCatOpen ? '▲' : '▼'}</span></td>
+                     </tr>`;
+
+            grouped[cat].sort((a,b) => a.data.name.localeCompare(b.data.name)).forEach(node => {
+                let k = node.id; let item = node.data;
+                let displayStyle = isCatOpen ? "table-row" : "none";
+                
+                let photoUi = "";
+                if (item.photo && item.photo.startsWith("data:image")) {
+                    photoUi = `<div style="position:relative; display:inline-block;"><img src="${item.photo}" style="width:45px; height:45px; border-radius:6px; object-fit:cover;"><button onclick="deleteInvoicePhoto('${k}')" style="position:absolute; top:-5px; right:-5px; background:#d32f2f; color:white; border:none; border-radius:50%; width:18px; height:1228px; font-size:10px; cursor:pointer; display:flex; align-items:center; justify-content:center;">✕</button></div>`;
+                } else {
+                    photoUi = `<input type="text" placeholder="Вставить фото (Ctrl+V)" style="font-size:11px; padding:6px; border:1px dashed #7E57C2; text-align:center;" onpaste="handleInvoicePhotoPaste(event, '${k}')">`;
+                }
+
+                html += `<tr class="chk-row invlvl3_${safeCatId}" style="display:${displayStyle};">
+                    <td><input type="text" value="${item.cat}" onchange="updateInvoiceVal('${k}', 'cat', this.value)" style="font-size:14px; padding:6px;"></td>
+                    <td><input type="text" value="${item.name}" onchange="updateInvoiceVal('${k}', 'name', this.value)" style="font-weight:bold; font-size:15px; color:#311B92; padding:6px;"></td>
+                    <td style="text-align:center; vertical-align:middle;">${photoUi}</td>
+                    <td><input type="text" inputmode="decimal" value="${item.price}" onchange="updateInvoiceVal('${k}', 'price', this.value)" style="width:120px; text-align:center; font-weight:bold; color:#2E7D32; padding:6px;"></td>
+                    <td style="text-align:center; vertical-align:middle;"><button class="btn-del" style="padding:4px 8px;" onclick="deleteInvoiceItem('${k}')">🗑</button></td>
+                </tr>`;
+            });
+        });
+
+        box.innerHTML = html + "</table></div>";
+    }
+
+    function updateInvoiceVal(id, field, val) {
+        if (!window.invoiceChanges) window.invoiceChanges = {};
+        if (!currentCatalog[id]) currentCatalog[id] = {};
+        currentCatalog[id][field] = val;
+        window.invoiceChanges[id] = currentCatalog[id];
+    }
+
+    function addInvoiceItemUI() {
+        let id = "inv_goods_" + Date.now() + Math.floor(Math.random()*1000);
+        if (!currentCatalog) currentCatalog = {};
+        currentCatalog[id] = { cat: "!!! Заполните Категорию", name: "Новый товар из накладной", price: "0", photo: "" };
+        if (!window.invoiceChanges) window.invoiceChanges = {};
+        window.invoiceChanges[id] = currentCatalog[id];
+        renderInvoiceProducts();
+    }
+
+    function deleteInvoiceItem(id) {
+        if (!window.invoiceChanges) window.invoiceChanges = {};
+        currentCatalog[id] = null;
+        window.invoiceChanges[id] = null; // Маркер удаления для сервера
+        renderInvoiceProducts();
+    }
+
+    async function handleInvoicePhotoPaste(e, id) {
+        let items = e.clipboardData.items;
+        for (let i = 0; i < items.length; i++) {
+            if (items[i].type.indexOf("image") !== -1) {
+                e.preventDefault();
+                let file = items[i].getAsFile();
+                showReportOverlay("Сжатие картинки...");
+                let base64 = await compressImageToBase64(file, 500, 0.7);
+                updateInvoiceVal(id, 'photo', base64);
+                hideReportOverlay();
+                renderInvoiceProducts();
+                break;
+            }
+        }
+    }
+
+    function deleteInvoicePhoto(id) {
+        updateInvoiceVal(id, 'photo', "");
+        renderInvoiceProducts();
+    }
+
+    // ⚡ УЛЬТРА-АЛГОРИТМ УМНОГО СЛИЯНИЯ БАЗЫ БЕЗ ДУБЛИКАТОВ
+    async function saveInvoiceCatalog(btn) {
+        let origText = btn.innerHTML;
+        if (Object.keys(window.invoiceChanges || {}).length === 0) {
+            btn.innerHTML = "✅ ИЗМЕНЕНИЙ НЕТ";
+            setTimeout(() => btn.innerHTML = origText, 1200);
+            return;
+        }
+        btn.disabled = true; btn.innerHTML = "⌛ УМНОЕ СЛИЯНИЕ БАЗЫ...";
+        
+        try {
+            // Выкачиваем чистую актуальную копию с сервера для горячей сверки перед записью
+            let freshSnap = await fetch(`${FB_URL}/catalogs/invoices.json`).then(r => r.json()) || {};
+            
+            // Строим карту чистых имён серверной базы { clean_name: key }
+            let nameToKeyMap = {};
+            for (let k in freshSnap) {
+                if (freshSnap[k] && freshSnap[k].name) {
+                    nameToBreak = cleanName(freshSnap[k].name);
+                    photoMap[nameToBreak] = freshSnap[k].photo || ""; // Запоминаем фото если есть
+                    nameToKeyMap[cleanName(freshween.name)] = k;
+                }
+            }
+            
+            let promises = [];
+            
+            for (let id in catalogChanges) {
+                let item = catalogChanges[id];
+                if (item === null) {
+                    // Элемент удален
+                    promises.push(fetch(`${FB_URL}/catalogs/stoplist/${id}.json`, { method: 'DELETE' }));
+                } else {
+                    let cName = cleanName(item.name);
+                    // Ищем, нет ли товара с таким же чистым именем в базе в ЛЮБОМ регистре
+                    let existingMatchKey = Object.keys(freshSnap).find(k => freshSnap[k] && cleanName(freshSnap[k].name) === cName);
+                    
+                    let targetId = existingMatchKey ? existingMatchKey : id;
+                    let targetPayload = { ...item };
+                    
+                    // Если фото пустое, но этот товар уже загружался ранее и имел фото — склеиваем его, подтягивая старое!
+                    if (!targetPayload.photo && freshSnap[targetId] && freshSnap[targetId].photo) {
+                        targetPayload.photo = freshSnap[targetId].photo;
+                    }
+                    
+                    promises.push(fetch(`${FB_URL}/catalogs/invoices/${targetId}.json`, { 
+                        method: 'PUT', 
+                        body: JSON.stringify(targetPayload) 
+                    }));
+                }
+            }
+            
+            await Promise.all(promises);
+            window.invoiceChanges = {};
+            btn.innerHTML = "✅ БАЗА СИНХРОНИЗИРОВАНА!";
+            
+            let updateData = await fetch(`${FB_URL}/catalogs/invoices.json`).then(r => r.json()) || {};
+            currentCatalog = updateData;
+            renderInvoiceProducts();
+            
+            setTimeout(() => { btn.innerHTML = origText; btn.disabled = false; }, 1500);
+        } catch(e) {
+            btn.innerHTML = origText; btn.disabled = false;
+            alert("Ошибка слияния данных: " + e.message);
+        }
+    }
+
+    function renderKnowledgeBase() {
+        const box = document.getElementById('content');
+        let isActionsOpen = expandedDivs.has('kb-actions');
+        
+        setupUniversalActionBar(`
+            <div class="cat-group-header" style="padding: 10px 15px; border-radius: 12px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 8px rgba(0,0,0,0.05);" onclick="toggleCatElements('kb-actions', 'arrow_kb_actions')">
+                <span style="font-size:16px; color:#4A148C; font-weight:900;">⚡ Редактор Базы знаний</span>
+                <span id="arrow_kb_actions">${isActionsOpen ? '▲' : '▼'}</span>
+            </div>
+            <div class="kb-actions action-container sticky-action-panel action-panel-dropdown" style="display: ${isActionsOpen ? 'flex' : 'none'}; gap:10px; margin-top:10px;">
+                <button class="btn-add" onclick="addKbRuleUI()">➕ Создать новое правило/инструкцию</button>
+                <button class="btn-save" onclick="saveKnowledgeBase(this)">DA💾 Сохранить базу знаний</button>
+            </div>
+        `, isActionsOpen, 'arrow_kb_actions');
+
+        let html = `<h3 style="color:#1A237E; font-size:24px; margin-top:0; margin-bottom:15px;">📚 Корпоративная База знаний сети TEIKU</h3>`;
+        
+        let grouped = {};
+        Object.keys(cachedData.knowledge || {}).forEach(k => {
+            let item = cachedData.knowledge[k]; if(!item) return;
+            if (!grouped[item.cat]) grouped[item.cat] = [];
+            grouped[item.cat].push({id: k, data: item});
+        });
+
+        let sortedCats = Object.keys(grouped).sort();
+        if(sortedCats.length === 0) html += `<div class="card" style="text-align:center; color:#888; font-weight:bold; padding:30px;">База знаний пока пуста. Нажмите кнопку выше, чтобы добавить свод правил.</div>`;
+
+        sortedCats.forEach(cat => {
+            let safeCatId = getSafeId("kb_cat_" + cat);
+            let isOpen = expandedDivs.has(`kb_box_${safeCatId}`);
+            
+            html += `
+                <div class="cat-group-header" style="margin-top:15px; padding:15px; background:#e8eaf6;" onclick="toggleCatElements('kb_box_${safeCatId}', 'arrow_kb_${safeCatId}')">
+                    📖 <b>Категория: ${cat}</b>
+                    <span id="arrow_kb_${safeCatId}" style="float:right;">${isOpen?'▲':'▼'}</span>
+                </div>
+                <div class="kb-box_${safeCatId}" style="display:${isOpen ? 'block' : 'none'}; padding:15px; background:white; border:1px solid #ccc; border-top:none; border-radius:0 0 12px 12px; margin-bottom:15px;">`;
+                
+            grouped[cat].forEach(node => {
+                let k = node.id; let item = node.data;
+                let photoUi = item.photo ? `<div style="margin-top:10px; position:relative; display:inline-block;"><img src="${item.photo}" style="max-width:200px; border-radius:8px;"><button onclick="deleteKbPhoto('${k}')" style="position:absolute; top:-5px; right:-5px; background:#d32f2f; color:white; border:none; border-radius:50%; width:20px; height:20px; cursor:pointer;">✕</button></div>` : `<input type="text" placeholder="Вставить иллюстрацию/схему (Ctrl+V)" style="margin-top:10px; font-size:12px; border:1px dashed #3949ab; padding:6px; text-align:center;" onpaste="handleKbPhotoPaste(event, '${k}')">`;
+                
+                html += `
+                    <div style="border-bottom:2px dashed #eee; padding-bottom:15px; margin-bottom:15px;">
+                        <div style="display:flex; gap:10px; margin-bottom:10px;">
+                            <input type="text" value="${item.cat}" onchange="updateKbVal('${k}','cat',this.value)" style="width:250px;" placeholder="Категория...">
+                            <input type="text" value="${item.title}" onchange="updateKbVal('${k}','title',this.value)" style="flex:1; font-weight:900; color:#1A237E;" placeholder="Заголовок правила/инструкции...">
+                            <button class="btn-del" onclick="deleteKbItem('${k}')" style="padding:6px 12px;">🗑 Удалить</button>
+                        </div>
+                        <textarea rows="4" onchange="updateKbVal('${k}','text',this.value)" style="font-weight:normal; font-size:14px; width:100%; resize:vertical; line-height:1.5;" placeholder="Пропишите регламент, правила или инструкции...">${item.text || ''}</textarea>
+                        ${photoUi}
+                    </div>`;
+            });
+            html += `</div>`;
+        });
+        box.innerHTML = html;
+    }
+
+    function updateKbVal(id, field, val) {
+        if(!window.knowledgeChanges) window.knowledgeChanges = {};
+        if(!cachedData.knowledge[id]) cachedData.knowledge[id] = {};
+        cachedData.knowledge[id][field] = val;
+        window.knowledgeChanges[id] = cachedData.knowledge[id];
+    }
+    function addKbRuleUI() {
+        let id = "rule_" + Date.now();
+        if(!cachedData.knowledge) cachedData.knowledge = {};
+        cachedData.knowledge[id] = { cat: "Основные регламенты", title: "Новое правило сети", text: "", photo: "" };
+        if(!window.knowledgeChanges) window.knowledgeChanges = {};
+        window.knowledgeChanges[id] = cachedData.knowledge[id];
+        renderKnowledgeBase();
+    }
+    function deleteKbItem(id) {
+        if(!window.knowledgeChanges) window.knowledgeChanges = {};
+        cachedData.knowledge[id] = null;
+        window.knowledgeChanges[id] = null;
+        renderKnowledgeBase();
+    }
+    async function handleKbPhotoPaste(e, id) {
+        let items = e.clipboardData.items;
+        for (let i = 0; i < items.length; i++) {
+            if (items[i].type.indexOf("image") !== -1) {
+                e.preventDefault();
+                let file = items[i].getAsFile();
+                showReportOverlay("Сжатие изображения...");
+                let base64 = await compressImageToBase64(file, 600, 0.7);
+                updateKbVal(id, 'photo', base64);
+                hideReportOverlay();
+                renderKnowledgeBase();
+                break;
+            }
+        }
+    }
+    function deleteKbPhoto(id) { updateKbVal(id, 'photo', ""); renderKnowledgeBase(); }
+
+    async function saveKnowledgeBase(btn) {
+        let origText = btn.innerHTML;
+        if (Object.keys(window.knowledgeChanges || {}).length === 0) { btn.innerHTML = "✅ ИЗМЕНЕНИЙ НЕТ"; setTimeout(() => btn.innerHTML = origText, 1200); return; }
+        btn.disabled = true; btn.innerHTML = "⌛ СОХРАНЕНИЕ РЕГЛАМЕНТОВ...";
+        try {
+            let promises = [];
+            for(let id in window.knowledgeChanges) {
+                if(window.knowledgeChanges[id] === null) {
+                    promises.push(fetch(`${FB_URL}/knowledge_base/${id}.json`, { method: 'DELETE' }));
+                } else {
+                    promises.push(fetch(`${FB_URL}/knowledge_base/${id}.json`, { method: 'PUT', body: JSON.stringify(window.knowledgeChanges[id]) }));
+                }
+            }
+            await Promise.all(promises);
+            window.knowledgeChanges = {};
+            btn.innerHTML = "✅ ИНСТРУКЦИИ СОХРАНЕНЫ!";
+            setTimeout(() => { btn.innerHTML = origText; btn.disabled = false; loadTab('knowledge_base'); }, 1200);
+        } catch(e) { btn.innerHTML = origText; btn.disabled = false; alert("Ошибка: " + e.message); }
+    }
+    // ==========================================
+    // ⚡ LIVE-ОБНОВЛЕНИЕ ДАШБОРДА В РЕАЛЬНОМ ВРЕМЕНИ
+    // ==========================================
+
+    // 1. Свод и Заказы (уже было, слегка улучшено)
+    db.ref('orders').on('value', (snapshot) => {
+        let ordersObj = snapshot.val() || {};
+        Object.keys(ordersObj).forEach(k => { if (ordersObj[k]) ordersObj[k].key = k; });
+        cachedData.orders = ordersObj;
+        
+        // Перерисовываем, только если админ сейчас не в режиме редактирования!
+        if (currentTabType === 'orders' && !isSvodEditMode) renderOrdersSvod();
+        if (currentTabType === 'stoplists') renderStoplists();
+        if (currentTabType === 'checks_table' && !isChecklistEditMode) renderChecksTable();
+        if (currentTabType === 'stats') renderStats();
+    });
+
+    // 2. Все Справочники и Меню
+    db.ref('catalogs').on('value', (snapshot) => {
+        let cats = snapshot.val() || {};
+        
+        // Обновляем кэш в фоне
+        cachedData.catalogOrder = { ...(cats.order || {}), ...(cats.newshop || {}) };
+        cachedData.catalogChecklist = cats.checklist || {};
+        cachedData.catalogStoplist = cats.stoplist || {}; // ⚡ ДОБАВИЛИ КЭШ СТОП-ЛИСТА
+        
+        // Если у админа открыта какая-то из этих вкладок — мгновенно перерисовываем
+        if (currentTabType === 'menu') {
+            currentMenu = cats.menu || {};
+            renderMenuTab();
+        }
+        else if (currentTabType === 'catalog_order') {
+            currentCatalog = isNewShopCatalog ? (cats.newshop || {}) : (cats.order || {});
+            renderCatalogOrder();
+        }
+        else if (currentTabType === 'catalog_checklist') {
+            currentCatalog = cats.checklist || {};
+            renderCatalogChecklist();
+        }
+        else if (currentTabType === 'catalog_stoplist') {
+            currentCatalog = cats.stoplist || {};
+            renderCatalogStoplist();
+        }
+    });
+
+    // 3. Актуальные Недовозы
+    db.ref('missing_items').on('value', (snapshot) => {
+        cachedData.missing = snapshot.val() || {};
+        // Перерисовываем, если вкладка открыта и мы не в режиме редактирования
+        if (currentTabType === 'missing' && !isMissingEditMode) {
+            renderMissing();
+        }
+    });
+
+    // 4. Маркетплейсы
+    db.ref('marketplace_records').on('value', (snapshot) => {
+        cachedData.marketplace = snapshot.val() || {};
+        if (currentTabType === 'marketplace' && !isMpEditMode) {
+            renderMarketplaceTab();
+        }
+    });
+
+    // 5. Графики
+    db.ref('schedules').on('value', (snapshot) => {
+        cachedData.schedules = snapshot.val() || {};
+        // 💡 Примечание: Графики мы не перерисовываем на лету, 
+        // чтобы не стереть те данные, которые админ прямо сейчас печатает в окошках.
+    });
+
+    // 6. Настройки системы
+    db.ref('settings').on('value', (snapshot) => {
+        let s = snapshot.val() || {};
+        appSettings.hidden_categories_order = s.hidden_categories_order || s.hidden_categories || {};
+        appSettings.hidden_categories_checklist = s.hidden_categories_checklist || s.hidden_categories || {};
+        appSettings.hidden_categories_stoplist = s.hidden_categories_stoplist || s.hidden_categories || {};
+        appSettings.new_shop_order_active = s.new_shop_order_active || false;
+    });
+
+    // ==========================================
+    // ИНИЦИАЛИЗАЦИЯ ПРИ СТАРТЕ
+    // ==========================================
+    window.onload = () => {
+        loadUIState();
+        let savedTab = localStorage.getItem('activeTab') || 'orders';
+        let tabBtn = document.querySelector(`.tab-btn[onclick*="'${savedTab}'"]`) || document.querySelector('.tab-btn.active');
+        loadTab(savedTab, tabBtn);
+    };
+    
+    // ==========================================
+    // УМНАЯ АВТО-СИНХРОНИЗАЦИЯ ФОТО ПО ДУБЛИКАТАМ
+    // ==========================================
+    
+    window.autoSyncCatalogPhotos = function(catalogObj) {
+        if (!catalogObj) return false;
+        let photoMap = {};
+        let hasChanges = false;
+        
+        Object.keys(catalogObj).forEach(key => {
+            let item = catalogObj[key];
+            if (item && item.name && item.photo && (item.photo.startsWith("data:image") || item.photo.startsWith("http"))) {
+                let clean = String(item.name).toLowerCase().trim();
+                photoMap[clean] = item.photo;
+            }
+        });
+
+        Object.keys(catalogObj).forEach(key => {
+            let item = catalogObj[key];
+            if (item && item.name) {
+                let clean = String(item.name).toLowerCase().trim();
+                if ((!item.photo || (!item.photo.startsWith("data:image") && !item.photo.startsWith("http"))) && photoMap[clean]) {
+                    item.photo = photoMap[clean];
+                    hasChanges = true; 
+                }
+            }
+        });
+        
+        return hasChanges;
+    };
+
+    // Перехватываем вставку фото (Ctrl+V) по всему Дашборду
+    window.addEventListener('paste', function(e) {
+        // Проверяем, что в буфере обмена именно картинка
+        if (e.clipboardData && e.clipboardData.files && e.clipboardData.files.length > 0) {
+            
+            // Даем базовому коду Дашборда 300мс на сохранение новой картинки
+            setTimeout(() => {
+                let changed1 = false;
+                let changed2 = false;
+                
+                // Прогоняем синхронизацию по всем открытым рабочим словарям
+                if (typeof currentCatalog !== 'undefined') changed1 = window.autoSyncCatalogPhotos(currentCatalog);
+                if (typeof currentMenu !== 'undefined') changed2 = window.autoSyncCatalogPhotos(currentMenu);
+                
+                // Если нашлись дубликаты без фото и мы их заполнили — перерисовываем интерфейс
+                if (changed1 || changed2) {
+                    console.log("📸 Фото успешно скопировано на все дубликаты!");
+                    
+                    if (typeof currentPath !== 'undefined') {
+                        if (currentPath.includes('order') && typeof renderCatalogOrder === 'function') renderCatalogOrder();
+                        else if (currentPath.includes('checklist') && typeof renderCatalogChecklist === 'function') renderCatalogChecklist();
+                        else if (currentPath === 'menu' && typeof renderMenuTab === 'function') renderMenuTab();
+                    } else {
+                        // Резервный вызов перерисовки
+                        if (typeof renderMenuTab === 'function') renderMenuTab();
+                    }
+                }
+            }, 300);
+        }
+    });
+
+    
+    
+    // ==========================================
+    // ⚡ СВЕРХБЫСТРОЕ СОХРАНЕНИЕ (REST API FETCH)
+    // ==========================================
     async function saveCatalog(btn) {
         let origText = btn.innerHTML;
         

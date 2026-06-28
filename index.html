@@ -628,10 +628,9 @@
             openControlPanel(role);
         }
     }
-
   
+   
    // ⚡ ОБНОВЛЕННАЯ ФУНКЦИЯ НАВИГАЦИИ
-    // ⚡ ОБНОВЛЕННАЯ ФУНКЦИЯ НАВИГАЦИИ (Единая шапка)
     function showScreen(screenId, recordHistory = true) {
       const allScreens = ['step-1', 'step-2', 'step-sub-lists', 'step-sub-orders', 'step-sub-profile', 'step-sub-info', 'step-invoices', 'step-knowledge', 'step-stoplist', 'step-panel', 'step-admin-purchase', 'step-3', 'step-mp-month', 'step-mp-vendor', 'step-mp-mode', 'step-mp-address', 'step-mp-keypad', 'step-menu', 'step-schedule-name', 'step-schedule-calendar'];
       
@@ -657,14 +656,18 @@
       scrollToTop();
       updateNavButtons(screenId);
 
-      let headerMain = document.getElementById('header-main-select');
+      let headerShop = document.getElementById('header-shop-select');
+      let headerRole = document.getElementById('header-role-select');
       let headerTitle = document.getElementById('header-title-text');
       let headerArrow = document.getElementById('header-select-arrow');
 
-      // Скрываем всё перед проверкой
-      if(headerMain) headerMain.style.display = 'none';
+      // Сброс видимости элементов шапки
+      if(headerShop) headerShop.style.display = 'none';
+      if(headerRole) headerRole.style.display = 'none';
       if(headerTitle) headerTitle.style.display = 'none';
       if(headerArrow) headerArrow.style.display = 'none';
+
+      let isPrivileged = TG_BOSS_IDS.includes(String(globalTgUserId)) || TG_ADMIN_IDS.includes(String(globalTgUserId));
 
       if (screenId === 'step-1') {
           if(headerTitle) { headerTitle.style.display = 'block'; headerTitle.innerText = "Добро пожаловать"; }
@@ -673,19 +676,19 @@
       } else if (screenId.startsWith('step-mp')) {
           if(headerTitle) { headerTitle.style.display = 'block'; headerTitle.innerText = "Маркетплейс"; }
       } else if (screenId === 'step-panel') {
-          if(headerMain) {
-              headerMain.style.display = 'inline-block';
+          if(headerRole && isPrivileged) {
+              headerRole.style.display = 'inline-block';
               if(headerArrow) headerArrow.style.display = 'inline-block';
               let currentRole = state.currentControlRole || 'boss';
-              headerMain.value = "ROLE_" + currentRole;
+              headerRole.value = currentRole;
           }
       } else {
-          // Экраны бариста (показываем адреса)
-          if(headerMain) {
-              headerMain.style.display = 'inline-block';
+          // Для всех экранов бариста показываем адреса
+          if(headerShop) {
+              headerShop.style.display = 'inline-block';
               if(headerArrow) headerArrow.style.display = 'inline-block';
-              if (state.currentShop) headerMain.value = "SHOP_" + state.currentShop;
-              else headerMain.value = "";
+              if (state.currentShop) headerShop.value = state.currentShop;
+              else headerShop.value = "";
           }
       }
     }
@@ -864,10 +867,10 @@
         }, 1200);
     }
 
-   function enterBaristaMode() {
+  function enterBaristaMode() {
         triggerHaptic();
         
-        // Показываем кнопку возврата ТОЛЬКО Админам и Боссам
+        // Показываем кнопку возврата в панель ТОЛЬКО Админам и Боссам
         let isPrivileged = TG_BOSS_IDS.includes(String(globalTgUserId)) || TG_ADMIN_IDS.includes(String(globalTgUserId));
         let returnPanel = document.getElementById('admin-boss-return-panel');
         if (returnPanel) returnPanel.style.display = isPrivileged ? 'block' : 'none';
@@ -885,7 +888,6 @@
         let isBoss = TG_BOSS_IDS.includes(String(globalTgUserId));
         let isAdmin = TG_ADMIN_IDS.includes(String(globalTgUserId));
         
-        // Если почему-то роль потерялась
         if (!role) {
             if (isAdmin) role = 'admin';
             else if (isBoss) role = 'boss';
@@ -901,10 +903,10 @@
       if (role === 'admin' && !isAdmin) return showPopupError("Доступ запрещен", "Только для администратора.");
       if (role === 'boss' && !isBoss && !isAdmin) return showPopupError("Доступ запрещен", "Только для руководства.");
       
-      state.currentControlRole = role; // Сохраняем текущую роль
+      state.currentControlRole = role; 
       
-      let sel = document.getElementById('header-main-select');
-      if (sel) sel.value = "ROLE_" + role;
+      let sel = document.getElementById('header-role-select');
+      if (sel) sel.value = role;
       
       showScreen('step-panel');
       
@@ -923,10 +925,8 @@
           grid.innerHTML = `
             <div class="card btn-boss-table" onclick="executeAdminAction('status_checklist_boss')"><span style="font-size: 26px; margin-bottom: 6px;">👥</span><span>КТО ЗАПОЛНИЛ?</span></div>
             <div class="card btn-boss-table" onclick="openExternalDashboard()"><span style="font-size: 26px; margin-bottom: 6px;">🌐</span><span>ЧЕК-ЛИСТЫ</span></div>
-            
             <div class="card btn-boss-yellow wide" onclick="fetchBossReport('Сиропы половина')"><span>Сиропы половина</span></div>
             <div class="card btn-boss-red wide" onclick="fetchBossReport('Сиропы на исходе')"><span>Сиропы на исходе</span></div>
-            
             <div class="card btn-boss-pale" onclick="fetchBossReport('Зерно')"><span>Зерно</span></div>
             <div class="card btn-boss-pale" onclick="fetchBossReport('Стаканы и крышки')"><span>Стаканы и крышки</span></div>
             <div class="card btn-boss-pale" onclick="fetchBossReport('Расходники')"><span>Расходники</span></div>
@@ -3824,23 +3824,22 @@ function showLastOrder() {
         let savedShop = localStorage.getItem("teiku_main_shop");
         
         if (isBoss || isAdmin) {
-            // Если сохранен магазин, синхронизируем данные (на случай если админ захочет зайти в режим бариста)
             if (savedShop) {
                 state.currentShop = savedShop;
-                let sel = document.getElementById('header-main-select');
-                if (sel) sel.value = "SHOP_" + savedShop;
+                let sel = document.getElementById('header-shop-select');
+                if (sel) sel.value = savedShop;
                 startShopDataSync();
             }
-            openControlPanel(isAdmin ? 'admin' : 'boss'); // Сразу панель управления!
+            openControlPanel(isAdmin ? 'admin' : 'boss'); 
         } else {
             if (savedShop) {
                 state.currentShop = savedShop;
-                let sel = document.getElementById('header-main-select');
-                if (sel) sel.value = "SHOP_" + savedShop;
+                let sel = document.getElementById('header-shop-select');
+                if (sel) sel.value = savedShop;
                 startShopDataSync();
-                showScreen('step-2', false); // Бариста сразу идет в Главное меню
+                showScreen('step-2', false); 
             } else {
-                showScreen('step-1', false); // Бариста без сохраненной кофейни идет выбирать ее
+                showScreen('step-1', false); 
             }
         }
     };

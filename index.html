@@ -203,20 +203,11 @@
 
   <div id="validation-banner" class="validation-error-banner" onclick="this.style.display='none'"></div>
 
-  <!-- ⚡ ОБНОВЛЕННАЯ ШАПКА ⚡ -->
+  <!-- ⚡ УМНАЯ ШАПКА - ЕДИНЫЙ ПЕРЕКЛЮЧАТЕЛЬ ⚡ -->
   <div class="header" id="main-header">
       <span id="header-title-text" style="display:none;">Главное меню</span>
-      <select id="header-shop-select" onchange="handleHeaderShopChange(this.value)" style="display:none; font-family:inherit; font-weight:900; font-size:18px; color:#4A148C; border:none; background:transparent; outline:none; text-align-last:center; max-width: 90%; appearance: none; -webkit-appearance: none;">
-          <option value="" disabled selected>📍 Выберите адрес...</option>
-          <option value="Бояринова">📍 Бояринова</option>
-          <option value="Гагарина">📍 Гагарина</option>
-          <option value="Вертолетчиков">📍 Вертолетчиков</option>
-          <option value="Липчанского">📍 Липчанского</option>
-          <option value="Новокосино">📍 Новокосино</option>
-          <option value="Новокосино 2">📍 Новокосино 2</option>
-          <option value="Старое Павлино">📍 Старое Павлино</option>
-          <option value="Красноказарменная">📍 МЭИ</option>
-          <option value="Ухтомского ополчения">📍 Ухтомского ополчения</option>
+      <select id="header-main-select" onchange="handleHeaderChange(this.value)" style="display:none; font-family:inherit; font-weight:900; font-size:18px; color:#4A148C; border:none; background:transparent; outline:none; text-align-last:center; max-width: 90%; appearance: none; -webkit-appearance: none;">
+          <!-- Опции будут генерироваться через JavaScript -->
       </select>
       <span id="header-select-arrow" style="display:none; font-size: 12px; color: #4A148C; margin-left: 5px; pointer-events:none;">▼</span>
   </div>
@@ -612,6 +603,45 @@
         window.open('https://adrimangir-cpu.github.io/Coffee-app/dashboard.html', '_blank'); 
     }
 
+    // ⚡ ГЕНЕРАЦИЯ ОПЦИЙ ШАПКИ
+    function updateHeaderSelectOptions() {
+        let sel = document.getElementById('header-main-select');
+        if (!sel) return;
+        let html = '';
+        
+        let isBoss = TG_BOSS_IDS.includes(String(globalTgUserId));
+        let isAdmin = TG_ADMIN_IDS.includes(String(globalTgUserId));
+
+        if (isAdmin || isBoss) {
+            html += `<optgroup label="⚙️ ПАНЕЛИ УПРАВЛЕНИЯ">`;
+            if (isAdmin) html += `<option value="ROLE_admin">👨‍💻 Админ-панель</option>`;
+            if (isAdmin || isBoss) html += `<option value="ROLE_boss">👔 Кабинет Босса</option>`;
+            html += `</optgroup>`;
+        }
+        
+        html += `<optgroup label="📍 КОФЕЙНИ (РЕЖИМ БАРИСТА)">`;
+        let shops = ["Бояринова", "Гагарина", "Вертолетчиков", "Липчанского", "Новокосино", "Новокосино 2", "Старое Павлино", "Красноказарменная", "Ухтомского ополчения"];
+        shops.forEach(s => {
+            let display = s === 'Красноказарменная' ? 'МЭИ' : s;
+            html += `<option value="SHOP_${s}">📍 ${display}</option>`;
+        });
+        html += `</optgroup>`;
+        
+        sel.innerHTML = html;
+    }
+
+    // ⚡ ОБРАБОТЧИК КЛИКОВ ШАПКИ
+    function handleHeaderChange(value) {
+        triggerHaptic();
+        if (value.startsWith('SHOP_')) {
+            let shopName = value.replace('SHOP_', '');
+            handleHeaderShopChange(shopName);
+        } else if (value.startsWith('ROLE_')) {
+            let roleName = value.replace('ROLE_', '');
+            openControlPanel(roleName);
+        }
+    }
+
     // ⚡ ОБНОВЛЕННАЯ ФУНКЦИЯ НАВИГАЦИИ (Умное сохранение истории)
    // ⚡ ОБНОВЛЕННАЯ ФУНКЦИЯ НАВИГАЦИИ (Умное сохранение истории)
     function showScreen(screenId, recordHistory = true) {
@@ -640,7 +670,7 @@
       scrollToTop();
       updateNavButtons(screenId);
 
-      let headerSelect = document.getElementById('header-shop-select');
+      let headerSelect = document.getElementById('header-main-select'); // ⚡ Новый ID
       let headerTitle = document.getElementById('header-title-text');
       let headerArrow = document.getElementById('header-select-arrow');
 
@@ -649,11 +679,6 @@
           headerArrow.style.display = 'none';
           headerTitle.style.display = 'block';
           headerTitle.innerText = "Добро пожаловать";
-      } else if (screenId === 'step-panel') {
-          headerSelect.style.display = 'none';
-          headerArrow.style.display = 'none';
-          headerTitle.style.display = 'block';
-          // Текст задается динамически внутри openControlPanel
       } else if (screenId === 'step-admin-purchase') {
           headerSelect.style.display = 'none';
           headerArrow.style.display = 'none';
@@ -665,16 +690,15 @@
           headerTitle.style.display = 'block';
           headerTitle.innerText = "Маркетплейс";
       } else {
+          // ⚡ Для остальных экранов И для step-panel показываем умный селект!
           headerTitle.style.display = 'none';
           headerSelect.style.display = 'inline-block';
           headerArrow.style.display = 'inline-block';
-          if (state.currentShop) {
-              headerSelect.value = state.currentShop;
-          } else {
-              headerSelect.value = "";
+          if (screenId !== 'step-panel' && state.currentShop) {
+              headerSelect.value = "SHOP_" + state.currentShop;
           }
       }
-    } 
+    }
       
     function checkShopSelected() {
         if (!state.currentShop) {
@@ -820,7 +844,8 @@
       triggerHaptic(); 
       localStorage.setItem("teiku_main_shop", name); 
       state.currentShop = name; 
-      document.getElementById('header-shop-select').value = name;
+      let sel = document.getElementById('header-main-select');
+      if(sel) sel.value = "SHOP_" + name;
       state.screenHistory = []; 
 
       showGlobalLoader("Настройка кофейни..."); 
@@ -849,7 +874,6 @@
         }, 1200);
     }
 
-    // ⚡ ФУНКЦИЯ ВХОДА В РЕЖИМ БАРИСТА ДЛЯ АДМИНА
     function enterBaristaMode() {
         triggerHaptic();
         document.getElementById('admin-boss-return-panel').style.display = 'block';
@@ -866,6 +890,55 @@
         let isAdmin = TG_ADMIN_IDS.includes(String(globalTgUserId));
         if (isAdmin) openControlPanel('admin');
         else if (isBoss) openControlPanel('boss');
+    }
+
+    function openControlPanel(role) {
+      triggerHaptic();
+      let isBoss = TG_BOSS_IDS.includes(String(globalTgUserId));
+      let isAdmin = TG_ADMIN_IDS.includes(String(globalTgUserId));
+
+      if (role === 'admin' && !isAdmin) return showPopupError("Доступ запрещен", "Только для администратора.");
+      if (role === 'boss' && !isBoss && !isAdmin) return showPopupError("Доступ запрещен", "Только для руководства.");
+      
+      let sel = document.getElementById('header-main-select');
+      if (sel) sel.value = "ROLE_" + role;
+      
+      showScreen('step-panel');
+      
+      let grid = document.getElementById('panel-controls-grid');
+      let panelTitle = document.getElementById('panel-title');
+
+      if (role === 'admin') {
+          panelTitle.innerText = "Админ-панель";
+          grid.innerHTML = `
+            <div class="card btn-admin-pink" style="grid-column: span 2;" onclick="showScreen('step-admin-purchase')"><span>📦</span><span>Управление закупкой</span></div>
+            <div class="card wide btn-admin-white" onclick="executeAdminAction('status_checklist_admin')"><span>👥</span><span style="margin-top:5px;">КТО ЗАПОЛНИЛ?</span></div>
+            <div class="card wide btn-admin-white" onclick="openMissingAdmin()"><span>🚚</span><span style="margin-top:5px;">Недовозы</span></div>
+            <div class="card wide btn-admin-white" onclick="openExternalDashboard()"><span>🌐</span><span style="margin-top:5px;">ОТКРЫТЬ CRM</span></div>
+            <div class="card wide btn-admin-white" onclick="initMarketplace()"><span>🛒</span><span style="margin-top:5px;">Маркетплейс</span></div>
+            ${isBoss ? '' : `<div class="card btn-boss-table" style="grid-column: span 2; margin-top: 10px;" onclick="openControlPanel('boss')"><span>👔</span><span>КАБИНЕТ БОССА</span></div>`}
+          `;
+      } 
+      else {
+          panelTitle.innerText = "Кабинет Босса";
+          let adminBtnHtml = isAdmin ? `<div class="card btn-admin-pink" style="grid-column: span 2; margin-top: 10px;" onclick="openControlPanel('admin')"><span>👨‍💻</span><span>АДМИН ПАНЕЛЬ</span></div>` : '';
+          
+          grid.innerHTML = `
+            <div class="card btn-boss-table" onclick="executeAdminAction('status_checklist_boss')"><span style="font-size: 26px; margin-bottom: 6px;">👥</span><span>КТО ЗАПОЛНИЛ?</span></div>
+            <div class="card btn-boss-table" onclick="openExternalDashboard()"><span style="font-size: 26px; margin-bottom: 6px;">🌐</span><span>ЧЕК-ЛИСТЫ</span></div>
+            
+            <div class="card btn-boss-yellow wide" onclick="fetchBossReport('Сиропы половина')"><span>Сиропы половина</span></div>
+            <div class="card btn-boss-red wide" onclick="fetchBossReport('Сиропы на исходе')"><span>Сиропы на исходе</span></div>
+            
+            <div class="card btn-boss-pale" onclick="fetchBossReport('Зерно')"><span>Зерно</span></div>
+            <div class="card btn-boss-pale" onclick="fetchBossReport('Стаканы и крышки')"><span>Стаканы и крышки</span></div>
+            <div class="card btn-boss-pale" onclick="fetchBossReport('Расходники')"><span>Расходники</span></div>
+            <div class="card btn-boss-pale" onclick="fetchBossReport('Пищевые расходники')"><span>Пищевые расходники</span></div>
+            <div class="card btn-boss-pale" style="grid-column: span 2;" onclick="fetchBossReport('Пищевые порошки')"><span>Пищевые порошки</span></div>
+            <div class="card btn-boss-pale" style="grid-column: span 2;" onclick="fetchBossReport('Бабл ти')"><span>Бабл ти</span></div>
+            ${adminBtnHtml}
+          `;
+      }
     }
 
     // ==========================================
@@ -3737,6 +3810,7 @@ function showLastOrder() {
         
         let isBoss = TG_BOSS_IDS.includes(globalTgUserId);
         let isAdmin = TG_ADMIN_IDS.includes(globalTgUserId);
+        updateHeaderSelectOptions();
 
         state.cachedCatalogs = {};
         

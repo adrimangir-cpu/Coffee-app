@@ -517,7 +517,7 @@
     </div>
   </div>
 
-  <script>
+<script>
     const firebaseConfig = {
       apiKey: "AIzaSyDQ_-YPu7gxKruOzOFy_zeNfDqF3xs3xts",
       authDomain: "project-lenta22.firebaseapp.com",
@@ -540,6 +540,7 @@
     var state = { 
       currentShop: "", 
       currentMode: "", 
+      currentControlRole: "",
       productCatalog: {}, 
       menuCatalog: {}, 
       userBasket: {}, 
@@ -628,9 +629,8 @@
             openControlPanel(role);
         }
     }
-  
-   
-   // ⚡ ОБНОВЛЕННАЯ ФУНКЦИЯ НАВИГАЦИИ
+
+    // ⚡ ОБНОВЛЕННАЯ ФУНКЦИЯ НАВИГАЦИИ (Умное сохранение истории)
     function showScreen(screenId, recordHistory = true) {
       const allScreens = ['step-1', 'step-2', 'step-sub-lists', 'step-sub-orders', 'step-sub-profile', 'step-sub-info', 'step-invoices', 'step-knowledge', 'step-stoplist', 'step-panel', 'step-admin-purchase', 'step-3', 'step-mp-month', 'step-mp-vendor', 'step-mp-mode', 'step-mp-address', 'step-mp-keypad', 'step-menu', 'step-schedule-name', 'step-schedule-calendar'];
       
@@ -661,7 +661,7 @@
       let headerTitle = document.getElementById('header-title-text');
       let headerArrow = document.getElementById('header-select-arrow');
 
-      // Сброс видимости элементов шапки
+      // Скрываем все элементы шапки перед проверкой
       if(headerShop) headerShop.style.display = 'none';
       if(headerRole) headerRole.style.display = 'none';
       if(headerTitle) headerTitle.style.display = 'none';
@@ -679,8 +679,7 @@
           if(headerRole && isPrivileged) {
               headerRole.style.display = 'inline-block';
               if(headerArrow) headerArrow.style.display = 'inline-block';
-              let currentRole = state.currentControlRole || 'boss';
-              headerRole.value = currentRole;
+              headerRole.value = state.currentControlRole || 'boss';
           }
       } else {
           // Для всех экранов бариста показываем адреса
@@ -706,13 +705,8 @@
         triggerHaptic();
         if (state.screenHistory.length > 0) {
             let prevScreen = state.screenHistory.pop();
-            // Возврат в панель правильной роли
             if(prevScreen === 'step-panel') {
-                let isBoss = TG_BOSS_IDS.includes(String(globalTgUserId));
-                let isAdmin = TG_ADMIN_IDS.includes(String(globalTgUserId));
-                if(isAdmin) openControlPanel('admin');
-                else if(isBoss) openControlPanel('boss');
-                else showScreen('step-2', false);
+                returnToPanel();
             } else {
                 showScreen(prevScreen, false);
             }
@@ -720,7 +714,6 @@
             let isBoss = TG_BOSS_IDS.includes(String(globalTgUserId));
             let isAdmin = TG_ADMIN_IDS.includes(String(globalTgUserId));
             
-            // Если история пуста (например после перезагрузки), пытаемся вернуть по логике
             if (state.currentMode === 'order' || state.currentMode === 'new_shop' || state.currentMode === 'receiving' || state.currentMode === 'my_last_order') {
                 showScreen('step-sub-orders', false);
             } else if (state.currentMode === 'checklist' || state.currentMode === 'stoplist_fill' || state.currentMode === 'stoplist_view') {
@@ -731,7 +724,7 @@
                 showScreen('step-sub-profile', false);
             } else {
                 if (isAdmin || isBoss) {
-                    openControlPanel(isAdmin ? 'admin' : 'boss');
+                    returnToPanel();
                 } else {
                     showScreen('step-2', false);
                 }
@@ -837,8 +830,8 @@
       triggerHaptic(); 
       localStorage.setItem("teiku_main_shop", name); 
       state.currentShop = name; 
-      let sel = document.getElementById('header-main-select');
-      if(sel) sel.value = "SHOP_" + name;
+      let sel = document.getElementById('header-shop-select');
+      if(sel) sel.value = name;
       state.screenHistory = []; 
 
       showGlobalLoader("Настройка кофейни..."); 
@@ -867,10 +860,8 @@
         }, 1200);
     }
 
-  function enterBaristaMode() {
+    function enterBaristaMode() {
         triggerHaptic();
-        
-        // Показываем кнопку возврата в панель ТОЛЬКО Админам и Боссам
         let isPrivileged = TG_BOSS_IDS.includes(String(globalTgUserId)) || TG_ADMIN_IDS.includes(String(globalTgUserId));
         let returnPanel = document.getElementById('admin-boss-return-panel');
         if (returnPanel) returnPanel.style.display = isPrivileged ? 'block' : 'none';
@@ -911,8 +902,10 @@
       showScreen('step-panel');
       
       let grid = document.getElementById('panel-controls-grid');
+      let panelTitle = document.getElementById('panel-title');
 
       if (role === 'admin') {
+          panelTitle.innerText = "Админ-панель";
           grid.innerHTML = `
             <div class="card btn-admin-pink" style="grid-column: span 2;" onclick="showScreen('step-admin-purchase')"><span>📦</span><span>Управление закупкой</span></div>
             <div class="card wide btn-admin-white" onclick="executeAdminAction('status_checklist_admin')"><span>👥</span><span style="margin-top:5px;">КТО ЗАПОЛНИЛ?</span></div>
@@ -922,11 +915,14 @@
           `;
       } 
       else {
+          panelTitle.innerText = "Кабинет Босса";
           grid.innerHTML = `
             <div class="card btn-boss-table" onclick="executeAdminAction('status_checklist_boss')"><span style="font-size: 26px; margin-bottom: 6px;">👥</span><span>КТО ЗАПОЛНИЛ?</span></div>
             <div class="card btn-boss-table" onclick="openExternalDashboard()"><span style="font-size: 26px; margin-bottom: 6px;">🌐</span><span>ЧЕК-ЛИСТЫ</span></div>
+            
             <div class="card btn-boss-yellow wide" onclick="fetchBossReport('Сиропы половина')"><span>Сиропы половина</span></div>
             <div class="card btn-boss-red wide" onclick="fetchBossReport('Сиропы на исходе')"><span>Сиропы на исходе</span></div>
+            
             <div class="card btn-boss-pale" onclick="fetchBossReport('Зерно')"><span>Зерно</span></div>
             <div class="card btn-boss-pale" onclick="fetchBossReport('Стаканы и крышки')"><span>Стаканы и крышки</span></div>
             <div class="card btn-boss-pale" onclick="fetchBossReport('Расходники')"><span>Расходники</span></div>
@@ -2663,45 +2659,36 @@
       if (role === 'admin' && !isAdmin) return showPopupError("Доступ запрещен", "Только для администратора.");
       if (role === 'boss' && !isBoss && !isAdmin) return showPopupError("Доступ запрещен", "Только для руководства.");
       
+      state.currentControlRole = role; 
+      
+      let sel = document.getElementById('header-role-select');
+      if (sel) sel.value = role;
+      
       showScreen('step-panel');
       
       let grid = document.getElementById('panel-controls-grid');
-      let panelTitle = document.getElementById('panel-title');
-      let headerTitle = document.getElementById('header-title-text');
 
       if (role === 'admin') {
-          panelTitle.innerText = "Админ-панель";
-          headerTitle.innerText = "Админ-панель";
           grid.innerHTML = `
             <div class="card btn-admin-pink" style="grid-column: span 2;" onclick="showScreen('step-admin-purchase')"><span>📦</span><span>Управление закупкой</span></div>
             <div class="card wide btn-admin-white" onclick="executeAdminAction('status_checklist_admin')"><span>👥</span><span style="margin-top:5px;">КТО ЗАПОЛНИЛ?</span></div>
             <div class="card wide btn-admin-white" onclick="openMissingAdmin()"><span>🚚</span><span style="margin-top:5px;">Недовозы</span></div>
             <div class="card wide btn-admin-white" onclick="openExternalDashboard()"><span>🌐</span><span style="margin-top:5px;">ОТКРЫТЬ CRM</span></div>
             <div class="card wide btn-admin-white" onclick="initMarketplace()"><span>🛒</span><span style="margin-top:5px;">Маркетплейс</span></div>
-            <div class="card btn-boss-table" style="grid-column: span 2; margin-top: 10px;" onclick="openControlPanel('boss')"><span>👔</span><span>КАБИНЕТ БОССА</span></div>
           `;
       } 
       else {
-          panelTitle.innerText = "Кабинет Босса";
-          headerTitle.innerText = "Кабинет Босса";
-          
-          // Кнопка возврата в Админку показывается только тем, у кого есть права Админа
-          let adminBtnHtml = isAdmin ? `<div class="card btn-admin-pink" style="grid-column: span 2; margin-top: 10px;" onclick="openControlPanel('admin')"><span>👨‍💻</span><span>АДМИН ПАНЕЛЬ</span></div>` : '';
-          
           grid.innerHTML = `
             <div class="card btn-boss-table" onclick="executeAdminAction('status_checklist_boss')"><span style="font-size: 26px; margin-bottom: 6px;">👥</span><span>КТО ЗАПОЛНИЛ?</span></div>
             <div class="card btn-boss-table" onclick="openExternalDashboard()"><span style="font-size: 26px; margin-bottom: 6px;">🌐</span><span>ЧЕК-ЛИСТЫ</span></div>
-            
             <div class="card btn-boss-yellow wide" onclick="fetchBossReport('Сиропы половина')"><span>Сиропы половина</span></div>
             <div class="card btn-boss-red wide" onclick="fetchBossReport('Сиропы на исходе')"><span>Сиропы на исходе</span></div>
-            
             <div class="card btn-boss-pale" onclick="fetchBossReport('Зерно')"><span>Зерно</span></div>
             <div class="card btn-boss-pale" onclick="fetchBossReport('Стаканы и крышки')"><span>Стаканы и крышки</span></div>
             <div class="card btn-boss-pale" onclick="fetchBossReport('Расходники')"><span>Расходники</span></div>
             <div class="card btn-boss-pale" onclick="fetchBossReport('Пищевые расходники')"><span>Пищевые расходники</span></div>
             <div class="card btn-boss-pale" style="grid-column: span 2;" onclick="fetchBossReport('Пищевые порошки')"><span>Пищевые порошки</span></div>
             <div class="card btn-boss-pale" style="grid-column: span 2;" onclick="fetchBossReport('Бабл ти')"><span>Бабл ти</span></div>
-            ${adminBtnHtml}
           `;
       }
     }
@@ -3793,7 +3780,7 @@ function showLastOrder() {
         } 
     }
     
- // ==========================================
+// ==========================================
     // ⚡ ГЛАВНЫЙ СТАРТ ПРИЛОЖЕНИЯ
     // ==========================================
    window.onload = async () => { 
@@ -3806,6 +3793,8 @@ function showLastOrder() {
         
         let isBoss = TG_BOSS_IDS.includes(globalTgUserId);
         let isAdmin = TG_ADMIN_IDS.includes(globalTgUserId);
+
+        // ⚡ Генерируем опции для шапки при запуске
         updateHeaderSelectOptions();
 
         state.cachedCatalogs = {};
@@ -3843,7 +3832,6 @@ function showLastOrder() {
             }
         }
     };
-    
   </script>
 </body>
 </html>

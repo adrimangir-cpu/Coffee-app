@@ -4183,9 +4183,9 @@ function renderGraphsTab() {
 
         let globalCats = ["Основное меню"];
         Object.values(currentCatalog).forEach(i => {
-            if(i.globalCat && !globalCats.includes(i.globalCat) && !i.globalCat.includes("!!!")) globalCats.push(i.globalCat);
+            if(i && i.globalCat && !globalCats.includes(i.globalCat) && !i.globalCat.includes("!!!")) globalCats.push(i.globalCat);
         });
-        let subCats = [...new Set(Object.values(currentCatalog).map(i => i.cat).filter(c => c && !c.includes("!!!")))];
+        let subCats = [...new Set(Object.values(currentCatalog).filter(i => i).map(i => i.cat).filter(c => c && !c.includes("!!!")))];
 
         let catLabel = isNewShopCatalog ? "🏗 На новую кофейню" : "📦 Обычная закупка";
         let isActionsOpen = expandedDivs.has('cat-ord-actions');
@@ -4307,8 +4307,10 @@ function renderGraphsTab() {
         });
 
         let globalCats = ["Основное меню"];
-        Object.values(currentCatalog).forEach(i => { if(i.globalCat && !globalCats.includes(i.globalCat) && !i.globalCat.includes("!!!")) globalCats.push(i.globalCat); });
-        let subCats = [...new Set(Object.values(currentCatalog).map(i => i.cat).filter(c => c && !c.includes("!!!")))];
+        Object.values(currentCatalog).forEach(i => {
+            if(i && i.globalCat && !globalCats.includes(i.globalCat) && !i.globalCat.includes("!!!")) globalCats.push(i.globalCat);
+        });
+        let subCats = [...new Set(Object.values(currentCatalog).filter(i => i).map(i => i.cat).filter(c => c && !c.includes("!!!")))];
         
         let isActionsOpen = expandedDivs.has('cat-chk-actions');
 
@@ -4409,9 +4411,9 @@ function renderGraphsTab() {
         
         let globalCats = ["Основное меню"];
         Object.values(currentCatalog).forEach(i => {
-            if(i.globalCat && !globalCats.includes(i.globalCat) && !i.globalCat.includes("!!!")) globalCats.push(i.globalCat);
+            if(i && i.globalCat && !globalCats.includes(i.globalCat) && !i.globalCat.includes("!!!")) globalCats.push(i.globalCat);
         });
-        let subCats = [...new Set(Object.values(currentCatalog).map(i => i.cat).filter(c => c && !c.includes("!!!")))];
+        let subCats = [...new Set(Object.values(currentCatalog).filter(i => i).map(i => i.cat).filter(c => c && !c.includes("!!!")))];
         
         let isActionsOpen = expandedDivs.has('cat-stop-actions');
 
@@ -5266,7 +5268,7 @@ async function exportGraphsToExcel() {
                         <td colspan="5" style="padding:14px; font-size:17px; background:#e1bee7; color:#4A148C;">📂 <b>${cat}</b> <span id="arrow_invcat_${safeCatId}" style="float:right; opacity:0.6;">${isCatOpen ? '▲' : '▼'}</span></td>
                      </tr>`;
 
-            grouped[cat].sort((a,b) => a.data.name.localeCompare(b.data.name)).forEach(node => {
+            grouped[cat].sort((a,b) => (a.data.name||'').localeCompare(b.data.name||'')).forEach(node => {
                 let k = node.id; let item = node.data;
                 let displayStyle = isCatOpen ? "table-row" : "none";
                 
@@ -5415,33 +5417,22 @@ async function exportGraphsToExcel() {
         try {
             // Выкачиваем чистую актуальную копию с сервера для горячей сверки перед записью
             let freshSnap = await fetch(`${FB_URL}/catalogs/invoices.json`).then(r => r.json()) || {};
-            
-            // Строим карту чистых имён серверной базы { clean_name: key }
-            let nameToKeyMap = {};
-            for (let k in freshSnap) {
-                if (freshSnap[k] && freshSnap[k].name) {
-                    nameToBreak = cleanName(freshSnap[k].name);
-                    photoMap[nameToBreak] = freshSnap[k].photo || ""; // Запоминаем фото если есть
-                    nameToKeyMap[cleanName(freshween.name)] = k;
-                }
-            }
-            
             let promises = [];
             
-            for (let id in catalogChanges) {
-                let item = catalogChanges[id];
+            for (let id in window.invoiceChanges) {
+                let item = window.invoiceChanges[id];
                 if (item === null) {
                     // Элемент удален
-                    promises.push(fetch(`${FB_URL}/catalogs/stoplist/${id}.json`, { method: 'DELETE' }));
+                    promises.push(fetch(`${FB_URL}/catalogs/invoices/${id}.json`, { method: 'DELETE' }));
                 } else {
                     let cName = cleanName(item.name);
-                    // Ищем, нет ли товара с таким же чистым именем в базе в ЛЮБОМ регистре
+                    // Ищем, нет ли товара с таким же чистым именем в базе
                     let existingMatchKey = Object.keys(freshSnap).find(k => freshSnap[k] && cleanName(freshSnap[k].name) === cName);
                     
                     let targetId = existingMatchKey ? existingMatchKey : id;
                     let targetPayload = { ...item };
                     
-                    // Если фото пустое, но этот товар уже загружался ранее и имел фото — склеиваем его, подтягивая старое!
+                    // Склеиваем фото
                     if (!targetPayload.photo && freshSnap[targetId] && freshSnap[targetId].photo) {
                         targetPayload.photo = freshSnap[targetId].photo;
                     }

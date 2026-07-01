@@ -3296,9 +3296,12 @@ function renderGraphsTab() {
                     let isDeleted = mpDeletions.has(r.key); 
                     let rowOp = isDeleted ? "opacity:0.4; background:#eee;" : "";
                     
-                    let inputVal = document.getElementById(`mp_inp_${r.key}`) ? document.getElementById(`mp_inp_${r.key}`).value : r.amount;
+                   let inputVal = document.getElementById(`mp_inp_${r.key}`) ? document.getElementById(`mp_inp_${r.key}`).value : r.amount;
                     let displayAmt = isMpEditMode ? inputVal : r.amount;
                     let amtColor = parseFloat(displayAmt) < 0 ? "#D32F2F" : "#2E7D32";
+                    
+                    // ⚡ Создаем бейджик "исправлено", если есть флаг is_edited
+                    let editedBadge = r.is_edited ? `<br><span style="font-size:11px; color:#888; background:#f0f0f0; padding:2px 6px; border-radius:4px; display:inline-block; margin-top:4px;">✏️ исправлено</span>` : "";
                     
                     html += `<tr style="${rowOp}">
                         <td style="font-size:15px;">${d}</td>
@@ -3306,11 +3309,10 @@ function renderGraphsTab() {
                         <td>`;
                         
                     if (isMpEditMode) {
-                        // ⚡ ИСПРАВЛЕНИЕ: Убрали renderMarketplaceTab(), оставили только смену цвета на лету. 
-                        // type="text" inputmode="decimal" вызовет удобную цифровую клавиатуру без ползунков
                         html += `<input type="text" inputmode="decimal" id="mp_inp_${r.key}" value="${displayAmt}" ${isDeleted ? 'disabled' : ''} style="width:120px; text-align:right; font-weight:bold; color:${amtColor}; border:2px solid #ce93d8;" oninput="this.style.color = parseFloat(this.value) < 0 ? '#D32F2F' : '#2E7D32';">`;
+                        html += editedBadge; // Показываем бейджик даже в режиме редактирования
                     } else {
-                        html += `<b style="color:${amtColor}; font-size:18px;">${displayAmt}</b>`;
+                        html += `<b style="color:${amtColor}; font-size:18px;">${displayAmt}</b>${editedBadge}`;
                     }
                     
                     html += `</td><td style="text-align:center;">`;
@@ -3429,11 +3431,13 @@ function renderGraphsTab() {
                     let val = parseFloat(inp.value);
                     if (!isNaN(val) && cachedData.marketplace && cachedData.marketplace[key]) {
                         if (parseFloat(cachedData.marketplace[key].amount) !== val) {
-                            promises.push(fetch(`${FB_URL}/marketplace_records/${key}.json`, { method: 'PATCH', body: JSON.stringify({amount: val}) }));
-                            
-                            // ⚡ МАГИЯ: Синхронизируем локальную память устройства на лету
-                            cachedData.marketplace[key].amount = val;
-                        }
+            // ⚡ Добавляем флаг is_edited: true при сохранении в базу
+            promises.push(fetch(`${FB_URL}/marketplace_records/${key}.json`, { method: 'PATCH', body: JSON.stringify({amount: val, is_edited: true}) }));
+            
+            // ⚡ Синхронизируем локальную память
+            cachedData.marketplace[key].amount = val;
+            cachedData.marketplace[key].is_edited = true;
+        }
                     }
                 }
             });
@@ -3671,13 +3675,23 @@ function renderGraphsTab() {
                     if(m.status === 'transit') { statText = "В пути (от поставщика)"; statColor = "#1565c0"; }
                     else if(m.status === 'reorder') { statText = "Отменен (Админ закажет сам)"; statColor = "#888"; }
                     
+                    // ⚡ ДОБАВЛЯЕМ БЫСТРЫЕ КНОПКИ ДЛЯ СТАТУСА "ОЖИДАЕТ ПРОВЕРКИ"
+                    let actionButtons = "";
+                    if (m.status === 'pending') {
+                        actionButtons = `
+                            <button onclick="updateMissingStatus('${m.key}', 'transit')" style="background: #1565C0; color: white; border: none; padding: 6px 10px; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 11px; margin-bottom: 5px; width: 100%; box-shadow: 0 2px 4px rgba(0,0,0,0.2);">✅ Подтвердить</button>
+                            <br>
+                            <button onclick="updateMissingStatus('${m.key}', 'canceled')" style="background: #C62828; color: white; border: none; padding: 6px 10px; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 11px; width: 100%; box-shadow: 0 2px 4px rgba(0,0,0,0.2);">❌ Отменить</button>
+                        `;
+                    }
+                    
                     activeHtml += `
                     <tr>
                         <td><b style="font-size:17px; color:#311b92;">${displayName}</b></td>
                         <td style="font-size:16px;">${m.name} ${linksHtml}</td>
                         <td style="font-size:17px; font-weight:bold; text-align:center;">${m.qty}</td>
                         <td style="font-weight:900; font-size:14px; color:${statColor};">${statText}</td>
-                        <td style="text-align:center;"></td>
+                        <td style="text-align:center; vertical-align:middle;">${actionButtons}</td>
                     </tr>`;
                 }
             }
@@ -5820,6 +5834,23 @@ async function exportGraphsToExcel() {
         }
     }
     
+   // ⚡ ФУНКЦИЯ ДЛЯ КНОПОК НЕДОВОЗОВ В КОНТРОЛЕ ПРИЕМОК
+    window.updateMissingStatus = async function(key, newStatus) {
+        let msg = newStatus === 'transit' ? "Подтвердить недовоз? Он появится у бариста в статусе 'В пути'." : "Отменить недовоз? Бариста не получит этот товар.";
+        if (!confirm(msg)) return;
+        showReportOverlay("Обновление статуса...");
+        try {
+            await fetch(`${FB_URL}/missing_items/${key}.json`, { 
+                method: 'PATCH', 
+                body: JSON.stringify({ status: newStatus, timestamp: Date.now() }) 
+            });
+            hideReportOverlay();
+            // ⚡ Перерисовка произойдет автоматически благодаря real-time обновлениям Firebase
+        } catch(e) {
+            hideReportOverlay();
+            alert("Ошибка: " + e.message);
+        }
+    }; 
 </script>
 </body>
 </html>

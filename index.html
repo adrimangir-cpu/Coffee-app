@@ -855,6 +855,10 @@
     function handleShopSelection(name) {
       triggerHaptic(); 
       localStorage.setItem("teiku_main_shop", name); 
+      // ⚡ Сохраняем в вечное облако Telegram
+      if (window.Telegram && Telegram.WebApp && Telegram.WebApp.CloudStorage) {
+          Telegram.WebApp.CloudStorage.setItem("teiku_main_shop", name);
+      }
       state.currentShop = name; 
       let sel = document.getElementById('header-shop-select');
       if(sel) sel.value = name;
@@ -873,6 +877,10 @@
     function handleHeaderShopChange(name) {
         triggerHaptic();
         localStorage.setItem("teiku_main_shop", name);
+        // ⚡ Обновляем в облаке Telegram
+        if (window.Telegram && Telegram.WebApp && Telegram.WebApp.CloudStorage) {
+            Telegram.WebApp.CloudStorage.setItem("teiku_main_shop", name);
+        }
         state.currentShop = name;
         
         showGlobalLoader("Смена кофейни...");
@@ -3903,7 +3911,7 @@ function showLastOrder() {
 // ==========================================
     // ⚡ ГЛАВНЫЙ СТАРТ ПРИЛОЖЕНИЯ (ИСПРАВЛЕНА АВТОРИЗАЦИЯ)
     // ==========================================
-    window.onload = async () => { 
+   window.onload = async () => { 
         showGlobalLoader("Запуск приложения..."); 
         try { 
             if (window.Telegram && Telegram.WebApp) {
@@ -3912,7 +3920,7 @@ function showLastOrder() {
                 if (Telegram.WebApp.initDataUnsafe && Telegram.WebApp.initDataUnsafe.user) {
                     globalTgUserId = String(Telegram.WebApp.initDataUnsafe.user.id);
                 } else {
-                    globalTgUserId = "unknown_user"; // Если данных нет, статус "неизвестный"
+                    globalTgUserId = "unknown_user";
                 }
             } else {
                 globalTgUserId = "unknown_user";
@@ -3922,12 +3930,9 @@ function showLastOrder() {
         let isBoss = TG_BOSS_IDS.includes(globalTgUserId);
         let isAdmin = TG_ADMIN_IDS.includes(globalTgUserId);
 
-        // ⚡ Генерируем опции для шапки при запуске
         updateHeaderSelectOptions();
-
         state.cachedCatalogs = {};
         
-        // Мгновенно поднимаем локальный кэш, если он есть
         const paths = ['order', 'newshop', 'stoplist', 'checklist', 'menu'];
         for (let p of paths) {
             let cachedData = await loadFromRealCache(p);
@@ -3937,25 +3942,33 @@ function showLastOrder() {
         state.globalOrders = []; state.globalMissing = [];
         restoreMpDraft(); 
         if(typeof startRealtimeUpdates === 'function') startRealtimeUpdates(); 
-        hideGlobalLoader(); 
-        
+
+        // ⚡ 1. Ищем адрес локально
         let savedShop = localStorage.getItem("teiku_main_shop");
+        
+        // ⚡ 2. Если локально пусто, тянем из облака Telegram (защита от сброса кэша)
+        if (!savedShop && window.Telegram && Telegram.WebApp && Telegram.WebApp.CloudStorage) {
+            savedShop = await new Promise((resolve) => {
+                Telegram.WebApp.CloudStorage.getItem("teiku_main_shop", (err, val) => {
+                    resolve(err ? null : val);
+                });
+            });
+            if (savedShop) localStorage.setItem("teiku_main_shop", savedShop);
+        }
+        
+        hideGlobalLoader(); 
         
         // ЛОГИКА РАСПРЕДЕЛЕНИЯ
         if (isAdmin || isBoss) {
-            // Если Админ/Босс, открываем панель
             openControlPanel(isAdmin ? 'admin' : 'boss'); 
         } else {
-            // Если Бариста (Обычный сотрудник)
             if (savedShop) {
-                // Если адрес уже выбирался ранее -> сразу в Меню (step-2)
                 state.currentShop = savedShop;
                 let sel = document.getElementById('header-shop-select');
                 if (sel) sel.value = savedShop;
                 startShopDataSync();
                 showScreen('step-2', false); 
             } else {
-                // Если зашел впервые -> Экран выбора адреса (step-1)
                 showScreen('step-1', false); 
             }
         }

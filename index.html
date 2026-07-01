@@ -257,8 +257,8 @@
             <button class="btn-mode" style="background: linear-gradient(135deg, #4A148C 0%, #7E57C2 100%); margin-bottom: 0;" onclick="if(checkShopSelected()) showScreen('step-sub-profile')">👤 Личный кабинет</button>
         </div>
 
-        <div id="admin-boss-return-panel" style="display:none; padding: 0 10px; margin-top: 10px;">
-           <button class="btn-mode" style="background:#607d8b; font-size:14px!important; padding:15px!important;" onclick="returnToPanel()">🔙 ВЕРНУТЬСЯ В ПАНЕЛЬ УПРАВЛЕНИЯ</button>
+        <<div id="admin-boss-return-panel" class="bottom-fixed-bar" style="display:none;">
+            <button class="btn-bottom-exit" style="background:#607d8b; color:white; margin-top:0;" onclick="returnToPanel()">🔙 ВЕРНУТЬСЯ В ПАНЕЛЬ УПРАВЛЕНИЯ</button>
         </div>
     </div>
 
@@ -1254,29 +1254,31 @@
         if(!checkShopSelected()) return;
         triggerHaptic();
         state.currentMode = 'invoices';
-        state.currentInvoiceTab = 'active'; // По умолчанию вкладка "Актуальная"
+        state.currentInvoiceTab = 'active'; 
         
         showGlobalLoader("Загрузка накладных...");
         showScreen('step-invoices');
         
         try {
-            // Грузим одновременно актуальную и архив (максимум 2 последние)
             const [activeSnap, historySnap] = await Promise.all([
                 database.ref('catalogs/invoices').once('value'),
                 database.ref('catalogs/invoices_history').orderByKey().limitToLast(2).once('value')
             ]);
             
             let invData = activeSnap.val() || {};
+            // Вытаскиваем дату из специального технического поля _meta
+            let activeTimestamp = invData._meta ? invData._meta.timestamp : null;
+            if(invData._meta) delete invData._meta; // Убираем, чтобы не выводилось как товар
             
             let historyData = [];
             historySnap.forEach(child => {
                 historyData.push({ key: child.key, ...child.val() });
             });
-            // Сортируем архив: свежие сверху
             historyData.sort((a, b) => b.timestamp - a.timestamp);
 
             state.invoiceDataFull = {
                 active: invData,
+                activeTimestamp: activeTimestamp,
                 history: historyData
             };
             
@@ -1298,9 +1300,8 @@
             btnActive.style.background = '#4A148C'; btnActive.style.color = '#fff';
             btnHistory.style.background = 'transparent'; btnHistory.style.color = '#888';
             
-            // Поддержка как старого формата (просто список), так и нового (с датой)
             state.invoiceData = state.invoiceDataFull.active.items || state.invoiceDataFull.active;
-            renderInvoices(state.invoiceData, state.invoiceDataFull.active.timestamp);
+            renderInvoices(state.invoiceData, state.invoiceDataFull.activeTimestamp);
         } else {
             btnHistory.style.background = '#9C27B0'; btnHistory.style.color = '#fff';
             btnActive.style.background = 'transparent'; btnActive.style.color = '#888';
@@ -1413,7 +1414,7 @@
                 }
             });
         }
-        renderInvoices(filtered, state.invoiceDataFull.active.timestamp);
+        renderInvoices(filtered, state.invoiceDataFull.activeTimestamp);
     }
 
     // ==========================================
@@ -3900,22 +3901,33 @@ function showLastOrder() {
     }
     
 // ==========================================
-    // ⚡ ГЛАВНЫЙ СТАРТ ПРИЛОЖЕНИЯ
+    // ⚡ ГЛАВНЫЙ СТАРТ ПРИЛОЖЕНИЯ (ИСПРАВЛЕНА АВТОРИЗАЦИЯ)
     // ==========================================
-   window.onload = async () => { 
+    window.onload = async () => { 
         showGlobalLoader("Запуск приложения..."); 
         try { 
-            Telegram.WebApp.ready(); 
-            Telegram.WebApp.expand(); 
-            globalTgUserId = (Telegram.WebApp.initDataUnsafe && Telegram.WebApp.initDataUnsafe.user) ? String(Telegram.WebApp.initDataUnsafe.user.id) : "708179577";
-        } catch(e){ globalTgUserId = "708179577"; }
+            if (window.Telegram && Telegram.WebApp) {
+                Telegram.WebApp.ready(); 
+                Telegram.WebApp.expand(); 
+                if (Telegram.WebApp.initDataUnsafe && Telegram.WebApp.initDataUnsafe.user) {
+                    globalTgUserId = String(Telegram.WebApp.initDataUnsafe.user.id);
+                } else {
+                    globalTgUserId = "unknown_user"; // Если данных нет, статус "неизвестный"
+                }
+            } else {
+                globalTgUserId = "unknown_user";
+            }
+        } catch(e){ globalTgUserId = "unknown_user"; }
         
         let isBoss = TG_BOSS_IDS.includes(globalTgUserId);
         let isAdmin = TG_ADMIN_IDS.includes(globalTgUserId);
 
+        // ⚡ Генерируем опции для шапки при запуске
         updateHeaderSelectOptions();
+
         state.cachedCatalogs = {};
         
+        // Мгновенно поднимаем локальный кэш, если он есть
         const paths = ['order', 'newshop', 'stoplist', 'checklist', 'menu'];
         for (let p of paths) {
             let cachedData = await loadFromRealCache(p);
@@ -3924,25 +3936,28 @@ function showLastOrder() {
         
         state.globalOrders = []; state.globalMissing = [];
         restoreMpDraft(); 
-        startRealtimeUpdates(); // Убедись, что этот вызов есть!
+        if(typeof startRealtimeUpdates === 'function') startRealtimeUpdates(); 
         hideGlobalLoader(); 
         
         let savedShop = localStorage.getItem("teiku_main_shop");
         
-        // ⚡ ЛОГИКА АВТО-РЕДИРЕКТА
-        // Если ты админ/босс, открываем админку
-        if (isBoss || isAdmin) {
+        // ЛОГИКА РАСПРЕДЕЛЕНИЯ
+        if (isAdmin || isBoss) {
+            // Если Админ/Босс, открываем панель
             openControlPanel(isAdmin ? 'admin' : 'boss'); 
-        } 
-        // Если обычный бариста
-        else if (savedShop) {
-            state.currentShop = savedShop;
-            let sel = document.getElementById('header-shop-select');
-            if (sel) sel.value = savedShop;
-            startShopDataSync();
-            showScreen('step-2', false); 
         } else {
-            showScreen('step-1', false); 
+            // Если Бариста (Обычный сотрудник)
+            if (savedShop) {
+                // Если адрес уже выбирался ранее -> сразу в Меню (step-2)
+                state.currentShop = savedShop;
+                let sel = document.getElementById('header-shop-select');
+                if (sel) sel.value = savedShop;
+                startShopDataSync();
+                showScreen('step-2', false); 
+            } else {
+                // Если зашел впервые -> Экран выбора адреса (step-1)
+                showScreen('step-1', false); 
+            }
         }
     };
   

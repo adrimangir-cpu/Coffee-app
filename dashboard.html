@@ -925,70 +925,77 @@
         }
         html += `</div>`;
 
-        // 2. ИСТОРИЯ ПРИЕМОК И НЕДОВОЗОВ
+        // 2. ИСТОРИЯ ПРИЕМОК (ЧТО ИМЕННО ВЫБРАЛ БАРИСТА)
         let historyArr = [];
+        let allMissingItems = Object.values(cachedData.missing || {});
         
-        Object.values(cachedData.orders || {}).forEach(o => {
+        ordersArr.forEach(o => {
             if (!o || (o.mode !== 'order' && o.mode !== 'new_shop')) return;
             let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
             
             const extractHistory = (vKey, flag, flagTs, nameRu, color, bg) => {
-                if (flag) {
-                    let ts = flagTs || o.timestamp;
-                    let list = [];
-                    itemsArr.forEach(i => {
-                        if (!i || !i.name || i.name === 'НЕТ ЗАКАЗА') return;
-                        let catItem = orderCatMapFast[i.name] || {};
-                        let vRaw = (i.vendor || catItem.vendor || 'Лента').toLowerCase();
-                        let v = 'lenta';
-                        if (vRaw.includes('озон') || vRaw.includes('ozon')) v = 'ozon';
-                        else if (vRaw.includes('купер') || vRaw.includes('kuper')) v = 'kuper';
+                if (!flag) return;
+                let ts = flagTs || o.timestamp;
+                let dateStr = new Date(ts).toLocaleDateString('ru-RU') + ' ' + new Date(ts).toLocaleTimeString('ru-RU', {hour:'2-digit', minute:'2-digit'});
+                let sId = getSafeId("rhist_" + o.key + vKey);
+                let isOpen = expandedDivs.has(sId);
+                
+                let htmlItems = [];
+                itemsArr.forEach(i => {
+                    if (!i || !i.name || i.name === 'НЕТ ЗАКАЗА') return;
+                    let catItem = orderCatMapFast[i.name] || {};
+                    let vRaw = (i.vendor || catItem.vendor || 'Лента').toLowerCase();
+                    let v = 'lenta';
+                    if (vRaw.includes('озон') || vRaw.includes('ozon')) v = 'ozon';
+                    else if (vRaw.includes('купер') || vRaw.includes('kuper')) v = 'kuper';
+                    
+                    if (v === vKey && i.status !== 'error' && i.status !== 'not_needed' && !i.bot_error) {
+                        // ⚡ ПРОВЕРЯЕМ: Этот товар бариста отметил как недовоз (попал в базу missing) или как принят?
+                        let isMissing = allMissingItems.find(m => m.shop === o.shop && m.name === i.name && m.timestamp >= o.timestamp - 86400000 && m.timestamp <= o.timestamp + 86400000*3);
                         
-                        if (v === vKey && i.status !== 'error' && i.status !== 'not_needed' && !i.bot_error) {
-                            list.push(`▪️ ${i.name} (${i.qty} шт)`);
+                        if (isMissing) {
+                            htmlItems.push(`❌ <b>${i.name}</b> (${i.qty} шт) — <span style="color:#e65100; font-weight:bold;">Недовоз</span>`);
+                        } else {
+                            htmlItems.push(`✅ <b>${i.name}</b> (${i.qty} шт) — <span style="color:#2e7d32; font-weight:bold;">Доехал</span>`);
                         }
-                    });
-                    if (list.length > 0) {
-                        historyArr.push({ ts: ts, shop: o.shop, type: `Приемка ${nameRu}`, color: color, bg: bg, items: list });
                     }
+                });
+                
+                if (htmlItems.length > 0) {
+                    historyArr.push({ 
+                        ts: ts, 
+                        html: `<tr class="cat-group-header" onclick="toggleCatElements('${sId}', 'arr_${sId}')">
+                                <td style="padding:15px; border-bottom:1px solid #eee; background:#f5f5f5;">
+                                    <b>📍 ${o.shop === 'Красноказарменная' ? 'МЭИ' : o.shop}</b> — ${nameRu} 
+                                    <span style="color:#888; font-size:13px; margin-left:10px;">(${dateStr})</span>
+                                    <span id="arr_${sId}" style="float:right;">${isOpen ? '▲' : '▼'}</span>
+                                </td>
+                               </tr>
+                               <tr class="${sId}" style="display:${isOpen ? 'table-row' : 'none'};">
+                                <td style="padding:15px; background:#fff; line-height:1.8; font-size:15px;">
+                                    ${htmlItems.join('<br>')}
+                                </td>
+                               </tr>` 
+                    });
                 }
             };
             
-            extractHistory('lenta', o.lenta_received, o.lenta_received_ts, 'ЛЕНТА', '#f57f17', '#fff8e1');
-            extractHistory('ozon', o.ozon_received, o.ozon_received_ts, 'ОЗОН', '#1565c0', '#e3f2fd');
-            extractHistory('kuper', o.kuper_received, o.kuper_received_ts, 'КУПЕР', '#2e7d32', '#e8f5e9');
-        });
-
-        Object.values(cachedData.missing || {}).forEach(m => {
-            if (m && (m.status === 'arrived' || m.status === 'canceled' || m.status === 'reorder')) {
-                let statText = m.status === 'arrived' ? '✅ Доехал' : (m.status === 'reorder' ? '✅ Перезаказан' : '🔄 Возвращен в корзину');
-                let color = m.status === 'arrived' ? '#4caf50' : (m.status === 'reorder' ? '#0288d1' : '#c62828');
-                historyArr.push({
-                    ts: m.timestamp, shop: m.shop, type: `Недовоз (${statText})`, color: color, bg: '#f5f5f5', items: [`▪️ ${m.name} (${m.qty} шт)`]
-                });
-            }
+            extractHistory('lenta', o.lenta_received, o.lenta_received_ts, 'Лента 🛒', '#f57f17', '#fff8e1');
+            extractHistory('ozon', o.ozon_received, o.ozon_received_ts, 'Озон 📦', '#1565c0', '#e3f2fd');
+            extractHistory('kuper', o.kuper_received, o.kuper_received_ts, 'Купер 🛵', '#2e7d32', '#e8f5e9');
         });
 
         historyArr.sort((a,b) => b.ts - a.ts);
         
-        let histHtml = `<table style="min-width:100%; margin-top:10px;"><tr><th style="width:180px;">Дата</th><th style="width:160px;">Кофейня</th><th style="width:200px;">Событие</th><th>Товары</th></tr>`;
+        let histHtml = `<table style="min-width:100%; margin-top:0;">`;
         if (historyArr.length === 0) {
-            histHtml += `<tr><td colspan="4" style="text-align:center; padding:20px; color:#888; font-weight:bold;">История пуста</td></tr>`;
+            histHtml += `<tr><td style="text-align:center; padding:20px; color:#888; font-weight:bold;">История пуста</td></tr>`;
         } else {
-            historyArr.slice(0, 150).forEach(h => {
-                let d = new Date(h.ts);
-                let dStr = d.toLocaleDateString('ru-RU') + " " + d.toLocaleTimeString('ru-RU', {hour:'2-digit', minute:'2-digit'});
-                histHtml += `<tr>
-                    <td style="color:#666; font-size:14px; font-weight:bold;">${dStr}</td>
-                    <td><b style="color:#311b92; font-size:15px;">${h.shop === 'Красноказарменная' ? 'МЭИ' : h.shop}</b></td>
-                    <td><span style="background:${h.bg}; color:${h.color}; padding:4px 8px; border-radius:6px; font-weight:900; font-size:12px;">${h.type}</span></td>
-                    <td style="font-size:14px; line-height:1.4;">${h.items.join('<br>')}</td>
-                </tr>`;
-            });
+            historyArr.slice(0, 150).forEach(h => histHtml += h.html);
         }
         histHtml += `</table>`;
 
-        html += `<div class="card"><h4 style="color:#311B92; margin-top:0;">🕒 История приемок и статусов недовозов</h4>${histHtml}</div>`;
+        html += `<div class="card" style="padding:0; overflow:hidden;"><h4 style="color:#311B92; margin-top:0; padding:15px 15px 5px 15px;">🕒 История приемок (Детализация)</h4>${histHtml}</div>`;
         box.innerHTML = html;
     }
 
@@ -2410,24 +2417,35 @@ async function renderOrdersSvod() {
 
                             
                     
-                       // ⚡ ИСКЛЮЧАЕМ ЛЕНТУ ИЗ ПОВТОРОВ. ПОВТОРЫ ПОДСВЕЧИВАЕМ ЖЕЛТЫМ!
+                      // ⚡ ИСКЛЮЧАЕМ ЛЕНТУ ИЗ ПОВТОРОВ. ОТОБРАЖАЕМ РЕАЛЬНЫЕ СТАТУСЫ НЕДОВОЗОВ!
                             let repeatBadge = "";
                             let rowBg = "";
                             let isRepeat = false;
                             let forceStatus = null; 
-                            let itemArrDate = ""; 
                         
                             if (!isLenta) {
                                 let ozonStat = window.getOzonRepeatStatus(shop, name, cachedData, actualVendor); 
                                 if (ozonStat.isRepeat) {
                                     isRepeat = true;
                                     if (ozonStat.isReceived) {
-                                        itemArrDate = ozonStat.dateStr;
-                                        let dateDisplay = itemArrDate ? ` ${itemArrDate}` : "";
-                                        repeatBadge = `<span style='color:#0277bd; font-size:12px; margin-left:5px; font-weight:bold;'>⚠️ Повтор (Принят${dateDisplay} ✅)</span>`;
+                                        let itemArrDate = ozonStat.dateStr ? ` ${ozonStat.dateStr}` : "";
+                                        repeatBadge = `<span style='color:#0277bd; font-size:12px; margin-left:5px; font-weight:bold;'>⚠️ Повтор (Принят${itemArrDate} ✅)</span>`;
                                         forceStatus = 'already_received'; 
                                     } else {
-                                        repeatBadge = `<span style='color:#e65100; font-size:12px; margin-left:5px; font-weight:bold;'>⚠️ Повтор (Недовоз 🚚)</span>`;
+                                        // ⚡ ВЫТЯГИВАЕМ РЕАЛЬНЫЙ СТАТУС НЕДОВОЗА
+                                        let mObj = Object.values(cachedData.missing || {}).find(m => m.shop === shop && m.name === name && m.status !== 'arrived' && m.status !== 'canceled');
+                                        if (mObj) {
+                                            if (mObj.status === 'transit') {
+                                                repeatBadge = `<span style='color:#1565c0; font-size:12px; margin-left:5px; font-weight:bold;'>🚚 В пути (Недовоз)</span>`;
+                                                forceStatus = 'error'; // Форсируем ошибку, чтобы вычесть из суммы
+                                            } else if (mObj.status === 'reorder') {
+                                                repeatBadge = `<span style='color:#0288d1; font-size:12px; margin-left:5px; font-weight:bold;'>🔄 Перезаказан (Недовоз)</span>`;
+                                            } else {
+                                                repeatBadge = `<span style='color:#e65100; font-size:12px; margin-left:5px; font-weight:bold;'>⚠️ Недовоз (Ожидает)</span>`;
+                                            }
+                                        } else {
+                                            repeatBadge = `<span style='color:#e65100; font-size:12px; margin-left:5px; font-weight:bold;'>⚠️ Повтор (Прошлая закупка)</span>`;
+                                        }
                                     }
                                 }
                             }
@@ -3623,24 +3641,7 @@ function renderGraphsTab() {
         let btnEditColor = isMissingEditMode ? "#f44336" : "#0288d1";
         let btnEditText = isMissingEditMode ? "💾 Сохранить изменения" : "✏️ Редактировать";
 
-        let latestOrderMap = {};
-        // ⚡ ИСПРАВЛЕНИЕ 1: Железный щит || {} от падения, если заказы не успели загрузиться
-        Object.values(cachedData.orders || {}).forEach(o => {
-            if (o && (o.mode === 'order' || o.mode === 'new_shop')) {
-                if (!latestOrderMap[o.shop]) latestOrderMap[o.shop] = {};
-                let itemsArr = Array.isArray(o.items) ? o.items : (typeof o.items === 'object' && o.items !== null ? Object.values(o.items) : []);
-                itemsArr.forEach(i => {
-                    if (i && i.name && parseFloat(i.qty) > 0 && i.status !== 'error' && i.bot_error !== true) {
-                        if (!latestOrderMap[o.shop][i.name] || o.timestamp > latestOrderMap[o.shop][i.name]) {
-                            latestOrderMap[o.shop][i.name] = o.timestamp;
-                        }
-                    }
-                });
-            }
-        });
-
         let isActionsOpen = expandedDivs.has('miss-action-buttons');
-        
         setupUniversalActionBar(`
             <div class="cat-group-header" style="padding: 10px 15px; border-radius: 12px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 8px rgba(0,0,0,0.05);" onclick="toggleCatElements('miss-action-buttons', 'arrow_miss_actions')">
                 <span style="font-size:16px; color:#E53935; font-weight:900;">⚡ Действия</span>
@@ -3651,128 +3652,132 @@ function renderGraphsTab() {
             </div>
         `, isActionsOpen, 'arrow_miss_actions');
 
-        let activeHtml = `<h3 style='color:#E53935; font-size:24px; margin-top:0; margin-bottom:15px;'>‼️ Актуальные Недовозы</h3>`;
-                          
-        activeHtml += `<table style='margin-bottom:20px;'><tr><th>Точка</th><th>Товар / Ссылки</th><th style='text-align:center;'>Кол-во</th><th>Статус</th><th style='text-align:center;'>${isMissingEditMode ? 'Удалить' : ''}</th></tr>`;
-        let historyHtml = "<table style='margin-top:15px;'><tr><th>Точка</th><th>Товар</th><th style='text-align:center;'>Кол-во</th><th>Статус</th><th style='text-align:center;'>Удалить</th></tr>";
-        
-        let hasActive = false; 
-        let hasHistory = false; 
-        let cutoff = Date.now() - (30 * 24 * 60 * 60 * 1000);
-        
-        // ⚡ ИСПРАВЛЕНИЕ 2: Щит || {} для базы недовозов
         let missingData = cachedData.missing || {};
         let missingArr = Object.keys(missingData).map(k => ({key: k, ...missingData[k]}));
-        
         missingArr.sort((a,b) => (b.timestamp || 0) - (a.timestamp || 0));
+
+        let activeByShop = {};
+        let historyByShop = {};
+        let hasActive = false;
+        let hasHistory = false;
+        let cutoff = Date.now() - (30 * 24 * 60 * 60 * 1000);
 
         missingArr.forEach(m => {
             if ((m.timestamp || 0) < cutoff && m.status !== 'pending' && m.status !== 'transit' && m.status !== 'oos' && m.status !== 'reorder') return; 
-            
-            let lastOrdTs = (latestOrderMap[m.shop] && latestOrderMap[m.shop][m.name]) || 0;
-            if (lastOrdTs > m.timestamp && m.status !== 'arrived') {
-                m.status = 'reorder';
-            }
-
-            let iNameLow = String(m.name).trim().toLowerCase();
-            let catInfo = Object.values(cachedData.catalogOrder || {}).find(ci => {
-                if(!ci || !ci.name) return false; 
-                return cleanName(ci.name) === cleanName(iNameLow);
-            }) || {};
-            
-            let displayName = m.shop === 'Красноказарменная' ? 'МЭИ' : m.shop;
-            
             if (m.status === 'canceled' || m.status === 'arrived' || m.status === 'reorder') {
                 hasHistory = true;
-                let statColor = m.status === 'arrived' ? '#4caf50' : (m.status === 'reorder' ? '#0288d1' : '#d32f2f'); 
-                let statText = m.status === 'arrived' ? '✅ Доехал' : (m.status === 'reorder' ? '✅ Перезаказан' : '🔄 Возвращен в корзину');
-                let dateStr = m.timestamp ? new Date(m.timestamp).toLocaleDateString('ru-RU') : '';
-                
-                historyHtml += `
-                <tr style="background:#fafafa;">
-                    <td><b style="font-size:16px; color:#311b92;">${displayName}</b><br><span style="font-size:12px; color:#888;">${dateStr}</span></td>
-                    <td style="font-size:15px;">${m.name}</td>
-                    <td style="font-size:16px; font-weight:bold; text-align:center;">${m.qty}</td>
-                    <td style="font-size:14px; color:${statColor}; font-weight:bold;">${statText}</td>
-                    <td style="text-align:center;"><button class="btn-del" style="padding:4px 8px; font-size:14px;" onclick="deleteMissing('${m.key}')">🗑</button></td>
-                </tr>`;
+                if(!historyByShop[m.shop]) historyByShop[m.shop] = [];
+                historyByShop[m.shop].push(m);
             } else {
                 hasActive = true;
-                let link1 = catInfo.link ? `<a href="${catInfo.link}" target="_blank" style="color:#0288d1; font-weight:bold; margin-right:8px; text-decoration:none;">🔗 Осн</a>` : "";
-                let link2 = catInfo.link2 ? `<a href="${catInfo.link2}" target="_blank" style="color:#e53935; font-weight:bold; text-decoration:none;">🔗 Рез</a>` : "";
-                let linksHtml = (link1 || link2) ? `<br><span style="font-size:14px; background:#f0f0f0; padding:4px 8px; border-radius:6px; display:inline-block; margin-top:5px;">Заказать: ${link1}${link2}</span>` : "";
-                
-                let currentStat = tempMissingStatus[m.key] || m.status;
-                let isDeleted = missingDeletions.has(m.key);
-                let rowStyle = isDeleted ? "opacity: 0.4; background: #eee;" : "";
-
-                if (isMissingEditMode) {
-                    activeHtml += `
-                    <tr style="${rowStyle}">
-                        <td><b style="font-size:17px; color:#311b92;">${displayName}</b></td>
-                        <td style="font-size:16px;">${m.name} ${linksHtml}</td>
-                        <td style="font-size:17px; font-weight:bold; text-align:center;">${m.qty}</td>
-                        <td>
-                            <select onchange="tempMissingStatus['${m.key}'] = this.value" ${isDeleted ? 'disabled' : ''} style="padding:10px; border-radius:8px; border:2px solid #e1bee7; font-weight:bold; font-size:15px; width:100%;">
-                                <option value="pending" ${currentStat==='pending'?'selected':''}>Ожидает проверки админом</option>
-                                <option value="transit" ${currentStat==='transit'?'selected':''}>В пути (от поставщика)</option>
-                                <option value="reorder" ${currentStat==='reorder'?'selected':''}>Отменен (Админ закажет сам)</option>
-                                <option value="canceled" ${currentStat==='canceled'?'selected':''}>ОТМЕНЕН (Вернуть в корзину)</option>
-                                <option value="arrived" ${currentStat==='arrived'?'selected':''}>✅ ДОЕХАЛ (Удалить из стоп-листа)</option>
-                            </select>
-                        </td>
-                        <td style="text-align:center;"><button class="btn-del" ${isDeleted ? 'disabled' : ''} onclick="markMissingDelete('${m.key}')">🗑</button></td>
-                    </tr>`;
-                } else {
-                    let statText = "Ожидает проверки"; 
-                    let statColor = "#ef6c00";
-                    if(m.status === 'transit') { statText = "В пути (от поставщика)"; statColor = "#1565c0"; }
-                    else if(m.status === 'reorder') { statText = "Отменен (Админ закажет сам)"; statColor = "#888"; }
-                    
-                    // ⚡ ДОБАВЛЯЕМ БЫСТРЫЕ КНОПКИ ДЛЯ СТАТУСА "ОЖИДАЕТ ПРОВЕРКИ"
-                    let actionButtons = "";
-                    if (m.status === 'pending') {
-                        actionButtons = `
-                            <button onclick="updateMissingStatus('${m.key}', 'transit')" style="background: #1565C0; color: white; border: none; padding: 6px 10px; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 11px; margin-bottom: 5px; width: 100%; box-shadow: 0 2px 4px rgba(0,0,0,0.2);">✅ Подтвердить</button>
-                            <br>
-                            <button onclick="updateMissingStatus('${m.key}', 'canceled')" style="background: #C62828; color: white; border: none; padding: 6px 10px; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 11px; width: 100%; box-shadow: 0 2px 4px rgba(0,0,0,0.2);">❌ Отменить</button>
-                        `;
-                    }
-                    
-                    activeHtml += `
-                    <tr>
-                        <td><b style="font-size:17px; color:#311b92;">${displayName}</b></td>
-                        <td style="font-size:16px;">${m.name} ${linksHtml}</td>
-                        <td style="font-size:17px; font-weight:bold; text-align:center;">${m.qty}</td>
-                        <td style="font-weight:900; font-size:14px; color:${statColor};">${statText}</td>
-                        <td style="text-align:center; vertical-align:middle;">${actionButtons}</td>
-                    </tr>`;
-                }
+                if(!activeByShop[m.shop]) activeByShop[m.shop] = [];
+                activeByShop[m.shop].push(m);
             }
         });
-        
-        activeHtml += "</table>"; 
+
+        let activeHtml = `<h3 style='color:#E53935; font-size:24px; margin-top:0; margin-bottom:15px;'>‼️ Актуальные Недовозы</h3>`;
         
         if (!hasActive) {
-            activeHtml = `
-            <div style="display:flex; justify-content:space-between; margin-bottom:15px; align-items:center;">
-                <h3 style='color:#E53935; font-size:24px; margin:0;'>‼️ Актуальные Недовозы</h3>
-            </div>
-            <div class='card' style='text-align:center; font-weight:900; color:#888; margin-bottom:20px;'>Нет активных недовозов.</div>`;
+            activeHtml += `<div class='card' style='text-align:center; font-weight:900; color:#888; margin-bottom:20px;'>Нет активных недовозов.</div>`;
+        } else {
+            activeHtml += `<div class="card" style="padding:0; overflow:hidden; margin-bottom:20px;"><table style='margin-top:0; width:100%;'>`;
+            Object.keys(activeByShop).sort().forEach(shop => {
+                let safeShop = getSafeId("miss_act_" + shop);
+                let isOpen = expandedDivs.has(`miss_shop_${safeShop}`);
+                let displayName = shop === 'Красноказарменная' ? 'МЭИ' : shop;
+                
+                activeHtml += `<tr class="cat-group-header" onclick="toggleCatElements('miss_shop_${safeShop}', 'arr_${safeShop}')">
+                    <td colspan="${isMissingEditMode ? 4 : 3}" style="background:#FFE0B2; padding:12px 15px; font-size:16px; border-bottom:1px solid #FFB74D;">
+                        <b>📍 ${displayName}</b> <span style="background:#e65100; color:white; padding:2px 6px; border-radius:10px; font-size:12px; margin-left:10px;">${activeByShop[shop].length} позиций</span>
+                        <span id="arr_${safeShop}" style="float:right;">${isOpen ? '▲' : '▼'}</span>
+                    </td>
+                </tr>`;
+                
+                activeByShop[shop].forEach(m => {
+                    let catInfo = Object.values(cachedData.catalogOrder || {}).find(ci => ci && cleanName(ci.name) === cleanName(m.name)) || {};
+                    let link1 = catInfo.link ? `<a href="${catInfo.link}" target="_blank" style="color:#0288d1; font-weight:bold; margin-right:8px; text-decoration:none;">🔗 Осн</a>` : "";
+                    let link2 = catInfo.link2 ? `<a href="${catInfo.link2}" target="_blank" style="color:#e53935; font-weight:bold; text-decoration:none;">🔗 Рез</a>` : "";
+                    let linksHtml = (link1 || link2) ? `<br><span style="font-size:14px; background:#f0f0f0; padding:4px 8px; border-radius:6px; display:inline-block; margin-top:5px;">Заказать: ${link1}${link2}</span>` : "";
+
+                    let currentStat = tempMissingStatus[m.key] || m.status;
+                    let isDeleted = missingDeletions.has(m.key);
+                    let rowStyle = isDeleted ? "opacity: 0.4; background: #eee;" : "background:#fff;";
+                    let safeNameEsc = escapeName(m.name);
+                    
+                    let statText = m.status === 'transit' ? "В пути 🚚" : "Ожидает проверки ⏳"; 
+                    let statColor = m.status === 'transit' ? "#1565c0" : "#ef6c00";
+
+                    activeHtml += `<tr class="miss_shop_${safeShop}" style="display:${isOpen ? 'table-row' : 'none'}; ${rowStyle}">
+                        <td style="font-size:16px; width:45%; padding:15px;"><b>${m.name}</b> ${linksHtml}</td>
+                        <td style="font-size:17px; font-weight:bold; text-align:center; width:15%;">${m.qty} шт</td>`;
+                        
+                    if (isMissingEditMode) {
+                        activeHtml += `
+                        <td style="width:30%;">
+                            <select onchange="tempMissingStatus['${m.key}'] = this.value" ${isDeleted ? 'disabled' : ''} style="padding:8px; border-radius:8px; border:2px solid #e1bee7; font-weight:bold; font-size:14px; width:100%;">
+                                <option value="pending" ${currentStat==='pending'?'selected':''}>Ожидает проверки</option>
+                                <option value="transit" ${currentStat==='transit'?'selected':''}>В пути 🚚</option>
+                                <option value="reorder" ${currentStat==='reorder'?'selected':''}>Отменен (Админ закажет)</option>
+                                <option value="canceled" ${currentStat==='canceled'?'selected':''}>ОТМЕНЕН (В корзину)</option>
+                                <option value="arrived" ${currentStat==='arrived'?'selected':''}>✅ ДОЕХАЛ</option>
+                            </select>
+                        </td>
+                        <td style="text-align:center; width:10%;"><button class="btn-del" ${isDeleted ? 'disabled' : ''} onclick="markMissingDelete('${m.key}')">🗑</button></td>`;
+                    } else {
+                        activeHtml += `<td style="font-weight:900; font-size:14px; color:${statColor}; width:40%; text-align:right; padding-right:15px;">${statText}</td>`;
+                    }
+                    activeHtml += `</tr>`;
+                });
+            });
+            activeHtml += `</table></div>`;
+            if (isMissingEditMode) {
+                activeHtml += `<button onclick="saveAllMissingChanges()" class="btn-mode" style="background: var(--btn-stop-grad) !important; margin-top:10px; font-size:15px !important; padding:15px !important; margin-bottom:0;">🏁 СОХРАНИТЬ ИЗМЕНЕНИЯ</button>`;
+            }
         }
-        
-        let html = activeHtml + `<p style='margin-top:0px; margin-bottom:30px; font-size:15px; color:#777; background:#fff9c4; padding:15px; border-radius:10px;'>💡 <b>Подсказка:</b> Если выбрать статус <b>"НЕТ В НАЛИЧИИ"</b> (ОТМЕНЕН), товар вернется в корзину сотруднику в мини-приложении.</p>`;
-        
+
+        let historyHtml = "";
+        if (hasHistory) {
+            historyHtml += `<table style='width:100%; margin-top:0;'>`;
+            Object.keys(historyByShop).sort().forEach(shop => {
+                let safeShop = getSafeId("miss_hist_" + shop);
+                let isOpen = expandedDivs.has(`miss_shop_${safeShop}`);
+                let displayName = shop === 'Красноказарменная' ? 'МЭИ' : shop;
+                
+                historyHtml += `<tr class="cat-group-header" onclick="toggleCatElements('miss_shop_${safeShop}', 'arr_${safeShop}')">
+                    <td colspan="4" style="background:#e8eaf6; padding:12px 15px; font-size:16px; border-bottom:1px solid #c5cae9;">
+                        <b>📍 ${displayName}</b> <span style="background:#7986cb; color:white; padding:2px 6px; border-radius:10px; font-size:12px; margin-left:10px;">${historyByShop[shop].length} позиций</span>
+                        <span id="arr_${safeShop}" style="float:right;">${isOpen ? '▲' : '▼'}</span>
+                    </td>
+                </tr>`;
+                
+                historyByShop[shop].forEach(m => {
+                    let dateStr = m.timestamp ? new Date(m.timestamp).toLocaleDateString('ru-RU') : '';
+                    let statText = m.status === 'arrived' ? '✅ Доехал' : (m.status === 'reorder' ? '✅ Перезаказан' : '🔄 В корзине');
+                    let statColor = m.status === 'arrived' ? '#4caf50' : (m.status === 'reorder' ? '#0288d1' : '#d32f2f');
+                    
+                    historyHtml += `<tr class="miss_shop_${safeShop}" style="display:${isOpen ? 'table-row' : 'none'}; background:#fafafa;">
+                        <td style="color:#666; font-size:13px; width:15%; padding-left:15px;">${dateStr}</td>
+                        <td style="font-size:15px; width:45%;">${m.name}</td>
+                        <td style="font-size:16px; font-weight:bold; text-align:center; width:15%;">${m.qty} шт</td>
+                        <td style="font-size:14px; color:${statColor}; font-weight:bold; width:25%; text-align:right; padding-right:15px;">${statText}</td>
+                    </tr>`;
+                });
+            });
+            historyHtml += `</table>`;
+        }
+
+        let html = `${activeHtml}`;
+        html += `<p style='margin-top:10px; margin-bottom:30px; font-size:15px; color:#777; background:#fff9c4; padding:15px; border-radius:10px;'>💡 <b>Подсказка:</b> Если выбрать статус <b>"ОТМЕНЕН"</b>, товар вернется в корзину сотруднику в мини-приложении.</p>`;
+
         if (hasHistory) {
             let isHistOpen = expandedDivs.has('miss-history-container');
-            html += `<div class="cat-group-header" style="padding: 14px 20px; border-radius: 12px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.05);" onclick="toggleCatElements('miss-history-container', 'arrow_hist_miss')">
+            html += `<div class="cat-group-header" style="padding: 14px 20px; border-radius: 12px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; margin-top:20px; box-shadow: 0 2px 8px rgba(0,0,0,0.05);" onclick="toggleCatElements('miss-history-container', 'arrow_hist_miss')">
                         <span style="font-size:16px; color:#311B92; font-weight:900;">🕒 История недовозов (за 30 дней)</span>
                         <span id="arrow_hist_miss">${isHistOpen ? '▲' : '▼'}</span>
                      </div>
                      <div class="miss-history-container action-container" style="display: ${isHistOpen ? 'block' : 'none'}; flex-direction: column; margin-bottom: 20px; width: 100%;">
-                        <div class="card" style="padding:15px; width:100%; box-sizing: border-box;">
+                        <div class="card" style="padding:0; overflow:hidden; width:100%; box-sizing: border-box;">
                             ${historyHtml}
-                        </table>
                         </div>
                      </div>`;
         }

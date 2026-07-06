@@ -524,7 +524,23 @@
     const shopListAll = ["Бояринова", "Гагарина", "Вертолетчиков", "Липчанского", "Новокосино", "Новокосино 2", "Старое Павлино", "Красноказарменная", "Ухтомского ополчения"];
     let draggedRecipeItem = null;
 
-    // ⚡ ГЛОБАЛЬНАЯ, СТРОГАЯ ЛОГИКА ДЛЯ СВЕРКИ ПОВТОРОВ (ИСПРАВЛЕНО)
+    // ⚡ АВТО-МИГРАЦИЯ: Спасаем потерянные недовозы из мини-приложения
+    setTimeout(() => {
+        db.ref('push_items_missing').once('value', snap => {
+            let badData = snap.val();
+            if (badData) {
+                let updates = {};
+                for (let k in badData) {
+                    updates[`missing_items/${k}`] = badData[k];
+                    updates[`push_items_missing/${k}`] = null;
+                }
+                db.ref().update(updates);
+                console.log("✅ Недовозы успешно перенесены в правильную базу!");
+            }
+        });
+    }, 2000);
+
+    // ⚡ СТРОГАЯ ЛОГИКА ДЛЯ СВЕРКИ ПОВТОРОВ И НЕДОВОЗОВ
     window.getOzonRepeatStatus = function(shop, itemName, cachedData, vendor) {
         if (!cachedData || !cachedData.orders) return { isRepeat: false, isReceived: false, dateStr: "" };
         
@@ -553,10 +569,10 @@
             .sort((a,b) => b.timestamp - a.timestamp)
             .find(m => m && m.shop === shop && String(m.name).trim().toLowerCase() === exactNameLow && m.timestamp >= (lastOrder.timestamp - 5000));
 
-        // ⚡ Проверяем статус приемки СТРОГО по нужному поставщику
         let vLower = (vendor || 'озон').toLowerCase();
         let isOzon = vLower.includes('озон') || vLower.includes('ozon');
         let isKuper = vLower.includes('купер') || vLower.includes('kuper');
+        let isLenta = vLower.includes('лента') || vLower.includes('lenta');
         
         let orderReceivedFlag = false;
         let orderReceivedTs = lastOrder.timestamp;
@@ -567,14 +583,22 @@
         } else if (isKuper) {
             orderReceivedFlag = lastOrder.kuper_received;
             if (lastOrder.kuper_received_ts) orderReceivedTs = lastOrder.kuper_received_ts;
+        } else if (isLenta) {
+            orderReceivedFlag = lastOrder.lenta_received;
+            if (lastOrder.lenta_received_ts) orderReceivedTs = lastOrder.lenta_received_ts;
         }
 
+        // ⚡ ВАЖНО: Если товар есть в Недовозах, он НЕ принят, пока у него статус не станет arrived!
         if (missingItem) {
             if (missingItem.status === 'arrived') {
                 isReceived = true;
                 dateStr = new Date(missingItem.timestamp).toLocaleDateString('ru-RU', {day: '2-digit', month: '2-digit'});
+            } else {
+                isReceived = false; // Точно недовоз!
+                dateStr = ""; 
             }
         } else {
+            // Если товара нет в недовозах, смотрим на статус приемки заказа
             if (orderReceivedFlag) {
                 isReceived = true;
                 dateStr = new Date(orderReceivedTs).toLocaleDateString('ru-RU', {day: '2-digit', month: '2-digit'});
@@ -583,6 +607,7 @@
         
         return { isRepeat: true, isReceived: isReceived, dateStr: dateStr };
     };
+    
  // ==========================================
     // ПРОФЕССИОНАЛЬНЫЙ УЛЬТРА-КЭШ ДЛЯ ДАШБОРДА
     // ==========================================
@@ -808,45 +833,32 @@
         } catch (e) { alert(`❌ Ошибка: ` + e.message); }
     }
 
-    function renderReceivingsControl() {
+   function renderReceivingsControl() {
         const box = document.getElementById('content');
         setupUniversalActionBar('', false, ''); 
         
-        // ⚡ 1. Собираем каталог для точного определения поставщика
         let orderCatalog = cachedData.catalogOrder || {};
         let orderCatMapFast = {};
         Object.values(orderCatalog).forEach(c => { if (c && c.name) orderCatMapFast[c.name] = c; });
 
-        // ⚡ 2. Жесткий лимит: берем заказы строго за последние 14 дней (как у Бариста!)
         let fourteenDaysAgo = Date.now() - (14 * 24 * 60 * 60 * 1000);
         let ordersArr = Object.values(cachedData.orders || {}).filter(o => 
             o && (o.mode === 'order' || o.mode === 'new_shop') && o.timestamp >= fourteenDaysAgo
         ).sort((a,b) => b.timestamp - a.timestamp);
         
-        let missing = Object.values(cachedData.missing || {}).filter(m => 
-            m && (m.status === 'transit' || m.status === 'pending')
-        ).sort((a,b) => b.timestamp - a.timestamp);
+        let html = `<h3 style="color:#311B92; font-size:24px; margin-top:0; margin-bottom:15px;">🚚 Контроль приемок</h3>`;
         
-        let html = `<h3 style="color:#311B92; font-size:24px; margin-top:0; margin-bottom:15px;">🚚 Контроль приемок и недовозов</h3>`;
-        
-        // ⚡ 3. Сбор ТОЛЬКО ожидающих приемок по кофейням (те, что реально висят у бариста)
+        // 1. ОЖИДАЮТ ПРИЕМКИ БАРИСТА
         let pendingReceivings = {};
-        
         ordersArr.forEach(o => {
             let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
-            
-            let lentaItems = [];
-            let ozonItems = [];
-            let kuperItems = [];
+            let lentaItems = [], ozonItems = [], kuperItems = [];
 
             itemsArr.forEach(i => {
                 if (!i || !i.name || i.name === "НЕТ ЗАКАЗА") return;
-                
-                // ⚡ СТРОГО: Товар должен быть заказан админом (ordered или из стоп-листа)
                 let isItemOrdered = (i.status === 'ordered' || i.status === 'from_stoplist');
                 
                 if (isItemOrdered && i.status !== 'already_received' && i.status !== 'not_needed' && i.status !== 'error' && i.bot_error !== true) {
-                    
                     let catItem = orderCatMapFast[i.name] || {};
                     let vRaw = (i.vendor || catItem.vendor || 'Лента').toLowerCase();
                     let vendor = 'lenta';
@@ -876,7 +888,7 @@
         });
 
         html += `<div class="card" style="margin-bottom: 20px;">
-                    <h4 style="color:#2E7D32; margin-top:0;">📦 Ожидают приемки в приложении (за последние 14 дней)</h4>`;
+                    <h4 style="color:#2E7D32; margin-top:0;">📦 Ожидают приемки в приложении бариста</h4>`;
         
         if (Object.keys(pendingReceivings).length > 0) {
             html += `<table style="margin-top:0; min-width:100%;">`;
@@ -913,47 +925,70 @@
         }
         html += `</div>`;
 
-        // 4. Сбор актуальных недовозов
-        html += `<div class="card">
-                    <h4 style="color:#e65100; margin-top:0;">‼️ Актуальные Недовозы (Ожидают реакции)</h4>`;
-        if (missing.length > 0) {
-            let missingByShop = {};
-            missing.forEach(m => {
-                if (!missingByShop[m.shop]) missingByShop[m.shop] = [];
-                missingByShop[m.shop].push(m);
-            });
+        // 2. ИСТОРИЯ ПРИЕМОК И НЕДОВОЗОВ
+        let historyArr = [];
+        
+        Object.values(cachedData.orders || {}).forEach(o => {
+            if (!o || (o.mode !== 'order' && o.mode !== 'new_shop')) return;
+            let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
+            
+            const extractHistory = (vKey, flag, flagTs, nameRu, color, bg) => {
+                if (flag) {
+                    let ts = flagTs || o.timestamp;
+                    let list = [];
+                    itemsArr.forEach(i => {
+                        if (!i || !i.name || i.name === 'НЕТ ЗАКАЗА') return;
+                        let catItem = orderCatMapFast[i.name] || {};
+                        let vRaw = (i.vendor || catItem.vendor || 'Лента').toLowerCase();
+                        let v = 'lenta';
+                        if (vRaw.includes('озон') || vRaw.includes('ozon')) v = 'ozon';
+                        else if (vRaw.includes('купер') || vRaw.includes('kuper')) v = 'kuper';
+                        
+                        if (v === vKey && i.status !== 'error' && i.status !== 'not_needed' && !i.bot_error) {
+                            list.push(`▪️ ${i.name} (${i.qty} шт)`);
+                        }
+                    });
+                    if (list.length > 0) {
+                        historyArr.push({ ts: ts, shop: o.shop, type: `Приемка ${nameRu}`, color: color, bg: bg, items: list });
+                    }
+                }
+            };
+            
+            extractHistory('lenta', o.lenta_received, o.lenta_received_ts, 'ЛЕНТА', '#f57f17', '#fff8e1');
+            extractHistory('ozon', o.ozon_received, o.ozon_received_ts, 'ОЗОН', '#1565c0', '#e3f2fd');
+            extractHistory('kuper', o.kuper_received, o.kuper_received_ts, 'КУПЕР', '#2e7d32', '#e8f5e9');
+        });
 
-            html += `<table style="margin-top:0; min-width:100%;">`;
-            Object.keys(missingByShop).sort().forEach(shop => {
-                let safeShop = getSafeId("miss_"+shop);
-                let isShopOpen = expandedDivs.has(`miss_shop_${safeShop}`);
-                
-                html += `<tr class="cat-group-header" onclick="toggleCatElements('miss_shop_${safeShop}', 'arrow_miss_${safeShop}')">
-                            <td colspan="4" style="background:#FFE0B2; padding:12px 15px; font-size:16px; border-bottom:1px solid #FFB74D;">
-                                <b>📍 ${shop === 'Красноказарменная' ? 'МЭИ' : shop}</b> <span style="background:#e65100; color:white; padding:2px 6px; border-radius:10px; font-size:12px; margin-left:10px;">${missingByShop[shop].length} позиций</span>
-                                <span id="arrow_miss_${safeShop}" style="float:right;">${isShopOpen ? '▲' : '▼'}</span>
-                            </td>
-                         </tr>`;
-                
-                missingByShop[shop].forEach(m => {
-                    let dStr = m.timestamp ? new Date(m.timestamp).toLocaleDateString('ru-RU') : '';
-                    let statText = m.status === 'transit' ? "В пути (от поставщика)" : "Ожидает проверки"; 
-                    let statColor = m.status === 'transit' ? "#1565c0" : "#ef6c00";
-                    
-                    html += `<tr class="miss_shop_${safeShop}" style="display:${isShopOpen ? 'table-row' : 'none'}; background:#fff;">
-                                <td style="color:#666; font-size:13px; width:100px;">${dStr}</td>
-                                <td style="font-weight:bold;">${m.name}</td>
-                                <td style="text-align:center; font-weight:bold; font-size:16px; width:80px;">${m.qty}</td>
-                                <td style="font-weight:bold; color:${statColor}; font-size:13px; width:180px;">${statText}</td>
-                            </tr>`;
+        Object.values(cachedData.missing || {}).forEach(m => {
+            if (m && (m.status === 'arrived' || m.status === 'canceled' || m.status === 'reorder')) {
+                let statText = m.status === 'arrived' ? '✅ Доехал' : (m.status === 'reorder' ? '✅ Перезаказан' : '🔄 Возвращен в корзину');
+                let color = m.status === 'arrived' ? '#4caf50' : (m.status === 'reorder' ? '#0288d1' : '#c62828');
+                historyArr.push({
+                    ts: m.timestamp, shop: m.shop, type: `Недовоз (${statText})`, color: color, bg: '#f5f5f5', items: [`▪️ ${m.name} (${m.qty} шт)`]
                 });
-            });
-            html += `</table>`;
-        } else {
-            html += `<div style="text-align:center; padding:20px; font-size:16px; color:#888; font-weight:bold;">Нет активных недовозов.</div>`;
-        }
-        html += `</div>`;
+            }
+        });
 
+        historyArr.sort((a,b) => b.ts - a.ts);
+        
+        let histHtml = `<table style="min-width:100%; margin-top:10px;"><tr><th style="width:180px;">Дата</th><th style="width:160px;">Кофейня</th><th style="width:200px;">Событие</th><th>Товары</th></tr>`;
+        if (historyArr.length === 0) {
+            histHtml += `<tr><td colspan="4" style="text-align:center; padding:20px; color:#888; font-weight:bold;">История пуста</td></tr>`;
+        } else {
+            historyArr.slice(0, 150).forEach(h => {
+                let d = new Date(h.ts);
+                let dStr = d.toLocaleDateString('ru-RU') + " " + d.toLocaleTimeString('ru-RU', {hour:'2-digit', minute:'2-digit'});
+                histHtml += `<tr>
+                    <td style="color:#666; font-size:14px; font-weight:bold;">${dStr}</td>
+                    <td><b style="color:#311b92; font-size:15px;">${h.shop === 'Красноказарменная' ? 'МЭИ' : h.shop}</b></td>
+                    <td><span style="background:${h.bg}; color:${h.color}; padding:4px 8px; border-radius:6px; font-weight:900; font-size:12px;">${h.type}</span></td>
+                    <td style="font-size:14px; line-height:1.4;">${h.items.join('<br>')}</td>
+                </tr>`;
+            });
+        }
+        histHtml += `</table>`;
+
+        html += `<div class="card"><h4 style="color:#311B92; margin-top:0;">🕒 История приемок и статусов недовозов</h4>${histHtml}</div>`;
         box.innerHTML = html;
     }
 
@@ -2392,7 +2427,7 @@ async function renderOrdersSvod() {
                                         repeatBadge = `<span style='color:#0277bd; font-size:12px; margin-left:5px; font-weight:bold;'>⚠️ Повтор (Принят${dateDisplay} ✅)</span>`;
                                         forceStatus = 'already_received'; 
                                     } else {
-                                        repeatBadge = `<span style='color:#e65100; font-size:12px; margin-left:5px; font-weight:bold;'>⚠️ Повтор (Ещё не принят 🚚)</span>`;
+                                        repeatBadge = `<span style='color:#e65100; font-size:12px; margin-left:5px; font-weight:bold;'>⚠️ Повтор (Недовоз 🚚)</span>`;
                                     }
                                 }
                             }

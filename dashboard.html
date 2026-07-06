@@ -524,8 +524,8 @@
     const shopListAll = ["Бояринова", "Гагарина", "Вертолетчиков", "Липчанского", "Новокосино", "Новокосино 2", "Старое Павлино", "Красноказарменная", "Ухтомского ополчения"];
     let draggedRecipeItem = null;
 
-    // ⚡ ГЛОБАЛЬНАЯ, СТРОГАЯ ЛОГИКА ДЛЯ СВЕРКИ ОЗОНА
-    window.getOzonRepeatStatus = function(shop, itemName, cachedData) {
+    // ⚡ ГЛОБАЛЬНАЯ, СТРОГАЯ ЛОГИКА ДЛЯ СВЕРКИ ПОВТОРОВ (ИСПРАВЛЕНО)
+    window.getOzonRepeatStatus = function(shop, itemName, cachedData, vendor) {
         if (!cachedData || !cachedData.orders) return { isRepeat: false, isReceived: false, dateStr: "" };
         
         let pastOrders = Object.values(cachedData.orders)
@@ -553,15 +553,31 @@
             .sort((a,b) => b.timestamp - a.timestamp)
             .find(m => m && m.shop === shop && String(m.name).trim().toLowerCase() === exactNameLow && m.timestamp >= (lastOrder.timestamp - 5000));
 
+        // ⚡ Проверяем статус приемки СТРОГО по нужному поставщику
+        let vLower = (vendor || 'озон').toLowerCase();
+        let isOzon = vLower.includes('озон') || vLower.includes('ozon');
+        let isKuper = vLower.includes('купер') || vLower.includes('kuper');
+        
+        let orderReceivedFlag = false;
+        let orderReceivedTs = lastOrder.timestamp;
+
+        if (isOzon) {
+            orderReceivedFlag = lastOrder.ozon_received;
+            if (lastOrder.ozon_received_ts) orderReceivedTs = lastOrder.ozon_received_ts;
+        } else if (isKuper) {
+            orderReceivedFlag = lastOrder.kuper_received;
+            if (lastOrder.kuper_received_ts) orderReceivedTs = lastOrder.kuper_received_ts;
+        }
+
         if (missingItem) {
             if (missingItem.status === 'arrived') {
                 isReceived = true;
                 dateStr = new Date(missingItem.timestamp).toLocaleDateString('ru-RU', {day: '2-digit', month: '2-digit'});
             }
         } else {
-            if (lastOrder.ozon_received) {
+            if (orderReceivedFlag) {
                 isReceived = true;
-                dateStr = new Date(lastOrder.ozon_received_ts || lastOrder.timestamp).toLocaleDateString('ru-RU', {day: '2-digit', month: '2-digit'});
+                dateStr = new Date(orderReceivedTs).toLocaleDateString('ru-RU', {day: '2-digit', month: '2-digit'});
             }
         }
         
@@ -2359,29 +2375,31 @@ async function renderOrdersSvod() {
 
                             
                     
-                        // ⚡ ЛОГИКА ТОЛЬКО ДЛЯ ОЗОНА: Строгая проверка через единую функцию
+                       // ⚡ ИСКЛЮЧАЕМ ЛЕНТУ ИЗ ПОВТОРОВ. ПОВТОРЫ ПОДСВЕЧИВАЕМ ЖЕЛТЫМ!
                             let repeatBadge = "";
                             let rowBg = "";
                             let isRepeat = false;
                             let forceStatus = null; 
                             let itemArrDate = ""; 
                         
-                            let ozonStat = window.getOzonRepeatStatus(shop, name, cachedData); // ⚡ ВЫЗОВ
-                        if (ozonStat.isRepeat) {
-                            isRepeat = true;
-                            if (ozonStat.isReceived) {
-                                itemArrDate = ozonStat.dateStr;
-                                let dateDisplay = itemArrDate ? ` ${itemArrDate}` : "";
-                                repeatBadge = `<span style='color:#0277bd; font-size:12px; margin-left:5px; font-weight:bold;'>⚠️ Повтор (Принят${dateDisplay} ✅)</span>`;
-                                forceStatus = 'already_received'; 
-                            } else {
-                                repeatBadge = `<span style='color:#e65100; font-size:12px; margin-left:5px; font-weight:bold;'>⚠️ Повтор (Ещё не принят 🚚)</span>`;
+                            if (!isLenta) {
+                                let ozonStat = window.getOzonRepeatStatus(shop, name, cachedData, actualVendor); 
+                                if (ozonStat.isRepeat) {
+                                    isRepeat = true;
+                                    if (ozonStat.isReceived) {
+                                        itemArrDate = ozonStat.dateStr;
+                                        let dateDisplay = itemArrDate ? ` ${itemArrDate}` : "";
+                                        repeatBadge = `<span style='color:#0277bd; font-size:12px; margin-left:5px; font-weight:bold;'>⚠️ Повтор (Принят${dateDisplay} ✅)</span>`;
+                                        forceStatus = 'already_received'; 
+                                    } else {
+                                        repeatBadge = `<span style='color:#e65100; font-size:12px; margin-left:5px; font-weight:bold;'>⚠️ Повтор (Ещё не принят 🚚)</span>`;
+                                    }
+                                }
                             }
-                        }
-                        
-                        if (forceStatus && baseStatus === 'pending') {
-                            baseStatus = forceStatus;
-                        }
+                            
+                            if (forceStatus && baseStatus === 'pending') {
+                                baseStatus = forceStatus;
+                            }
 
                             let itemStatus = (tempSvodStatus[dateStr] && tempSvodStatus[dateStr][shop] && tempSvodStatus[dateStr][shop][name]) 
                                             ? tempSvodStatus[dateStr][shop][name] : baseStatus;
@@ -2405,19 +2423,20 @@ async function renderOrdersSvod() {
                             let htmlName = name.replace(/"/g, '&quot;');
                             let htmlShop = shop.replace(/"/g, '&quot;');
 
+                            // ⚡ ПРАВИЛЬНАЯ ПРИОРИТИЗАЦИЯ ЦВЕТОВ (С ЖЕЛТЫМ ФОНОМ ДЛЯ ПОВТОРОВ)
                             if (itemStatus === 'error') {
                                 rowBg = "background-color: #ffebee !important;";
                             } else if (itemStatus === 'from_stoplist') {
                                 rowBg = "background-color: #ffcdd2 !important;";
+                            } else if (isRepeat) {
+                                rowBg = "background-color: #fff9c4 !important;"; // ⚡ Желтый фон для повторов
                             } else if (itemStatus === 'already_received' || itemStatus === 'not_needed') {
                                 rowBg = "background-color: #f5f5f5 !important; opacity: 0.85;"; 
-                            } else if (isRepeat) {
-                                rowBg = "background-color: #fff9c4 !important;";
                             }
 
                             if (itemStatus === 'from_stoplist') {
                                 repeatBadge += `<span style='color:#d32f2f; font-size:12px; margin-left:5px; font-weight:bold;'>⚠️ Из стоп-листа</span>`;
-                            } 
+                            }
 
                             let statusText = "Ожидает ⏳", statusColor = "#f57c00", statusBg = "#fff3e0";
                             if (itemStatus === 'ordered') { statusText = "Заказано ✅"; statusColor = "#2e7d32"; statusBg = "#e8f5e9"; } 

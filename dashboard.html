@@ -2417,12 +2417,12 @@ async function renderOrdersSvod() {
 
                             
                     
-                      // ⚡ ИСКЛЮЧАЕМ ЛЕНТУ ИЗ ПОВТОРОВ. ОТОБРАЖАЕМ РЕАЛЬНЫЕ СТАТУСЫ НЕДОВОЗОВ!
+                      // ⚡ ИСКЛЮЧАЕМ ЛЕНТУ ИЗ ПОВТОРОВ. ОТОБРАЖАЕМ РЕАЛЬНЫЕ СТАТУСЫ НЕДОВОЗОВ И НОВЫЕ СТАТУСЫ АВТО-ЗАКАЗА!
                             let repeatBadge = "";
                             let rowBg = "";
                             let isRepeat = false;
                             let forceStatus = null; 
-                            let itemArrDate = ""; // ⚡ ИСПРАВЛЕНИЕ: Вынесли переменную наружу, чтобы она всегда существовала!
+                            let itemArrDate = ""; 
                         
                             if (!isLenta) {
                                 let ozonStat = window.getOzonRepeatStatus(shop, name, cachedData, actualVendor); 
@@ -2433,12 +2433,11 @@ async function renderOrdersSvod() {
                                         repeatBadge = `<span style='color:#0277bd; font-size:12px; margin-left:5px; font-weight:bold;'>⚠️ Повтор (Принят${itemArrDate} ✅)</span>`;
                                         forceStatus = 'already_received'; 
                                     } else {
-                                        // ⚡ ВЫТЯГИВАЕМ РЕАЛЬНЫЙ СТАТУС НЕДОВОЗА
                                         let mObj = Object.values(cachedData.missing || {}).find(m => m.shop === shop && m.name === name && m.status !== 'arrived' && m.status !== 'canceled');
                                         if (mObj) {
                                             if (mObj.status === 'transit') {
                                                 repeatBadge = `<span style='color:#1565c0; font-size:12px; margin-left:5px; font-weight:bold;'>🚚 В пути (Недовоз)</span>`;
-                                                forceStatus = 'error'; // Форсируем ошибку, чтобы вычесть из суммы
+                                                forceStatus = 'error'; 
                                             } else if (mObj.status === 'reorder') {
                                                 repeatBadge = `<span style='color:#0288d1; font-size:12px; margin-left:5px; font-weight:bold;'>🔄 Перезаказан (Недовоз)</span>`;
                                             } else {
@@ -2451,6 +2450,68 @@ async function renderOrdersSvod() {
                                 }
                             }
                             
+                            if (forceStatus && baseStatus === 'pending') {
+                                baseStatus = forceStatus;
+                            }
+
+                            let itemStatus = (tempSvodStatus[dateStr] && tempSvodStatus[dateStr][shop] && tempSvodStatus[dateStr][shop][name]) 
+                                            ? tempSvodStatus[dateStr][shop][name] : baseStatus;
+                            
+                            let price1 = parseFloat(catItem.price) || 0;
+                            let price2 = parseFloat(catItem.price2) || 0;
+                            let isRegularKuper = !isAutoKuper && (actualVendor.toLowerCase().includes('купер') || actualVendor.toLowerCase().includes('kuper'));
+                            let finalPrice = (isRegularKuper && price2 > 0) ? price2 : price1;
+
+                            let cost = finalPrice * (isDeleted ? 0 : actualQty);
+                            
+                            // Исключаем из подсчета суммы: Ошибки, Нет в наличии, Не надо, Уже принят
+                            if (itemStatus === 'error' || itemStatus === 'not_found' || itemStatus === 'not_needed' || itemStatus === 'already_received') cost = 0; 
+                            
+                            if (isLenta) totalLenta += cost; 
+                            else if (isOzon) totalOzon += cost; 
+                            else if (actualVendor.toLowerCase().includes('купер') || actualVendor.toLowerCase().includes('kuper')) totalKuper += cost;
+
+                            let linksHtml = [(catItem.link ? `<a href="${catItem.link}" target="_blank" style="color:#0288d1; font-weight:bold;">🔗 Осн</a>` : ""), (catItem.link2 ? `<a href="${catItem.link2}" target="_blank" style="color:#e53935; font-weight:bold; margin-left:8px;">🔗 Рез</a>` : "")].filter(Boolean).join(" ");
+                            let jsName = name.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+                            let jsShop = shop.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+                            let htmlName = name.replace(/"/g, '&quot;');
+                            let htmlShop = shop.replace(/"/g, '&quot;');
+
+                            // ⚡ ЦВЕТОВАЯ ПОДСВЕТКА СТРОК
+                            if (itemStatus === 'error' || itemStatus === 'not_found') {
+                                rowBg = "background-color: #ffebee !important;"; // Красный
+                            } else if (itemStatus === 'from_stoplist') {
+                                rowBg = "background-color: #ffcdd2 !important;"; // Темно-красный
+                            } else if (isRepeat || itemStatus === 'partial') {
+                                rowBg = "background-color: #fff9c4 !important;"; // Желтый (Для повторов и частичных заказов)
+                            } else if (itemStatus === 'already_received' || itemStatus === 'not_needed') {
+                                rowBg = "background-color: #f5f5f5 !important; opacity: 0.85;"; // Серый
+                            }
+
+                            if (itemStatus === 'from_stoplist') {
+                                repeatBadge += `<span style='color:#d32f2f; font-size:12px; margin-left:5px; font-weight:bold;'>⚠️ Из стоп-листа</span>`;
+                            } 
+
+                            // ⚡ ТЕКСТЫ И ЦВЕТА СТАТУСОВ
+                            let statusText = "Ожидает ⏳", statusColor = "#f57c00", statusBg = "#fff3e0";
+                            if (itemStatus === 'ordered') { statusText = "Заказано ✅"; statusColor = "#2e7d32"; statusBg = "#e8f5e9"; } 
+                            else if (itemStatus === 'partial') { statusText = "Заказано ⚠️"; statusColor = "#f57f17"; statusBg = "#fff9c4"; } // ⚡ Желтый статус для частичного
+                            else if (itemStatus === 'not_needed') { statusText = "Не надо ⛔"; statusColor = "#616161"; statusBg = "#eeeeee"; }
+                            else if (itemStatus === 'not_found') { statusText = "Нет в наличии ❌"; statusColor = "#c62828"; statusBg = "#ffebee"; } // ⚡ Новый текст вместо ошибки
+                            else if (itemStatus === 'error') { statusText = "Ошибка ❌"; statusColor = "#c62828"; statusBg = "#ffebee"; } 
+                            else if (itemStatus === 'from_stoplist') { statusText = "Из стоп-листа 🛑"; statusColor = "#c62828"; statusBg = "#ffcdd2"; }
+                            else if (itemStatus === 'already_received') { 
+                                let dText = itemArrDate ? ` ${itemArrDate}` : "";
+                                statusText = `Принят${dText} 📦`; 
+                                statusColor = "#0277bd"; 
+                                statusBg = "#e3f2fd"; 
+                            }
+                            
+                            let statusBadge = `<span style="background:${statusBg}; color:${statusColor}; padding:6px 10px; border-radius:8px; font-size:13px; font-weight:900; display:inline-block;">${statusText}</span>`;
+                                    }
+                                }
+                            }
+                        }
                             if (forceStatus && baseStatus === 'pending') {
                                 baseStatus = forceStatus;
                             }
@@ -5262,15 +5323,15 @@ async function exportGraphsToExcel() {
         }
     }
 
-    // Мгновенное авто-сохранение статуса в базу (без кнопки "Сохранить")
-   // Мгновенное переключение статуса по КЛИКУ
-    async function instantStatusToggle(dateStr, shop, name, currentStatus) {
+    
+   async function instantStatusToggle(dateStr, shop, name, currentStatus) {
         preserveSvodInputs(); 
         
-        // ⚡ ЦИКЛ ПЕРЕКЛЮЧЕНИЙ СО СТАТУСОМ "УЖЕ ПРИНЯТ"
         let newStatus = 'ordered'; 
+        // ⚡ Добавлены новые статусы в цикл ручного переключения
         if (currentStatus === 'pending' || currentStatus === 'from_stoplist' || currentStatus === 'already_received') newStatus = 'ordered';
-        else if (currentStatus === 'ordered') newStatus = 'not_needed';
+        else if (currentStatus === 'ordered' || currentStatus === 'partial') newStatus = 'not_found';
+        else if (currentStatus === 'not_found') newStatus = 'not_needed';
         else if (currentStatus === 'not_needed') newStatus = 'error';
         else if (currentStatus === 'error') newStatus = 'pending';
 
@@ -5289,7 +5350,7 @@ async function exportGraphsToExcel() {
             let itemIdx = itemsArr.findIndex(i => i && i.name === name);
             
             if (itemIdx !== -1) {
-                let isError = (newStatus === 'error');
+                let isError = (newStatus === 'error' || newStatus === 'not_found'); // Оба считаем за ошибку для БД
                 fetch(`${FB_URL}/orders/${targetOrderKey}/items/${itemIdx}.json`, {
                     method: 'PATCH',
                     body: JSON.stringify({ status: newStatus, bot_error: isError, not_found: isError })

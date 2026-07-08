@@ -2271,7 +2271,7 @@ function toggleAllHistoryCheckboxes(source) {
     checkboxes.forEach(cb => cb.checked = source.checked);
 }
 
-// ⚡ НОВАЯ ФУНКЦИЯ: Вернуть заказы из истории
+// ⚡ ОПТИМИЗИРОВАННАЯ ФУНКЦИЯ: Мгновенный возврат заказов без зависания экрана
 async function restoreOrdersFromHistory() {
     let checkboxes = document.querySelectorAll('.hist-checkbox:checked');
     if (checkboxes.length === 0) {
@@ -2280,42 +2280,64 @@ async function restoreOrdersFromHistory() {
     }
     if (!confirm(`Вы уверены, что хотите вернуть ${checkboxes.length} заказ(ов) обратно в работу?`)) return;
 
-    showReportOverlay("Возвращаем заказы...");
-    try {
-        let updates = {};
-        checkboxes.forEach(cb => {
-            let oKey = cb.value;
-            let o = cachedData.orders[oKey];
-            if (o) {
-                updates[oKey + "/ordered"] = false; // Открываем папку заказа
-                updates[oKey + "/svod"] = false;    // Снимаем метку свода
-                
-                // Возвращаем статусы товаров из "Заказано" в "Ожидает"
-                if (o.items) {
-                    let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items);
-                    let itemsChanged = false;
-                    itemsArr.forEach(i => {
-                        if (i && i.name !== "НЕТ ЗАКАЗА" && i.status === 'ordered') {
-                            i.status = 'pending';
-                            itemsChanged = true;
-                        }
-                    });
-                    if (itemsChanged) {
-                        updates[oKey + "/items"] = itemsArr;
-                    }
-                }
-            }
-        });
+    // Вместо тяжелого оверлея меняем текст прямо на кнопке
+    let btn = document.querySelector('button[onclick="restoreOrdersFromHistory()"]');
+    let origText = btn ? btn.innerHTML : "↩️ Вернуть выбранные заказы в работу (Шаг назад)";
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = "⏳ Секунду, возвращаю...";
+    }
 
-        if (Object.keys(updates).length > 0) {
-            await fetch(`${FB_URL}/orders.json`, { method: 'PATCH', body: JSON.stringify(updates) });
-            alert("✅ Заказы успешно возвращены в работу!");
-            // Данные обновятся сами через real-time слушатель Firebase
+    let updates = {};
+    checkboxes.forEach(cb => {
+        let oKey = cb.value;
+        let o = cachedData.orders[oKey];
+        if (o) {
+            // ⚡ МГНОВЕННЫЙ АПДЕЙТ В ПАМЯТИ: меняем локально для моментального эффекта
+            o.ordered = false;
+            o.svod = false;
+
+            updates[oKey + "/ordered"] = false;
+            updates[oKey + "/svod"] = false;
+            
+            if (o.items) {
+                let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items);
+                itemsArr.forEach(i => {
+                    if (i && i.name !== "НЕТ ЗАКАЗА" && i.status === 'ordered') {
+                        i.status = 'pending';
+                    }
+                });
+                o.items = itemsArr; // Обновляем локальную копию
+                updates[oKey + "/items"] = itemsArr;
+            }
         }
-        hideReportOverlay();
-    } catch (e) {
-        hideReportOverlay();
-        alert("❌ Ошибка при возврате: " + e.message);
+    });
+
+    if (Object.keys(updates).length > 0) {
+        // ⚡ ЭФФЕКТ МОЛНИИ: Перерисовываем экран прямо сейчас, не дожидаясь ответа от серверов
+        renderOrdersSvod();
+
+        // Отправляем пакет изменений в сеть на фоне (без await), разгружая процессор
+        fetch(`${FB_URL}/orders.json`, { method: 'PATCH', body: JSON.stringify(updates) })
+            .then(() => {
+                if (btn) {
+                    btn.innerHTML = "✅ Успешно возвращены!";
+                    setTimeout(() => {
+                        btn.innerHTML = origText;
+                        btn.disabled = false;
+                    }, 1200);
+                }
+            })
+            .catch(e => {
+                alert("❌ Сетевая ошибка синхронизации, но локально данные обновлены: " + e.message);
+                if (btn) {
+                    btn.innerHTML = origText;
+                    btn.disabled = false;
+                }
+                renderOrdersSvod();
+            });
+    } else {
+        if (btn) btn.disabled = false;
     }
 }
     

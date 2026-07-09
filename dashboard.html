@@ -1863,200 +1863,9 @@
         renderOrdersSvod(); 
     }
 
-    function preserveSvodInputs() {
-        document.querySelectorAll('.edit-svod-input').forEach(inp => {
-            let d = inp.getAttribute('data-date');
-            let n = inp.getAttribute('data-item'); 
-            let s = inp.getAttribute('data-shop');
+    
 
-            if (!tempSvodQty[d]) tempSvodQty[d] = {};
-            if (!tempSvodQty[d][s]) tempSvodQty[d][s] = {};
-            tempSvodQty[d][s][n] = parseFloat(inp.value) || 0;
-        });
-        
-        document.querySelectorAll('.edit-svod-vendor-select').forEach(sel => {
-            let d = sel.getAttribute('data-date');
-            let s = sel.getAttribute('data-shop');
-            let n = sel.getAttribute('data-item');
-            if (!tempSvodVendor[d]) tempSvodVendor[d] = {};
-            if (!tempSvodVendor[d][s]) tempSvodVendor[d][s] = {};
-            tempSvodVendor[d][s][n] = sel.value;
-        });
-        
-        document.querySelectorAll('.edit-svod-shop-select').forEach(sel => {
-            let d = sel.getAttribute('data-date');
-            let s = sel.getAttribute('data-original-shop');
-            let n = sel.getAttribute('data-item');
-            if (!tempSvodShop[d]) tempSvodShop[d] = {};
-            if (!tempSvodShop[d][s]) tempSvodShop[d][s] = {};
-            tempSvodShop[d][s][n] = sel.value;
-        });
-
-        tempSvodNewRows = [];
-        document.querySelectorAll('.new-svod-row').forEach(row => {
-            let nameSel = row.querySelector('.new-svod-name');
-            let qtyInp = row.querySelector('.new-svod-qty');
-            let vendorSel = row.querySelector('.new-svod-vendor');
-
-            let dateStr = nameSel.getAttribute('data-date');
-            let shop = nameSel.getAttribute('data-shop');
-            if (shop.includes('&quot;')) shop = shop.replace(/&quot;/g, '"');
-
-            tempSvodNewRows.push({
-                date: dateStr,
-                shop: shop,
-                name: nameSel.value,
-                qty: qtyInp.value, 
-                vendor: vendorSel ? vendorSel.value : 'Лента'
-            });
-        });
-    }
-
-    function recalcSvodTotals() {
-        preserveSvodInputs();
-        let totalLenta = 0; 
-        let totalOzon = 0; 
-        let totalKuper = 0;
-        let shopLentaSums = {};
-        
-        document.querySelectorAll('.edit-svod-input').forEach(inp => {
-            let shop = inp.getAttribute('data-shop');
-            let name = inp.getAttribute('data-item');
-            let date = inp.getAttribute('data-date');
-            
-            let vendorSelect = document.querySelector(`.edit-svod-vendor-select[data-item="${escCss(name)}"][data-date="${date}"][data-shop="${escCss(shop)}"]`);
-            let vendor = vendorSelect ? vendorSelect.value.toLowerCase() : (inp.getAttribute('data-vendor') || 'лента').toLowerCase();
-            let targetShop = (tempSvodShop[date] && tempSvodShop[date][shop] && tempSvodShop[date][shop][name]) ? tempSvodShop[date][shop][name] : shop;
-            let price1 = parseFloat(inp.getAttribute('data-price')) || 0;
-            let inTransit = inp.getAttribute('data-transit') === 'true';
-            let isDeleted = inp.getAttribute('data-deleted') === 'true';
-            let itemStatus = inp.getAttribute('data-status');
-            let qty = parseFloat(inp.value) || 0;
-            
-            let isAutoKuper = false;
-            let isLenta = vendor.includes('лента') || vendor.includes('lenta');
-            if (isLenta && shopLentaSums[targetShop] > 0 && shopLentaSums[targetShop] < 2000) {
-                vendor = 'купер (авто)';
-                isAutoKuper = true;
-            }
-
-            if (!shopLentaSums[targetShop]) shopLentaSums[targetShop] = 0;
-            // ⚡ СТАТУС "УЖЕ ПРИНЯТ" ИСКЛЮЧАЕТСЯ ИЗ СУММЫ
-            if (!isDeleted && !inTransit && itemStatus !== 'error' && itemStatus !== 'not_needed' && itemStatus !== 'already_received' && (isLenta || isAutoKuper)) {
-                shopLentaSums[targetShop] += (qty * price1);
-            }
-        });
-
-        document.querySelectorAll('.new-svod-row').forEach(row => {
-            let nameSel = row.querySelector('.new-svod-name');
-            let shop = nameSel.getAttribute('data-shop').replace(/&quot;/g, '"');
-            let name = nameSel.value;
-            let qty = parseFloat(row.querySelector('.new-svod-qty').value) || 0;
-            let vendorSel = row.querySelector('.new-svod-vendor');
-            let vendor = vendorSel ? vendorSel.value.toLowerCase() : 'лента';
-
-            if(name && qty > 0) {
-                let catItem = Object.values(cachedData.catalogOrder).find(c => c && c.name === name) || {};
-                let price1 = parseFloat(catItem.price) || 0;
-                if (!shopLentaSums[shop]) shopLentaSums[shop] = 0;
-                
-                let isAutoKuper = false;
-                let isLenta = vendor.includes('лента') || vendor.includes('lenta');
-                if (isLenta && shopLentaSums[shop] > 0 && shopLentaSums[shop] < 2000) {
-                    vendor = 'купер (авто)';
-                    isAutoKuper = true;
-                }
-
-                if (isLenta || isAutoKuper) {
-                    shopLentaSums[shop] += (qty * price1);
-                }
-            }
-        });
-        
-        document.querySelectorAll('.edit-svod-input').forEach(inp => {
-            let shop = inp.getAttribute('data-shop');
-            let name = inp.getAttribute('data-item');
-            let date = inp.getAttribute('data-date');
-            
-            let vendorSelect = document.querySelector(`.edit-svod-vendor-select[data-item="${escCss(name)}"][data-date="${date}"][data-shop="${escCss(shop)}"]`);
-            let vendor = vendorSelect ? vendorSelect.value.toLowerCase() : (inp.getAttribute('data-vendor') || 'лента').toLowerCase();
-            let targetShop = (tempSvodShop[date] && tempSvodShop[date][shop] && tempSvodShop[date][shop][name]) ? tempSvodShop[date][shop][name] : shop;
-            let inTransit = inp.getAttribute('data-transit') === 'true';
-            let isDeleted = inp.getAttribute('data-deleted') === 'true';
-            let itemStatus = inp.getAttribute('data-status');
-            let qty = parseFloat(inp.value) || 0;
-
-            let isAutoKuper = false;
-            let isLenta = vendor.includes('лента') || vendor.includes('lenta');
-            if (isLenta && shopLentaSums[targetShop] > 0 && shopLentaSums[targetShop] < 2000) {
-                vendor = 'купер (авто)';
-                isAutoKuper = true;
-            }
-
-            let catItem = Object.values(cachedData.catalogOrder).find(c => c && c.name === name.replace(/&quot;/g, '"')) || {};
-            let price1 = parseFloat(catItem.price) || 0;
-            let price2 = parseFloat(catItem.price2) || 0;
-            let isRegularKuper = !isAutoKuper && (vendor.includes('купер') || vendor.includes('kuper'));
-            let finalPrice = (isRegularKuper && price2 > 0) ? price2 : price1;
-            
-            let cost = finalPrice * qty;
-            // ⚡ ИСКЛЮЧАЕМ ИЗ ФИНАЛЬНОГО ПОДСЧЕТА
-            if (inTransit || itemStatus === 'error' || itemStatus === 'not_needed' || itemStatus === 'already_received' || isDeleted) cost = 0;
-            
-            if (vendor.includes('лента') || vendor.includes('lenta')) {
-                totalLenta += cost;
-            } else if (vendor.includes('озон') || vendor.includes('ozon')) {
-                totalOzon += cost;
-            } else if (vendor.includes('купер') || vendor.includes('kuper')) {
-                totalKuper += cost;
-            }
-        });
-
-        document.querySelectorAll('.new-svod-row').forEach(row => {
-            let nameSel = row.querySelector('.new-svod-name');
-            let shop = nameSel.getAttribute('data-shop').replace(/&quot;/g, '"');
-            let name = nameSel.value;
-            let qty = parseFloat(row.querySelector('.new-svod-qty').value) || 0;
-            let vendorSel = row.querySelector('.new-svod-vendor');
-            let vendor = vendorSel ? vendorSel.value.toLowerCase() : 'лента';
-
-            if(name && qty > 0) {
-                let catItem = Object.values(cachedData.catalogOrder).find(c => c && c.name === name) || {};
-                
-                let isAutoKuper = false;
-                let isLenta = vendor.includes('лента') || vendor.includes('lenta');
-                if (isLenta && shopLentaSums[shop] > 0 && shopLentaSums[shop] < 2000) {
-                    vendor = 'купер (авто)';
-                    isAutoKuper = true;
-                }
-
-                let price1 = parseFloat(catItem.price) || 0;
-                let price2 = parseFloat(catItem.price2) || 0;
-                let isRegularKuper = !isAutoKuper && (vendor.includes('купер') || vendor.includes('kuper'));
-                let finalPrice = (isRegularKuper && price2 > 0) ? price2 : price1;
-
-                let cost = finalPrice * qty;
-
-                if (vendor.includes('лента') || vendor.includes('lenta')) {
-                    totalLenta += cost;
-                } else if (vendor.includes('озон') || vendor.includes('ozon')) {
-                    totalOzon += cost;
-                } else if (vendor.includes('купер') || vendor.includes('kuper')) {
-                    totalKuper += cost;
-                }
-            }
-        });
-        
-        let elLenta = document.getElementById('svod-total-lenta');
-        let elOzon = document.getElementById('svod-total-ozon');
-        let elKuper = document.getElementById('svod-total-kuper');
-        let elAll = document.getElementById('svod-total-all');
-        
-        if(elLenta) elLenta.innerText = Math.round(totalLenta) + " ₽";
-        if(elOzon) elOzon.innerText = Math.round(totalOzon) + " ₽";
-        if(elKuper) elKuper.innerText = Math.round(totalKuper) + " ₽";
-        if(elAll) elAll.innerText = Math.round(totalLenta + totalOzon + totalKuper) + " ₽";
-    }
+   
 
     function markSvodStatusChange(dateKey, shop, name, currentStatus) {
         preserveSvodInputs();
@@ -2092,33 +1901,25 @@
         renderOrdersSvod(); 
     }
 
-    function updateNewRowVendor(sel) {
-        let opt = sel.options[sel.selectedIndex];
-        let vendor = opt.getAttribute('data-vendor');
-        if (!vendor) return;
-        
-        let tr = sel.closest('tr');
-        let vSel = tr.querySelector('.new-svod-vendor');
-        if (vSel) {
-            let vLower = vendor.toLowerCase();
-            let found = Array.from(vSel.options).some(o => o.value.toLowerCase() === vLower);
-            if (!found) {
-                vSel.insertAdjacentHTML('beforeend', `<option value="${vendor}">${vendor}</option>`);
+    function updateNewRowVendorAndPrice(inputEl) {
+        let name = inputEl.value;
+        let catItem = Object.values(cachedData.catalogOrder).find(c => c && c.name === name);
+        if (catItem) {
+            let tr = inputEl.closest('tr');
+            let vSel = tr.querySelector('.new-svod-vendor');
+            if (vSel && catItem.vendor) {
+                let vLower = catItem.vendor.toLowerCase();
+                let found = Array.from(vSel.options).some(o => o.value.toLowerCase() === vLower);
+                if (!found) {
+                    vSel.insertAdjacentHTML('beforeend', `<option value="${catItem.vendor}">${catItem.vendor}</option>`);
+                }
+                vSel.value = Array.from(vSel.options).find(o => o.value.toLowerCase() === vLower).value;
             }
-            vSel.value = Array.from(vSel.options).find(o => o.value.toLowerCase() === vLower).value;
         }
+        recalcSvodTotals();
     }
 
     function addSvodRowUI(btn, dateStr, shop, safeShopDate, safeDate) {
-        let itemOptions = `<option value="" data-vendor="">-- Выберите товар --</option>`;
-        let sortedCat = Object.values(cachedData.catalogOrder).sort((a,b) => (a.name||'').localeCompare(b.name||''));
-        sortedCat.forEach(c => {
-            if(c && c.name) {
-                let v = (c.vendor || 'Лента').replace(/"/g, '&quot;');
-                itemOptions += `<option value="${c.name.replace(/"/g, '&quot;')}" data-vendor="${v}">${c.name}</option>`;
-            }
-        });
-
         let vendorOptions = ["Лента", "Озон", "Купер", "Wildberries", "Самокат", "METRO"].map(v => `<option value="${v}">${v}</option>`).join('');
 
         let tr = document.createElement('tr');
@@ -2126,15 +1927,21 @@
         tr.style.backgroundColor = "#e8f5e9";
         
         tr.innerHTML = `
+            <td style="text-align:center; font-weight:bold; color:#4caf50; font-size:18px;">+</td>
             <td style="padding-left:15px;">
-                <select class="new-svod-name" data-date="${dateStr}" data-shop="${shop.replace(/"/g, '&quot;')}" style="font-size:14px; padding:4px; width:100%; border:2px solid #4caf50; font-weight:bold; color:#2e7d32;" onchange="updateNewRowVendor(this); recalcSvodTotals();">
-                    ${itemOptions}
-                </select>
+                <input type="text" list="svod_items_list" class="new-svod-name" data-date="${dateStr}" data-shop="${shop.replace(/"/g, '&quot;')}" placeholder="Поиск товара..." style="font-size:14px; padding:6px; width:100%; border:2px solid #4caf50; font-weight:bold; background:#212121; color:#fff;" oninput="updateNewRowVendorAndPrice(this)">
             </td>
             <td style="text-align:center;">
-                <input type="number" class="new-svod-qty" value="1" oninput="recalcSvodTotals()" style="width:100px; text-align:center; font-size:15px; font-weight:bold; border:2px solid #4caf50; border-radius:6px; padding:4px;">
+                <input type="number" class="new-svod-qty" value="1" oninput="recalcSvodTotals()" style="width:70px; text-align:center; font-size:15px; font-weight:bold; border:2px solid #4caf50; border-radius:6px; padding:4px;">
             </td>
-            <td style="text-align:center;"><span style="color:#2e7d32; font-weight:bold; font-size:13px;">Новый 🆕</span></td>
+            <td style="text-align:center;">
+                <select class="new-svod-status" style="font-size: 13px; padding: 4px; border: 2px solid #4caf50; border-radius: 4px; width: 100%; font-weight:bold; color:#2e7d32; background:#e8f5e9;" onchange="recalcSvodTotals()">
+                    <option value="pending">Ожидает ⏳</option>
+                    <option value="ordered">Заказано ✅</option>
+                    <option value="already_received">Принят ✅</option>
+                    <option value="error">Ошибка ❌</option>
+                </select>
+            </td>
             <td>
                 <select class="new-svod-vendor" style="font-size: 14px; padding: 4px; border: 1px solid #ccc; border-radius: 4px; width: 100%;" onchange="recalcSvodTotals()">
                     ${vendorOptions}
@@ -2144,8 +1951,339 @@
                 <button class="btn-del" onclick="this.closest('tr').remove(); recalcSvodTotals();">🗑</button>
             </td>
         `;
-        
         btn.closest('tr').insertAdjacentElement('beforebegin', tr);
+    }
+
+    function preserveSvodInputs() {
+        document.querySelectorAll('.edit-svod-input').forEach(inp => {
+            let d = inp.getAttribute('data-date');
+            let n = inp.getAttribute('data-item'); 
+            let s = inp.getAttribute('data-shop');
+
+            if (!tempSvodQty[d]) tempSvodQty[d] = {};
+            if (!tempSvodQty[d][s]) tempSvodQty[d][s] = {};
+            tempSvodQty[d][s][n] = parseFloat(inp.value) || 0;
+        });
+        
+        document.querySelectorAll('.edit-svod-vendor-select').forEach(sel => {
+            let d = sel.getAttribute('data-date');
+            let s = sel.getAttribute('data-shop');
+            let n = sel.getAttribute('data-item');
+            if (!tempSvodVendor[d]) tempSvodVendor[d] = {};
+            if (!tempSvodVendor[d][s]) tempSvodVendor[d][s] = {};
+            tempSvodVendor[d][s][n] = sel.value;
+        });
+        
+        document.querySelectorAll('.edit-svod-shop-select').forEach(sel => {
+            let d = sel.getAttribute('data-date');
+            let s = sel.getAttribute('data-original-shop');
+            let n = sel.getAttribute('data-item');
+            if (!tempSvodShop[d]) tempSvodShop[d] = {};
+            if (!tempSvodShop[d][s]) tempSvodShop[d][s] = {};
+            tempSvodShop[d][s][n] = sel.value;
+        });
+
+        tempSvodNewRows = [];
+        document.querySelectorAll('.new-svod-row').forEach(row => {
+            let nameInp = row.querySelector('.new-svod-name');
+            let shop = nameInp.getAttribute('data-shop').replace(/&quot;/g, '"');
+            let dateStr = nameInp.getAttribute('data-date');
+            let qty = row.querySelector('.new-svod-qty').value;
+            let vendor = row.querySelector('.new-svod-vendor').value;
+            let status = row.querySelector('.new-svod-status').value;
+
+            tempSvodNewRows.push({
+                date: dateStr,
+                shop: shop,
+                name: nameInp.value,
+                qty: qty, 
+                vendor: vendor,
+                status: status
+            });
+        });
+    }
+
+    async function saveSvodEdits() {
+        let btn = document.getElementById('svod-btn-edit'); 
+        let origText = btn.innerHTML;
+        btn.innerHTML = "⌛ СОХРАНЕНИЕ...";
+        preserveSvodInputs(); 
+        
+        try {
+            let promises = []; 
+            let moves = [];
+            let newItemsByOrder = {};
+            let newOrdersToCreate = {};
+
+            document.querySelectorAll('.new-svod-row').forEach(row => {
+                let nameInp = row.querySelector('.new-svod-name');
+                let qtyInp = row.querySelector('.new-svod-qty');
+                let vendorSel = row.querySelector('.new-svod-vendor');
+                let statusSel = row.querySelector('.new-svod-status');
+
+                let dateStr = nameInp.getAttribute('data-date');
+                let shop = nameInp.getAttribute('data-shop').replace(/&quot;/g, '"');
+                let name = nameInp.value.replace(/&quot;/g, '"');
+                let qty = parseFloat(qtyInp.value) || 0;
+                let vendor = vendorSel.value;
+                let status = statusSel.value;
+
+                if(!name || qty <= 0) return;
+
+                let catItem = Object.values(cachedData.catalogOrder).find(c => c && c.name === name) || {};
+                let cat = catItem.cat || "Прочее";
+
+                let targetOrderKey = Object.keys(cachedData.orders).find(k => {
+                    let o = cachedData.orders[k];
+                    return o && o.shop === shop && !o.ordered && new Date(o.timestamp).toLocaleDateString('ru-RU') === dateStr;
+                });
+
+                let itemObj = { name: name, qty: qty, vendor: vendor, status: status, bot_error: false, cat: cat };
+
+                if (targetOrderKey) {
+                    if(!newItemsByOrder[targetOrderKey]) newItemsByOrder[targetOrderKey] = [];
+                    newItemsByOrder[targetOrderKey].push(itemObj);
+                } else {
+                    let pseudoKey = "new_" + dateStr + "_" + shop;
+                    if(!newOrdersToCreate[pseudoKey]) {
+                        let [d, m, y] = dateStr.split('.');
+                        let ts = new Date(y, m-1, d).getTime();
+                        newOrdersToCreate[pseudoKey] = { shop: shop, mode: 'order', items: [], timestamp: ts, svod: false, ordered: false, userId: 'admin_dashboard' };
+                    }
+                    newOrdersToCreate[pseudoKey].items.push(itemObj);
+                }
+            });
+            
+            for (let k in cachedData.orders) {
+                let o = cachedData.orders[k];
+                if (o && (o.mode === 'order' || o.mode === 'new_shop') && !o.ordered) {
+                    let dKey = new Date(o.timestamp).toLocaleDateString('ru-RU');
+                    let needsUpdate = false;
+                    let itemsArr = Array.isArray(o.items) ? o.items : (typeof o.items === 'object' && o.items !== null ? Object.values(o.items) : []);
+                    let newItemsArr = [];
+                    
+                    for (let i = 0; i < itemsArr.length; i++) {
+                        let itm = itemsArr[i]; 
+                        if (!itm || !itm.name) continue;
+                        
+                        let isDeleted = svodDeletions.some(d => d.date === dKey && d.shop === o.shop && d.name === itm.name);
+                        if (isDeleted) { 
+                            needsUpdate = true; 
+                            continue; 
+                        }
+                        
+                        let updatedQty = (tempSvodQty[dKey] && tempSvodQty[dKey][o.shop] && tempSvodQty[dKey][o.shop][itm.name] !== undefined) ? tempSvodQty[dKey][o.shop][itm.name] : undefined;
+                        let updatedStatus = (tempSvodStatus[dKey] && tempSvodStatus[dKey][o.shop] && tempSvodStatus[dKey][o.shop][itm.name] !== undefined) ? tempSvodStatus[dKey][o.shop][itm.name] : undefined;
+                        let updatedVendor = (tempSvodVendor[dKey] && tempSvodVendor[dKey][o.shop] && tempSvodVendor[dKey][o.shop][itm.name]) ? tempSvodVendor[dKey][o.shop][itm.name] : undefined;
+                        let newTargetShop = (tempSvodShop[dKey] && tempSvodShop[dKey][o.shop] && tempSvodShop[dKey][o.shop][itm.name]) ? tempSvodShop[dKey][o.shop][itm.name] : o.shop;
+                        
+                        let catItem = Object.values(cachedData.catalogOrder).find(c => c && c.name === itm.name) || {};
+
+                        if (updatedVendor !== undefined && (itm.vendor || catItem.vendor || 'Лента').toLowerCase() !== updatedVendor.toLowerCase()) {
+                            needsUpdate = true;
+                            itm.vendor = updatedVendor;
+                        }
+                        
+                        let finalQty = updatedQty !== undefined ? updatedQty : itm.qty;
+                        let finalStatus = updatedStatus !== undefined ? updatedStatus : itm.status;
+                        let finalBotError = (finalStatus === 'error') ? true : itm.bot_error;
+
+                        if (newTargetShop !== o.shop) {
+                            needsUpdate = true;
+                            moves.push({
+                                date: dKey,
+                                fromShop: o.shop,
+                                toShop: newTargetShop,
+                                item: { ...itm, qty: finalQty, status: finalStatus, bot_error: finalBotError }
+                            });
+                            continue; 
+                        }
+
+                        if (updatedStatus !== undefined && itm.status !== updatedStatus) {
+                            needsUpdate = true;
+                            if (updatedStatus === 'error' && itm.status !== 'error') {
+                                let newMissing = { shop: o.shop, name: itm.name, qty: finalQty, status: 'canceled', timestamp: Date.now() };
+                                promises.push(fetch(`${FB_URL}/missing_items.json`, { method: 'POST', body: JSON.stringify(newMissing) }));
+                            }
+                            itm.status = updatedStatus; 
+                            itm.bot_error = (updatedStatus === 'error'); 
+                            itm.not_found = (updatedStatus === 'error'); 
+                            itm.error = (updatedStatus === 'error');
+                        }
+                        
+                        if (updatedQty !== undefined && String(updatedQty) !== String(itm.qty)) { 
+                            needsUpdate = true;
+                            itm.qty = updatedQty; 
+                        }
+
+                        if (parseFloat(itm.qty) > 0 || itm.name === "НЕТ ЗАКАЗА") {
+                            newItemsArr.push(itm);
+                        } else if (parseFloat(itm.qty) === 0) {
+                            needsUpdate = true;
+                        }
+                    }
+                    
+                    if (newItemsByOrder[k]) {
+                        needsUpdate = true;
+                        newItemsArr = newItemsArr.filter(i => i.name !== "НЕТ ЗАКАЗА");
+                        newItemsByOrder[k].forEach(newItem => {
+                            let existing = newItemsArr.find(i => i.name === newItem.name);
+                            if (existing) {
+                                existing.qty = parseFloat(existing.qty) + parseFloat(newItem.qty);
+                            } else {
+                                newItemsArr.push(newItem);
+                            }
+                        });
+                    }
+
+                    if (needsUpdate) {
+                        if (newItemsArr.length === 0) newItemsArr = [{name: "НЕТ ЗАКАЗА", qty: 0}];
+                        promises.push(fetch(`${FB_URL}/orders/${k}/items.json`, {method:'PUT', body: JSON.stringify(newItemsArr)}));
+                    }
+                }
+            }
+            
+            for (let pseudoKey in newOrdersToCreate) {
+                promises.push(fetch(`${FB_URL}/orders.json`, {method:'POST', body: JSON.stringify(newOrdersToCreate[pseudoKey])}));
+            }
+
+            for (let move of moves) {
+                let targetOrderKey = Object.keys(cachedData.orders).find(k => {
+                    let to = cachedData.orders[k];
+                    return to && to.shop === move.toShop && !to.ordered && new Date(to.timestamp).toLocaleDateString('ru-RU') === move.date;
+                });
+                if (targetOrderKey) {
+                    let targetOrder = cachedData.orders[targetOrderKey];
+                    let tItems = Array.isArray(targetOrder.items) ? targetOrder.items : (typeof targetOrder.items === 'object' && targetOrder.items !== null ? Object.values(targetOrder.items) : []);
+                    let existingItem = tItems.find(i => i.name === move.item.name);
+                    if (existingItem) {
+                        existingItem.qty = parseFloat(existingItem.qty) + parseFloat(move.item.qty);
+                    } else {
+                        tItems = tItems.filter(i => i.name !== "НЕТ ЗАКАЗА");
+                        tItems.push(move.item);
+                    }
+                    promises.push(fetch(`${FB_URL}/orders/${targetOrderKey}/items.json`, {method:'PUT', body: JSON.stringify(tItems)}));
+                } else {
+                    let [d, m, y] = move.date.split('.');
+                    let ts = new Date(y, m-1, d).getTime();
+                    let newOrder = { shop: move.toShop, mode: 'order', items: [move.item], timestamp: ts, svod: false, ordered: false, userId: 'admin_move' };
+                    promises.push(fetch(`${FB_URL}/orders.json`, {method:'POST', body: JSON.stringify(newOrder)}));
+                }
+            }
+
+            await Promise.all(promises);
+            isSvodEditMode = false; 
+            svodDeletions = []; 
+            tempSvodQty = {}; 
+            tempSvodStatus = {};
+            tempSvodVendor = {};
+            tempSvodShop = {};
+            tempSvodNewRows = [];
+            
+            if(btn) btn.innerHTML = "✅ СОХРАНЕНО!";
+            renderOrdersSvod(); 
+            setTimeout(() => {
+                if(btn) btn.innerHTML = origText;
+            }, 1000);
+        } catch (e) { 
+            if(btn) btn.innerHTML = origText; 
+            alert("❌ Ошибка при сохранении: " + e.message); 
+        }
+    }
+
+    function recalcSvodTotals() {
+        preserveSvodInputs();
+        let totalLentaAll = 0, totalLentaRem = 0; 
+        let totalOzonAll = 0, totalOzonRem = 0; 
+        let totalKuperAll = 0, totalKuperRem = 0;
+        let shopLentaSums = {};
+        
+        const calculateRow = (shop, name, date, qty, vendor, itemStatus, isDeleted, inTransit) => {
+            let catItem = Object.values(cachedData.catalogOrder).find(c => c && c.name === name) || {};
+            let isAutoKuper = false;
+            let isLenta = vendor.includes('лента') || vendor.includes('lenta');
+            
+            if (isLenta && shopLentaSums[shop] > 0 && shopLentaSums[shop] < 2000) {
+                vendor = 'купер (авто)';
+                isAutoKuper = true;
+            }
+
+            if (!shopLentaSums[shop]) shopLentaSums[shop] = 0;
+            if (!isDeleted && !inTransit && itemStatus !== 'error' && itemStatus !== 'not_needed' && itemStatus !== 'already_received' && (isLenta || isAutoKuper)) {
+                shopLentaSums[shop] += (qty * (parseFloat(catItem.price)||0));
+            }
+            
+            let price1 = parseFloat(catItem.price) || 0;
+            let price2 = parseFloat(catItem.price2) || 0;
+            let isRegularKuper = !isAutoKuper && (vendor.includes('купер') || vendor.includes('kuper'));
+            let finalPrice = (isRegularKuper && price2 > 0) ? price2 : price1;
+            
+            let cost = finalPrice * (isDeleted ? 0 : qty);
+            
+            // Если ошибка, не надо или удалено — не считаем никуда
+            if (inTransit || itemStatus === 'error' || itemStatus === 'not_needed' || isDeleted) cost = 0;
+            
+            // Если товар уже "Принят", он идет только в итог, но НЕ в остаток
+            let isRemaining = (itemStatus === 'pending' || itemStatus === 'from_stoplist' || itemStatus === 'partial');
+            
+            if (vendor.includes('лента') || vendor.includes('lenta')) {
+                totalLentaAll += cost;
+                if (isRemaining) totalLentaRem += cost;
+            } else if (vendor.includes('озон') || vendor.includes('ozon')) {
+                totalOzonAll += cost;
+                if (isRemaining) totalOzonRem += cost;
+            } else if (vendor.includes('купер') || vendor.includes('kuper')) {
+                totalKuperAll += cost;
+                if (isRemaining) totalKuperRem += cost;
+            }
+        };
+
+        // 1. Прогоняем текущие строки
+        document.querySelectorAll('.edit-svod-input').forEach(inp => {
+            let shop = inp.getAttribute('data-shop');
+            let name = inp.getAttribute('data-item');
+            let date = inp.getAttribute('data-date');
+            
+            let vendorSelect = document.querySelector(`.edit-svod-vendor-select[data-item="${escCss(name)}"][data-date="${date}"][data-shop="${escCss(shop)}"]`);
+            let vendor = vendorSelect ? vendorSelect.value.toLowerCase() : (inp.getAttribute('data-vendor') || 'лента').toLowerCase();
+            let targetShop = (tempSvodShop[date] && tempSvodShop[date][shop] && tempSvodShop[date][shop][name]) ? tempSvodShop[date][shop][name] : shop;
+            let inTransit = inp.getAttribute('data-transit') === 'true';
+            let isDeleted = inp.getAttribute('data-deleted') === 'true';
+            let itemStatus = inp.getAttribute('data-status');
+            let qty = parseFloat(inp.value) || 0;
+
+            calculateRow(targetShop, name, date, qty, vendor, itemStatus, isDeleted, inTransit);
+        });
+
+        // 2. Прогоняем новые ручные строки
+        document.querySelectorAll('.new-svod-row').forEach(row => {
+            let name = row.querySelector('.new-svod-name').value;
+            let shop = row.querySelector('.new-svod-name').getAttribute('data-shop').replace(/&quot;/g, '"');
+            let date = row.querySelector('.new-svod-name').getAttribute('data-date');
+            let qty = parseFloat(row.querySelector('.new-svod-qty').value) || 0;
+            let vendor = row.querySelector('.new-svod-vendor').value.toLowerCase();
+            let status = row.querySelector('.new-svod-status').value;
+            
+            if(name && qty > 0) calculateRow(shop, name, date, qty, vendor, status, false, false);
+        });
+        
+        let elLenta = document.getElementById('svod-total-lenta');
+        let remLenta = document.getElementById('svod-rem-lenta');
+        let elOzon = document.getElementById('svod-total-ozon');
+        let remOzon = document.getElementById('svod-rem-ozon');
+        let elKuper = document.getElementById('svod-total-kuper');
+        let remKuper = document.getElementById('svod-rem-kuper');
+        let elAll = document.getElementById('svod-total-all');
+        let remAll = document.getElementById('svod-rem-all');
+        
+        if(elLenta) elLenta.innerText = Math.round(totalLentaAll) + " ₽";
+        if(remLenta) remLenta.innerText = Math.round(totalLentaRem) + " ₽";
+        if(elOzon) elOzon.innerText = Math.round(totalOzonAll) + " ₽";
+        if(remOzon) remOzon.innerText = Math.round(totalOzonRem) + " ₽";
+        if(elKuper) elKuper.innerText = Math.round(totalKuperAll) + " ₽";
+        if(remKuper) remKuper.innerText = Math.round(totalKuperRem) + " ₽";
+        if(elAll) elAll.innerText = Math.round(totalLentaAll + totalOzonAll + totalKuperAll) + " ₽";
+        if(remAll) remAll.innerText = Math.round(totalLentaRem + totalOzonRem + totalKuperRem) + " ₽";
     }
 
     async function mergePendingOrders() {
@@ -2359,9 +2497,9 @@ async function renderOrdersSvod() {
             svodActionBar = document.getElementById('dynamic-action-bar');
         }
         
-        let totalLenta = 0;
-        let totalOzon = 0;
-        let totalKuper = 0;
+        let totalLentaAll = 0, totalLentaRem = 0;
+        let totalOzonAll = 0, totalOzonRem = 0;
+        let totalKuperAll = 0, totalKuperRem = 0;
         let isOrdHistOpen = expandedDivs.has('history_orders_list');
 
         let vendorMap = {};
@@ -2372,7 +2510,6 @@ async function renderOrdersSvod() {
         let allOrders = Object.values(cachedData.orders || {}).sort((a,b) => (b.timestamp || 0) - (a.timestamp || 0));
         let cutoffMonth = Date.now() - (30 * 24 * 60 * 60 * 1000); 
 
-        // ⚡ Убрана старая мусорная логика, просто делим заказы
         allOrders.forEach(o => {
             if (o && (o.mode === 'order' || o.mode === 'new_shop')) {
                 if (!o.ordered) todaysOrders.push(o);
@@ -2467,25 +2604,36 @@ async function renderOrdersSvod() {
             svodActionBar.style.display = 'block';
         } else { svodActionBar.style.display = 'none'; }
 
-        let html = `<h3 style="color:#311B92; font-size:22px; margin-top:0; margin-bottom:15px;">📊 Ожидают сборки</h3>`;
-        if (isSvodEditMode) html += `<div style="margin-bottom:15px; padding:15px; background:#fff3e0; color:#e65100; border-radius:12px; font-size:15px; font-weight:bold; border: 2px dashed #ffb74d;">💡 <b>Режим редактирования активен:</b><br>- <b>Статусы сохраняются МГНОВЕННО</b> при выборе из выпадающего списка.<br>- Вы можете перенести товар на другого поставщика или на другой адрес.<br>- Внизу каждого адреса есть кнопка <b>➕ Добавить товар</b>.<br><b style="color:#d32f2f;">ВНИМАНИЕ:</b> Нажмите "Сохранить изменения", когда закончите править количества и цены!</div>`;
-        html += `<table style='margin-bottom:20px;'><tr><th>Кофейня / Товар</th><th style="text-align:center;">Кол-во</th><th style="text-align:center;">Статус</th><th>Поставщик</th><th style="text-align:center;">${isSvodEditMode ? 'Удалить' : 'Ссылка'}</th></tr>`;
+        // ⚡ ГЕНЕРИРУЕМ СПИСОК ТОВАРОВ ДЛЯ НОВЫХ ПОЗИЦИЙ С ЧЕРНЫМ ПОИСКОМ
+        let allPurchaseItems = [];
+        if (cachedData.catalogOrder) allPurchaseItems.push(...Object.values(cachedData.catalogOrder).map(i => i.name));
+        let uniqueNames = [...new Set(allPurchaseItems.filter(Boolean))].sort((a,b) => a.localeCompare(b));
+        let optionsHtml = uniqueNames.map(name => `<option value="${name.replace(/"/g, '&quot;')}">${name}</option>`).join("");
+
+        let html = `<datalist id="svod_items_list">${optionsHtml}</datalist>`;
+        html += `<h3 style="color:#311B92; font-size:22px; margin-top:0; margin-bottom:15px;">📊 Ожидают сборки</h3>`;
+        if (isSvodEditMode) html += `<div style="margin-bottom:15px; padding:15px; background:#fff3e0; color:#e65100; border-radius:12px; font-size:15px; font-weight:bold; border: 2px dashed #ffb74d;">💡 <b>Режим редактирования активен:</b><br>- <b>Статусы сохраняются МГНОВЕННО</b> при выборе из выпадающего списка.<br>- Внизу каждого адреса есть кнопка <b>➕ Добавить товар</b>.<br><b style="color:#d32f2f;">ВНИМАНИЕ:</b> Нажмите "Сохранить изменения", когда закончите править количества и цены!</div>`;
         
-        if (sortedDates.length === 0) html += `<tr><td colspan="5" style="text-align:center; padding:20px; font-weight:bold; font-size:16px; color:#888;">Нет заказов, ожидающих сборки</td></tr>`;
+        // ⚡ ДОБАВИЛИ КОЛОНКУ "#" (ДЛЯ НУМЕРАЦИИ)
+        html += `<table style='margin-bottom:20px;'><tr><th style="width:30px; text-align:center;">#</th><th>Кофейня / Товар</th><th style="text-align:center;">Кол-во</th><th style="text-align:center;">Статус</th><th>Поставщик</th><th style="text-align:center;">${isSvodEditMode ? 'Удалить' : 'Ссылка'}</th></tr>`;
+        
+        if (sortedDates.length === 0) html += `<tr><td colspan="6" style="text-align:center; padding:20px; font-weight:bold; font-size:16px; color:#888;">Нет заказов, ожидающих сборки</td></tr>`;
         else {
             sortedDates.forEach(dateStr => {
                 let safeDate = getSafeId(dateStr), isDateOpen = expandedDivs.has(`svodlvl2_${safeDate}`);
-                html += `<tr class="cat-group-header" onclick="toggleSvodDate('${safeDate}')"><td colspan="5" style="padding:16px; background:#D1C4E9; font-size:18px; border-bottom: 2px solid #b39ddb;">📅 <b>Закупка от ${dateStr}</b> <span id="arrow_sdate_${safeDate}" style="float:right; margin-left:15px;">${isDateOpen ? '▲' : '▼'}</span><button onclick="deleteOrdersFromSvod(event, '${dateStr}')" style="float:right; background:#e53935; color:white; border:none; border-radius:6px; padding:4px 10px; font-size:13px; font-weight:bold; cursor:pointer; box-shadow:0 2px 4px rgba(0,0,0,0.2);">🗑 Удалить день</button></td></tr>`;
+                html += `<tr class="cat-group-header" onclick="toggleSvodDate('${safeDate}')"><td colspan="6" style="padding:16px; background:#D1C4E9; font-size:18px; border-bottom: 2px solid #b39ddb;">📅 <b>Закупка от ${dateStr}</b> <span id="arrow_sdate_${safeDate}" style="float:right; margin-left:15px;">${isDateOpen ? '▲' : '▼'}</span><button onclick="deleteOrdersFromSvod(event, '${dateStr}')" style="float:right; background:#e53935; color:white; border:none; border-radius:6px; padding:4px 10px; font-size:13px; font-weight:bold; cursor:pointer; box-shadow:0 2px 4px rgba(0,0,0,0.2);">🗑 Удалить день</button></td></tr>`;
                 
                 let shopsObj = svodDataByDate[dateStr];
                 Object.keys(shopsObj).sort().forEach(shop => {
                     let safeShopDate = getSafeId(dateStr + shop), isShopOpen = expandedDivs.has(`svoditem_${safeShopDate}`), displayShop = (isDateOpen && isShopOpen) ? 'table-row' : 'none';
-                   let escShop = shop.replace(/'/g, "\\'").replace(/"/g, '&quot;');
-         html += `<tr class="cat-group-header svodlvl2_${safeDate}" onclick="toggleCatElements('svoditem_${safeShopDate}', 'arrow_sshop_${safeShopDate}')" style="display:${isDateOpen ? 'table-row' : 'none'};"><td colspan="5" style="background:#ede7f6; padding:14px; padding-left:30px; font-size:16px; color:#311B92; border-bottom: 1px solid #d1c4e9;"><b>📍 ${shop === 'Красноказарменная' ? 'МЭИ' : shop}</b> <span id="arrow_sshop_${safeShopDate}" style="float:right; margin-left:15px;">${isShopOpen ? '▲' : '▼'}</span><button onclick="deleteOrdersFromSvod(event, '${dateStr}', '${escShop}')" style="float:right; background:#e53935; color:white; border:none; border-radius:6px; padding:3px 8px; font-size:12px; font-weight:bold; cursor:pointer; box-shadow:0 2px 4px rgba(0,0,0,0.2);">🗑 Удалить заказ</button></td></tr>`;
+                    let escShop = shop.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+                    html += `<tr class="cat-group-header svodlvl2_${safeDate}" onclick="toggleCatElements('svoditem_${safeShopDate}', 'arrow_sshop_${safeShopDate}')" style="display:${isDateOpen ? 'table-row' : 'none'};"><td colspan="6" style="background:#ede7f6; padding:14px; padding-left:30px; font-size:16px; color:#311B92; border-bottom: 1px solid #d1c4e9;"><b>📍 ${shop === 'Красноказарменная' ? 'МЭИ' : shop}</b> <span id="arrow_sshop_${safeShopDate}" style="float:right; margin-left:15px;">${isShopOpen ? '▲' : '▼'}</span><button onclick="deleteOrdersFromSvod(event, '${dateStr}', '${escShop}')" style="float:right; background:#e53935; color:white; border:none; border-radius:6px; padding:3px 8px; font-size:12px; font-weight:bold; cursor:pointer; box-shadow:0 2px 4px rgba(0,0,0,0.2);">🗑 Удалить заказ</button></td></tr>`;
                              
                     let sortedItemNames = Object.keys(shopsObj[shop].items).sort((a,b) => { let vA = vendorMap[a] || 'лента', vB = vendorMap[b] || 'лента'; return vA < vB ? -1 : (vA > vB ? 1 : a.localeCompare(b)); });
-                    if (sortedItemNames.length === 0 && shopsObj[shop].no_order) html += `<tr class="svoditem_${safeShopDate} svodlvl3_of_${safeDate}" style="display:${displayShop}; background:#f1f8e9;"><td colspan="5" style="padding:15px; padding-left:45px; font-weight:bold; color:#2e7d32; text-align:center; font-size:15px;">➖ Заказ на эту дату не требуется</td></tr>`;
+                    
+                    if (sortedItemNames.length === 0 && shopsObj[shop].no_order) html += `<tr class="svoditem_${safeShopDate} svodlvl3_of_${safeDate}" style="display:${displayShop}; background:#f1f8e9;"><td colspan="6" style="padding:15px; padding-left:45px; font-weight:bold; color:#2e7d32; text-align:center; font-size:15px;">➖ Заказ на эту дату не требуется</td></tr>`;
                     else {
+                        let itemIndex = 1; // ⚡ НУМЕРАЦИЯ ДЛЯ АДРЕСА
                         sortedItemNames.forEach(name => {
                             let catItem = Object.values(cachedData.catalogOrder || {}).find(c => c && c.name === name) || {};
                             let actualVendor = (tempSvodVendor[dateStr] && tempSvodVendor[dateStr][shop] && tempSvodVendor[dateStr][shop][name]) ? tempSvodVendor[dateStr][shop][name] : (shopsObj[shop].items[name].vendor || catItem.vendor || 'Лента');
@@ -2504,17 +2652,14 @@ async function renderOrdersSvod() {
                                 baseStatus = 'pending';
                             }
 
-                            
-                    
-                     
-                            // ⚡ ИСКЛЮЧАЕМ ЛЕНТУ И КУПЕР ИЗ ПОВТОРОВ. ОТОБРАЖАЕМ РЕАЛЬНЫЕ СТАТУСЫ НЕДОВОЗОВ ДЛЯ ОЗОНА!
                             let repeatBadge = "";
                             let rowBg = "";
                             let isRepeat = false;
                             let forceStatus = null; 
                             let itemArrDate = ""; 
                         
-                            if (isOzon) { // ⚡ ТЕПЕРЬ ТОЛЬКО ДЛЯ ОЗОНА (КУПЕР ИГНОРИРУЕТСЯ)
+                            // ⚡ ОЗОН: Реальные статусы недовозов
+                            if (isOzon) {
                                 let ozonStat = window.getOzonRepeatStatus(shop, name, cachedData, actualVendor); 
                                 if (ozonStat.isRepeat) {
                                     isRepeat = true;
@@ -2523,12 +2668,11 @@ async function renderOrdersSvod() {
                                         repeatBadge = `<span style='color:#0277bd; font-size:12px; margin-left:5px; font-weight:bold;'>⚠️ Повтор (Принят${itemArrDate} ✅)</span>`;
                                         forceStatus = 'already_received'; 
                                     } else {
-                                        // ⚡ ВЫТЯГИВАЕМ РЕАЛЬНЫЙ СТАТУС НЕДОВОЗА
                                         let mObj = Object.values(cachedData.missing || {}).find(m => m && m.shop === shop && cleanName(m.name) === cleanName(name) && m.status !== 'arrived' && m.status !== 'canceled');
                                         if (mObj) {
                                             if (mObj.status === 'transit') {
                                                 repeatBadge = `<span style='color:#1565c0; font-size:12px; margin-left:5px; font-weight:bold;'>🚚 В пути (Недовоз)</span>`;
-                                                forceStatus = 'error'; // Форсируем ошибку, чтобы вычесть из суммы
+                                                forceStatus = 'error'; 
                                             } else if (mObj.status === 'reorder') {
                                                 repeatBadge = `<span style='color:#0288d1; font-size:12px; margin-left:5px; font-weight:bold;'>🔄 Перезаказан (Недовоз)</span>`;
                                             } else {
@@ -2555,11 +2699,21 @@ async function renderOrdersSvod() {
 
                             let cost = finalPrice * (isDeleted ? 0 : actualQty);
                             
-                            if (itemStatus === 'error' || itemStatus === 'not_needed' || itemStatus === 'already_received') cost = 0; 
+                            if (itemStatus === 'error' || itemStatus === 'not_needed' || isDeleted) cost = 0; 
                             
-                            if (isLenta) totalLenta += cost; 
-                            else if (isOzon) totalOzon += cost; 
-                            else if (actualVendor.toLowerCase().includes('купер') || actualVendor.toLowerCase().includes('kuper')) totalKuper += cost;
+                            // ⚡ ОСТАТКИ: Только Ожидает или Из стоп-листа
+                            let isRemaining = (itemStatus === 'pending' || itemStatus === 'from_stoplist' || itemStatus === 'partial');
+                            
+                            if (actualVendor.toLowerCase().includes('лента') || actualVendor.toLowerCase().includes('lenta')) {
+                                totalLentaAll += cost;
+                                if(isRemaining) totalLentaRem += cost;
+                            } else if (isOzon) {
+                                totalOzonAll += cost;
+                                if(isRemaining) totalOzonRem += cost;
+                            } else if (actualVendor.toLowerCase().includes('купер') || actualVendor.toLowerCase().includes('kuper')) {
+                                totalKuperAll += cost;
+                                if(isRemaining) totalKuperRem += cost;
+                            }
 
                             let linksHtml = [(catItem.link ? `<a href="${catItem.link}" target="_blank" style="color:#0288d1; font-weight:bold;">🔗 Осн</a>` : ""), (catItem.link2 ? `<a href="${catItem.link2}" target="_blank" style="color:#e53935; font-weight:bold; margin-left:8px;">🔗 Рез</a>` : "")].filter(Boolean).join(" ");
                             let jsName = name.replace(/'/g, "\\'").replace(/"/g, '&quot;');
@@ -2567,13 +2721,12 @@ async function renderOrdersSvod() {
                             let htmlName = name.replace(/"/g, '&quot;');
                             let htmlShop = shop.replace(/"/g, '&quot;');
 
-                            // ⚡ ПРАВИЛЬНАЯ ПРИОРИТИЗАЦИЯ ЦВЕТОВ (С ЖЕЛТЫМ ФОНОМ ДЛЯ ПОВТОРОВ)
                             if (itemStatus === 'error') {
                                 rowBg = "background-color: #ffebee !important;";
                             } else if (itemStatus === 'from_stoplist') {
                                 rowBg = "background-color: #ffcdd2 !important;";
                             } else if (isRepeat) {
-                                rowBg = "background-color: #fff9c4 !important;"; // ⚡ Желтый фон для повторов
+                                rowBg = "background-color: #fff9c4 !important;"; 
                             } else if (itemStatus === 'already_received' || itemStatus === 'not_needed') {
                                 rowBg = "background-color: #f5f5f5 !important; opacity: 0.85;"; 
                             }
@@ -2602,37 +2755,62 @@ async function renderOrdersSvod() {
                                 statusBadge = `<button onclick="instantStatusToggle('${dateStr}', '${jsShop}', '${jsName}', '${itemStatus}')" style="cursor:pointer; background:${statusBg}; color:${statusColor}; border:2px dashed ${statusColor}; padding:4px 8px; border-radius:8px; font-size:13px; font-weight:900; display:inline-block; box-shadow:0 2px 4px rgba(0,0,0,0.1);">${statusText} 🔄</button>`;
                                 html += `
                                 <tr class="svod-row svoditem_${safeShopDate} svodlvl3_of_${safeDate}" style="display:${displayShop}; color:${isDeleted ? '#aaa':'#333'}; ${rowBg}">
+                                    <td style="text-align:center; font-weight:bold; color:#999; font-size:13px;">${itemIndex}</td>
                                     <td style="padding-left:15px; font-size:15px; font-weight:bold;">${name} ${repeatBadge} <select class="edit-svod-shop-select" data-original-shop="${htmlShop}" data-item="${htmlName}" data-date="${dateStr}" style="margin-top: 5px; font-size: 13px; padding: 4px; border: 1px solid #ccc; border-radius: 4px; width: 100%;" onchange="markSvodShopChange('${dateStr}', '${jsShop}', '${jsName}', this.value)" ${isDeleted ? 'disabled' : ''}>${shopListAll.map(sName => `<option value="${sName}" ${sName === actualShop ? 'selected' : ''}>${sName}</option>`).join('')}</select></td>
-                                    <td style="text-align:center;"><input type="number" class="edit-svod-input" data-date="${dateStr}" data-shop="${htmlShop}" data-item="${htmlName}" data-vendor="${actualVendor}" data-price="${finalPrice}" data-deleted="${isDeleted}" data-status="${itemStatus}" value="${actualQty}" ${isDeleted ? 'disabled' : ''} oninput="recalcSvodTotals()" style="width: 100px; text-align: center; font-size: 15px; font-weight: bold; color: ${isDeleted ? '#aaa' : '#311b92'}; border: 2px solid ${isDeleted ? '#eee' : '#7E57C2'}; border-radius: 6px; padding: 4px;"></td>
+                                    <td style="text-align:center;"><input type="number" class="edit-svod-input" data-date="${dateStr}" data-shop="${htmlShop}" data-item="${htmlName}" data-vendor="${actualVendor}" data-price="${finalPrice}" data-deleted="${isDeleted}" data-status="${itemStatus}" value="${actualQty}" ${isDeleted ? 'disabled' : ''} oninput="recalcSvodTotals()" style="width: 80px; text-align: center; font-size: 15px; font-weight: bold; color: ${isDeleted ? '#aaa' : '#311b92'}; border: 2px solid ${isDeleted ? '#eee' : '#7E57C2'}; border-radius: 6px; padding: 4px;"></td>
                                     <td style="text-align:center;">${statusBadge}</td>
                                     <td style="font-size:14px; color:${isDeleted ? '#aaa' : '#333'}">${displayVendorCell}</td>
                                     <td style="text-align:center;"><button class="btn-del" ${isDeleted ? 'disabled' : ''} onclick="markSvodDelete(this, '${dateStr}', '${jsShop}', '${jsName}')">🗑</button></td>
                                 </tr>`;
                             }else {
-                                html += `<tr class="svod-row svoditem_${safeShopDate} svodlvl3_of_${safeDate}" style="display:${displayShop}; ${rowBg}"><td style="padding-left:15px; font-size:15px; font-weight:bold;">${name} ${repeatBadge}</td><td style="text-align:center; font-size:16px; font-weight:bold; color:#311b92;">${actualQty}</td><td style="text-align:center;">${statusBadge}</td><td style="font-size:14px;">${displayVendorCell}</td><td style="text-align:center;">${linksHtml}</td></tr>`;
+                                html += `<tr class="svod-row svoditem_${safeShopDate} svodlvl3_of_${safeDate}" style="display:${displayShop}; ${rowBg}">
+                                    <td style="text-align:center; font-weight:bold; color:#999; font-size:13px;">${itemIndex}</td>
+                                    <td style="padding-left:15px; font-size:15px; font-weight:bold;">${name} ${repeatBadge}</td>
+                                    <td style="text-align:center; font-size:16px; font-weight:bold; color:#311b92;">${actualQty}</td>
+                                    <td style="text-align:center;">${statusBadge}</td>
+                                    <td style="font-size:14px;">${displayVendorCell}</td>
+                                    <td style="text-align:center;">${linksHtml}</td>
+                                </tr>`;
                             }
+                            itemIndex++; // Увеличиваем номер
                         });
                     }
                     if (isSvodEditMode) {
                         tempSvodNewRows.filter(r => r.date === dateStr && r.shop === shop).forEach(r => {
-                            let itemOptions = `<option value="">-- Выберите --</option>` + Object.values(cachedData.catalogOrder || {}).sort((a,b) => (a.name||'').localeCompare(b.name||'')).map(c => c && c.name ? `<option value="${c.name.replace(/"/g, '&quot;')}" data-vendor="${(c.vendor || 'Лента').replace(/"/g, '&quot;')}" ${c.name === r.name ? 'selected' : ''}>${c.name}</option>` : '').join('');
-                            html += `<tr class="svod-row svoditem_${safeShopDate} svodlvl3_of_${safeDate} new-svod-row" style="background-color: #e8f5e9; display:${displayShop};"><td style="padding-left:15px;"><select class="new-svod-name" data-date="${dateStr}" data-shop="${shop.replace(/"/g, '&quot;')}" style="font-size:14px; padding:4px; width:100%; border:2px solid #4caf50; font-weight:bold; color:#2e7d32;" onchange="updateNewRowVendor(this); recalcSvodTotals();">${itemOptions}</select></td><td style="text-align:center;"><input type="number" class="new-svod-qty" value="${r.qty}" oninput="recalcSvodTotals()" style="width:100px; text-align:center; font-size:15px; font-weight:bold; border:2px solid #4caf50; border-radius:6px; padding:4px;"></td><td style="text-align:center;"><span style="color:#2e7d32; font-weight:bold; font-size:13px;">Новый 🆕</span></td><td><select class="new-svod-vendor" style="font-size: 14px; padding: 4px; border: 1px solid #ccc; border-radius: 4px; width: 100%;" onchange="recalcSvodTotals()">${["Лента", "Озон", "Купер", "Wildberries", "Самокат", "METRO"].map(v => `<option value="${v}" ${v.toLowerCase() === r.vendor.toLowerCase() ? 'selected' : ''}>${v}</option>`).join('')}</select></td><td style="text-align:center;"><button class="btn-del" onclick="this.closest('tr').remove(); recalcSvodTotals();">🗑</button></td></tr>`;
+                            html += `<tr class="svod-row svoditem_${safeShopDate} svodlvl3_of_${safeDate} new-svod-row" style="background-color: #e8f5e9; display:${displayShop};">
+                                <td style="text-align:center; font-weight:bold; color:#4caf50; font-size:18px;">+</td>
+                                <td style="padding-left:15px;">
+                                    <input type="text" list="svod_items_list" class="new-svod-name" data-date="${dateStr}" data-shop="${shop.replace(/"/g, '&quot;')}" value="${r.name}" style="font-size:14px; padding:6px; width:100%; border:2px solid #4caf50; font-weight:bold; background:#212121; color:#fff;" oninput="updateNewRowVendorAndPrice(this)">
+                                </td>
+                                <td style="text-align:center;"><input type="number" class="new-svod-qty" value="${r.qty}" oninput="recalcSvodTotals()" style="width:70px; text-align:center; font-size:15px; font-weight:bold; border:2px solid #4caf50; border-radius:6px; padding:4px;"></td>
+                                <td style="text-align:center;">
+                                    <select class="new-svod-status" style="font-size: 13px; padding: 4px; border: 2px solid #4caf50; border-radius: 4px; width: 100%; font-weight:bold; color:#2e7d32; background:#e8f5e9;" onchange="recalcSvodTotals()">
+                                        <option value="pending" ${r.status==='pending'?'selected':''}>Ожидает ⏳</option>
+                                        <option value="ordered" ${r.status==='ordered'?'selected':''}>Заказано ✅</option>
+                                        <option value="already_received" ${r.status==='already_received'?'selected':''}>Принят ✅</option>
+                                        <option value="error" ${r.status==='error'?'selected':''}>Ошибка ❌</option>
+                                    </select>
+                                </td>
+                                <td><select class="new-svod-vendor" style="font-size: 14px; padding: 4px; border: 1px solid #ccc; border-radius: 4px; width: 100%;" onchange="recalcSvodTotals()">${["Лента", "Озон", "Купер", "Wildberries", "Самокат", "METRO"].map(v => `<option value="${v}" ${v.toLowerCase() === r.vendor.toLowerCase() ? 'selected' : ''}>${v}</option>`).join('')}</select></td>
+                                <td style="text-align:center;"><button class="btn-del" onclick="this.closest('tr').remove(); recalcSvodTotals();">🗑</button></td>
+                            </tr>`;
                         });
-                        html += `<tr class="svoditem_${safeShopDate} svodlvl3_of_${safeDate}" style="display:${displayShop};"><td colspan="5" style="text-align:center; padding:15px; background:#f9fbe7; border-bottom: 2px dashed #c5e1a5;"><button class="btn-add" style="background: linear-gradient(135deg, #4caf50 0%, #2e7d32 100%); padding:8px 16px; font-size:14px; border-radius:8px;" onclick="addSvodRowUI(this, '${dateStr}', '${shop.replace(/'/g, "\\'").replace(/"/g, '&quot;')}', '${safeShopDate}', '${safeDate}')">➕ Добавить товар</button></td></tr>`;
+                        html += `<tr class="svoditem_${safeShopDate} svodlvl3_of_${safeDate}" style="display:${displayShop};"><td colspan="6" style="text-align:center; padding:15px; background:#f9fbe7; border-bottom: 2px dashed #c5e1a5;"><button class="btn-add" style="background: linear-gradient(135deg, #4caf50 0%, #2e7d32 100%); padding:8px 16px; font-size:14px; border-radius:8px;" onclick="addSvodRowUI(this, '${dateStr}', '${shop.replace(/'/g, "\\'").replace(/"/g, '&quot;')}', '${safeShopDate}', '${safeDate}')">➕ Добавить товар</button></td></tr>`;
                     }
-                    if(shopsObj[shop].comments.length > 0) html += `<tr class="svoditem_${safeShopDate} svodlvl3_of_${safeDate}" style="display:${displayShop};"><td colspan="5" style="padding:15px; padding-left:15px; font-style:italic; font-size:14px; color:#ef6c00; background:#fff3e0;">💬 Комментарий: <b>${shopsObj[shop].comments.join(' | ')}</b></td></tr>`;
+                    if(shopsObj[shop].comments.length > 0) html += `<tr class="svoditem_${safeShopDate} svodlvl3_of_${safeDate}" style="display:${displayShop};"><td colspan="6" style="padding:15px; padding-left:15px; font-style:italic; font-size:14px; color:#ef6c00; background:#fff3e0;">💬 Комментарий: <b>${shopsObj[shop].comments.join(' | ')}</b></td></tr>`;
                 });
             });
         }
         
         html += `</table>`;
 
-        if (totalLenta > 0 || totalOzon > 0 || totalKuper > 0) {
+        // ⚡ ВЫВОДИМ ОСТАТКИ В ИТОГАХ
+        if (totalLentaAll > 0 || totalOzonAll > 0 || totalKuperAll > 0) {
             html += `<div class="summary-block">
-                        <div class="summary-item">🛒 Лента<br><b id="svod-total-lenta" style="font-size:22px; color:#2e7d32;">${Math.round(totalLenta)} ₽</b></div>
-                        <div class="summary-item">📦 Озон<br><b id="svod-total-ozon" style="font-size:22px; color:#0288d1;">${Math.round(totalOzon)} ₽</b></div>
-                        <div class="summary-item">🛵 Купер<br><b id="svod-total-kuper" style="font-size:22px; color:#c2185b;">${Math.round(totalKuper)} ₽</b></div>
-                        <div class="summary-total">💵 ИТОГО<br><b id="svod-total-all" style="font-size:26px; color:#4A148C;">${Math.round(totalLenta+totalOzon+totalKuper)} ₽</b></div>
+                        <div class="summary-item">🛒 Лента<br><b id="svod-total-lenta" style="font-size:20px; color:#2e7d32;">${Math.round(totalLentaAll)} ₽</b><br><span style="font-size:14px; color:#e65100;">Остаток: <span id="svod-rem-lenta">${Math.round(totalLentaRem)} ₽</span></span></div>
+                        <div class="summary-item">📦 Озон<br><b id="svod-total-ozon" style="font-size:20px; color:#0288d1;">${Math.round(totalOzonAll)} ₽</b><br><span style="font-size:14px; color:#e65100;">Остаток: <span id="svod-rem-ozon">${Math.round(totalOzonRem)} ₽</span></span></div>
+                        <div class="summary-item">🛵 Купер<br><b id="svod-total-kuper" style="font-size:20px; color:#c2185b;">${Math.round(totalKuperAll)} ₽</b><br><span style="font-size:14px; color:#e65100;">Остаток: <span id="svod-rem-kuper">${Math.round(totalKuperRem)} ₽</span></span></div>
+                        <div class="summary-total">💵 ИТОГО<br><b id="svod-total-all" style="font-size:24px; color:#4A148C;">${Math.round(totalLentaAll+totalOzonAll+totalKuperAll)} ₽</b><br><span style="font-size:15px; color:#e65100; font-weight:bold;">Остаток: <span id="svod-rem-all">${Math.round(totalLentaRem+totalOzonRem+totalKuperRem)} ₽</span></span></div>
                     </div>`;
         }
 
@@ -2643,15 +2821,15 @@ async function renderOrdersSvod() {
             <div class="history_orders_list action-container" style="display: ${isOrdHistOpen ? 'block' : 'none'}; flex-direction: column; width: 100%;">
             <div class="card" style="padding:15px; margin-bottom: 20px; width:100%; box-sizing: border-box;">`;
             
-            if (historyOrdersList.length > 0) {
-                html += `<button class="btn-save" style="width:100%; margin-bottom:15px; background: linear-gradient(135deg, #0288d1 0%, #01579b 100%); font-size:16px; box-shadow: 0 4px 10px rgba(0,0,0,0.2);" onclick="restoreOrdersFromHistory()">↩️ Вернуть выбранные заказы в работу (Шаг назад)</button>`;
-            }
+        if (historyOrdersList.length > 0) {
+            html += `<button class="btn-save" style="width:100%; margin-bottom:15px; background: linear-gradient(135deg, #0288d1 0%, #01579b 100%); font-size:16px; box-shadow: 0 4px 10px rgba(0,0,0,0.2);" onclick="restoreOrdersFromHistory()">↩️ Вернуть выбранные заказы в работу (Шаг назад)</button>`;
+        }
 
-            html += `<table style="min-width:900px; margin-top:0;">
-                    <tr><th style="width:40px; text-align:center;">🔙</th><th>Кофейня</th><th>Тип</th><th>Дата</th><th>Детали</th><th>Комментарий</th><th style="text-align:center;">Удалить</th></tr>`;
+        html += `<table style="min-width:900px; margin-top:0;">
+                <tr><th style="width:40px; text-align:center;">🔙</th><th>Кофейня</th><th>Тип</th><th>Дата</th><th>Детали</th><th>Комментарий</th><th style="text-align:center;">Удалить</th></tr>`;
         
         if (historyOrdersList.length === 0) {
-            html += `<tr><td colspan="6" style="text-align:center; color:#888; font-size:15px; font-weight:bold;">История пуста</td></tr>`;
+            html += `<tr><td colspan="7" style="text-align:center; color:#888; font-size:15px; font-weight:bold;">История пуста</td></tr>`;
         } else {
             historyOrdersList.forEach(o => {
                 let itemsStr = (Array.isArray(o.items) ? o.items : (typeof o.items === 'object' && o.items !== null ? Object.values(o.items) : [])).map(i => { if (!i) return ''; return `${i.name} <b>(${i.qty})</b>${(i.bot_error || i.not_found || i.error || i.status === 'error') ? ' <span style="color:#d32f2f;">⚠️</span>' : ''}`; }).join(', ');
@@ -2673,196 +2851,6 @@ async function renderOrdersSvod() {
           console.error(e);
           document.getElementById('content').innerHTML = `<div style="color:red; font-size:18px; padding:20px;">Ошибка рендера Свода: ${e.message}</div>`;
       }
-    }
-
-    async function saveSvodEdits() {
-        let btn = document.getElementById('svod-btn-edit'); 
-        let origText = btn.innerHTML;
-        btn.innerHTML = "⌛ СОХРАНЕНИЕ...";
-        preserveSvodInputs(); 
-        
-        try {
-            let promises = []; 
-            let moves = [];
-            let newItemsByOrder = {};
-            let newOrdersToCreate = {};
-
-            document.querySelectorAll('.new-svod-row').forEach(row => {
-                let nameSel = row.querySelector('.new-svod-name');
-                let qtyInp = row.querySelector('.new-svod-qty');
-                let vendorSel = row.querySelector('.new-svod-vendor');
-
-                let dateStr = nameSel.getAttribute('data-date');
-                let shop = nameSel.getAttribute('data-shop');
-                if (shop.includes('&quot;')) shop = shop.replace(/&quot;/g, '"');
-                
-                let name = nameSel.value;
-                if (name.includes('&quot;')) name = name.replace(/&quot;/g, '"');
-                
-                let qty = parseFloat(qtyInp.value) || 0;
-                let vendor = vendorSel.value;
-
-                if(!name || qty <= 0) return;
-
-                let catItem = Object.values(cachedData.catalogOrder).find(c => c && c.name === name) || {};
-                let cat = catItem.cat || "Прочее";
-
-                let targetOrderKey = Object.keys(cachedData.orders).find(k => {
-                    let o = cachedData.orders[k];
-                    return o && o.shop === shop && !o.ordered && new Date(o.timestamp).toLocaleDateString('ru-RU') === dateStr;
-                });
-
-                let itemObj = { name: name, qty: qty, vendor: vendor, status: 'pending', bot_error: false, cat: cat };
-
-                if (targetOrderKey) {
-                    if(!newItemsByOrder[targetOrderKey]) newItemsByOrder[targetOrderKey] = [];
-                    newItemsByOrder[targetOrderKey].push(itemObj);
-                } else {
-                    let pseudoKey = "new_" + dateStr + "_" + shop;
-                    if(!newOrdersToCreate[pseudoKey]) {
-                        let [d, m, y] = dateStr.split('.');
-                        let ts = new Date(y, m-1, d).getTime();
-                        newOrdersToCreate[pseudoKey] = { shop: shop, mode: 'order', items: [], timestamp: ts, svod: false, ordered: false, userId: 'admin_dashboard' };
-                    }
-                    newOrdersToCreate[pseudoKey].items.push(itemObj);
-                }
-            });
-            
-            for (let k in cachedData.orders) {
-                let o = cachedData.orders[k];
-                if (o && (o.mode === 'order' || o.mode === 'new_shop') && !o.ordered) {
-                    let dKey = new Date(o.timestamp).toLocaleDateString('ru-RU');
-                    let needsUpdate = false;
-                    let itemsArr = Array.isArray(o.items) ? o.items : (typeof o.items === 'object' && o.items !== null ? Object.values(o.items) : []);
-                    let newItemsArr = [];
-                    
-                    for (let i = 0; i < itemsArr.length; i++) {
-                        let itm = itemsArr[i]; 
-                        if (!itm || !itm.name) continue;
-                        
-                        let isDeleted = svodDeletions.some(d => d.date === dKey && d.shop === o.shop && d.name === itm.name);
-                        if (isDeleted) { 
-                            needsUpdate = true; 
-                            continue; 
-                        }
-                        
-                        let updatedQty = (tempSvodQty[dKey] && tempSvodQty[dKey][o.shop] && tempSvodQty[dKey][o.shop][itm.name] !== undefined) ? tempSvodQty[dKey][o.shop][itm.name] : undefined;
-                        let updatedStatus = (tempSvodStatus[dKey] && tempSvodStatus[dKey][o.shop] && tempSvodStatus[dKey][o.shop][itm.name] !== undefined) ? tempSvodStatus[dKey][o.shop][itm.name] : undefined;
-                        let updatedVendor = (tempSvodVendor[dKey] && tempSvodVendor[dKey][o.shop] && tempSvodVendor[dKey][o.shop][itm.name]) ? tempSvodVendor[dKey][o.shop][itm.name] : undefined;
-                        let newTargetShop = (tempSvodShop[dKey] && tempSvodShop[dKey][o.shop] && tempSvodShop[dKey][o.shop][itm.name]) ? tempSvodShop[dKey][o.shop][itm.name] : o.shop;
-                        
-                        let catItem = Object.values(cachedData.catalogOrder).find(c => c && c.name === itm.name) || {};
-
-                        if (updatedVendor !== undefined && (itm.vendor || catItem.vendor || 'Лента').toLowerCase() !== updatedVendor.toLowerCase()) {
-                            needsUpdate = true;
-                            itm.vendor = updatedVendor;
-                        }
-                        
-                        let finalQty = updatedQty !== undefined ? updatedQty : itm.qty;
-                        let finalStatus = updatedStatus !== undefined ? updatedStatus : itm.status;
-                        let finalBotError = (finalStatus === 'error') ? true : itm.bot_error;
-
-                        if (newTargetShop !== o.shop) {
-                            needsUpdate = true;
-                            moves.push({
-                                date: dKey,
-                                fromShop: o.shop,
-                                toShop: newTargetShop,
-                                item: { ...itm, qty: finalQty, status: finalStatus, bot_error: finalBotError }
-                            });
-                            continue; 
-                        }
-
-                        if (updatedStatus !== undefined && itm.status !== updatedStatus) {
-                            needsUpdate = true;
-                            if (updatedStatus === 'error' && itm.status !== 'error') {
-                                let newMissing = { shop: o.shop, name: itm.name, qty: finalQty, status: 'canceled', timestamp: Date.now() };
-                                promises.push(fetch(`${FB_URL}/missing_items.json`, { method: 'POST', body: JSON.stringify(newMissing) }));
-                            }
-                            itm.status = updatedStatus; 
-                            itm.bot_error = (updatedStatus === 'error'); 
-                            itm.not_found = (updatedStatus === 'error'); 
-                            itm.error = (updatedStatus === 'error');
-                        }
-                        
-                        if (updatedQty !== undefined && String(updatedQty) !== String(itm.qty)) { 
-                            needsUpdate = true;
-                            itm.qty = updatedQty; 
-                        }
-
-                        if (parseFloat(itm.qty) > 0 || itm.name === "НЕТ ЗАКАЗА") {
-                            newItemsArr.push(itm);
-                        } else if (parseFloat(itm.qty) === 0) {
-                            needsUpdate = true;
-                        }
-                    }
-                    
-                    if (newItemsByOrder[k]) {
-                        needsUpdate = true;
-                        newItemsArr = newItemsArr.filter(i => i.name !== "НЕТ ЗАКАЗА");
-                        newItemsByOrder[k].forEach(newItem => {
-                            let existing = newItemsArr.find(i => i.name === newItem.name);
-                            if (existing) {
-                                existing.qty = parseFloat(existing.qty) + parseFloat(newItem.qty);
-                            } else {
-                                newItemsArr.push(newItem);
-                            }
-                        });
-                    }
-
-                    if (needsUpdate) {
-                        if (newItemsArr.length === 0) newItemsArr = [{name: "НЕТ ЗАКАЗА", qty: 0}];
-                        promises.push(fetch(`${FB_URL}/orders/${k}/items.json`, {method:'PUT', body: JSON.stringify(newItemsArr)}));
-                    }
-                }
-            }
-            
-            for (let pseudoKey in newOrdersToCreate) {
-                promises.push(fetch(`${FB_URL}/orders.json`, {method:'POST', body: JSON.stringify(newOrdersToCreate[pseudoKey])}));
-            }
-
-            for (let move of moves) {
-                let targetOrderKey = Object.keys(cachedData.orders).find(k => {
-                    let to = cachedData.orders[k];
-                    return to && to.shop === move.toShop && !to.ordered && new Date(to.timestamp).toLocaleDateString('ru-RU') === move.date;
-                });
-                if (targetOrderKey) {
-                    let targetOrder = cachedData.orders[targetOrderKey];
-                    let tItems = Array.isArray(targetOrder.items) ? targetOrder.items : (typeof targetOrder.items === 'object' && targetOrder.items !== null ? Object.values(targetOrder.items) : []);
-                    let existingItem = tItems.find(i => i.name === move.item.name);
-                    if (existingItem) {
-                        existingItem.qty = parseFloat(existingItem.qty) + parseFloat(move.item.qty);
-                    } else {
-                        tItems = tItems.filter(i => i.name !== "НЕТ ЗАКАЗА");
-                        tItems.push(move.item);
-                    }
-                    promises.push(fetch(`${FB_URL}/orders/${targetOrderKey}/items.json`, {method:'PUT', body: JSON.stringify(tItems)}));
-                } else {
-                    let [d, m, y] = move.date.split('.');
-                    let ts = new Date(y, m-1, d).getTime();
-                    let newOrder = { shop: move.toShop, mode: 'order', items: [move.item], timestamp: ts, svod: false, ordered: false, userId: 'admin_move' };
-                    promises.push(fetch(`${FB_URL}/orders.json`, {method:'POST', body: JSON.stringify(newOrder)}));
-                }
-            }
-
-            await Promise.all(promises);
-            isSvodEditMode = false; 
-            svodDeletions = []; 
-            tempSvodQty = {}; 
-            tempSvodStatus = {};
-            tempSvodVendor = {};
-            tempSvodShop = {};
-            tempSvodNewRows = [];
-            
-            if(btn) btn.innerHTML = "✅ СОХРАНЕНО!";
-            renderOrdersSvod(); // ⚡ Мгновенно перерисовываем без моргания экрана
-            setTimeout(() => {
-                if(btn) btn.innerHTML = origText;
-            }, 1000);
-        } catch (e) { 
-            if(btn) btn.innerHTML = origText; 
-            alert("❌ Ошибка при сохранении: " + e.message); 
-        }
     }
     
     async function markOrdersAsPlaced() {
@@ -3723,7 +3711,7 @@ function renderGraphsTab() {
             tempMissingStatus = {};
 
             if(btn) btn.innerHTML = "✅ СОХРАНЕНО!";
-            renderMissing(); // ⚡ Мгновенно перерисовываем
+            renderMissing(); 
             setTimeout(() => {
                 if(btn) btn.innerHTML = origText;
             }, 1000);
@@ -3741,7 +3729,7 @@ function renderGraphsTab() {
         let isActionsOpen = expandedDivs.has('miss-action-buttons');
         setupUniversalActionBar(`
             <div class="cat-group-header" style="padding: 10px 15px; border-radius: 12px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 8px rgba(0,0,0,0.05);" onclick="toggleCatElements('miss-action-buttons', 'arrow_miss_actions')">
-                <span style="font-size:16px; color:#E53935; font-weight:900;">⚡ Действия</span>
+                <span style="font-size:16px; color:#4A148C; font-weight:900;">⚡ Действия с недовозами</span>
                 <span id="arrow_miss_actions">${isActionsOpen ? '▲' : '▼'}</span>
             </div>
             <div class="miss-action-buttons action-container sticky-action-panel action-panel-dropdown" style="display: ${isActionsOpen ? 'flex' : 'none'}; gap: 10px; flex-wrap: wrap; margin-top: 10px;">
@@ -3752,6 +3740,29 @@ function renderGraphsTab() {
         let missingData = cachedData.missing || {};
         let missingArr = Object.keys(missingData).map(k => ({key: k, ...missingData[k]}));
         missingArr.sort((a,b) => (b.timestamp || 0) - (a.timestamp || 0));
+
+        // ⚡ ЗАЩИТА ОТ ДУБЛИКАТОВ: Оставляем только самую свежую запись для каждого адреса
+        let seenMissing = new Set();
+        let keysToDelete = [];
+        missingArr = missingArr.filter(m => {
+            if (m.status !== 'arrived' && m.status !== 'canceled') {
+                let uniqueKey = m.shop + "_" + cleanName(m.name);
+                if (seenMissing.has(uniqueKey)) {
+                    keysToDelete.push(m.key);
+                    return false; // Удаляем старый дубликат
+                }
+                seenMissing.add(uniqueKey);
+            }
+            return true;
+        });
+
+        // Тихо чистим базу от старых дубликатов
+        if (keysToDelete.length > 0) {
+            keysToDelete.forEach(k => {
+                fetch(`${FB_URL}/missing_items/${k}.json`, { method: 'DELETE' });
+                delete cachedData.missing[k];
+            });
+        }
 
         let activeByShop = {};
         let historyByShop = {};
@@ -3772,7 +3783,7 @@ function renderGraphsTab() {
             }
         });
 
-        let activeHtml = `<h3 style='color:#E53935; font-size:24px; margin-top:0; margin-bottom:15px;'>‼️ Актуальные Недовозы</h3>`;
+        let activeHtml = `<h3 style='color:#4A148C; font-size:24px; margin-top:0; margin-bottom:15px;'>‼️ Актуальные Недовозы</h3>`;
         
         if (!hasActive) {
             activeHtml += `<div class='card' style='text-align:center; font-weight:900; color:#888; margin-bottom:20px;'>Нет активных недовозов.</div>`;
@@ -3783,9 +3794,10 @@ function renderGraphsTab() {
                 let isOpen = expandedDivs.has(`miss_shop_${safeShop}`);
                 let displayName = shop === 'Красноказарменная' ? 'МЭИ' : shop;
                 
+                // ⚡ ФИОЛЕТОВЫЙ ДИЗАЙН
                 activeHtml += `<tr class="cat-group-header" onclick="toggleCatElements('miss_shop_${safeShop}', 'arr_${safeShop}')">
-                    <td colspan="${isMissingEditMode ? 4 : 3}" style="background:#FFE0B2; padding:12px 15px; font-size:16px; border-bottom:1px solid #FFB74D;">
-                        <b>📍 ${displayName}</b> <span style="background:#e65100; color:white; padding:2px 6px; border-radius:10px; font-size:12px; margin-left:10px;">${activeByShop[shop].length} позиций</span>
+                    <td colspan="${isMissingEditMode ? 4 : 3}" style="background:#e1bee7; padding:12px 15px; font-size:16px; border-bottom:1px solid #ce93d8; color:#4A148C;">
+                        <b>📍 ${displayName}</b> <span style="background:#7E57C2; color:white; padding:2px 6px; border-radius:10px; font-size:12px; margin-left:10px;">${activeByShop[shop].length} позиций</span>
                         <span id="arr_${safeShop}" style="float:right;">${isOpen ? '▲' : '▼'}</span>
                     </td>
                 </tr>`;
@@ -3799,14 +3811,17 @@ function renderGraphsTab() {
                     let currentStat = tempMissingStatus[m.key] || m.status;
                     let isDeleted = missingDeletions.has(m.key);
                     let rowStyle = isDeleted ? "opacity: 0.4; background: #eee;" : "background:#fff;";
-                    let safeNameEsc = escapeName(m.name);
                     
                     let statText = m.status === 'transit' ? "В пути 🚚" : "Ожидает проверки ⏳"; 
                     let statColor = m.status === 'transit' ? "#1565c0" : "#ef6c00";
+                    let dateStr = m.timestamp ? new Date(m.timestamp).toLocaleDateString('ru-RU') + " " + new Date(m.timestamp).toLocaleTimeString('ru-RU', {hour: '2-digit', minute:'2-digit'}) : '';
 
                     activeHtml += `<tr class="miss_shop_${safeShop}" style="display:${isOpen ? 'table-row' : 'none'}; ${rowStyle}">
-                        <td style="font-size:16px; width:45%; padding:15px;"><b>${m.name}</b> ${linksHtml}</td>
-                        <td style="font-size:17px; font-weight:bold; text-align:center; width:15%;">${m.qty} шт</td>`;
+                        <td style="font-size:16px; width:45%; padding:15px;">
+                            <b>${m.name}</b> ${linksHtml}
+                            <div style="font-size:12px; color:#888; margin-top:5px;">🕒 Отмечен: ${dateStr}</div>
+                        </td>
+                        <td style="font-size:17px; font-weight:bold; text-align:center; width:15%; color:#311B92;">${m.qty} шт</td>`;
                         
                     if (isMissingEditMode) {
                         activeHtml += `
@@ -3827,9 +3842,6 @@ function renderGraphsTab() {
                 });
             });
             activeHtml += `</table></div>`;
-            if (isMissingEditMode) {
-                activeHtml += `<button onclick="saveAllMissingChanges()" class="btn-mode" style="background: var(--btn-stop-grad) !important; margin-top:10px; font-size:15px !important; padding:15px !important; margin-bottom:0;">🏁 СОХРАНИТЬ ИЗМЕНЕНИЯ</button>`;
-            }
         }
 
         let historyHtml = "";
@@ -3841,7 +3853,7 @@ function renderGraphsTab() {
                 let displayName = shop === 'Красноказарменная' ? 'МЭИ' : shop;
                 
                 historyHtml += `<tr class="cat-group-header" onclick="toggleCatElements('miss_shop_${safeShop}', 'arr_${safeShop}')">
-                    <td colspan="4" style="background:#e8eaf6; padding:12px 15px; font-size:16px; border-bottom:1px solid #c5cae9;">
+                    <td colspan="4" style="background:#e8eaf6; padding:12px 15px; font-size:16px; border-bottom:1px solid #c5cae9; color:#4A148C;">
                         <b>📍 ${displayName}</b> <span style="background:#7986cb; color:white; padding:2px 6px; border-radius:10px; font-size:12px; margin-left:10px;">${historyByShop[shop].length} позиций</span>
                         <span id="arr_${safeShop}" style="float:right;">${isOpen ? '▲' : '▼'}</span>
                     </td>
@@ -3854,8 +3866,8 @@ function renderGraphsTab() {
                     
                     historyHtml += `<tr class="miss_shop_${safeShop}" style="display:${isOpen ? 'table-row' : 'none'}; background:#fafafa;">
                         <td style="color:#666; font-size:13px; width:15%; padding-left:15px;">${dateStr}</td>
-                        <td style="font-size:15px; width:45%;">${m.name}</td>
-                        <td style="font-size:16px; font-weight:bold; text-align:center; width:15%;">${m.qty} шт</td>
+                        <td style="font-size:15px; width:45%;"><b>${m.name}</b></td>
+                        <td style="font-size:16px; font-weight:bold; text-align:center; width:15%; color:#311B92;">${m.qty} шт</td>
                         <td style="font-size:14px; color:${statColor}; font-weight:bold; width:25%; text-align:right; padding-right:15px;">${statText}</td>
                     </tr>`;
                 });

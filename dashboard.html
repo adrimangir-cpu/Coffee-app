@@ -648,22 +648,18 @@
     async function fetchOptimistic(path) {
         let cached = await loadFromCache(path);
         
-        let networkPromise = fetch(`${FB_URL}/${path}.json`).then(r => r.json()).then(data => {
+        // ⚡ Сетевой запрос уходит чисто в фон, чтобы не тормозить переключение вкладок
+        fetch(`${FB_URL}/${path}.json`).then(r => r.json()).then(data => {
             let finalData = data || {};
-            saveToCache(path, finalData); // Сохраняем свежие данные в фон
-            return finalData;
+            saveToCache(path, finalData); // Тихо обновляем кэш на фоне
         }).catch(e => null);
 
         if (cached && Object.keys(cached).length > 0) {
-            networkPromise.then(fresh => {
-                if (fresh) {
-                    if (!window.silentCache) window.silentCache = {};
-                    window.silentCache[path] = fresh; 
-                }
-            });
-            return cached;
+            return cached; // ⚡ МГНОВЕННО отдаем данные из памяти
         } else {
-            let fresh = await networkPromise;
+            // Ждем ответа от сети ТОЛЬКО если кэш абсолютно пустой (самый первый запуск)
+            let fresh = await fetch(`${FB_URL}/${path}.json`).then(r => r.json()).catch(e => null);
+            if (fresh) saveToCache(path, fresh);
             return fresh || {};
         }
     }
@@ -5758,17 +5754,18 @@ async function exportGraphsToExcel() {
             setTimeout(() => { btn.innerHTML = origText; btn.disabled = false; loadTab('knowledge_base'); }, 1200);
         } catch(e) { btn.innerHTML = origText; btn.disabled = false; alert("Ошибка: " + e.message); }
     }
+    
     // ==========================================
-    // ⚡ LIVE-ОБНОВЛЕНИЕ ДАШБОРДА В РЕАЛЬНОМ ВРЕМЕНИ
+    // ⚡ LIVE-ОБНОВЛЕНИЕ ДАШБОРДА В РЕАЛЬНОМ ВРЕМЕНИ (СИНХРОНИЗАЦИЯ КЭША)
     // ==========================================
 
-    // 1. Свод и Заказы (уже было, слегка улучшено)
+    // 1. Свод и Заказы
     db.ref('orders').on('value', (snapshot) => {
         let ordersObj = snapshot.val() || {};
         Object.keys(ordersObj).forEach(k => { if (ordersObj[k]) ordersObj[k].key = k; });
         cachedData.orders = ordersObj;
+        saveToCache('orders', ordersObj); // ⚡ Мгновенно перезаписываем кэш!
         
-        // Перерисовываем, только если админ сейчас не в режиме редактирования!
         if (currentTabType === 'orders' && !isSvodEditMode) renderOrdersSvod();
         if (currentTabType === 'stoplists') renderStoplists();
         if (currentTabType === 'checks_table' && !isChecklistEditMode) renderChecksTable();
@@ -5779,12 +5776,17 @@ async function exportGraphsToExcel() {
     db.ref('catalogs').on('value', (snapshot) => {
         let cats = snapshot.val() || {};
         
-        // Обновляем кэш в фоне
         cachedData.catalogOrder = { ...(cats.order || {}), ...(cats.newshop || {}) };
         cachedData.catalogChecklist = cats.checklist || {};
-        cachedData.catalogStoplist = cats.stoplist || {}; // ⚡ ДОБАВИЛИ КЭШ СТОП-ЛИСТА
+        cachedData.catalogStoplist = cats.stoplist || {}; 
         
-        // Если у админа открыта какая-то из этих вкладок — мгновенно перерисовываем
+        // ⚡ Раскидываем свежие справочники по кэш-папкам
+        saveToCache('catalogs/order', cats.order || {});
+        saveToCache('catalogs/newshop', cats.newshop || {});
+        saveToCache('catalogs/checklist', cats.checklist || {});
+        saveToCache('catalogs/stoplist', cats.stoplist || {});
+        saveToCache('catalogs/menu', cats.menu || {});
+        
         if (currentTabType === 'menu') {
             currentMenu = cats.menu || {};
             renderMenuTab();
@@ -5806,25 +5808,21 @@ async function exportGraphsToExcel() {
     // 3. Актуальные Недовозы
     db.ref('missing_items').on('value', (snapshot) => {
         cachedData.missing = snapshot.val() || {};
-        // Перерисовываем, если вкладка открыта и мы не в режиме редактирования
-        if (currentTabType === 'missing' && !isMissingEditMode) {
-            renderMissing();
-        }
+        saveToCache('missing_items', cachedData.missing); // ⚡ Обновляем кэш
+        if (currentTabType === 'missing' && !isMissingEditMode) renderMissing();
     });
 
     // 4. Маркетплейсы
     db.ref('marketplace_records').on('value', (snapshot) => {
         cachedData.marketplace = snapshot.val() || {};
-        if (currentTabType === 'marketplace' && !isMpEditMode) {
-            renderMarketplaceTab();
-        }
+        saveToCache('marketplace_records', cachedData.marketplace); // ⚡ Обновляем кэш
+        if (currentTabType === 'marketplace' && !isMpEditMode) renderMarketplaceTab();
     });
 
     // 5. Графики
     db.ref('schedules').on('value', (snapshot) => {
         cachedData.schedules = snapshot.val() || {};
-        // 💡 Примечание: Графики мы не перерисовываем на лету, 
-        // чтобы не стереть те данные, которые админ прямо сейчас печатает в окошках.
+        saveToCache('schedules', cachedData.schedules); // ⚡ Обновляем кэш
     });
 
     // 6. Настройки системы
@@ -5834,6 +5832,7 @@ async function exportGraphsToExcel() {
         appSettings.hidden_categories_checklist = s.hidden_categories_checklist || s.hidden_categories || {};
         appSettings.hidden_categories_stoplist = s.hidden_categories_stoplist || s.hidden_categories || {};
         appSettings.new_shop_order_active = s.new_shop_order_active || false;
+        saveToCache('settings', appSettings); // ⚡ Обновляем кэш
     });
 
     // ==========================================

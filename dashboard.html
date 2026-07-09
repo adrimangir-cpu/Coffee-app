@@ -4145,6 +4145,10 @@ function renderGraphsTab() {
         const catOrderArr = ["Стаканы и крышки", "Расходники", "Пищевые расходники", "Зерно", "Бабл ти", "Пищевые порошки", "Сиропы"];
         let groupedCat = {};
         Object.values(cachedData.catalog).forEach(i => {
+            // ⚡ ИСКЛЮЧАЕМ СКРЫТЫЕ КАТЕГОРИИ ИЗ ТАБЛИЦЫ ЧЕК-ЛИСТА
+            let gc = i.globalCat || "Основное меню";
+            if (appSettings.hidden_categories_checklist && appSettings.hidden_categories_checklist[gc]) return;
+            
             if (!groupedCat[i.cat]) groupedCat[i.cat] = []; 
             groupedCat[i.cat].push(i.name);
         });
@@ -5681,13 +5685,22 @@ async function exportGraphsToExcel() {
             </div>
         `, isActionsOpen, 'arrow_kb_actions');
 
-        let html = `<h3 style="color:#1A237E; font-size:24px; margin-top:0; margin-bottom:15px;">📚 Корпоративная База знаний сети TEIKU</h3>`;
+        let html = `<h3 style="color:#1A237E; font-size:24px; margin-top:0; margin-bottom:15px;">📚 Корпоративная База знаний сети TEIKU</h3>
+                    <div style="background:#fff3e0; padding:15px; border-radius:12px; font-size:14px; margin-bottom:20px; border:2px dashed #ffb74d;">
+                        💡 <b>Как прикрепить фото к тексту:</b><br>
+                        1. Напишите текст инструкции.<br>
+                        2. Выделите левой кнопкой мыши нужное слово (например, "кофемашина").<br>
+                        3. Нажмите кнопку <b>"🖼 Прикрепить фото к выделенному тексту"</b> под полем ввода.<br>
+                        4. В появившееся ниже окошко вставьте скопированную картинку (Ctrl+V).<br>
+                        <i>В мини-приложении бариста это слово станет интерактивной кнопкой, по нажатию на которую откроется фото!</i>
+                    </div>`;
         
         let grouped = {};
         Object.keys(cachedData.knowledge || {}).forEach(k => {
             let item = cachedData.knowledge[k]; if(!item) return;
-            if (!grouped[item.cat]) grouped[item.cat] = [];
-            grouped[item.cat].push({id: k, data: item});
+            let cat = item.cat || "Без категории";
+            if (!grouped[cat]) grouped[cat] = [];
+            grouped[cat].push({id: k, data: item});
         });
 
         let sortedCats = Object.keys(grouped).sort();
@@ -5702,22 +5715,46 @@ async function exportGraphsToExcel() {
                     📖 <b>Категория: ${cat}</b>
                     <span id="arrow_kb_${safeCatId}" style="float:right;">${isOpen?'▲':'▼'}</span>
                 </div>
-                <!-- ⚡ ИСПРАВЛЕНИЕ: Был дефис (kb-box_), сделали нижнее подчеркивание (kb_box_), теперь разворачивается! -->
                 <div class="kb_box_${safeCatId}" style="display:${isOpen ? 'block' : 'none'}; padding:15px; background:white; border:1px solid #ccc; border-top:none; border-radius:0 0 12px 12px; margin-bottom:15px;">`;
                 
             grouped[cat].forEach(node => {
                 let k = node.id; let item = node.data;
-                let photoUi = item.photo ? `<div style="margin-top:10px; position:relative; display:inline-block;"><img src="${item.photo}" style="max-width:200px; border-radius:8px;"><button onclick="deleteKbPhoto('${k}')" style="position:absolute; top:-5px; right:-5px; background:#d32f2f; color:white; border:none; border-radius:50%; width:20px; height:20px; cursor:pointer;">✕</button></div>` : `<input type="text" placeholder="Вставить иллюстрацию/схему (Ctrl+V)" style="margin-top:10px; font-size:12px; border:1px dashed #3949ab; padding:6px; text-align:center; cursor:pointer;" onpaste="handleKbPhotoPaste(event, '${k}')">`;
+                let textValue = item.text || '';
+                
+                let photoSlotsHtml = "";
+                // ⚡ Парсим умные теги в тексте
+                let regex = /\[ФОТО_(\d+)\](.*?)\[\/ФОТО_\d+\]/g;
+                let match;
+                
+                while ((match = regex.exec(textValue)) !== null) {
+                    let n = match[1];
+                    let word = match[2];
+                    let pKey = `photo_${n}`;
+                    let pData = item[pKey] || "";
+                    
+                    photoSlotsHtml += `<div style="display:flex; align-items:center; gap:10px; margin-top:12px; background:#fafafa; padding:8px 12px; border-radius:8px; border:1px solid #eee;">
+                        <b style="color:#3949ab; width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:14px;">📸 Фото для: "${word}"</b>`;
+                    
+                    if (pData) {
+                        photoSlotsHtml += `<div style="position:relative; margin-left:10px;"><img src="${pData}" style="height:45px; border-radius:4px; box-shadow:0 2px 4px rgba(0,0,0,0.1); border:1px solid #ddd;"><button onclick="deleteKbPhotoN('${k}', ${n})" style="position:absolute; top:-8px; right:-8px; background:#d32f2f; color:white; border:none; border-radius:50%; width:20px; height:20px; font-size:11px; cursor:pointer; font-weight:bold; box-shadow:0 1px 3px rgba(0,0,0,0.2);">✕</button></div>`;
+                    } else {
+                        photoSlotsHtml += `<input type="text" placeholder="Вставить картинку (Ctrl+V)" style="font-size:13px; border:1px dashed #3949ab; padding:6px 10px; width:220px; text-align:center; cursor:pointer; background:#fff; border-radius:6px;" onpaste="handleKbPhotoPasteN(event, '${k}', ${n})">`;
+                    }
+                    photoSlotsHtml += `</div>`;
+                }
                 
                 html += `
                     <div style="border-bottom:2px dashed #eee; padding-bottom:15px; margin-bottom:15px;">
                         <div style="display:flex; gap:10px; margin-bottom:10px; flex-wrap:wrap;">
-                            <input type="text" value="${item.cat}" onchange="updateKbVal('${k}','cat',this.value)" style="width:250px;" placeholder="Категория...">
-                            <input type="text" value="${item.title}" onchange="updateKbVal('${k}','title',this.value)" style="flex:1; font-weight:900; color:#1A237E; min-width: 250px;" placeholder="Подкатегория / Заголовок инструкции...">
+                            <input type="text" value="${item.cat || ''}" onchange="updateKbVal('${k}','cat',this.value)" style="width:250px;" placeholder="Категория...">
+                            <input type="text" value="${item.title || ''}" onchange="updateKbVal('${k}','title',this.value)" style="flex:1; font-weight:900; color:#1A237E; min-width: 250px;" placeholder="Заголовок инструкции...">
                             <button class="btn-del" onclick="deleteKbItem('${k}')" style="padding:6px 12px;">🗑 Удалить</button>
                         </div>
-                        <textarea rows="4" onchange="updateKbVal('${k}','text',this.value)" style="font-weight:normal; font-size:14px; width:100%; resize:vertical; line-height:1.5;" placeholder="Пропишите регламент, правила или инструкции...">${item.text || ''}</textarea>
-                        ${photoUi}
+                        <textarea id="kb_text_${k}" rows="4" onchange="updateKbVal('${k}','text',this.value)" style="font-weight:normal; font-size:15px; width:100%; resize:vertical; line-height:1.5; padding:10px; border:1px solid #ccc; border-radius:8px;" placeholder="Пропишите регламент, правила или инструкции...">${textValue}</textarea>
+                        
+                        <button onclick="wrapSelectedTextWithPhotoTag('${k}')" style="margin-top:8px; background:#e8eaf6; color:#3949ab; border:1px solid #c5cae9; padding:6px 12px; border-radius:6px; font-weight:bold; cursor:pointer; font-size:13px; transition:0.2s;">🖼 Прикрепить фото к выделенному тексту</button>
+                        
+                        <div style="margin-top:5px;">${photoSlotsHtml}</div>
                     </div>`;
             });
             html += `</div>`;
@@ -5731,21 +5768,53 @@ async function exportGraphsToExcel() {
         cachedData.knowledge[id][field] = val;
         window.knowledgeChanges[id] = cachedData.knowledge[id];
     }
+
     function addKbRuleUI() {
         let id = "rule_" + Date.now();
         if(!cachedData.knowledge) cachedData.knowledge = {};
-        cachedData.knowledge[id] = { cat: "Основные регламенты", title: "Новое правило сети", text: "", photo: "" };
+        cachedData.knowledge[id] = { cat: "Основные регламенты", title: "Новое правило сети", text: "" };
         if(!window.knowledgeChanges) window.knowledgeChanges = {};
         window.knowledgeChanges[id] = cachedData.knowledge[id];
         renderKnowledgeBase();
     }
+
     function deleteKbItem(id) {
         if(!window.knowledgeChanges) window.knowledgeChanges = {};
         cachedData.knowledge[id] = null;
         window.knowledgeChanges[id] = null;
         renderKnowledgeBase();
     }
-    async function handleKbPhotoPaste(e, id) {
+
+    // ⚡ Оборачивает выделенный текст в умный тег
+    window.wrapSelectedTextWithPhotoTag = function(id) {
+        let textarea = document.getElementById(`kb_text_${id}`);
+        let start = textarea.selectionStart;
+        let end = textarea.selectionEnd;
+        if (start === end) {
+            alert("Сначала выделите левой кнопкой мыши слово или фразу в тексте (например, 'кофемашина'), а затем нажмите эту кнопку!");
+            return;
+        }
+        let selectedText = textarea.value.substring(start, end);
+        
+        let itemData = (window.knowledgeChanges && window.knowledgeChanges[id]) ? window.knowledgeChanges[id] : cachedData.knowledge[id];
+        let currentText = textarea.value;
+        
+        let maxN = 0;
+        let regex = /\[ФОТО_(\d+)\]/g;
+        let match;
+        while ((match = regex.exec(currentText)) !== null) {
+            if (parseInt(match[1]) > maxN) maxN = parseInt(match[1]);
+        }
+        let newN = maxN + 1;
+        
+        let newText = currentText.substring(0, start) + `[ФОТО_${newN}]${selectedText}[/ФОТО_${newN}]` + currentText.substring(end);
+        
+        textarea.value = newText;
+        updateKbVal(id, 'text', newText);
+        renderKnowledgeBase();
+    };
+
+    window.handleKbPhotoPasteN = async function(e, id, n) {
         let items = e.clipboardData.items;
         for (let i = 0; i < items.length; i++) {
             if (items[i].type.indexOf("image") !== -1) {
@@ -5753,14 +5822,18 @@ async function exportGraphsToExcel() {
                 let file = items[i].getAsFile();
                 showReportOverlay("Сжатие изображения...");
                 let base64 = await compressImageToBase64(file, 600, 0.7);
-                updateKbVal(id, 'photo', base64);
+                updateKbVal(id, `photo_${n}`, base64);
                 hideReportOverlay();
                 renderKnowledgeBase();
                 break;
             }
         }
-    }
-    function deleteKbPhoto(id) { updateKbVal(id, 'photo', ""); renderKnowledgeBase(); }
+    };
+
+    window.deleteKbPhotoN = function(id, n) {
+        updateKbVal(id, `photo_${n}`, "");
+        renderKnowledgeBase();
+    };
 
     async function saveKnowledgeBase(btn) {
         let origText = btn.innerHTML;

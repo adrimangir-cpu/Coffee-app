@@ -5891,86 +5891,96 @@ async function exportGraphsToExcel() {
         let shops = ["Бояринова", "Гагарина", "Вертолетчиков", "Липчанского", "Новокосино", "Новокосино 2", "Старое Павлино", "Красноказарменная", "Ухтомского ополчения"];
         let espressoData = cachedData.espresso || {};
         
-        let kbEspresso = Object.values(cachedData.knowledge || {}).filter(k => 
-            (k.cat && k.cat.toLowerCase().includes('эспрессо')) || 
-            (k.title && k.title.toLowerCase().includes('эспрессо'))
-        );
+        let defaultData = espressoData.default || { current: {}, history: {} };
+        let overridesData = espressoData.overrides || {};
         
-        let kbHtml = '';
-        if (kbEspresso.length > 0) {
-            kbHtml = `<div class="card" style="background:#e8eaf6; margin-bottom:20px; border:2px dashed #7986cb;">
-                <h4 style="margin-top:0; color:#1a237e;">📚 База знаний: Работа с эспрессо</h4>
-                <ul style="margin:0; padding-left:20px; font-size:14px; color:#333;">
-                    ${kbEspresso.map(k => `<li style="margin-bottom:8px;"><b>${k.title}</b>: <br>${k.text ? k.text.replace(/\n/g, '<br>') : ''}</li>`).join('')}
-                </ul>
-            </div>`;
+        let html = `<h3 style="color:#4A148C; font-size:24px; margin-top:0; margin-bottom:15px;">☕ Рецепты эспрессо</h3>`;
+        
+        // --- 1. ОБЩИЙ РЕЦЕПТ ---
+        html += renderEspressoBlock('default', '🌍 ОБЩИЙ РЕЦЕПТ (Для всех адресов по умолчанию)', defaultData, true);
+        
+        // --- 2. ДОБАВЛЕНИЕ ИСКЛЮЧЕНИЯ ---
+        let overrideOpts = shops.filter(s => !overridesData[s]).map(s => `<option value="${s}">${s}</option>`).join('');
+        if (overrideOpts) {
+            html += `<div style="margin: 20px 0; padding:15px; background:#fff; border-radius:12px; display:flex; gap:10px; align-items:center; border:2px dashed #7E57C2;">
+                        <span style="font-weight:bold; color:#4A148C;">Добавить индивидуальный рецепт для адреса:</span>
+                        <select id="new-override-shop" style="padding:8px; border-radius:8px; flex:1; border:2px solid #D1C4E9; font-weight:bold; outline:none;">${overrideOpts}</select>
+                        <button onclick="addEspressoOverride()" class="btn-add" style="margin:0;">➕ Создать исключение</button>
+                     </div>`;
         }
 
-        let html = `<h3 style="color:#4A148C; font-size:24px; margin-top:0; margin-bottom:15px;">☕ Рецепты эспрессо (по кофейням)</h3>${kbHtml}`;
-        
-        shops.forEach(shop => {
-            let sData = espressoData[shop] || { current: {}, history: {} };
-            let curr = sData.current || { in: "", out: "", time: "", result: "", roast: "", brand: "" };
-            let history = Object.values(sData.history || {}).sort((a,b) => b.timestamp - a.timestamp);
-            
-            let safeShop = getSafeId('esp_' + shop);
-            let isOpen = expandedDivs.has(safeShop);
-            let isHistOpen = expandedDivs.has('hist_' + safeShop);
-            
-            html += `
-            <div class="cat-group-header" style="margin-top:15px; padding:15px; background:#d1c4e9; border-radius: 12px; font-size:18px;" onclick="toggleCatElements('esp_box_${safeShop}', 'arr_esp_${safeShop}')">
-                📍 <b>${shop === 'Красноказарменная' ? 'МЭИ' : shop}</b>
-                <span id="arr_esp_${safeShop}" style="float:right;">${isOpen?'▲':'▼'}</span>
-            </div>
-            <div class="esp_box_${safeShop}" style="display:${isOpen ? 'block' : 'none'}; padding:15px; background:white; border-radius: 0 0 12px 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.05); margin-bottom:10px;">
-                <table style="width:100%; border-collapse:collapse; margin-bottom:15px; min-width:auto;">
-                    <tr>
-                        <th style="background:#f3e5f5; padding:8px; border:1px solid #ccc; text-align:center;">Вход (гр)</th>
-                        <th style="background:#f3e5f5; padding:8px; border:1px solid #ccc; text-align:center;">Выход (гр)</th>
-                        <th style="background:#f3e5f5; padding:8px; border:1px solid #ccc; text-align:center;">Время (сек)</th>
-                        <th style="background:#f3e5f5; padding:8px; border:1px solid #ccc; text-align:center;">Итог</th>
-                    </tr>
-                    <tr>
-                        <td style="border:1px solid #ccc; padding:0;"><input type="text" id="esp_in_${safeShop}" value="${curr.in||''}" style="width:100%; text-align:center; border:none; padding:10px; font-weight:bold; font-size:15px;"></td>
-                        <td style="border:1px solid #ccc; padding:0;"><input type="text" id="esp_out_${safeShop}" value="${curr.out||''}" style="width:100%; text-align:center; border:none; padding:10px; font-weight:bold; font-size:15px;"></td>
-                        <td style="border:1px solid #ccc; padding:0;"><input type="text" id="esp_time_${safeShop}" value="${curr.time||''}" style="width:100%; text-align:center; border:none; padding:10px; font-weight:bold; font-size:15px;"></td>
-                        <td style="border:1px solid #ccc; padding:0;"><input type="text" id="esp_res_${safeShop}" value="${curr.result||''}" style="width:100%; text-align:center; border:none; padding:10px; font-weight:bold; font-size:15px;"></td>
-                    </tr>
-                </table>
-                <div style="display:flex; gap:15px; margin-bottom:15px; flex-wrap:wrap;">
-                    <div style="flex:1; min-width:200px;">
-                        <label style="font-size:12px; color:#888; font-weight:bold;">Бренд зерна:</label>
-                        <input type="text" id="esp_brand_${safeShop}" value="${curr.brand||''}" style="width:100%; border:1px solid #ccc; border-radius:6px; padding:8px; font-size:14px;">
-                    </div>
-                    <div style="flex:1; min-width:200px;">
-                        <label style="font-size:12px; color:#888; font-weight:bold;">Дата обжарки:</label>
-                        <input type="text" id="esp_roast_${safeShop}" value="${curr.roast||''}" style="width:100%; border:1px solid #ccc; border-radius:6px; padding:8px; font-size:14px;" placeholder="ДД.ММ.ГГГГ">
-                    </div>
-                </div>
-                <button class="btn-save" style="width:100%; background:linear-gradient(135deg, #0288D1 0%, #01579B 100%);" onclick="saveEspresso('${shop}', '${safeShop}')">💾 Сохранить и отправить текущий в историю</button>
-                
-                <div style="margin-top:20px;">
-                    <div style="font-size:15px; font-weight:900; color:#7E57C2; cursor:pointer; background:#f5f5f5; padding:10px; border-radius:8px;" onclick="toggleCatElements('hist_box_${safeShop}', 'arr_ehist_${safeShop}')">
-                        🕒 История рецептов (${history.length}) <span id="arr_ehist_${safeShop}" style="float:right;">${isHistOpen?'▲':'▼'}</span>
-                    </div>
-                    <div class="hist_box_${safeShop}" style="display:${isHistOpen ? 'block' : 'none'}; margin-top:10px; background:#fafafa; border-radius:8px; padding:10px; border:1px solid #eee;">
-                        ${history.length === 0 ? '<div style="color:#888; font-size:13px; text-align:center;">История пуста</div>' : 
-                          history.map(h => `
-                            <div style="border-bottom:1px solid #ddd; padding:8px 0; font-size:14px;">
-                                <b style="color:#4A148C;">${new Date(h.timestamp).toLocaleString('ru-RU')}</b><br>
-                                Вход: <b>${h.in}</b> | Выход: <b>${h.out}</b> | Время: <b>${h.time}</b> | Итог: <b>${h.result}</b> 
-                                <br><span style="color:#888; font-size:12px;">Зерно: ${h.brand} (Обжарка: ${h.roast})</span>
-                            </div>
-                          `).join('')}
-                    </div>
-                </div>
-            </div>`;
+        // --- 3. ИСКЛЮЧЕНИЯ ---
+        Object.keys(overridesData).forEach(shop => {
+             html += renderEspressoBlock(shop, `📍 ИСКЛЮЧЕНИЕ: ${shop === 'Красноказарменная' ? 'МЭИ' : shop}`, overridesData[shop], false);
         });
-        
+
         box.innerHTML = html;
     }
 
-    window.saveEspresso = async function(shop, safeId) {
+    function renderEspressoBlock(shopKey, title, sData, isDefault) {
+        let curr = sData.current || { in: "", out: "", time: "", result: "", roast: "", brand: "" };
+        let history = Object.values(sData.history || {}).sort((a,b) => b.timestamp - a.timestamp);
+        let safeShop = getSafeId('esp_' + shopKey);
+        let isOpen = expandedDivs.has(safeShop) || isDefault; 
+        if(isDefault) expandedDivs.add(safeShop);
+
+        let bgHeader = isDefault ? '#c5cae9' : '#ffcc80';
+        let colorTitle = isDefault ? '#1a237e' : '#e65100';
+        let delBtn = isDefault ? '' : `<button onclick="deleteEspressoOverride('${shopKey}')" style="float:right; background:#e53935; color:#fff; border:none; padding:4px 10px; border-radius:6px; font-weight:bold; cursor:pointer; margin-right:15px;">🗑 Удалить исключение</button>`;
+
+        return `
+        <div class="cat-group-header" style="margin-top:15px; padding:15px; background:${bgHeader}; border-radius: 12px; font-size:18px;" onclick="toggleCatElements('esp_box_${safeShop}', 'arr_esp_${safeShop}')">
+            <b style="color:${colorTitle};">${title}</b>
+            <span id="arr_esp_${safeShop}" style="float:right; color:${colorTitle};">${isOpen?'▲':'▼'}</span>
+            ${delBtn}
+        </div>
+        <div class="esp_box_${safeShop}" style="display:${isOpen ? 'block' : 'none'}; padding:15px; background:white; border-radius: 0 0 12px 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.05); margin-bottom:10px; border:2px solid ${bgHeader}; border-top:none;">
+            <table style="width:100%; border-collapse:collapse; margin-bottom:15px; min-width:auto;">
+                <tr>
+                    <th style="background:#f3e5f5; padding:8px; border:1px solid #ccc; text-align:center;">Вход (гр)</th>
+                    <th style="background:#f3e5f5; padding:8px; border:1px solid #ccc; text-align:center;">Выход (гр)</th>
+                    <th style="background:#f3e5f5; padding:8px; border:1px solid #ccc; text-align:center;">Время (сек)</th>
+                    <th style="background:#f3e5f5; padding:8px; border:1px solid #ccc; text-align:center;">Итог</th>
+                </tr>
+                <tr>
+                    <td style="border:1px solid #ccc; padding:0;"><input type="text" id="esp_in_${safeShop}" value="${curr.in||''}" style="width:100%; text-align:center; border:none; padding:10px; font-weight:bold; font-size:15px;"></td>
+                    <td style="border:1px solid #ccc; padding:0;"><input type="text" id="esp_out_${safeShop}" value="${curr.out||''}" style="width:100%; text-align:center; border:none; padding:10px; font-weight:bold; font-size:15px;"></td>
+                    <td style="border:1px solid #ccc; padding:0;"><input type="text" id="esp_time_${safeShop}" value="${curr.time||''}" style="width:100%; text-align:center; border:none; padding:10px; font-weight:bold; font-size:15px;"></td>
+                    <td style="border:1px solid #ccc; padding:0;"><input type="text" id="esp_res_${safeShop}" value="${curr.result||''}" style="width:100%; text-align:center; border:none; padding:10px; font-weight:bold; font-size:15px;"></td>
+                </tr>
+            </table>
+            <div style="display:flex; gap:15px; margin-bottom:15px; flex-wrap:wrap;">
+                <div style="flex:1; min-width:200px;">
+                    <label style="font-size:12px; color:#888; font-weight:bold;">Бренд зерна:</label>
+                    <input type="text" id="esp_brand_${safeShop}" value="${curr.brand||''}" style="width:100%; border:1px solid #ccc; border-radius:6px; padding:8px; font-size:14px;">
+                </div>
+                <div style="flex:1; min-width:200px;">
+                    <label style="font-size:12px; color:#888; font-weight:bold;">Дата обжарки:</label>
+                    <input type="text" id="esp_roast_${safeShop}" value="${curr.roast||''}" style="width:100%; border:1px solid #ccc; border-radius:6px; padding:8px; font-size:14px;" placeholder="ДД.ММ.ГГГГ">
+                </div>
+            </div>
+            <button class="btn-save" style="width:100%; background:linear-gradient(135deg, #0288D1 0%, #01579B 100%);" onclick="saveEspresso('${shopKey}')">💾 Сохранить и обновить у бариста</button>
+            
+            <div style="margin-top:20px;">
+                <div style="font-size:15px; font-weight:900; color:#7E57C2; cursor:pointer; background:#f5f5f5; padding:10px; border-radius:8px;" onclick="toggleCatElements('hist_box_${safeShop}', 'arr_ehist_${safeShop}')">
+                    🕒 История рецептов (${history.length}) <span id="arr_ehist_${safeShop}" style="float:right;">▼</span>
+                </div>
+                <div class="hist_box_${safeShop}" style="display:none; margin-top:10px; background:#fafafa; border-radius:8px; padding:10px; border:1px solid #eee;">
+                    ${history.length === 0 ? '<div style="color:#888; font-size:13px; text-align:center;">История пуста</div>' : 
+                      history.map(h => `
+                        <div style="border-bottom:1px solid #ddd; padding:8px 0; font-size:14px;">
+                            <b style="color:#4A148C;">${new Date(h.timestamp).toLocaleString('ru-RU')}</b><br>
+                            Вход: <b>${h.in}</b> | Выход: <b>${h.out}</b> | Время: <b>${h.time}</b> | Итог: <b>${h.result}</b> 
+                            <br><span style="color:#888; font-size:12px;">Зерно: ${h.brand} (Обжарка: ${h.roast})</span>
+                        </div>
+                      `).join('')}
+                </div>
+            </div>
+        </div>`;
+    }
+
+    window.saveEspresso = async function(shopKey) {
+        let safeId = getSafeId('esp_' + shopKey);
         let inVal = document.getElementById(`esp_in_${safeId}`).value;
         let outVal = document.getElementById(`esp_out_${safeId}`).value;
         let timeVal = document.getElementById(`esp_time_${safeId}`).value;
@@ -5979,15 +5989,16 @@ async function exportGraphsToExcel() {
         let roast = document.getElementById(`esp_roast_${safeId}`).value;
         
         let ts = Date.now();
-        let currentData = (cachedData.espresso && cachedData.espresso[shop]) ? cachedData.espresso[shop] : { current: null, history: {} };
+        let basePath = shopKey === 'default' ? 'default' : `overrides/${shopKey}`;
+        let currentData = shopKey === 'default' ? (cachedData.espresso.default || {}) : ((cachedData.espresso.overrides || {})[shopKey] || {});
         let updates = {};
         
         if (currentData.current && (currentData.current.in || currentData.current.out)) {
             let histKey = "hist_" + currentData.current.timestamp;
-            updates[`${shop}/history/${histKey}`] = currentData.current;
+            updates[`${basePath}/history/${histKey}`] = currentData.current;
         }
         
-        updates[`${shop}/current`] = {
+        updates[`${basePath}/current`] = {
             in: inVal, out: outVal, time: timeVal, result: resVal, brand: brand, roast: roast, timestamp: ts
         };
 
@@ -6003,6 +6014,41 @@ async function exportGraphsToExcel() {
         } catch(e) {
             hideReportOverlay();
             alert("❌ Ошибка: " + e.message);
+        }
+    }
+
+    window.addEspressoOverride = async function() {
+        let shop = document.getElementById('new-override-shop').value;
+        if (!shop) return;
+        
+        showReportOverlay("Создание исключения...");
+        try {
+            let def = (cachedData.espresso && cachedData.espresso.default) ? cachedData.espresso.default.current : { in: "", out: "", time: "", result: "", roast: "", brand: "" };
+            await fetch(`${FB_URL}/espresso_recipes/overrides/${shop}/current.json`, { method: 'PUT', body: JSON.stringify(def) });
+            let fresh = await fetch(`${FB_URL}/espresso_recipes.json`).then(r=>r.json());
+            cachedData.espresso = fresh;
+            saveToCache('espresso_recipes', fresh);
+            renderEspressoTab();
+            hideReportOverlay();
+        } catch(e) {
+            hideReportOverlay();
+            alert(e.message);
+        }
+    }
+    
+    window.deleteEspressoOverride = async function(shop) {
+        if (!confirm(`Удалить исключение для ${shop}? Рецепт вернется к общему.`)) return;
+        showReportOverlay("Удаление...");
+        try {
+            await fetch(`${FB_URL}/espresso_recipes/overrides/${shop}.json`, { method: 'DELETE' });
+            let fresh = await fetch(`${FB_URL}/espresso_recipes.json`).then(r=>r.json());
+            cachedData.espresso = fresh;
+            saveToCache('espresso_recipes', fresh);
+            renderEspressoTab();
+            hideReportOverlay();
+        } catch(e) {
+            hideReportOverlay();
+            alert(e.message);
         }
     }
 
@@ -6068,28 +6114,42 @@ async function exportGraphsToExcel() {
     }
 
     window.generateTaskRowHtml = function(k, t, kbOptions) {
-        let perOptions = `
-            <option value="every_day" ${t.period === 'every_day'?'selected':''}>Каждый день</option>
-            <option value="every_mon" ${t.period === 'every_mon'?'selected':''}>Каждый Понедельник</option>
-            <option value="every_tue" ${t.period === 'every_tue'?'selected':''}>Каждый Вторник</option>
-            <option value="every_wed" ${t.period === 'every_wed'?'selected':''}>Каждую Среду</option>
-            <option value="every_thu" ${t.period === 'every_thu'?'selected':''}>Каждый Четверг</option>
-            <option value="every_fri" ${t.period === 'every_fri'?'selected':''}>Каждую Пятницу</option>
-            <option value="every_sat" ${t.period === 'every_sat'?'selected':''}>Каждую Субботу</option>
-            <option value="every_sun" ${t.period === 'every_sun'?'selected':''}>Каждое Воскресенье</option>
-            <option value="1st_week" ${t.period === '1st_week'?'selected':''}>Первая неделя (1-7 числа)</option>
-            <option value="every_3_days" ${t.period === 'every_3_days'?'selected':''}>Раз в 3 дня</option>
-            <option value="monthly" ${t.period === 'monthly'?'selected':''}>Раз в месяц</option>
-        `;
+        let periods = Array.isArray(t.period) ? t.period : [t.period || 'every_day'];
+        
+        const pOpts = [
+            {val: 'every_day', label: 'Каждый день'},
+            {val: 'every_mon', label: 'Понедельник'},
+            {val: 'every_tue', label: 'Вторник'},
+            {val: 'every_wed', label: 'Среда'},
+            {val: 'every_thu', label: 'Четверг'},
+            {val: 'every_fri', label: 'Пятница'},
+            {val: 'every_sat', label: 'Суббота'},
+            {val: 'every_sun', label: 'Воскресенье'},
+            {val: '1st_week', label: 'Первая неделя (1-7)'},
+            {val: 'monthly', label: 'Раз в месяц'},
+            {val: 'every_3_days', label: 'Раз в 3 дня'}
+        ];
+
+        let checkboxesHtml = pOpts.map(o => `
+            <label style="display:flex; align-items:center; margin-bottom:6px; font-size:13px; cursor:pointer;">
+                <input type="checkbox" value="${o.val}" class="task-period-cb" ${periods.includes(o.val)?'checked':''} onchange="renderAdminCalendar()" style="margin-right:8px; transform:scale(1.2);">
+                ${o.label}
+            </label>
+        `).join('');
+
         let modifiedKbOptions = kbOptions.replace(`value="${t.kb_id}"`, `value="${t.kb_id}" selected`);
         let startD = t.startDate ? t.startDate : new Date().toISOString().split('T')[0];
 
         return `<tr class="task-row" data-id="${k}" style="background:#fff;">
-            <td><input type="text" class="task-name" value="${t.name || ''}" placeholder="Название задачи" style="width:100%; border:2px solid #ccc; font-weight:bold; color:#311b92;" onchange="renderAdminCalendar()"></td>
-            <td><select class="task-period" style="width:100%; font-size:14px; border:2px solid #ccc;" onchange="renderAdminCalendar()">${perOptions}</select></td>
-            <td><input type="date" class="task-start" value="${startD}" style="width:100%; font-size:14px; border:2px solid #ccc; padding:10px; font-weight:bold; color:#e65100; background:#fff3e0;" title="Дата отсчета (важно для 'Раз в X дней')" onchange="renderAdminCalendar()"></td>
-            <td><select class="task-kb" style="width:100%; font-size:14px; border:2px solid #ccc;">${modifiedKbOptions}</select></td>
-            <td style="text-align:center;"><button class="btn-del" onclick="this.closest('tr').remove(); renderAdminCalendar();">🗑</button></td>
+            <td style="vertical-align:top;"><input type="text" class="task-name" value="${t.name || ''}" placeholder="Название задачи" style="width:100%; border:2px solid #ccc; font-weight:bold; color:#311b92;" onchange="renderAdminCalendar()"></td>
+            <td style="vertical-align:top;">
+                <div class="task-period-container" style="max-height: 140px; overflow-y: auto; border: 2px solid #ccc; padding: 10px; border-radius: 8px; background: #fafafa; box-shadow:inset 0 2px 5px rgba(0,0,0,0.05);">
+                    ${checkboxesHtml}
+                </div>
+            </td>
+            <td style="vertical-align:top;"><input type="date" class="task-start" value="${startD}" style="width:100%; font-size:14px; border:2px solid #ccc; padding:10px; font-weight:bold; color:#e65100; background:#fff3e0;" title="Дата отсчета (важно для 'Раз в X дней')" onchange="renderAdminCalendar()"></td>
+            <td style="vertical-align:top;"><select class="task-kb" style="width:100%; font-size:14px; border:2px solid #ccc;">${modifiedKbOptions}</select></td>
+            <td style="text-align:center; vertical-align:top;"><button class="btn-del" onclick="this.closest('tr').remove(); renderAdminCalendar();">🗑</button></td>
         </tr>`;
     }
 
@@ -6114,10 +6174,13 @@ async function exportGraphsToExcel() {
             let id = row.getAttribute('data-id');
             let name = row.querySelector('.task-name').value.trim();
             let startDate = row.querySelector('.task-start').value;
-            if (name) {
+            // ⚡ ЧИТАЕМ МАССИВ ЧЕКБОКСОВ
+            let selectedPeriods = Array.from(row.querySelectorAll('.task-period-cb:checked')).map(cb => cb.value);
+            
+            if (name && selectedPeriods.length > 0) {
                 updates[id] = { 
                     name: name, 
-                    period: row.querySelector('.task-period').value, 
+                    period: selectedPeriods, 
                     startDate: startDate,
                     kb_id: row.querySelector('.task-kb').value 
                 };
@@ -6139,7 +6202,7 @@ async function exportGraphsToExcel() {
         }
     }
 
-    // ⚡ ЛОГИКА ОТРИСОВКИ МИНИ-КАЛЕНДАРЯ В ДАШБОРДЕ
+    // ⚡ ЛОГИКА ОТРИСОВКИ МИНИ-КАЛЕНДАРЯ С ЦВЕТНЫМИ ПИЛЮЛЯМИ
     window.renderAdminCalendar = function(deltaMonth = 0) {
         let container = document.getElementById('admin-calendar-preview');
         if (!container) return;
@@ -6154,14 +6217,13 @@ async function exportGraphsToExcel() {
         let daysInMonth = new Date(year, month + 1, 0).getDate();
         let monthNames = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
 
-        // Собираем текущие задачи прямо из таблицы (чтобы превью работало до сохранения)
         let currentTasks = [];
         document.querySelectorAll('.task-row').forEach(row => {
             let name = row.querySelector('.task-name').value.trim();
             if (name) {
                 currentTasks.push({
                     name: name,
-                    period: row.querySelector('.task-period').value,
+                    period: Array.from(row.querySelectorAll('.task-period-cb:checked')).map(cb => cb.value),
                     startDate: row.querySelector('.task-start').value
                 });
             }
@@ -6194,63 +6256,63 @@ async function exportGraphsToExcel() {
             let border = isToday ? "2px solid #FF9800" : "1px solid #eee";
             let color = isToday ? "#e65100" : "#333";
             
-            let dots = "";
+            // ⚡ ЦВЕТНЫЕ ПИЛЮЛИ (PILLS) ВМЕСТО ТОЧЕК
+            let pillsHtml = "";
             if (dayTasks.length > 0) {
-                let maxDots = Math.min(dayTasks.length, 3);
-                for(let i=0; i<maxDots; i++) dots += `<div style="width:6px; height:6px; background:#4A148C; border-radius:50%; display:inline-block; margin:1px;"></div>`;
-                if (dayTasks.length > 3) dots += `<div style="font-size:10px; color:#4A148C; line-height:6px; font-weight:bold;">+</div>`;
+                pillsHtml = dayTasks.map((t, idx) => {
+                    let colors = ['#4A148C', '#00695C', '#E65100', '#2E7D32', '#C2185B', '#0277BD', '#6D4C41', '#455A64'];
+                    let badgeColor = colors[idx % colors.length];
+                    let shortName = t.name.substring(0, 8) + (t.name.length > 8 ? '.' : '');
+                    return `<div style="background:${badgeColor}; color:#fff; font-size:10px; border-radius:4px; padding:2px 4px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; width:100%; box-sizing:border-box; box-shadow:0 1px 2px rgba(0,0,0,0.2);">${shortName}</div>`;
+                }).join('');
             }
 
             let tooltip = dayTasks.length > 0 ? dayTasks.map(t=>t.name).join('&#10;') : "Нет задач";
 
-            html += `<div title="${tooltip}" style="aspect-ratio:1; background:${bg}; border:${border}; border-radius:8px; display:flex; flex-direction:column; align-items:center; justify-content:flex-start; padding-top:4px; cursor:help;">
+            html += `<div title="${tooltip}" style="min-height:80px; background:${bg}; border:${border}; border-radius:8px; display:flex; flex-direction:column; align-items:center; justify-content:flex-start; padding:4px; cursor:help; overflow:hidden;">
                         <span style="font-weight:900; color:${color}; font-size:14px;">${d}</span>
-                        <div style="margin-top:auto; padding-bottom:4px;">${dots}</div>
+                        <div style="margin-top:4px; width:100%; display:flex; flex-direction:column; gap:2px;">${pillsHtml}</div>
                      </div>`;
         }
         html += `</div>`;
-        html += `<div style="margin-top:15px; font-size:12px; color:#888; text-align:center;">Наведите курсор на день с точками, чтобы увидеть превью задач на этот день.</div>`;
         
         container.innerHTML = html;
     }
 
-    // ⚡ ГЛОБАЛЬНАЯ ЛОГИКА РАСЧЕТА ЗАДАЧ 
     window.getTasksForDateLogic = function(dateObj, tasksArray) {
         let tasksForDay = [];
         let dayOfWeek = dateObj.getDay(); 
         let d = dateObj.getDate();
         
-        // Сброс часов для точного сравнения
         let currentTarget = new Date(dateObj);
         currentTarget.setHours(0,0,0,0);
         
         tasksArray.forEach(t => {
-            let p = t.period;
+            let periods = Array.isArray(t.period) ? t.period : [t.period || 'every_day'];
             let isMatch = false;
             
-            // Если дата отсчета не указана, считаем с 1 января 2024 года (старый вариант)
             let startD = t.startDate ? new Date(t.startDate) : new Date(2024, 0, 1);
             startD.setHours(0,0,0,0);
 
-            // Задача не может начаться ДО даты её старта
             if (currentTarget >= startD) {
-                if (p === 'every_day') isMatch = true;
-                else if (p === 'every_mon' && dayOfWeek === 1) isMatch = true;
-                else if (p === 'every_tue' && dayOfWeek === 2) isMatch = true;
-                else if (p === 'every_wed' && dayOfWeek === 3) isMatch = true;
-                else if (p === 'every_thu' && dayOfWeek === 4) isMatch = true;
-                else if (p === 'every_fri' && dayOfWeek === 5) isMatch = true;
-                else if (p === 'every_sat' && dayOfWeek === 6) isMatch = true;
-                else if (p === 'every_sun' && dayOfWeek === 0) isMatch = true;
-                else if (p === 'monthly' && d === startD.getDate()) isMatch = true; // Привязка к числу старта
-                else if (p === '1st_week' && d <= 7) isMatch = true;
-                else if (p === 'every_3_days') {
-                    let diffTime = Math.abs(currentTarget - startD);
-                    let diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24)); 
-                    if (diffDays % 3 === 0) isMatch = true;
-                }
+                periods.forEach(p => {
+                    if (p === 'every_day') isMatch = true;
+                    else if (p === 'every_mon' && dayOfWeek === 1) isMatch = true;
+                    else if (p === 'every_tue' && dayOfWeek === 2) isMatch = true;
+                    else if (p === 'every_wed' && dayOfWeek === 3) isMatch = true;
+                    else if (p === 'every_thu' && dayOfWeek === 4) isMatch = true;
+                    else if (p === 'every_fri' && dayOfWeek === 5) isMatch = true;
+                    else if (p === 'every_sat' && dayOfWeek === 6) isMatch = true;
+                    else if (p === 'every_sun' && dayOfWeek === 0) isMatch = true;
+                    else if (p === 'monthly' && d === startD.getDate()) isMatch = true; 
+                    else if (p === '1st_week' && d <= 7) isMatch = true;
+                    else if (p === 'every_3_days') {
+                        let diffTime = Math.abs(currentTarget - startD);
+                        let diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24)); 
+                        if (diffDays % 3 === 0) isMatch = true;
+                    }
+                });
             }
-            
             if (isMatch) tasksForDay.push(t);
         });
         return tasksForDay;

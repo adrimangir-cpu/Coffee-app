@@ -4118,14 +4118,32 @@ function showLastOrder() {
     }
 
     // ==========================================
-    // 📝 КАЛЕНДАРЬ ЗАДАЧ (МГНОВЕННАЯ ЗАГРУЗКА И ФИОЛЕТОВЫЙ ДИЗАЙН)
+    // 📝 КАЛЕНДАРЬ ЗАДАЧ (МГНОВЕННАЯ ЗАГРУЗКА, ВЫДЕЛЕНИЕ ДНЕЙ И СТРОКИ)
     // ==========================================
-   async function initCalendarTasksWorkflow() {
+    async function initCalendarTasksWorkflow() {
         if(!checkShopSelected()) return;
         triggerHaptic();
         state.currentMode = 'calendar_tasks';
         showScreen('step-tasks-calendar');
-        renderMiniCalendar(new Date()); // ⚡ МГНОВЕННЫЙ ОТКРЫТИЕ
+        
+        // Сбрасываем выбранную дату на сегодня при входе
+        state.selectedCalDate = new Date();
+        state.selectedCalDate.setHours(0,0,0,0);
+
+        if (state.cachedCatalogs && state.cachedCatalogs['tasks_calendar']) {
+            renderMiniCalendar(state.selectedCalDate); 
+        } else {
+            showGlobalLoader("Загрузка задач...");
+            let [calSnap, kbSnap] = await Promise.all([
+                database.ref('tasks_calendar').once('value'),
+                database.ref('knowledge_base').once('value')
+            ]);
+            if (!state.cachedCatalogs) state.cachedCatalogs = {};
+            state.cachedCatalogs['tasks_calendar'] = calSnap.val() || {};
+            state.cachedCatalogs['knowledge_base'] = kbSnap.val() || {};
+            hideGlobalLoader();
+            renderMiniCalendar(state.selectedCalDate);
+        }
     }
 
     window.renderMiniCalendar = function(targetDate) {
@@ -4135,59 +4153,135 @@ function showLastOrder() {
         let year = targetDate.getFullYear();
         let month = targetDate.getMonth();
         let today = new Date();
+        today.setHours(0,0,0,0);
         
         let firstDay = new Date(year, month, 1).getDay();
         let startOffset = (firstDay || 7) - 1; 
         let daysInMonth = new Date(year, month + 1, 0).getDate();
+        
         let monthNames = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
 
-        // ⚡ НЕЖНО-ФИОЛЕТОВЫЙ ДИЗАЙН КЕНЛАДАРЯ
+        // Устанавливаем текущий месяц для работы кнопок навигации
+        state.currentCalView = new Date(year, month, 1);
+
         let html = `
-        <div class="report-card" style="padding:15px; margin-bottom:15px; background:linear-gradient(135deg, #ede7f6 0%, #d1c4e9 100%); color:#311B92; border:1px solid #b39ddb; box-shadow:none;">
+        <div class="report-card" style="padding:15px; margin-bottom:15px; background:linear-gradient(135deg, #ede7f6 0%, #d1c4e9 100%); border:1px solid #b39ddb; box-shadow:0 4px 15px rgba(0,0,0,0.05);">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
-                <button onclick="changeMiniCalMonth(-1, ${year}, ${month})" style="background:#7E57C2; border:none; color:#fff; font-size:16px; padding:6px 14px; border-radius:8px; font-weight:bold; cursor:pointer;">◀</button>
+                <button onclick="changeMiniCalMonth(-1)" style="background:#7E57C2; border:none; color:#fff; font-size:18px; padding:8px 20px; border-radius:8px; font-weight:bold; cursor:pointer; box-shadow:0 2px 5px rgba(0,0,0,0.1); position:relative; z-index:10;">◀</button>
                 <div style="font-size:18px; font-weight:900; text-transform:uppercase; color:#311B92;">${monthNames[month]} ${year}</div>
-                <button onclick="changeMiniCalMonth(1, ${year}, ${month})" style="background:#7E57C2; border:none; color:#fff; font-size:16px; padding:6px 14px; border-radius:8px; font-weight:bold; cursor:pointer;">▶</button>
+                <button onclick="changeMiniCalMonth(1)" style="background:#7E57C2; border:none; color:#fff; font-size:18px; padding:8px 20px; border-radius:8px; font-weight:bold; cursor:pointer; box-shadow:0 2px 5px rgba(0,0,0,0.1); position:relative; z-index:10;">▶</button>
             </div>
             
-            <div class="cal-grid" style="gap:4px;">
-                <div class="cal-header" style="color:#311B92;">Пн</div><div class="cal-header" style="color:#311B92;">Вт</div>
-                <div class="cal-header" style="color:#311B92;">Ср</div><div class="cal-header" style="color:#311B92;">Чт</div>
-                <div class="cal-header" style="color:#311B92;">Пт</div><div class="cal-header" style="color:#e53935;">Сб</div>
-                <div class="cal-header" style="color:#e53935;">Вс</div>
+            <div class="cal-grid" style="display:grid; grid-template-columns: repeat(7, 1fr); gap:4px; text-align:center; margin-bottom:5px;">
+                <div style="font-weight:900; font-size:13px; color:#311B92;">Пн</div><div style="font-weight:900; font-size:13px; color:#311B92;">Вт</div>
+                <div style="font-weight:900; font-size:13px; color:#311B92;">Ср</div><div style="font-weight:900; font-size:13px; color:#311B92;">Чт</div>
+                <div style="font-weight:900; font-size:13px; color:#311B92;">Пт</div><div style="font-weight:900; font-size:13px; color:#e53935;">Сб</div>
+                <div style="font-weight:900; font-size:13px; color:#e53935;">Вс</div>
+            </div>
+            <div class="cal-grid" style="display:grid; grid-template-columns: repeat(7, 1fr); gap:4px; text-align:center;">
         `;
         
         for (let i = 0; i < startOffset; i++) { html += `<div></div>`; }
 
         for (let d = 1; d <= daysInMonth; d++) {
             let curr = new Date(year, month, d);
-            let isToday = (curr.getDate() === today.getDate() && curr.getMonth() === today.getMonth() && curr.getFullYear() === today.getFullYear());
+            curr.setHours(0,0,0,0);
+            
+            let isToday = curr.getTime() === today.getTime();
+            let isSelected = state.selectedCalDate && curr.getTime() === state.selectedCalDate.getTime();
             
             let dayTasks = getTasksForDate(curr, state.tasksArray);
             
-            let bg = isToday ? "#ffb74d" : "#fff";
-            let color = isToday ? "#fff" : "#311B92";
+            // ⚡ Цветовая схема выделения
+            let bg = isSelected ? "#311B92" : (isToday ? "#ffb74d" : "#fff");
+            let color = isSelected ? "#fff" : (isToday ? "#fff" : "#311B92");
+            let borderColor = isSelected ? "#311B92" : "#e1bee7";
             
-            // ⚡ ТЕКСТОВЫЕ МАРКЕРЫ В КЛЕТКАХ КАЛЕНДАРЯ
-            let labelHtml = "";
+            // ⚡ Задачи строчками внутри ячеек
+            let pillsHtml = "";
             if (dayTasks.length > 0) {
-                let lbl = dayTasks[0].name.substring(0,4);
-                let plus = dayTasks.length > 1 ? "+" : "";
-                labelHtml = `<div style="font-size:9px; background:#7E57C2; color:#fff; padding:1px 3px; border-radius:3px; max-width:100%; overflow:hidden; text-transform:uppercase; margin-top:2px; font-weight:bold;">${lbl}${plus}</div>`;
+                let maxPills = Math.min(dayTasks.length, 3);
+                for(let i=0; i<maxPills; i++) {
+                    let shortName = dayTasks[i].name.substring(0, 5); 
+                    pillsHtml += `<div style="font-size:8px; line-height:1; background:${isSelected ? '#fff' : '#7E57C2'}; color:${isSelected ? '#311B92' : '#fff'}; border-radius:3px; padding:2px; margin-bottom:2px; width:100%; text-overflow:ellipsis; overflow:hidden; white-space:nowrap; font-weight:bold;">${shortName}</div>`;
+                }
+                if (dayTasks.length > 3) {
+                    pillsHtml += `<div style="font-size:9px; color:${isSelected ? '#fff' : '#7E57C2'}; font-weight:bold;">+${dayTasks.length - 3}</div>`;
+                }
             }
             
-            html += `<div class="cal-cell" style="background:${bg}; border:1px solid #e1bee7; border-radius:10px; min-height:55px; justify-content:flex-start; padding-top:4px;" onclick="showTasksForDay(${year}, ${month}, ${d})">
-                        <span style="font-weight:900; color:${color}; font-size:14px;">${d}</span>
-                        ${labelHtml}
+            html += `<div style="background:${bg}; border:2px solid ${borderColor}; border-radius:8px; min-height:55px; display:flex; flex-direction:column; align-items:center; padding:4px 2px; cursor:pointer; position:relative; z-index:5; overflow:hidden;" onclick="showTasksForDay(${year}, ${month}, ${d})">
+                        <span style="font-weight:900; color:${color}; font-size:14px; margin-bottom:2px;">${d}</span>
+                        <div style="width:100%; display:flex; flex-direction:column; align-items:center;">${pillsHtml}</div>
                      </div>`;
         }
         html += `</div></div><div id="daily-tasks-list"></div>`;
         
         document.getElementById('tasks-calendar-container').innerHTML = html;
-        if (month === today.getMonth() && year === today.getFullYear()) showTasksForDay(year, month, today.getDate());
-        else showTasksForDay(year, month, 1);
+        
+        // Автоматически показываем список задач
+        if (state.selectedCalDate && state.selectedCalDate.getMonth() === month && state.selectedCalDate.getFullYear() === year) {
+            showTasksForDay(year, month, state.selectedCalDate.getDate(), false); 
+        } else {
+            document.getElementById('daily-tasks-list').innerHTML = `<div class="report-card" style="text-align:center; color:#888; font-weight:bold;">Выберите день в календаре</div>`;
+        }
     }
-  
+
+    window.changeMiniCalMonth = function(delta) {
+        triggerHaptic();
+        let currentView = state.currentCalView || new Date();
+        let newDate = new Date(currentView.getFullYear(), currentView.getMonth() + delta, 1);
+        renderMiniCalendar(newDate);
+    }
+
+    window.showTasksForDay = function(y, m, d, reRenderCalendar = true) {
+        triggerHaptic();
+        let dateObj = new Date(y, m, d);
+        dateObj.setHours(0,0,0,0);
+        state.selectedCalDate = dateObj; // Запоминаем выбранную дату
+        
+        if (reRenderCalendar) {
+            renderMiniCalendar(new Date(y, m, 1)); // Перерисовываем календарь для выделения дня
+        }
+        
+        let tasks = getTasksForDate(dateObj, state.tasksArray);
+        
+        let html = `<h4 style="color:#01579B; margin-bottom:10px; font-size:18px;">📌 Задачи на ${dateObj.toLocaleDateString('ru-RU')}</h4>`;
+        
+        if (tasks.length === 0) {
+            html += `<div class="report-card" style="text-align:center; color:#888; font-weight:bold;">На этот день задач нет. Отдыхаем! ☕</div>`;
+        } else {
+            tasks.forEach((t, idx) => {
+                let kbHtml = "";
+                // ⚡ СВЯЗЬ С БАЗОЙ ЗНАНИЙ (С ФОТО)
+                if (t.kb_id && state.cachedCatalogs['knowledge_base'] && state.cachedCatalogs['knowledge_base'][t.kb_id]) {
+                    let doc = state.cachedCatalogs['knowledge_base'][t.kb_id];
+                    let formattedText = doc.text ? doc.text.replace(/\n/g, '<br>') : '';
+                    let regex = /\[ФОТО_(\d+)\](.*?)\[\/ФОТО_\d+\]/g;
+                    formattedText = formattedText.replace(regex, (match, n, word) => {
+                        let photoData = doc[`photo_${n}`] || "";
+                        if (photoData) {
+                            return `<span style="color:#0288d1; border-bottom:1px dashed #0288d1; cursor:pointer; font-weight:bold;" onclick="openPhotoModal('${escapeName(word)}', '${photoData}')">📷 ${word}</span>`;
+                        }
+                        return `<b>${word}</b>`;
+                    });
+
+                    kbHtml = `<div style="margin-top:10px; padding-top:10px; border-top:1px dashed #ccc; font-size:14px; line-height:1.4;">
+                                <div style="color:#0288D1; font-weight:900; margin-bottom:5px;">📖 Инструкция: ${doc.title}</div>
+                                ${formattedText}
+                              </div>`;
+                }
+
+                html += `<div class="report-card" style="padding:15px; margin-bottom:10px; border-left:4px solid #0288D1;">
+                            <div style="font-size:16px; font-weight:900; color:#333;">${t.name}</div>
+                            ${kbHtml}
+                         </div>`;
+            });
+        }
+        
+        document.getElementById('daily-tasks-list').innerHTML = html;
+    }
+
     window.getTasksForDate = function(dateObj, tasksArray) {
         let tasksForDay = [];
         let dayOfWeek = dateObj.getDay(); 
@@ -4233,47 +4327,6 @@ function showLastOrder() {
             if (isMatch) tasksForDay.push(t);
         });
         return tasksForDay;
-    }
-  
-    window.showTasksForDay = function(y, m, d) {
-        triggerHaptic();
-        let dateObj = new Date(y, m, d);
-        let tasks = getTasksForDate(dateObj, state.tasksArray);
-        
-        let html = `<h4 style="color:#01579B; margin-bottom:10px; font-size:18px;">📌 Задачи на ${dateObj.toLocaleDateString('ru-RU')}</h4>`;
-        
-        if (tasks.length === 0) {
-            html += `<div class="report-card" style="text-align:center; color:#888; font-weight:bold;">На этот день задач нет. Отдыхаем! ☕</div>`;
-        } else {
-            tasks.forEach((t, idx) => {
-                let sId = getSafeId("task_" + idx);
-                let kbHtml = "";
-                if (t.kb_id && state.globalKnowledge[t.kb_id]) {
-                    let doc = state.globalKnowledge[t.kb_id];
-                    let formattedText = doc.text ? doc.text.replace(/\n/g, '<br>') : '';
-                    let regex = /\[ФОТО_(\d+)\](.*?)\[\/ФОТО_\d+\]/g;
-                    formattedText = formattedText.replace(regex, (match, n, word) => {
-                        let photoData = doc[`photo_${n}`] || "";
-                        if (photoData) {
-                            return `<span style="color:#0288d1; border-bottom:1px dashed #0288d1; cursor:pointer; font-weight:bold;" onclick="openPhotoModal('${escapeName(word)}', '${photoData}')">📷 ${word}</span>`;
-                        }
-                        return `<b>${word}</b>`;
-                    });
-
-                    kbHtml = `<div style="margin-top:10px; padding-top:10px; border-top:1px dashed #ccc; font-size:14px; line-height:1.4;">
-                                <div style="color:#0288D1; font-weight:900; margin-bottom:5px;">📖 Инструкция: ${doc.title}</div>
-                                ${formattedText}
-                              </div>`;
-                }
-
-                html += `<div class="report-card" style="padding:15px; margin-bottom:10px; border-left:4px solid #0288D1;">
-                            <div style="font-size:16px; font-weight:900; color:#333;">${t.name}</div>
-                            ${kbHtml}
-                         </div>`;
-            });
-        }
-        
-        document.getElementById('daily-tasks-list').innerHTML = html;
     }
 
     // ==========================================

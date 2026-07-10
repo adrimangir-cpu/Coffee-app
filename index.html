@@ -3959,13 +3959,13 @@ function showLastOrder() {
     // ⚡ ДВИЖОК НУЛЕВОГО ОЖИДАНИЯ (Фоновая синхронизация)
     // ==========================================
     function startRealtimeUpdates() {
+        // Базовые каталоги
         const paths = ['order', 'newshop', 'stoplist', 'checklist'];
         paths.forEach(p => {
             database.ref('catalogs/' + p).on('value', snap => {
                 let fresh = snap.val();
                 if (fresh) {
                     if (!state.cachedCatalogs) state.cachedCatalogs = {};
-                    if (JSON.stringify(state.cachedCatalogs[p]) === JSON.stringify(fresh)) return;
                     state.cachedCatalogs[p] = fresh;
                     saveToRealCache(p, fresh);
                     triggerActiveRender(); 
@@ -3973,21 +3973,27 @@ function showLastOrder() {
             });
         });
 
+        // ⚡ ОТЛОЖЕННАЯ ЗАГРУЗКА ТЯЖЕЛЫХ И НОВЫХ ВКЛАДОК (Эспрессо, Календарь, БЗ)
         setTimeout(() => {
-            database.ref('catalogs/menu').on('value', snap => {
-                let fresh = snap.val();
-                if (fresh) {
-                    if (!state.cachedCatalogs) state.cachedCatalogs = {};
-                    if (JSON.stringify(state.cachedCatalogs['menu']) === JSON.stringify(fresh)) return;
-                    state.cachedCatalogs['menu'] = fresh;
-                    saveToRealCache('menu', fresh);
-                    if (state.currentMode === 'menu') {
-                        state.menuCatalog = Object.assign({}, fresh);
-                        if (typeof renderMenuApp === 'function') renderMenuApp();
+            ['menu', 'espresso_recipes', 'tasks_calendar', 'knowledge_base'].forEach(p => {
+                let dbPath = p === 'menu' ? 'catalogs/menu' : p;
+                database.ref(dbPath).on('value', snap => {
+                    let fresh = snap.val();
+                    if (fresh) {
+                        if (!state.cachedCatalogs) state.cachedCatalogs = {};
+                        state.cachedCatalogs[p] = fresh;
+                        saveToRealCache(p, fresh);
+                        
+                        if (state.currentMode === 'menu' && p === 'menu') {
+                            state.menuCatalog = Object.assign({}, fresh);
+                            if (typeof renderMenuApp === 'function') renderMenuApp();
+                        }
+                        if (state.currentMode === 'espresso' && p === 'espresso_recipes') renderEspressoApp();
+                        if (state.currentMode === 'calendar_tasks' && p === 'tasks_calendar') renderMiniCalendar(new Date());
                     }
-                }
+                });
             });
-        }, 6000);
+        }, 2000);
     }
 
   function startShopDataSync() {
@@ -4054,37 +4060,46 @@ function showLastOrder() {
     }
 
   // ==========================================
-    // ☕ РЕЦЕПТЫ ЭСПРЕССО (ОТРИСОВКА В МИНИ-АППЕ)
+    // ☕ РЕЦЕПТЫ ЭСПРЕССО (СВАЙП ОДИНАРНЫЙ/ДВОЙНОЙ И МГНОВЕННАЯ ЗАГРУЗКА)
     // ==========================================
     async function initEspressoWorkflow() {
         if(!checkShopSelected()) return;
         triggerHaptic();
         state.currentMode = 'espresso';
-        showGlobalLoader("Загрузка рецептов...");
         showScreen('step-espresso');
         
-        try {
+        if (state.cachedCatalogs && state.cachedCatalogs['espresso_recipes']) {
+            renderEspressoApp();
+        } else {
+            showGlobalLoader("Загрузка рецептов...");
             let [espSnap, kbSnap] = await Promise.all([
                 database.ref('espresso_recipes').once('value'),
                 database.ref('knowledge_base').once('value')
             ]);
-            let espData = espSnap.val() || {};
-            let kbData = kbSnap.val() || {};
-            
-            // ⚡ ИЩЕМ ИСКЛЮЧЕНИЕ ДЛЯ АДРЕСА, ИНАЧЕ БЕРЕМ ОБЩИЙ РЕЦЕПТ
-            let sData = (espData.overrides && espData.overrides[state.currentShop]) ? espData.overrides[state.currentShop] : (espData.default || { current: {}, history: {} });
-            
-            let curr = sData.current || { in: "-", out: "-", time: "-", result: "-", roast: "---", brand: "---" };
-            let history = Object.values(sData.history || {}).sort((a,b) => b.timestamp - a.timestamp);
-            
-            let kbEspresso = Object.values(kbData).filter(k => 
-                (k.cat && k.cat.toLowerCase().includes('эспрессо')) || 
-                (k.title && k.title.toLowerCase().includes('эспрессо'))
-            );
+            if (!state.cachedCatalogs) state.cachedCatalogs = {};
+            state.cachedCatalogs['espresso_recipes'] = espSnap.val() || {};
+            state.cachedCatalogs['knowledge_base'] = kbSnap.val() || {};
+            hideGlobalLoader();
+            renderEspressoApp();
+        }
+    }
 
-            let html = `
-            <div class="report-card" style="background: linear-gradient(135deg, #795548 0%, #4E342E 100%); color:#fff; border:none;">
-                <div style="font-size:14px; opacity:0.8; text-align:center; margin-bottom:10px;">Актуальный рецепт</div>
+    window.renderEspressoApp = function() {
+        let espData = state.cachedCatalogs['espresso_recipes'] || {};
+        let kbData = state.cachedCatalogs['knowledge_base'] || {};
+        
+        let sData = (espData.overrides && espData.overrides[state.currentShop]) ? espData.overrides[state.currentShop] : (espData.default || {});
+        let currD = sData.current_double || sData.current || { in: "-", out: "-", time: "-", result: "-", roast: "---", brand: "---" };
+        let currS = sData.current_single || { in: "-", out: "-", time: "-", result: "-", roast: "---", brand: "---" };
+        
+        let kbEspresso = Object.values(kbData).filter(k => 
+            (k.cat && k.cat.toLowerCase().includes('эспрессо')) || 
+            (k.title && k.title.toLowerCase().includes('эспрессо'))
+        );
+
+        const buildCard = (title, curr) => `
+            <div class="report-card" style="min-width:100%; scroll-snap-align: start; flex-shrink:0; background: linear-gradient(135deg, #795548 0%, #4E342E 100%); color:#fff; border:none; margin-bottom:0;">
+                <div style="font-weight:900; font-size:20px; text-align:center; margin-bottom:15px;">${title}</div>
                 <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; text-align:center; margin-bottom:15px;">
                     <div style="background:rgba(255,255,255,0.1); padding:10px; border-radius:12px;">
                         <div style="font-size:12px; opacity:0.8;">Вход</div>
@@ -4108,78 +4123,63 @@ function showLastOrder() {
                 </div>
             </div>`;
 
-            if (history.length > 0) {
-                html += `<div class="report-card">
-                            <div class="report-card-title" style="cursor:pointer;" onclick="toggleElements('esp_history_box', 'arr_esp_hist')">🕒 Прошлые рецепты <span id="arr_esp_hist" style="float:right;">▼</span></div>
-                            <div class="esp_history_box" style="display:none; margin-top:10px;">`;
-                history.forEach(h => {
-                    html += `<div style="border-bottom:1px dashed #eee; padding:10px 0; font-size:14px;">
-                                <div style="color:#888; font-weight:bold; font-size:12px; margin-bottom:5px;">${new Date(h.timestamp).toLocaleString('ru-RU')}</div>
-                                <div><b>В:</b> ${h.in}г | <b>В:</b> ${h.out}г | <b>В:</b> ${h.time}с | <b>И:</b> ${h.result}</div>
-                             </div>`;
+        let html = `
+            <div style="text-align:center; color:#888; font-size:13px; font-weight:bold; margin-bottom:10px;">← Свайп вбок для переключения →</div>
+            <div style="display:flex; overflow-x:auto; scroll-snap-type: x mandatory; scroll-behavior: smooth; gap:15px; padding-bottom:15px;">
+                ${buildCard('☕ Двойной эспрессо', currD)}
+                ${buildCard('☕ Одинарный эспрессо', currS)}
+            </div>`;
+
+        if (kbEspresso.length > 0) {
+            html += `<h4 style="margin-top:10px; color:#4E342E; font-size:18px;">📚 Инструкции по настройке</h4>`;
+            kbEspresso.forEach(doc => {
+                let formattedText = doc.text ? doc.text.replace(/\n/g, '<br>') : '';
+                let regex = /\[ФОТО_(\d+)\](.*?)\[\/ФОТО_\d+\]/g;
+                formattedText = formattedText.replace(regex, (match, n, word) => {
+                    let photoData = doc[`photo_${n}`] || "";
+                    if (photoData) return `<span style="color:#0288d1; border-bottom:1px dashed #0288d1; cursor:pointer; font-weight:bold;" onclick="openPhotoModal('${escapeName(word)}', '${photoData}')">📷 ${word}</span>`;
+                    return `<b>${word}</b>`;
                 });
-                html += `   </div>
+
+                html += `<div class="report-card" style="padding:15px; border:1px solid #ddd; margin-bottom:10px;">
+                            <div style="font-weight:900; color:#4E342E; font-size:16px; margin-bottom:10px;">${doc.title}</div>
+                            <div style="font-size:14px; line-height:1.5;">${formattedText}</div>
                          </div>`;
-            }
-
-            if (kbEspresso.length > 0) {
-                html += `<h4 style="margin-top:20px; color:#4E342E; font-size:18px;">📚 Инструкции по настройке</h4>`;
-                kbEspresso.forEach((doc, idx) => {
-                    let formattedText = doc.text ? doc.text.replace(/\n/g, '<br>') : '';
-                    let regex = /\[ФОТО_(\d+)\](.*?)\[\/ФОТО_\d+\]/g;
-                    formattedText = formattedText.replace(regex, (match, n, word) => {
-                        let photoData = doc[`photo_${n}`] || "";
-                        if (photoData) {
-                            return `<span style="color:#0288d1; border-bottom:1px dashed #0288d1; cursor:pointer; font-weight:bold;" onclick="openPhotoModal('${escapeName(word)}', '${photoData}')">📷 ${word}</span>`;
-                        }
-                        return `<b>${word}</b>`;
-                    });
-
-                    html += `<div class="report-card" style="padding:15px; border:1px solid #ddd; margin-bottom:10px;">
-                                <div style="font-weight:900; color:#4E342E; font-size:16px; margin-bottom:10px;">${doc.title}</div>
-                                <div style="font-size:14px; line-height:1.5;">${formattedText}</div>
-                             </div>`;
-                });
-            }
-
-            document.getElementById('espresso-container').innerHTML = html;
-        } catch(e) {
-            document.getElementById('espresso-container').innerHTML = "<div class='report-card'>Ошибка загрузки</div>";
+            });
         }
-        hideGlobalLoader();
+
+        document.getElementById('espresso-container').innerHTML = html;
     }
 
     // ==========================================
-    // 📝 КАЛЕНДАРЬ ЗАДАЧ (ОТРИСОВКА В МИНИ-АППЕ)
+    // 📝 КАЛЕНДАРЬ ЗАДАЧ (МГНОВЕННАЯ ЗАГРУЗКА И ФИОЛЕТОВЫЙ ДИЗАЙН)
     // ==========================================
     async function initCalendarTasksWorkflow() {
         if(!checkShopSelected()) return;
         triggerHaptic();
         state.currentMode = 'calendar_tasks';
-        showGlobalLoader("Загрузка задач...");
         showScreen('step-tasks-calendar');
         
-        try {
+        if (state.cachedCatalogs && state.cachedCatalogs['tasks_calendar']) {
+            renderMiniCalendar(new Date());
+        } else {
+            showGlobalLoader("Загрузка задач...");
             let [calSnap, kbSnap] = await Promise.all([
                 database.ref('tasks_calendar').once('value'),
                 database.ref('knowledge_base').once('value')
             ]);
-            
-            let tasks = calSnap.val() || {};
-            state.globalKnowledge = kbSnap.val() || {};
-            
-            let tasksArr = Object.values(tasks);
-            state.tasksArray = tasksArr;
-
+            if (!state.cachedCatalogs) state.cachedCatalogs = {};
+            state.cachedCatalogs['tasks_calendar'] = calSnap.val() || {};
+            state.cachedCatalogs['knowledge_base'] = kbSnap.val() || {};
+            hideGlobalLoader();
             renderMiniCalendar(new Date());
-
-        } catch(e) {
-            document.getElementById('tasks-calendar-container').innerHTML = "<div class='report-card'>Ошибка загрузки</div>";
         }
-        hideGlobalLoader();
     }
 
-    function renderMiniCalendar(targetDate) {
+    window.renderMiniCalendar = function(targetDate) {
+        let tasks = state.cachedCatalogs['tasks_calendar'] || {};
+        state.tasksArray = Object.values(tasks);
+        
         let year = targetDate.getFullYear();
         let month = targetDate.getMonth();
         let today = new Date();
@@ -4190,24 +4190,23 @@ function showLastOrder() {
         
         let monthNames = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
 
+        // ⚡ НЕЖНО-ФИОЛЕТОВЫЙ ГРАДИЕНТ (#B39DDB -> #7E57C2)
         let html = `
-        <div class="report-card" style="padding:15px; margin-bottom:15px; background:linear-gradient(135deg, #01579B 0%, #0288D1 100%); color:#fff; border:none;">
+        <div class="report-card" style="padding:15px; margin-bottom:15px; background:linear-gradient(135deg, #B39DDB 0%, #7E57C2 100%); color:#fff; border:none;">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
                 <button onclick="changeMiniCalMonth(-1, ${year}, ${month})" style="background:rgba(255,255,255,0.2); border:none; color:#fff; font-size:18px; padding:5px 15px; border-radius:8px; font-weight:bold;">◀</button>
-                <div style="font-size:18px; font-weight:900;">${monthNames[month]} ${year}</div>
+                <div style="font-size:18px; font-weight:900; text-transform:uppercase;">${monthNames[month]} ${year}</div>
                 <button onclick="changeMiniCalMonth(1, ${year}, ${month})" style="background:rgba(255,255,255,0.2); border:none; color:#fff; font-size:18px; padding:5px 15px; border-radius:8px; font-weight:bold;">▶</button>
             </div>
             
             <div class="cal-grid" style="gap:2px;">
-                <div class="cal-header" style="color:#fff; opacity:0.8;">Пн</div><div class="cal-header" style="color:#fff; opacity:0.8;">Вт</div>
-                <div class="cal-header" style="color:#fff; opacity:0.8;">Ср</div><div class="cal-header" style="color:#fff; opacity:0.8;">Чт</div>
-                <div class="cal-header" style="color:#fff; opacity:0.8;">Пт</div><div class="cal-header" style="color:#ffcc80;">Сб</div>
-                <div class="cal-header" style="color:#ffcc80;">Вс</div>
+                <div class="cal-header" style="color:#fff; opacity:0.9;">Пн</div><div class="cal-header" style="color:#fff; opacity:0.9;">Вт</div>
+                <div class="cal-header" style="color:#fff; opacity:0.9;">Ср</div><div class="cal-header" style="color:#fff; opacity:0.9;">Чт</div>
+                <div class="cal-header" style="color:#fff; opacity:0.9;">Пт</div><div class="cal-header" style="color:#FFD54F;">Сб</div>
+                <div class="cal-header" style="color:#FFD54F;">Вс</div>
         `;
         
-        for (let i = 0; i < startOffset; i++) {
-            html += `<div style="background:transparent;"></div>`;
-        }
+        for (let i = 0; i < startOffset; i++) { html += `<div style="background:transparent;"></div>`; }
 
         for (let d = 1; d <= daysInMonth; d++) {
             let curr = new Date(year, month, d);
@@ -4215,8 +4214,8 @@ function showLastOrder() {
             
             let dayTasks = getTasksForDate(curr, state.tasksArray);
             
-            let bg = isToday ? "#ffb74d" : "#fff";
-            let color = isToday ? "#e65100" : "#333";
+            let bg = isToday ? "#FFF3E0" : "#fff";
+            let color = isToday ? "#e65100" : "#4A148C";
             let dotHtml = dayTasks.length > 0 ? `<div style="width:6px; height:6px; background:#e53935; border-radius:50%; position:absolute; bottom:4px;"></div>` : "";
             
             html += `<div class="cal-cell" style="background:${bg}; border:none; cursor:pointer;" onclick="showTasksForDay(${year}, ${month}, ${d})">
@@ -4228,31 +4227,25 @@ function showLastOrder() {
         
         document.getElementById('tasks-calendar-container').innerHTML = html;
         
-        // По умолчанию показываем задачи на сегодня (если смотрим текущий месяц)
-        if (month === today.getMonth() && year === today.getFullYear()) {
-            showTasksForDay(year, month, today.getDate());
-        } else {
-            showTasksForDay(year, month, 1);
-        }
+        if (month === today.getMonth() && year === today.getFullYear()) showTasksForDay(year, month, today.getDate());
+        else showTasksForDay(year, month, 1);
     }
 
-    window.changeMiniCalMonth = function(delta, y, m) {
-        triggerHaptic();
-        let d = new Date(y, m + delta, 1);
-        renderMiniCalendar(d);
-    }
-
-    function getTasksForDate(dateObj, tasksArray) {
+    window.getTasksForDate = function(dateObj, tasksArray) {
         let tasksForDay = [];
         let dayOfWeek = dateObj.getDay(); 
         let d = dateObj.getDate();
         
         let currentTarget = new Date(dateObj);
         currentTarget.setHours(0,0,0,0);
+
+        // ⚡ ЛОГИКА КАЛЕНДАРНЫХ СТРОК (НЕДЕЛЬ)
+        let firstDayOfMonth = new Date(currentTarget.getFullYear(), currentTarget.getMonth(), 1).getDay();
+        let startOff = (firstDayOfMonth || 7) - 1; 
+        let weekRowNumber = Math.ceil((d + startOff) / 7);
         
         tasksArray.forEach(t => {
-            // Читаем массив периодов (поддержка старых данных и нового мульти-выбора)
-            let periods = Array.isArray(t.period) ? t.period : [t.period];
+            let periods = Array.isArray(t.period) ? t.period : [t.period || 'every_day'];
             let isMatch = false;
             
             let startD = t.startDate ? new Date(t.startDate) : new Date(2024, 0, 1);
@@ -4269,7 +4262,10 @@ function showLastOrder() {
                     else if (p === 'every_sat' && dayOfWeek === 6) isMatch = true;
                     else if (p === 'every_sun' && dayOfWeek === 0) isMatch = true;
                     else if (p === 'monthly' && d === startD.getDate()) isMatch = true; 
-                    else if (p === '1st_week' && d <= 7) isMatch = true;
+                    else if (p === '1st_week' && weekRowNumber === 1) isMatch = true;
+                    else if (p === '2nd_week' && weekRowNumber === 2) isMatch = true;
+                    else if (p === '3rd_week' && weekRowNumber === 3) isMatch = true;
+                    else if (p === '4th_week' && weekRowNumber === 4) isMatch = true;
                     else if (p === 'every_3_days') {
                         let diffTime = Math.abs(currentTarget - startD);
                         let diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24)); 
@@ -4281,7 +4277,7 @@ function showLastOrder() {
         });
         return tasksForDay;
     }
-
+  
     window.showTasksForDay = function(y, m, d) {
         triggerHaptic();
         let dateObj = new Date(y, m, d);

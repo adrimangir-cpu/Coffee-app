@@ -420,6 +420,8 @@
         <button class="tab-btn" onclick="loadTab('receivings_control', this)">🚚 Контроль приемок</button>
         <button class="tab-btn" onclick="loadTab('invoice_products', this)">📦 Накладные товары</button>
         <button class="tab-btn" onclick="loadTab('knowledge_base', this)">📚 Полезная информация</button>
+        <button class="tab-btn" onclick="loadTab('espresso', this)">☕ Рецепты эспрессо</button>
+        <button class="tab-btn" onclick="loadTab('calendar', this)">📅 Календарь дел</button>
         <button class="tab-btn" onclick="loadTab('catalog_order', this)">🛒 Справочник Закупки</button>
         <button class="tab-btn" onclick="loadTab('catalog_checklist', this)">📝 Справочник Чек-листа</button>
         <button class="tab-btn" onclick="loadTab('catalog_stoplist', this)">🛑 Справочник Стоп-листа</button>
@@ -1514,6 +1516,30 @@
                 if (!appSettings.hidden_categories_stoplist) appSettings.hidden_categories_stoplist = {};
                 renderCatalogStoplist();
             }
+
+                else if (type === 'espresso') {
+                currentPath = "espresso_recipes";
+                let [resEsp, resKb] = await Promise.all([
+                    fetchOptimistic(currentPath),
+                    fetchOptimistic('knowledge_base')
+                ]);
+                if (currentTabType !== fetchId) return;
+                cachedData.espresso = resEsp || {};
+                cachedData.knowledge = resKb || {};
+                renderEspressoTab();
+            }
+            else if (type === 'calendar') {
+                currentPath = "tasks_calendar";
+                let [resCal, resKb] = await Promise.all([
+                    fetchOptimistic(currentPath),
+                    fetchOptimistic('knowledge_base')
+                ]);
+                if (currentTabType !== fetchId) return;
+                cachedData.calendar = resCal || {};
+                cachedData.knowledge = resKb || {};
+                renderCalendarTab();
+            }
+                
             else if (type === 'stats') {
                 cachedData.orders = await fetchOptimistic('orders');
                 if (currentTabType !== fetchId) return;
@@ -5853,6 +5879,241 @@ async function exportGraphsToExcel() {
             btn.innerHTML = "✅ ИНСТРУКЦИИ СОХРАНЕНЫ!";
             setTimeout(() => { btn.innerHTML = origText; btn.disabled = false; loadTab('knowledge_base'); }, 1200);
         } catch(e) { btn.innerHTML = origText; btn.disabled = false; alert("Ошибка: " + e.message); }
+    }
+
+    // ==========================================
+    // ☕ ВКЛАДКА: РЕЦЕПТЫ ЭСПРЕССО
+    // ==========================================
+    window.renderEspressoTab = function() {
+        const box = document.getElementById('content');
+        setupUniversalActionBar('', false, ''); 
+
+        let shops = ["Бояринова", "Гагарина", "Вертолетчиков", "Липчанского", "Новокосино", "Новокосино 2", "Старое Павлино", "Красноказарменная", "Ухтомского ополчения"];
+        let espressoData = cachedData.espresso || {};
+        
+        let kbEspresso = Object.values(cachedData.knowledge || {}).filter(k => 
+            (k.cat && k.cat.toLowerCase().includes('эспрессо')) || 
+            (k.title && k.title.toLowerCase().includes('эспрессо'))
+        );
+        
+        let kbHtml = '';
+        if (kbEspresso.length > 0) {
+            kbHtml = `<div class="card" style="background:#e8eaf6; margin-bottom:20px; border:2px dashed #7986cb;">
+                <h4 style="margin-top:0; color:#1a237e;">📚 База знаний: Работа с эспрессо</h4>
+                <ul style="margin:0; padding-left:20px; font-size:14px; color:#333;">
+                    ${kbEspresso.map(k => `<li style="margin-bottom:8px;"><b>${k.title}</b>: <br>${k.text ? k.text.replace(/\n/g, '<br>') : ''}</li>`).join('')}
+                </ul>
+            </div>`;
+        }
+
+        let html = `<h3 style="color:#4A148C; font-size:24px; margin-top:0; margin-bottom:15px;">☕ Рецепты эспрессо (по кофейням)</h3>${kbHtml}`;
+        
+        shops.forEach(shop => {
+            let sData = espressoData[shop] || { current: {}, history: {} };
+            let curr = sData.current || { in: "", out: "", time: "", result: "", roast: "", brand: "" };
+            let history = Object.values(sData.history || {}).sort((a,b) => b.timestamp - a.timestamp);
+            
+            let safeShop = getSafeId('esp_' + shop);
+            let isOpen = expandedDivs.has(safeShop);
+            let isHistOpen = expandedDivs.has('hist_' + safeShop);
+            
+            html += `
+            <div class="cat-group-header" style="margin-top:15px; padding:15px; background:#d1c4e9; border-radius: 12px; font-size:18px;" onclick="toggleCatElements('esp_box_${safeShop}', 'arr_esp_${safeShop}')">
+                📍 <b>${shop === 'Красноказарменная' ? 'МЭИ' : shop}</b>
+                <span id="arr_esp_${safeShop}" style="float:right;">${isOpen?'▲':'▼'}</span>
+            </div>
+            <div class="esp_box_${safeShop}" style="display:${isOpen ? 'block' : 'none'}; padding:15px; background:white; border-radius: 0 0 12px 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.05); margin-bottom:10px;">
+                <table style="width:100%; border-collapse:collapse; margin-bottom:15px; min-width:auto;">
+                    <tr>
+                        <th style="background:#f3e5f5; padding:8px; border:1px solid #ccc; text-align:center;">Вход (гр)</th>
+                        <th style="background:#f3e5f5; padding:8px; border:1px solid #ccc; text-align:center;">Выход (гр)</th>
+                        <th style="background:#f3e5f5; padding:8px; border:1px solid #ccc; text-align:center;">Время (сек)</th>
+                        <th style="background:#f3e5f5; padding:8px; border:1px solid #ccc; text-align:center;">Итог</th>
+                    </tr>
+                    <tr>
+                        <td style="border:1px solid #ccc; padding:0;"><input type="text" id="esp_in_${safeShop}" value="${curr.in||''}" style="width:100%; text-align:center; border:none; padding:10px; font-weight:bold; font-size:15px;"></td>
+                        <td style="border:1px solid #ccc; padding:0;"><input type="text" id="esp_out_${safeShop}" value="${curr.out||''}" style="width:100%; text-align:center; border:none; padding:10px; font-weight:bold; font-size:15px;"></td>
+                        <td style="border:1px solid #ccc; padding:0;"><input type="text" id="esp_time_${safeShop}" value="${curr.time||''}" style="width:100%; text-align:center; border:none; padding:10px; font-weight:bold; font-size:15px;"></td>
+                        <td style="border:1px solid #ccc; padding:0;"><input type="text" id="esp_res_${safeShop}" value="${curr.result||''}" style="width:100%; text-align:center; border:none; padding:10px; font-weight:bold; font-size:15px;"></td>
+                    </tr>
+                </table>
+                <div style="display:flex; gap:15px; margin-bottom:15px; flex-wrap:wrap;">
+                    <div style="flex:1; min-width:200px;">
+                        <label style="font-size:12px; color:#888; font-weight:bold;">Бренд зерна:</label>
+                        <input type="text" id="esp_brand_${safeShop}" value="${curr.brand||''}" style="width:100%; border:1px solid #ccc; border-radius:6px; padding:8px; font-size:14px;">
+                    </div>
+                    <div style="flex:1; min-width:200px;">
+                        <label style="font-size:12px; color:#888; font-weight:bold;">Дата обжарки:</label>
+                        <input type="text" id="esp_roast_${safeShop}" value="${curr.roast||''}" style="width:100%; border:1px solid #ccc; border-radius:6px; padding:8px; font-size:14px;" placeholder="ДД.ММ.ГГГГ">
+                    </div>
+                </div>
+                <button class="btn-save" style="width:100%; background:linear-gradient(135deg, #0288D1 0%, #01579B 100%);" onclick="saveEspresso('${shop}', '${safeShop}')">💾 Сохранить и отправить текущий в историю</button>
+                
+                <div style="margin-top:20px;">
+                    <div style="font-size:15px; font-weight:900; color:#7E57C2; cursor:pointer; background:#f5f5f5; padding:10px; border-radius:8px;" onclick="toggleCatElements('hist_box_${safeShop}', 'arr_ehist_${safeShop}')">
+                        🕒 История рецептов (${history.length}) <span id="arr_ehist_${safeShop}" style="float:right;">${isHistOpen?'▲':'▼'}</span>
+                    </div>
+                    <div class="hist_box_${safeShop}" style="display:${isHistOpen ? 'block' : 'none'}; margin-top:10px; background:#fafafa; border-radius:8px; padding:10px; border:1px solid #eee;">
+                        ${history.length === 0 ? '<div style="color:#888; font-size:13px; text-align:center;">История пуста</div>' : 
+                          history.map(h => `
+                            <div style="border-bottom:1px solid #ddd; padding:8px 0; font-size:14px;">
+                                <b style="color:#4A148C;">${new Date(h.timestamp).toLocaleString('ru-RU')}</b><br>
+                                Вход: <b>${h.in}</b> | Выход: <b>${h.out}</b> | Время: <b>${h.time}</b> | Итог: <b>${h.result}</b> 
+                                <br><span style="color:#888; font-size:12px;">Зерно: ${h.brand} (Обжарка: ${h.roast})</span>
+                            </div>
+                          `).join('')}
+                    </div>
+                </div>
+            </div>`;
+        });
+        
+        box.innerHTML = html;
+    }
+
+    window.saveEspresso = async function(shop, safeId) {
+        let inVal = document.getElementById(`esp_in_${safeId}`).value;
+        let outVal = document.getElementById(`esp_out_${safeId}`).value;
+        let timeVal = document.getElementById(`esp_time_${safeId}`).value;
+        let resVal = document.getElementById(`esp_res_${safeId}`).value;
+        let brand = document.getElementById(`esp_brand_${safeId}`).value;
+        let roast = document.getElementById(`esp_roast_${safeId}`).value;
+        
+        let ts = Date.now();
+        let currentData = (cachedData.espresso && cachedData.espresso[shop]) ? cachedData.espresso[shop] : { current: null, history: {} };
+        let updates = {};
+        
+        if (currentData.current && (currentData.current.in || currentData.current.out)) {
+            let histKey = "hist_" + currentData.current.timestamp;
+            updates[`${shop}/history/${histKey}`] = currentData.current;
+        }
+        
+        updates[`${shop}/current`] = {
+            in: inVal, out: outVal, time: timeVal, result: resVal, brand: brand, roast: roast, timestamp: ts
+        };
+
+        showReportOverlay("Сохранение рецепта...");
+        try {
+            await fetch(`${FB_URL}/espresso_recipes.json`, { method: 'PATCH', body: JSON.stringify(updates) });
+            let fresh = await fetch(`${FB_URL}/espresso_recipes.json`).then(r=>r.json());
+            cachedData.espresso = fresh;
+            saveToCache('espresso_recipes', fresh);
+            hideReportOverlay();
+            renderEspressoTab();
+            alert("✅ Рецепт успешно сохранен!");
+        } catch(e) {
+            hideReportOverlay();
+            alert("❌ Ошибка: " + e.message);
+        }
+    }
+
+    // ==========================================
+    // 📅 ВКЛАДКА: КАЛЕНДАРЬ ЗАДАЧ
+    // ==========================================
+    window.renderCalendarTab = function() {
+        const box = document.getElementById('content');
+        setupUniversalActionBar(`
+            <div class="cat-group-header" style="padding: 10px 15px; border-radius: 12px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
+                <span style="font-size:16px; color:#4A148C; font-weight:900;">⚡ Управление Календарем</span>
+            </div>
+            <div class="action-container sticky-action-panel" style="display: flex; gap: 10px; flex-wrap: wrap; margin-top: 10px;">
+                <button class="btn-add" style="flex:1 1 auto;" onclick="addCalendarTaskUI()">➕ Создать новую задачу</button>
+                <button class="btn-save" style="flex:1 1 auto;" onclick="saveCalendarTasks()">💾 Сохранить расписание</button>
+            </div>
+        `, true, '');
+
+        let kbOptions = `<option value="">-- Не прикреплять базу знаний --</option>`;
+        Object.keys(cachedData.knowledge || {}).forEach(k => {
+            let item = cachedData.knowledge[k];
+            kbOptions += `<option value="${k}">${item.title} (${item.cat})</option>`;
+        });
+
+        let tasks = cachedData.calendar || {};
+        
+        let html = `<h3 style="color:#4A148C; font-size:24px; margin-top:0; margin-bottom:15px;">📅 Регулярные задачи сотрудников</h3>`;
+        html += `<div style="overflow-x:auto;"><table style="min-width:1000px;" id="tasks-table">
+                    <tr>
+                        <th style="width:300px;">Название задачи</th>
+                        <th style="width:250px;">Периодичность</th>
+                        <th>Прикрепить инструкцию из Базы Знаний</th>
+                        <th style="width:80px; text-align:center;">Удалить</th>
+                    </tr>`;
+
+        if (Object.keys(tasks).length === 0) {
+            html += `<tr id="no-tasks-row"><td colspan="4" style="text-align:center; padding:20px; color:#888; font-weight:bold;">Задач пока нет. Свобода!</td></tr>`;
+        } else {
+            Object.keys(tasks).forEach(k => {
+                html += generateTaskRowHtml(k, tasks[k], kbOptions);
+            });
+        }
+        html += `</table></div>`;
+        box.innerHTML = html;
+    }
+
+    window.generateTaskRowHtml = function(k, t, kbOptions) {
+        let perOptions = `
+            <option value="every_day" ${t.period === 'every_day'?'selected':''}>Каждый день</option>
+            <option value="every_mon" ${t.period === 'every_mon'?'selected':''}>Каждый Понедельник</option>
+            <option value="every_tue" ${t.period === 'every_tue'?'selected':''}>Каждый Вторник</option>
+            <option value="every_wed" ${t.period === 'every_wed'?'selected':''}>Каждую Среду</option>
+            <option value="every_thu" ${t.period === 'every_thu'?'selected':''}>Каждый Четверг</option>
+            <option value="every_fri" ${t.period === 'every_fri'?'selected':''}>Каждую Пятницу</option>
+            <option value="every_sat" ${t.period === 'every_sat'?'selected':''}>Каждую Субботу</option>
+            <option value="every_sun" ${t.period === 'every_sun'?'selected':''}>Каждое Воскресенье</option>
+            <option value="1st_week" ${t.period === '1st_week'?'selected':''}>Первая неделя месяца</option>
+            <option value="every_3_days" ${t.period === 'every_3_days'?'selected':''}>Раз в 3 дня</option>
+            <option value="monthly" ${t.period === 'monthly'?'selected':''}>Раз в месяц (1 число)</option>
+        `;
+        let modifiedKbOptions = kbOptions.replace(`value="${t.kb_id}"`, `value="${t.kb_id}" selected`);
+
+        return `<tr class="task-row" data-id="${k}" style="background:#fff;">
+            <td><input type="text" class="task-name" value="${t.name || ''}" placeholder="Название задачи" style="width:100%; border:2px solid #ccc; font-weight:bold; color:#311b92;"></td>
+            <td><select class="task-period" style="width:100%; font-size:14px; border:2px solid #ccc;">${perOptions}</select></td>
+            <td><select class="task-kb" style="width:100%; font-size:14px; border:2px solid #ccc;">${modifiedKbOptions}</select></td>
+            <td style="text-align:center;"><button class="btn-del" onclick="this.closest('tr').remove()">🗑</button></td>
+        </tr>`;
+    }
+
+    window.addCalendarTaskUI = function() {
+        let noTasks = document.getElementById('no-tasks-row');
+        if (noTasks) noTasks.remove();
+        
+        let k = "task_" + Date.now();
+        let kbOptions = `<option value="">-- Не прикреплять базу знаний --</option>`;
+        Object.keys(cachedData.knowledge || {}).forEach(kbId => {
+            kbOptions += `<option value="${kbId}">${cachedData.knowledge[kbId].title} (${cachedData.knowledge[kbId].cat})</option>`;
+        });
+        
+        let html = generateTaskRowHtml(k, {name: "", period: "every_day", kb_id: ""}, kbOptions);
+        document.getElementById('tasks-table').insertAdjacentHTML('beforeend', html);
+    }
+
+    window.saveCalendarTasks = async function() {
+        let updates = {};
+        document.querySelectorAll('.task-row').forEach(row => {
+            let id = row.getAttribute('data-id');
+            let name = row.querySelector('.task-name').value.trim();
+            if (name) {
+                updates[id] = { 
+                    name: name, 
+                    period: row.querySelector('.task-period').value, 
+                    kb_id: row.querySelector('.task-kb').value 
+                };
+            }
+        });
+
+        showReportOverlay("Сохранение календаря...");
+        try {
+            await fetch(`${FB_URL}/tasks_calendar.json`, { method: 'PUT', body: JSON.stringify(updates) });
+            let fresh = await fetch(`${FB_URL}/tasks_calendar.json`).then(r=>r.json());
+            cachedData.calendar = fresh || {};
+            saveToCache('tasks_calendar', cachedData.calendar);
+            hideReportOverlay();
+            alert("✅ Задачи успешно сохранены!");
+            renderCalendarTab();
+        } catch(e) {
+            hideReportOverlay();
+            alert("❌ Ошибка: " + e.message);
+        }
     }
     
     // ==========================================

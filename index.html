@@ -680,7 +680,7 @@
 
    // ⚡ ОБНОВЛЕННАЯ ФУНКЦИЯ НАВИГАЦИИ (С защитой от зависания кнопок)
     function showScreen(screenId, recordHistory = true) {
-      const allScreens = ['step-1', 'step-2', 'step-sub-lists', 'step-sub-orders', 'step-sub-profile', 'step-sub-info', 'step-invoices', 'step-knowledge', 'step-stoplist', 'step-panel', 'step-admin-purchase', 'step-3', 'step-mp-month', 'step-mp-vendor', 'step-mp-mode', 'step-mp-address', 'step-mp-keypad', 'step-menu', 'step-schedule-name', 'step-schedule-calendar'];
+     const allScreens = ['step-1', 'step-2', 'step-sub-lists', 'step-sub-orders', 'step-sub-profile', 'step-sub-info', 'step-invoices', 'step-knowledge', 'step-stoplist', 'step-panel', 'step-admin-purchase', 'step-3', 'step-mp-month', 'step-mp-vendor', 'step-mp-mode', 'step-mp-address', 'step-mp-keypad', 'step-menu', 'step-schedule-name', 'step-schedule-calendar', 'step-espresso', 'step-tasks-calendar'];
       
       if (['step-1', 'step-2', 'step-panel'].includes(screenId)) {
           state.screenHistory = []; 
@@ -4071,7 +4071,9 @@ function showLastOrder() {
             let espData = espSnap.val() || {};
             let kbData = kbSnap.val() || {};
             
-            let sData = espData[state.currentShop] || { current: {}, history: {} };
+            // ⚡ ИЩЕМ ИСКЛЮЧЕНИЕ ДЛЯ АДРЕСА, ИНАЧЕ БЕРЕМ ОБЩИЙ РЕЦЕПТ
+            let sData = (espData.overrides && espData.overrides[state.currentShop]) ? espData.overrides[state.currentShop] : (espData.default || { current: {}, history: {} });
+            
             let curr = sData.current || { in: "-", out: "-", time: "-", result: "-", roast: "---", brand: "---" };
             let history = Object.values(sData.history || {}).sort((a,b) => b.timestamp - a.timestamp);
             
@@ -4249,28 +4251,31 @@ function showLastOrder() {
         currentTarget.setHours(0,0,0,0);
         
         tasksArray.forEach(t => {
-            let p = t.period;
+            // Читаем массив периодов (поддержка старых данных и нового мульти-выбора)
+            let periods = Array.isArray(t.period) ? t.period : [t.period];
             let isMatch = false;
             
             let startD = t.startDate ? new Date(t.startDate) : new Date(2024, 0, 1);
             startD.setHours(0,0,0,0);
 
             if (currentTarget >= startD) {
-                if (p === 'every_day') isMatch = true;
-                else if (p === 'every_mon' && dayOfWeek === 1) isMatch = true;
-                else if (p === 'every_tue' && dayOfWeek === 2) isMatch = true;
-                else if (p === 'every_wed' && dayOfWeek === 3) isMatch = true;
-                else if (p === 'every_thu' && dayOfWeek === 4) isMatch = true;
-                else if (p === 'every_fri' && dayOfWeek === 5) isMatch = true;
-                else if (p === 'every_sat' && dayOfWeek === 6) isMatch = true;
-                else if (p === 'every_sun' && dayOfWeek === 0) isMatch = true;
-                else if (p === 'monthly' && d === startD.getDate()) isMatch = true; 
-                else if (p === '1st_week' && d <= 7) isMatch = true;
-                else if (p === 'every_3_days') {
-                    let diffTime = Math.abs(currentTarget - startD);
-                    let diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24)); 
-                    if (diffDays % 3 === 0) isMatch = true;
-                }
+                periods.forEach(p => {
+                    if (p === 'every_day') isMatch = true;
+                    else if (p === 'every_mon' && dayOfWeek === 1) isMatch = true;
+                    else if (p === 'every_tue' && dayOfWeek === 2) isMatch = true;
+                    else if (p === 'every_wed' && dayOfWeek === 3) isMatch = true;
+                    else if (p === 'every_thu' && dayOfWeek === 4) isMatch = true;
+                    else if (p === 'every_fri' && dayOfWeek === 5) isMatch = true;
+                    else if (p === 'every_sat' && dayOfWeek === 6) isMatch = true;
+                    else if (p === 'every_sun' && dayOfWeek === 0) isMatch = true;
+                    else if (p === 'monthly' && d === startD.getDate()) isMatch = true; 
+                    else if (p === '1st_week' && d <= 7) isMatch = true;
+                    else if (p === 'every_3_days') {
+                        let diffTime = Math.abs(currentTarget - startD);
+                        let diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24)); 
+                        if (diffDays % 3 === 0) isMatch = true;
+                    }
+                });
             }
             if (isMatch) tasksForDay.push(t);
         });

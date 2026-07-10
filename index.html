@@ -37,7 +37,9 @@
 
     * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; outline: none; -webkit-user-select: none; user-select: none; margin: 0; padding: 0; touch-action: manipulation; }
     input, textarea, select { -webkit-user-select: text; user-select: text; font-family: inherit; }
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: var(--bg-color); color: var(--text-color); font-size: 16px; line-height: 1.4; padding-bottom: 20px; overflow-x: hidden; scroll-behavior: smooth; -webkit-font-smoothing: antialiased; }
+    
+    /* ⚡ ДОБАВЛЕН overscroll-behavior: none; ДЛЯ БЛОКИРОВКИ СКРОЛЛА ЭКРАНА ВНИЗ */
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: var(--bg-color); color: var(--text-color); font-size: 16px; line-height: 1.4; padding-bottom: 20px; overflow-x: hidden; scroll-behavior: smooth; -webkit-font-smoothing: antialiased; overscroll-behavior: none; }
    
     #step-1, #step-2, #step-stoplist, #step-panel, #step-admin-purchase, #step-3, #step-mp-month, #step-mp-vendor, #step-mp-mode, #step-mp-address, #step-mp-keypad, #step-menu, #step-schedule-name, #step-schedule-calendar, #step-sub-lists, #step-sub-orders, #step-sub-profile, #step-sub-info, #step-invoices, #step-knowledge { padding-bottom: 110px; }
 
@@ -183,7 +185,11 @@
     }
   </style>
 </head>
-<body>
+<!-- ⚡ ДОБАВЛЕН onclick ДЛЯ СКРЫТИЯ КЛАВИАТУРЫ ПРИ КЛИКЕ В ПУСТОТУ -->
+<body onclick="if(event.target === document.body || event.target.id === 'main-wrapper') { document.activeElement.blur(); }">
+
+<!-- ⚡ ОБЕРТКА ДЛЯ КОРРЕКТНОЙ РАБОТЫ СОБЫТИЯ КЛИКА ПО ПУСТОМУ ФОНУ -->
+<div id="main-wrapper" style="min-height: 100vh;">
   
 <div id="global-loader" style="position:fixed; inset:0; background:rgba(255,255,255,0.9); z-index:99999; display:none; flex-direction:column; align-items:center; justify-content:center; backdrop-filter:blur(5px);">
       <style>
@@ -290,6 +296,8 @@
         <h3 class="sub-title">☕ Информация</h3>
         <div class="menu-section">
             <button class="btn-mode" style="background: var(--info-gradient);" onclick="initMenuWorkflow()">☕ МЕНЮ И РЕЦЕПТЫ</button>
+            <!-- ⚡ НОВАЯ ВКАЛДКА: РЕЦЕПТЫ ЭСПРЕССО -->
+            <button class="btn-mode" style="background: linear-gradient(135deg, #795548 0%, #4E342E 100%);" onclick="initEspressoWorkflow()">☕ РЕЦЕПТЫ ЭСПРЕССО</button>
             <button class="btn-mode" style="background: linear-gradient(135deg, #43a047 0%, #00695c 100%);" onclick="initInvoiceWorkflow()">📦 НАКЛАДНЫЕ ТОВАРЫ</button>
             <button class="btn-mode" style="background: var(--knowledge-gradient); margin-bottom: 0;" onclick="initKnowledgeWorkflow()">📚 ВАЖНАЯ ИНФОРМАЦИЯ</button>
         </div>
@@ -300,9 +308,28 @@
     <div id="step-sub-profile" style="display:none;">
         <h3 class="sub-title">👤 Личный кабинет</h3>
         <div class="menu-section">
-            <button class="btn-mode" style="background: linear-gradient(135deg, #4A148C 0%, #7E57C2 100%); margin-bottom: 0;" onclick="initScheduleWorkflow()">📅 МОЙ ГРАФИК РАБОТЫ</button>
+            <button class="btn-mode" style="background: linear-gradient(135deg, #4A148C 0%, #7E57C2 100%);" onclick="initScheduleWorkflow()">📅 МОЙ ГРАФИК РАБОТЫ</button>
+            <!-- ⚡ НОВАЯ ВКАЛДКА: КАЛЕНДАРЬ ДЕЛ -->
+            <button class="btn-mode" style="background: linear-gradient(135deg, #0288D1 0%, #01579B 100%); margin-bottom: 0;" onclick="initCalendarTasksWorkflow()">📝 КАЛЕНДАРЬ ДЕЛ</button>
         </div>
         <div class="bottom-fixed-bar"><button class="btn-bottom-exit" onclick="goBack()">⬅️ В главное меню</button></div>
+    </div>
+
+    <!-- ⚡ НОВЫЕ ЭКРАНЫ ДЛЯ РЕЦЕПТОВ ЭСПРЕССО И КАЛЕНДАРЯ -->
+    <div id="step-espresso" style="display:none;">
+      <h3 class="sub-title" style="color:#4E342E;">☕ Рецепты эспрессо</h3>
+      <div id="espresso-container"></div>
+      <div class="bottom-fixed-bar">
+        <button class="btn-bottom-exit" onclick="goBack()">⬅️ Назад</button>
+      </div>
+    </div>
+
+    <div id="step-tasks-calendar" style="display:none;">
+      <h3 class="sub-title" style="color:#01579B;">📝 Календарь дел</h3>
+      <div id="tasks-calendar-container"></div>
+      <div class="bottom-fixed-bar">
+        <button class="btn-bottom-exit" onclick="goBack()">⬅️ Назад</button>
+      </div>
     </div>
 
     <!-- Остальные экраны -->
@@ -1241,19 +1268,32 @@
                 let doc = data[k];
                 if(!doc) return;
                 let safeId = getSafeId(k);
+                
+                // ⚡ Читаем смарт-теги из текста
+                let formattedText = doc.text ? doc.text.replace(/\n/g, '<br>') : '';
+                let regex = /\[ФОТО_(\d+)\](.*?)\[\/ФОТО_\d+\]/g;
+                
+                formattedText = formattedText.replace(regex, (match, n, word) => {
+                    let photoData = doc[`photo_${n}`] || "";
+                    if (photoData) {
+                        return `<span style="color:#0288d1; border-bottom:1px dashed #0288d1; cursor:pointer; font-weight:bold;" onclick="openPhotoModal('${escapeName(word)}', '${photoData}')">📷 ${word}</span>`;
+                    }
+                    return `<b>${word}</b>`;
+                });
+
                 html += `<div class="report-card" style="padding:0; overflow:hidden; border:2px solid #D1C4E9; margin-bottom:15px;">
                             <div style="padding:15px; background:#ede7f6; font-weight:900; color:#311b92; font-size:17px; display:flex; justify-content:space-between; align-items:center; cursor:pointer;" onclick="toggleElements('kb_${safeId}', 'arr_kb_${safeId}')">
                                 <span>${doc.title}</span><span id="arr_kb_${safeId}" style="opacity:0.5; font-size:14px;">▼</span>
                             </div>
                             <div class="kb_${safeId}" style="display:none; padding:15px; background:#fff; font-size:15px; line-height:1.5;">
-                                ${doc.text ? doc.text.replace(/\n/g, '<br>') : ''}
+                                ${formattedText}
                             </div>
                          </div>`;
             });
         }
         document.getElementById('knowledge-container').innerHTML = html;
     }
-
+  
     function filterKnowledge(query) {
         let q = query.toLowerCase().trim();
         let filtered = {};
@@ -2543,6 +2583,11 @@
             });
         } else {
             document.getElementById('mp-edit-controls').style.display = 'none';
+            
+            // ⚡ УМНЫЙ РАСЧЕТ МИНИМАЛОК
+            let totalLenta = 0;
+            let totalKuper = 0;
+
             for(let name in state.userBasket) {
                 if(name === "_catinfo") continue;
                 let v = state.userBasket[name];
@@ -2550,13 +2595,77 @@
                 
                 if(String(v) !== "0" && v !== 0 && String(v) !== "-") {
                     let escName = escapeName(name);
-                    html += `<div class="item">
-                                <span>${name}</span>
-                                <div style="display:flex; align-items:center;">
-                                    <b style="color:var(--deep-purple); font-size:18px; margin-right:15px;">${v}</b>
+                    let safeId = getSafeId(name);
+                    
+                    let catItem = Object.values(state.productCatalog).find(c => c && c.name === name) || {};
+                    let vendor = (catItem.vendor || 'Лента').toLowerCase();
+                    let price1 = parseFloat(catItem.price) || 0;
+                    let price2 = parseFloat(catItem.price2) || 0;
+                    
+                    let isLenta = vendor.includes('лента');
+                    let isKuper = vendor.includes('купер');
+
+                    // Предварительный прогон суммы
+                    let cost = price1 * parseFloat(v);
+                    if (isLenta) totalLenta += cost;
+                    
+                    // Отрисовка
+                    html += `<div class="item" style="flex-direction:column; align-items:flex-start;">
+                                <div style="display:flex; justify-content:space-between; width:100%; align-items:center; margin-bottom:8px;">
+                                    <span style="font-weight:700; font-size:15px; color:#311b92;">${name}</span>
                                     <button class="btn-remove-item" onclick="removeFromCart('${escName}', '${cat}')">✕</button>
                                 </div>
+                                <div style="display:flex; justify-content:space-between; width:100%; align-items:center;">
+                                    <span style="font-size:12px; color:#888; font-weight:bold;">${catItem.vendor || 'Лента'}</span>
+                                    <div class="controls" id="cart-controls-${safeId}">
+                                        <button class="qty-btn" style="width:30px; height:30px;" onclick="adjustQuantity('${escName}', -1, '${cat}', '${safeId}')">−</button>
+                                        <input type="text" class="qty-input" id="cart-input-${safeId}" value="${v}" style="width:30px; font-size:15px;" onchange="registerInputChange('${escName}', this.value, '${cat}')" onfocus="handleInputFocus(this)" onblur="handleInputBlur()">
+                                        <button class="qty-btn" style="width:30px; height:30px;" onclick="adjustQuantity('${escName}', 1, '${cat}', '${safeId}')">+</button>
+                                    </div>
+                                </div>
                              </div>`;
+                }
+            }
+
+            // Второй прогон: если Лента меньше 2000, переводим в Купер и пересчитываем по цене 2
+            let displayTotal = 0;
+            for(let name in state.userBasket) {
+                if(name === "_catinfo") continue;
+                let v = state.userBasket[name];
+                if(String(v) !== "0" && v !== 0 && String(v) !== "-") {
+                    let catItem = Object.values(state.productCatalog).find(c => c && c.name === name) || {};
+                    let vendor = (catItem.vendor || 'Лента').toLowerCase();
+                    let price1 = parseFloat(catItem.price) || 0;
+                    let price2 = parseFloat(catItem.price2) || 0;
+                    
+                    let isLenta = vendor.includes('лента');
+                    let isKuper = vendor.includes('купер');
+
+                    if (isLenta && totalLenta > 0 && totalLenta < 2000) {
+                        isKuper = true; // Авто-перенос
+                    }
+                    
+                    let finalPrice = (isKuper && price2 > 0) ? price2 : price1;
+                    let cost = finalPrice * parseFloat(v);
+                    
+                    if (isKuper) totalKuper += cost;
+                    displayTotal += cost;
+                }
+            }
+
+            // ⚡ Отображаем ИТОГО и предупреждения
+            if (displayTotal > 0 && (state.currentMode === 'order' || state.currentMode === 'new_shop')) {
+                html += `<div style="margin-top:15px; padding-top:10px; border-top:2px dashed #eee; text-align:right;">
+                            <span style="font-size:14px; color:#888; font-weight:bold;">Предварительный итог:</span>
+                            <div style="font-size:22px; font-weight:900; color:#C2185B;">~ ${Math.round(displayTotal)} ₽</div>
+                         </div>`;
+                         
+                // Записываем суммы в state, чтобы валидатор их увидел
+                state.tempTotalLenta = totalLenta;
+                state.tempTotalKuper = totalKuper;
+                
+                if (totalLenta > 0 && totalLenta < 2000) {
+                    html += `<div style="font-size:12px; color:#e65100; margin-top:5px; text-align:right;">⚠️ Лента < 2000₽. Заказ уйдет в Купер.</div>`;
                 }
             }
         }
@@ -2592,7 +2701,6 @@
           
           state.isProcessing = true;
           let btn = document.getElementById('modal-submit-button'); btn.innerText = "ОТПРАВЛЯЮ...";
-          showGlobalLoader("Отправка в базу...");
           
           try {
               let submitTimestamp = firebase.database.ServerValue.TIMESTAMP;
@@ -2602,27 +2710,26 @@
                   submitTimestamp = prevMonthEnd.getTime();
               }
 
-              let promises = [];
+              // ⚡ Фоновая отправка (БЕЗ await Promise.all)
               for(let item of state.mpBasket) {
-                  promises.push(database.ref("marketplace_records").push({
+                  database.ref("marketplace_records").push({
                       vendor: item.vendor,
                       type: item.amount < 0 ? 'refund' : 'purchase',
                       address: item.address,
                       amount: parseFloat(item.amount),
                       timestamp: submitTimestamp,
                       userId: globalTgUserId
-                  }));
+                  });
               }
-              await Promise.all(promises);
               state.mpBasket = [];
               localStorage.removeItem("draft_marketplace");
           } catch(e) {
-              hideGlobalLoader(); 
               showPopupError("Ошибка", e.message);
               state.isProcessing = false; btn.innerText = "ПОДТВЕРДИТЬ И ОТПРАВИТЬ";
               return;
           }
       } else {
+          // Чек-лист проверка...
           if (state.currentMode === 'checklist') {
             let missingCategories = new Set(); 
             let totalMissing = 0;
@@ -2661,10 +2768,19 @@
 
           if (flatData.length === 0 && state.currentMode !== 'checklist') return showPopupError("Внимание", "Заполните данные перед отправкой!");
 
+          // ⚡ ПРОВЕРКА ЛИМИТА КУПЕРА
+          if ((state.currentMode === 'order' || state.currentMode === 'new_shop') && state.tempTotalKuper !== undefined) {
+              // Если Лента пустая или перевелась в Купер, и общая сумма Купера меньше 1000
+              if (state.tempTotalKuper > 0 && state.tempTotalKuper < 1000) {
+                  let diff = 1000 - state.tempTotalKuper;
+                  showPopupError("Минимальная сумма", `Не хватает до минимальной суммы Купера: <b>~ ${Math.round(diff)} ₽</b><br><small>Текущая сумма: ${Math.round(state.tempTotalKuper)} ₽</small>`);
+                  return;
+              }
+          }
+
           state.isProcessing = true;
           let btn = document.getElementById('modal-submit-button'); if(btn) btn.innerText = "ОТПРАВЛЯЮ...";
           let mainBtn = document.getElementById('main-action-button'); if(mainBtn) mainBtn.innerText = "ОТПРАВЛЯЮ...";
-          showGlobalLoader("Отправка данных..."); 
 
           try {
               if (state.currentMode === 'order' || state.currentMode === 'new_shop') {
@@ -2678,11 +2794,8 @@
                   existingSnap.forEach(c => {
                       let o = c.val();
                       if (o && (o.mode === 'order' || o.mode === 'new_shop') && o.svod === false && o.ordered === false) {
-                          if (!pendingKeyToUpdate) {
-                              pendingKeyToUpdate = c.key;
-                          } else {
-                              database.ref(`orders/${c.key}`).remove();
-                          }
+                          if (!pendingKeyToUpdate) pendingKeyToUpdate = c.key;
+                          else database.ref(`orders/${c.key}`).remove(); // Тихо удаляем дубликаты на фоне
                       }
                   });
 
@@ -2692,8 +2805,9 @@
                       svod: false, ordered: false, lenta_received: false, ozon_received: false, kuper_received: false
                   };
 
+                  // ⚡ ФОНОВАЯ ОТПРАВКА (БЕЗ await)
                   if (pendingKeyToUpdate) {
-                      await database.ref(`orders/${pendingKeyToUpdate}`).transaction((currentOrder) => {
+                      database.ref(`orders/${pendingKeyToUpdate}`).transaction((currentOrder) => {
                           if (currentOrder) {
                               let mergedItems = {};
                               let oldItems = Array.isArray(currentOrder.items) ? currentOrder.items : Object.values(currentOrder.items || {});
@@ -2724,7 +2838,7 @@
                           return finalDataToSave; 
                       });
                   } else {
-                      await database.ref("orders").push(finalDataToSave);
+                      database.ref("orders").push(finalDataToSave);
                   }
                   
               } else {
@@ -2736,7 +2850,8 @@
                       lenta_received: false, ozon_received: false, kuper_received: false
                   };
 
-                  await database.ref(`orders/${newRecordKey}`).transaction((currentRecord) => {
+                  // ⚡ ФОНОВАЯ ОТПРАВКА
+                  database.ref(`orders/${newRecordKey}`).transaction((currentRecord) => {
                       if (!currentRecord) return recordPayload;
                       return currentRecord;
                   });
@@ -2744,7 +2859,6 @@
 
               localStorage.removeItem("draft_" + state.currentShop + "_" + state.currentMode);
           } catch(e) {
-              hideGlobalLoader(); 
               showPopupError("Ошибка", "Произошла ошибка при отправке.");
               state.isProcessing = false;
               if(btn) btn.innerText = "ПОДТВЕРДИТЬ И ОТПРАВИТЬ";
@@ -2753,7 +2867,7 @@
           }
       } 
 
-      hideGlobalLoader(); 
+      // ⚡ МГНОВЕННЫЙ ВИЗУАЛЬНЫЙ ФИДБЕК
       toggleCartModal(false);
       document.getElementById('success-screen').style.display = 'flex';
       
@@ -2761,7 +2875,6 @@
           document.getElementById('success-screen').style.display = 'none';
           if(document.getElementById('comment')) document.getElementById('comment').value = "";
           
-          // ⚡ Запоминаем, где мы были, прежде чем очистить состояние
           let previousMode = state.currentMode; 
           
           state.userBasket = {};
@@ -2774,18 +2887,17 @@
           updateBadgeUI();
           state.screenHistory = [];
           
-          // ⚡ ИСПРАВЛЕННАЯ ЛОГИКА ВОЗВРАТА
           if (previousMode === 'marketplace') {
-              returnToPanel(); // Сразу возвращаем админа в его Кабинет
+              returnToPanel(); 
           } else if (previousMode === 'order' || previousMode === 'new_shop') {
               showScreen('step-sub-orders', false);
           } else if (previousMode === 'checklist' || previousMode === 'stoplist_fill') {
               showScreen('step-sub-lists', false);
           } else {
-              showScreen('step-2', false); // Обычное меню бариста
+              showScreen('step-2', false); 
           }
-      }, 2000);
- }
+      }, 1500); // ⚡ Ускорили экран Успеха
+   }
   
     function processNoOrder() {
         if(!checkShopSelected()) return;
@@ -2940,10 +3052,18 @@
                 return blockHtml + `</div>`;
             };
 
+            // Высчитываем даты
             let currentOrderDateStr = currentOrderObj ? new Date(currentOrderObj.timestamp).toLocaleString('ru-RU', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'}) : '---';
             let prevOrderDateStr = prevOrderObj ? new Date(prevOrderObj.timestamp).toLocaleString('ru-RU', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'}) : '---';
 
+            // Отрисовываем нужный блок
             html += (state.currentMyOrderTab === 'current') ? renderOrderBlock(currentAgg, currentOrderDateStr, "Текущий заказ", true) : renderOrderBlock(prevAgg, prevOrderDateStr, "Прошлый заказ", false);
+
+            // ⚡ КНОПКА ПОВТОРА ЗАКАЗА (Отрисовываем, только если открыта вкладка "Текущий заказ")
+            if (state.currentMyOrderTab === 'current' && Object.keys(currentAgg).length > 0) {
+                let safeAggStr = escapeName(JSON.stringify(currentAgg));
+                html += `<button class="btn-mode" style="background: var(--btn-order-grad); margin-top:20px;" onclick="repeatMyOrder('${safeAggStr}')">🔄 ПОВТОРИТЬ ЭТОТ ЗАКАЗ</button>`;
+            }
 
             document.getElementById('report-content-area').innerHTML = html;
         } catch(e) { 
@@ -3932,7 +4052,333 @@ function showLastOrder() {
            }
         } 
     }
-    
+
+  // ==========================================
+    // ☕ РЕЦЕПТЫ ЭСПРЕССО (ОТРИСОВКА В МИНИ-АППЕ)
+    // ==========================================
+    async function initEspressoWorkflow() {
+        if(!checkShopSelected()) return;
+        triggerHaptic();
+        state.currentMode = 'espresso';
+        showGlobalLoader("Загрузка рецептов...");
+        showScreen('step-espresso');
+        
+        try {
+            let [espSnap, kbSnap] = await Promise.all([
+                database.ref('espresso_recipes').once('value'),
+                database.ref('knowledge_base').once('value')
+            ]);
+            let espData = espSnap.val() || {};
+            let kbData = kbSnap.val() || {};
+            
+            let sData = espData[state.currentShop] || { current: {}, history: {} };
+            let curr = sData.current || { in: "-", out: "-", time: "-", result: "-", roast: "---", brand: "---" };
+            let history = Object.values(sData.history || {}).sort((a,b) => b.timestamp - a.timestamp);
+            
+            let kbEspresso = Object.values(kbData).filter(k => 
+                (k.cat && k.cat.toLowerCase().includes('эспрессо')) || 
+                (k.title && k.title.toLowerCase().includes('эспрессо'))
+            );
+
+            let html = `
+            <div class="report-card" style="background: linear-gradient(135deg, #795548 0%, #4E342E 100%); color:#fff; border:none;">
+                <div style="font-size:14px; opacity:0.8; text-align:center; margin-bottom:10px;">Актуальный рецепт</div>
+                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; text-align:center; margin-bottom:15px;">
+                    <div style="background:rgba(255,255,255,0.1); padding:10px; border-radius:12px;">
+                        <div style="font-size:12px; opacity:0.8;">Вход</div>
+                        <div style="font-weight:900; font-size:22px;">${curr.in || '-'} г</div>
+                    </div>
+                    <div style="background:rgba(255,255,255,0.1); padding:10px; border-radius:12px;">
+                        <div style="font-size:12px; opacity:0.8;">Выход</div>
+                        <div style="font-weight:900; font-size:22px;">${curr.out || '-'} г</div>
+                    </div>
+                    <div style="background:rgba(255,255,255,0.1); padding:10px; border-radius:12px;">
+                        <div style="font-size:12px; opacity:0.8;">Время</div>
+                        <div style="font-weight:900; font-size:22px;">${curr.time || '-'} с</div>
+                    </div>
+                    <div style="background:rgba(255,255,255,0.2); padding:10px; border-radius:12px; box-shadow:0 2px 10px rgba(0,0,0,0.1);">
+                        <div style="font-size:12px; opacity:0.9; font-weight:bold;">Итог</div>
+                        <div style="font-weight:900; font-size:22px;">${curr.result || '-'}</div>
+                    </div>
+                </div>
+                <div style="font-size:14px; text-align:center;">
+                    Бренд: <b>${curr.brand || '---'}</b> | Обжарка: <b>${curr.roast || '---'}</b>
+                </div>
+            </div>`;
+
+            if (history.length > 0) {
+                html += `<div class="report-card">
+                            <div class="report-card-title" style="cursor:pointer;" onclick="toggleElements('esp_history_box', 'arr_esp_hist')">🕒 Прошлые рецепты <span id="arr_esp_hist" style="float:right;">▼</span></div>
+                            <div class="esp_history_box" style="display:none; margin-top:10px;">`;
+                history.forEach(h => {
+                    html += `<div style="border-bottom:1px dashed #eee; padding:10px 0; font-size:14px;">
+                                <div style="color:#888; font-weight:bold; font-size:12px; margin-bottom:5px;">${new Date(h.timestamp).toLocaleString('ru-RU')}</div>
+                                <div><b>В:</b> ${h.in}г | <b>В:</b> ${h.out}г | <b>В:</b> ${h.time}с | <b>И:</b> ${h.result}</div>
+                             </div>`;
+                });
+                html += `   </div>
+                         </div>`;
+            }
+
+            if (kbEspresso.length > 0) {
+                html += `<h4 style="margin-top:20px; color:#4E342E; font-size:18px;">📚 Инструкции по настройке</h4>`;
+                kbEspresso.forEach((doc, idx) => {
+                    let formattedText = doc.text ? doc.text.replace(/\n/g, '<br>') : '';
+                    let regex = /\[ФОТО_(\d+)\](.*?)\[\/ФОТО_\d+\]/g;
+                    formattedText = formattedText.replace(regex, (match, n, word) => {
+                        let photoData = doc[`photo_${n}`] || "";
+                        if (photoData) {
+                            return `<span style="color:#0288d1; border-bottom:1px dashed #0288d1; cursor:pointer; font-weight:bold;" onclick="openPhotoModal('${escapeName(word)}', '${photoData}')">📷 ${word}</span>`;
+                        }
+                        return `<b>${word}</b>`;
+                    });
+
+                    html += `<div class="report-card" style="padding:15px; border:1px solid #ddd; margin-bottom:10px;">
+                                <div style="font-weight:900; color:#4E342E; font-size:16px; margin-bottom:10px;">${doc.title}</div>
+                                <div style="font-size:14px; line-height:1.5;">${formattedText}</div>
+                             </div>`;
+                });
+            }
+
+            document.getElementById('espresso-container').innerHTML = html;
+        } catch(e) {
+            document.getElementById('espresso-container').innerHTML = "<div class='report-card'>Ошибка загрузки</div>";
+        }
+        hideGlobalLoader();
+    }
+
+    // ==========================================
+    // 📝 КАЛЕНДАРЬ ЗАДАЧ (ОТРИСОВКА В МИНИ-АППЕ)
+    // ==========================================
+    async function initCalendarTasksWorkflow() {
+        if(!checkShopSelected()) return;
+        triggerHaptic();
+        state.currentMode = 'calendar_tasks';
+        showGlobalLoader("Загрузка задач...");
+        showScreen('step-tasks-calendar');
+        
+        try {
+            let [calSnap, kbSnap] = await Promise.all([
+                database.ref('tasks_calendar').once('value'),
+                database.ref('knowledge_base').once('value')
+            ]);
+            
+            let tasks = calSnap.val() || {};
+            state.globalKnowledge = kbSnap.val() || {};
+            
+            let tasksArr = Object.values(tasks);
+            state.tasksArray = tasksArr;
+
+            renderMiniCalendar(new Date());
+
+        } catch(e) {
+            document.getElementById('tasks-calendar-container').innerHTML = "<div class='report-card'>Ошибка загрузки</div>";
+        }
+        hideGlobalLoader();
+    }
+
+    function renderMiniCalendar(targetDate) {
+        let year = targetDate.getFullYear();
+        let month = targetDate.getMonth();
+        let today = new Date();
+        
+        let firstDay = new Date(year, month, 1).getDay();
+        let startOffset = (firstDay || 7) - 1; 
+        let daysInMonth = new Date(year, month + 1, 0).getDate();
+        
+        let monthNames = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
+
+        let html = `
+        <div class="report-card" style="padding:15px; margin-bottom:15px; background:linear-gradient(135deg, #01579B 0%, #0288D1 100%); color:#fff; border:none;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+                <button onclick="changeMiniCalMonth(-1, ${year}, ${month})" style="background:rgba(255,255,255,0.2); border:none; color:#fff; font-size:18px; padding:5px 15px; border-radius:8px; font-weight:bold;">◀</button>
+                <div style="font-size:18px; font-weight:900;">${monthNames[month]} ${year}</div>
+                <button onclick="changeMiniCalMonth(1, ${year}, ${month})" style="background:rgba(255,255,255,0.2); border:none; color:#fff; font-size:18px; padding:5px 15px; border-radius:8px; font-weight:bold;">▶</button>
+            </div>
+            
+            <div class="cal-grid" style="gap:2px;">
+                <div class="cal-header" style="color:#fff; opacity:0.8;">Пн</div><div class="cal-header" style="color:#fff; opacity:0.8;">Вт</div>
+                <div class="cal-header" style="color:#fff; opacity:0.8;">Ср</div><div class="cal-header" style="color:#fff; opacity:0.8;">Чт</div>
+                <div class="cal-header" style="color:#fff; opacity:0.8;">Пт</div><div class="cal-header" style="color:#ffcc80;">Сб</div>
+                <div class="cal-header" style="color:#ffcc80;">Вс</div>
+        `;
+        
+        for (let i = 0; i < startOffset; i++) {
+            html += `<div style="background:transparent;"></div>`;
+        }
+
+        for (let d = 1; d <= daysInMonth; d++) {
+            let curr = new Date(year, month, d);
+            let isToday = (curr.getDate() === today.getDate() && curr.getMonth() === today.getMonth() && curr.getFullYear() === today.getFullYear());
+            
+            let dayTasks = getTasksForDate(curr, state.tasksArray);
+            
+            let bg = isToday ? "#ffb74d" : "#fff";
+            let color = isToday ? "#e65100" : "#333";
+            let dotHtml = dayTasks.length > 0 ? `<div style="width:6px; height:6px; background:#e53935; border-radius:50%; position:absolute; bottom:4px;"></div>` : "";
+            
+            html += `<div class="cal-cell" style="background:${bg}; border:none; cursor:pointer;" onclick="showTasksForDay(${year}, ${month}, ${d})">
+                        <span style="font-weight:900; color:${color}; font-size:14px;">${d}</span>
+                        ${dotHtml}
+                     </div>`;
+        }
+        html += `</div></div><div id="daily-tasks-list"></div>`;
+        
+        document.getElementById('tasks-calendar-container').innerHTML = html;
+        
+        // По умолчанию показываем задачи на сегодня (если смотрим текущий месяц)
+        if (month === today.getMonth() && year === today.getFullYear()) {
+            showTasksForDay(year, month, today.getDate());
+        } else {
+            showTasksForDay(year, month, 1);
+        }
+    }
+
+    window.changeMiniCalMonth = function(delta, y, m) {
+        triggerHaptic();
+        let d = new Date(y, m + delta, 1);
+        renderMiniCalendar(d);
+    }
+
+    function getTasksForDate(dateObj, tasksArray) {
+        let tasksForDay = [];
+        let dayOfWeek = dateObj.getDay(); 
+        let d = dateObj.getDate();
+        let m = dateObj.getMonth();
+        let y = dateObj.getFullYear();
+        
+        tasksArray.forEach(t => {
+            let p = t.period;
+            let isMatch = false;
+            
+            if (p === 'every_day') isMatch = true;
+            else if (p === 'every_mon' && dayOfWeek === 1) isMatch = true;
+            else if (p === 'every_tue' && dayOfWeek === 2) isMatch = true;
+            else if (p === 'every_wed' && dayOfWeek === 3) isMatch = true;
+            else if (p === 'every_thu' && dayOfWeek === 4) isMatch = true;
+            else if (p === 'every_fri' && dayOfWeek === 5) isMatch = true;
+            else if (p === 'every_sat' && dayOfWeek === 6) isMatch = true;
+            else if (p === 'every_sun' && dayOfWeek === 0) isMatch = true;
+            else if (p === 'monthly' && d === 1) isMatch = true;
+            else if (p === '1st_week' && d <= 7) isMatch = true;
+            else if (p === 'every_3_days') {
+                // Берем отсчет от 1 января 2024
+                let diffTime = Math.abs(dateObj - new Date(2024, 0, 1));
+                let diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
+                if (diffDays % 3 === 0) isMatch = true;
+            }
+            
+            if (isMatch) tasksForDay.push(t);
+        });
+        return tasksForDay;
+    }
+
+    window.showTasksForDay = function(y, m, d) {
+        triggerHaptic();
+        let dateObj = new Date(y, m, d);
+        let tasks = getTasksForDate(dateObj, state.tasksArray);
+        
+        let html = `<h4 style="color:#01579B; margin-bottom:10px; font-size:18px;">📌 Задачи на ${dateObj.toLocaleDateString('ru-RU')}</h4>`;
+        
+        if (tasks.length === 0) {
+            html += `<div class="report-card" style="text-align:center; color:#888; font-weight:bold;">На этот день задач нет. Отдыхаем! ☕</div>`;
+        } else {
+            tasks.forEach((t, idx) => {
+                let sId = getSafeId("task_" + idx);
+                let kbHtml = "";
+                if (t.kb_id && state.globalKnowledge[t.kb_id]) {
+                    let doc = state.globalKnowledge[t.kb_id];
+                    let formattedText = doc.text ? doc.text.replace(/\n/g, '<br>') : '';
+                    let regex = /\[ФОТО_(\d+)\](.*?)\[\/ФОТО_\d+\]/g;
+                    formattedText = formattedText.replace(regex, (match, n, word) => {
+                        let photoData = doc[`photo_${n}`] || "";
+                        if (photoData) {
+                            return `<span style="color:#0288d1; border-bottom:1px dashed #0288d1; cursor:pointer; font-weight:bold;" onclick="openPhotoModal('${escapeName(word)}', '${photoData}')">📷 ${word}</span>`;
+                        }
+                        return `<b>${word}</b>`;
+                    });
+
+                    kbHtml = `<div style="margin-top:10px; padding-top:10px; border-top:1px dashed #ccc; font-size:14px; line-height:1.4;">
+                                <div style="color:#0288D1; font-weight:900; margin-bottom:5px;">📖 Инструкция: ${doc.title}</div>
+                                ${formattedText}
+                              </div>`;
+                }
+
+                html += `<div class="report-card" style="padding:15px; margin-bottom:10px; border-left:4px solid #0288D1;">
+                            <div style="font-size:16px; font-weight:900; color:#333;">${t.name}</div>
+                            ${kbHtml}
+                         </div>`;
+            });
+        }
+        
+        document.getElementById('daily-tasks-list').innerHTML = html;
+    }
+
+    // ==========================================
+    // ⚡ СОХРАНЕНИЕ ЭКРАНА В TELEGRAM CLOUD STORAGE
+    // ==========================================
+    function saveCurrentScreenState() {
+        if (window.Telegram && Telegram.WebApp && Telegram.WebApp.CloudStorage) {
+            let activeScreen = "step-1";
+            let screens = ['step-1', 'step-2', 'step-sub-lists', 'step-sub-orders', 'step-sub-profile', 'step-sub-info', 'step-invoices', 'step-knowledge', 'step-stoplist', 'step-panel', 'step-admin-purchase', 'step-3', 'step-mp-month', 'step-mp-vendor', 'step-mp-mode', 'step-mp-address', 'step-mp-keypad', 'step-menu', 'step-schedule-name', 'step-schedule-calendar', 'step-espresso', 'step-tasks-calendar'];
+            
+            for (let s of screens) {
+                let el = document.getElementById(s);
+                if (el && el.style.display === 'block') {
+                    activeScreen = s;
+                    break;
+                }
+            }
+            
+            let stateToSave = {
+                screen: activeScreen,
+                history: state.screenHistory,
+                mode: state.currentMode,
+                shop: state.currentShop,
+                role: state.currentControlRole
+            };
+            
+            Telegram.WebApp.CloudStorage.setItem("teiku_screen_state", JSON.stringify(stateToSave));
+        }
+    }
+
+    setInterval(saveCurrentScreenState, 2000); // Сохраняем стейт каждые 2 секунды на фон
+
+    // Обновляем функцию window.onload для загрузки стейта
+    const originalOnLoad = window.onload;
+    window.onload = async () => { 
+        await originalOnLoad();
+        
+        if (window.Telegram && Telegram.WebApp && Telegram.WebApp.CloudStorage) {
+            Telegram.WebApp.CloudStorage.getItem("teiku_screen_state", (err, val) => {
+                if (!err && val) {
+                    try {
+                        let savedState = JSON.parse(val);
+                        if (savedState.shop) {
+                            state.currentShop = savedShop; // Если кофейня была выбрана
+                        }
+                        if (savedState.screen && savedState.screen !== 'step-1') {
+                            state.screenHistory = savedState.history || [];
+                            state.currentMode = savedState.mode || "";
+                            state.currentControlRole = savedState.role || "";
+                            
+                            // Восстанавливаем конкретные экраны, если они требуют вызова загрузки данных
+                            if (savedState.screen === 'step-3') initWorkflow(state.currentMode);
+                            else if (savedState.screen === 'step-menu') initMenuWorkflow();
+                            else if (savedState.screen === 'step-espresso') initEspressoWorkflow();
+                            else if (savedState.screen === 'step-tasks-calendar') initCalendarTasksWorkflow();
+                            else if (savedState.screen === 'step-invoices') initInvoiceWorkflow();
+                            else if (savedState.screen === 'step-knowledge') initKnowledgeWorkflow();
+                            else if (savedState.screen === 'step-schedule-calendar') goToScheduleCalendar();
+                            else if (savedState.screen.startsWith('step-mp')) initMarketplace();
+                            else showScreen(savedState.screen, false);
+                        }
+                    } catch(e) {}
+                }
+            });
+        }
+    };
+  
 // ==========================================
     // ⚡ ГЛАВНЫЙ СТАРТ ПРИЛОЖЕНИЯ (ИСПРАВЛЕНА АВТОРИЗАЦИЯ)
     // ==========================================

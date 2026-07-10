@@ -2692,212 +2692,203 @@
     }
 
    async function validateAndSubmit(isFromModal) {
-      if (!isFromModal && (state.currentMode === 'order' || state.currentMode === 'new_shop' || state.currentMode === 'marketplace')) { toggleCartModal(true); return; }
-      if (state.isProcessing) return;
+    if (!isFromModal && (state.currentMode === 'order' || state.currentMode === 'new_shop' || state.currentMode === 'marketplace')) { toggleCartModal(true); return; }
+    if (state.isProcessing) return;
 
-      if (state.currentMode === 'marketplace') {
-          if (state.mpBasket.length === 0) return showPopupError("Внимание", "Корзина пуста!");
-          if (state.isMpEditMode) return showPopupError("Внимание", "Сначала сохраните изменения");
-          
-          state.isProcessing = true;
-          let btn = document.getElementById('modal-submit-button'); btn.innerText = "ОТПРАВЛЯЮ...";
-          
-          try {
-              let submitTimestamp = firebase.database.ServerValue.TIMESTAMP;
-              if (state.mpMonthOption === 'prev') {
-                  let now = new Date();
-                  let prevMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
-                  submitTimestamp = prevMonthEnd.getTime();
-              }
+    if (state.currentMode === 'marketplace') {
+        if (state.mpBasket.length === 0) return showPopupError("Внимание", "Корзина пуста!");
+        if (state.isMpEditMode) return showPopupError("Внимание", "Сначала сохраните изменения");
+        
+        state.isProcessing = true;
+        let btn = document.getElementById('modal-submit-button'); btn.innerText = "ОТПРАВЛЯЮ...";
+        showGlobalLoader("Отправка данных...");
+        
+        try {
+            let submitTimestamp = firebase.database.ServerValue.TIMESTAMP;
+            if (state.mpMonthOption === 'prev') {
+                let now = new Date();
+                let prevMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
+                submitTimestamp = prevMonthEnd.getTime();
+            }
 
-              // ⚡ Фоновая отправка (БЕЗ await Promise.all)
-              for(let item of state.mpBasket) {
-                  database.ref("marketplace_records").push({
-                      vendor: item.vendor,
-                      type: item.amount < 0 ? 'refund' : 'purchase',
-                      address: item.address,
-                      amount: parseFloat(item.amount),
-                      timestamp: submitTimestamp,
-                      userId: globalTgUserId
-                  });
-              }
-              state.mpBasket = [];
-              localStorage.removeItem("draft_marketplace");
-          } catch(e) {
-              showPopupError("Ошибка", e.message);
-              state.isProcessing = false; btn.innerText = "ПОДТВЕРДИТЬ И ОТПРАВИТЬ";
-              return;
-          }
-      } else {
-          // Чек-лист проверка...
-          if (state.currentMode === 'checklist') {
+            let promises = [];
+            for(let item of state.mpBasket) {
+                promises.push(database.ref("marketplace_records").push({
+                    vendor: item.vendor,
+                    type: item.amount < 0 ? 'refund' : 'purchase',
+                    address: item.address,
+                    amount: parseFloat(item.amount),
+                    timestamp: submitTimestamp,
+                    userId: globalTgUserId
+                }));
+            }
+            await Promise.all(promises); // ⚡ Гарантированно ждем отправки всех записей маркетплейса
+            state.mpBasket = [];
+            localStorage.removeItem("draft_marketplace");
+        } catch(e) {
+            hideGlobalLoader();
+            showPopupError("Ошибка", e.message);
+            state.isProcessing = false; btn.innerText = "ПОДТВЕРДИТЬ И ОТПРАВИТЬ";
+            return;
+        }
+    } else {
+        if (state.currentMode === 'checklist') {
             let missingCategories = new Set(); 
             let totalMissing = 0;
             for (let key in state.productCatalog) {
-              let item = state.productCatalog[key];
-              if (item && item.cat && item.name !== "Товар" && item.name !== "Дата заполнения") {
-                 let val = state.userBasket[item.name];
-                 if (val === undefined || val === null || String(val).trim() === "" || String(val).trim() === "-" || String(val).trim() === "--") { 
-                     missingCategories.add(item.cat); 
-                     totalMissing++; 
-                 }
-              }
+                let item = state.productCatalog[key];
+                if (item && item.cat && item.name !== "Товар" && item.name !== "Дата заполнения") {
+                    let val = state.userBasket[item.name];
+                    if (val === undefined || val === null || String(val).trim() === "" || String(val).trim() === "-" || String(val).trim() === "--") { 
+                        missingCategories.add(item.cat); 
+                        totalMissing++; 
+                    }
+                }
             }
             if (totalMissing > 0) {
-              triggerHaptic(); 
-              let catList = Array.from(missingCategories).join(', ');
-              showPopupError("Чек-лист заполнен не полностью!", `Осталось позиций: ${totalMissing}.<br><small>Пожалуйста, проверьте: ${catList}</small>`);
-              return;
+                triggerHaptic(); 
+                let catList = Array.from(missingCategories).join(', ');
+                showPopupError("Чек-лист заполнен не полностью!", `Осталось позиций: ${totalMissing}.<br><small>Пожалуйста, проверьте: ${catList}</small>`);
+                return;
             }
-          }
+        }
 
-          let flatData = Object.entries(state.userBasket).filter(([n,q]) => {
-              if (n === "_catinfo") return false;
-              if (String(q).trim() === "-" || String(q).trim() === "--" || String(q).trim() === "") return false;
-              if (state.currentMode !== 'checklist' && (q == 0 || String(q) === "0")) return false; 
-              
-              if (state.currentMode === 'order' || state.currentMode === 'new_shop') {
-                  let itemExists = Object.values(state.productCatalog).some(c => c && c.name === n);
-                  if (!itemExists) return false;
-              }
-              return true;
-          }).map(([n,q]) => {
-                let catName = (state.userBasket["_catinfo"] && state.userBasket["_catinfo"][n]) || (state.productCatalog[n] ? state.productCatalog[n].cat : "Прочее");
-                return {name: n, qty: q, cat: catName};
-          });
+        let flatData = Object.entries(state.userBasket).filter(([n,q]) => {
+            if (n === "_catinfo") return false;
+            if (String(q).trim() === "-" || String(q).trim() === "--" || String(q).trim() === "") return false;
+            if (state.currentMode !== 'checklist' && (q == 0 || String(q) === "0")) return false; 
+            
+            if (state.currentMode === 'order' || state.currentMode === 'new_shop') {
+                let itemExists = Object.values(state.productCatalog).some(c => c && c.name === n);
+                if (!itemExists) return false;
+            }
+            return true;
+        }).map(([n,q]) => {
+            let catName = (state.userBasket["_catinfo"] && state.userBasket["_catinfo"][n]) || (state.productCatalog[n] ? state.productCatalog[n].cat : "Прочее");
+            return {name: n, qty: q, cat: catName};
+        });
 
-          if (flatData.length === 0 && state.currentMode !== 'checklist') return showPopupError("Внимание", "Заполните данные перед отправкой!");
+        if (flatData.length === 0 && state.currentMode !== 'checklist') return showPopupError("Внимание", "Заполните данные перед отправкой!");
 
-          // ⚡ ПРОВЕРКА ЛИМИТА КУПЕРА
-          if ((state.currentMode === 'order' || state.currentMode === 'new_shop') && state.tempTotalKuper !== undefined) {
-              // Если Лента пустая или перевелась в Купер, и общая сумма Купера меньше 1000
-              if (state.tempTotalKuper > 0 && state.tempTotalKuper < 1000) {
-                  let diff = 1000 - state.tempTotalKuper;
-                  showPopupError("Минимальная сумма", `Не хватает до минимальной суммы Купера: <b>~ ${Math.round(diff)} ₽</b><br><small>Текущая сумма: ${Math.round(state.tempTotalKuper)} ₽</small>`);
-                  return;
-              }
-          }
+        // ⚡ ПРОВЕРКА МИНИМАЛЬНЫХ СУММ ДЛЯ КОРЗИНЫ
+        if ((state.currentMode === 'order' || state.currentMode === 'new_shop') && state.tempTotalKuper !== undefined) {
+            if (state.tempTotalKuper > 0 && state.tempTotalKuper < 1000) {
+                let diff = 1000 - state.tempTotalKuper;
+                showPopupError("Минимальная сумма", `Не хватает до минимальной суммы Купера: <b>~ ${Math.round(diff)} ₽</b><br><small>Текущая сумма: ${Math.round(state.tempTotalKuper)} ₽</small>`);
+                return;
+            }
+        }
 
-          state.isProcessing = true;
-          let btn = document.getElementById('modal-submit-button'); if(btn) btn.innerText = "ОТПРАВЛЯЮ...";
-          let mainBtn = document.getElementById('main-action-button'); if(mainBtn) mainBtn.innerText = "ОТПРАВЛЯЮ...";
+        state.isProcessing = true;
+        let btn = document.getElementById('modal-submit-button'); if(btn) btn.innerText = "ОТПРАВЛЯЮ...";
+        let mainBtn = document.getElementById('main-action-button'); if(mainBtn) mainBtn.innerText = "ОТПРАВЛЯЮ...";
+        showGlobalLoader("Отправка данных..."); 
 
-          try {
-              if (state.currentMode === 'order' || state.currentMode === 'new_shop') {
-                  const existingSnap = await database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(10).once("value");
-                  let pendingKeyToUpdate = null;
-                  let mergedComments = [];
+        try {
+            if (state.currentMode === 'order' || state.currentMode === 'new_shop') {
+                const existingSnap = await database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(10).once("value");
+                let pendingKeyToUpdate = null;
+                let mergedComments = [];
 
-                  let newComment = document.getElementById('comment') ? document.getElementById('comment').value.trim() : "";
-                  if (newComment) mergedComments.push(newComment);
+                let newComment = document.getElementById('comment') ? document.getElementById('comment').value.trim() : "";
+                if (newComment) mergedComments.push(newComment);
 
-                  existingSnap.forEach(c => {
-                      let o = c.val();
-                      if (o && (o.mode === 'order' || o.mode === 'new_shop') && o.svod === false && o.ordered === false) {
-                          if (!pendingKeyToUpdate) pendingKeyToUpdate = c.key;
-                          else database.ref(`orders/${c.key}`).remove(); // Тихо удаляем дубликаты на фоне
-                      }
-                  });
+                existingSnap.forEach(c => {
+                    let o = c.val();
+                    if (o && (o.mode === 'order' || o.mode === 'new_shop') && o.svod === false && o.ordered === false) {
+                        if (!pendingKeyToUpdate) pendingKeyToUpdate = c.key;
+                        else database.ref(`orders/${c.key}`).remove();
+                    }
+                });
 
-                  let finalDataToSave = {
-                      shop: state.currentShop, mode: state.currentMode, items: flatData,
-                      comment: mergedComments.join(" | "), timestamp: Date.now(), userId: globalTgUserId,
-                      svod: false, ordered: false, lenta_received: false, ozon_received: false, kuper_received: false
-                  };
+                let finalDataToSave = {
+                    shop: state.currentShop, mode: state.currentMode, items: flatData,
+                    comment: mergedComments.join(" | "), timestamp: Date.now(), userId: globalTgUserId,
+                    svod: false, ordered: false, lenta_received: false, ozon_received: false, kuper_received: false
+                };
 
-                  // ⚡ ФОНОВАЯ ОТПРАВКА (БЕЗ await)
-                  if (pendingKeyToUpdate) {
-                      database.ref(`orders/${pendingKeyToUpdate}`).transaction((currentOrder) => {
-                          if (currentOrder) {
-                              let mergedItems = {};
-                              let oldItems = Array.isArray(currentOrder.items) ? currentOrder.items : Object.values(currentOrder.items || {});
-                              oldItems.forEach(i => {
-                                  if (i && i.name && i.name !== "НЕТ ЗАКАЗА") {
-                                      mergedItems[i.name] = { ...i, qty: parseFloat(i.qty) || 0 };
-                                  }
-                              });
-                              flatData.forEach(item => {
-                                  if (!mergedItems[item.name]) {
-                                      mergedItems[item.name] = { ...item, qty: parseFloat(item.qty) || 0 };
-                                  } else {
-                                      mergedItems[item.name].qty += parseFloat(item.qty) || 0;
-                                  }
-                              });
-                              currentOrder.items = Object.values(mergedItems);
-                              if (currentOrder.items.length === 0) currentOrder.items = [{name: "НЕТ ЗАКАЗА", qty: 0}];
+                // ⚡ ЖЕСТКИЙ СИНХРОННЫЙ АПДЕЙТ: Ждем завершения записи, чтобы корзина не слетала впустую
+                if (pendingKeyToUpdate) {
+                    let mergedItems = {};
+                    let snapNode = await database.ref(`orders/${pendingKeyToUpdate}`).once('value');
+                    let currentOrder = snapNode.val();
+                    
+                    if (currentOrder) {
+                        let oldItems = Array.isArray(currentOrder.items) ? currentOrder.items : Object.values(currentOrder.items || {});
+                        oldItems.forEach(i => {
+                            if (i && i.name && i.name !== "НЕТ ЗАКАЗА") {
+                                mergedItems[i.name] = { ...i, qty: parseFloat(i.qty) || 0 };
+                            }
+                        });
+                        flatData.forEach(item => {
+                            if (!mergedItems[item.name]) {
+                                mergedItems[item.name] = { ...item, qty: parseFloat(item.qty) || 0 };
+                            } else {
+                                mergedItems[item.name].qty += parseFloat(item.qty) || 0;
+                            }
+                        });
+                        finalDataToSave.items = Object.values(mergedItems);
+                        
+                        let comments = [];
+                        if (currentOrder.comment && currentOrder.comment.trim() !== "") comments.push(currentOrder.comment.trim());
+                        if (newComment) comments.push(newComment);
+                        finalDataToSave.comment = comments.join(" | ");
+                    }
+                    await database.ref(`orders/${pendingKeyToUpdate}`).set(finalDataToSave);
+                } else {
+                    await database.ref("orders").push(finalDataToSave);
+                }
+                
+            } else {
+                let recordPayload = {
+                    shop: state.currentShop, mode: state.currentMode, items: flatData,
+                    comment: document.getElementById('comment') ? document.getElementById('comment').value : "",
+                    timestamp: Date.now(), userId: globalTgUserId, svod: false, ordered: false,
+                    lenta_received: false, ozon_received: false, kuper_received: false
+                };
+                await database.ref("orders").push(recordPayload);
+            }
 
-                              let comments = [];
-                              if (currentOrder.comment && currentOrder.comment.trim() !== "") comments.push(currentOrder.comment.trim());
-                              if (newComment) comments.push(newComment);
-                              currentOrder.comment = comments.join(" | ");
+            localStorage.removeItem("draft_" + state.currentShop + "_" + state.currentMode);
+        } catch(e) {
+            hideGlobalLoader(); 
+            showPopupError("Ошибка", "Произошла ошибка при отправке.");
+            state.isProcessing = false;
+            if(btn) btn.innerText = "ПОДТВЕРДИТЬ И ОТПРАВИТЬ";
+            if(mainBtn) mainBtn.innerText = "ОТПРАВИТЬ";
+            return;
+        }
+    } 
 
-                              currentOrder.timestamp = Date.now();
-                              currentOrder.userId = globalTgUserId;
-                              return currentOrder; 
-                          }
-                          return finalDataToSave; 
-                      });
-                  } else {
-                      database.ref("orders").push(finalDataToSave);
-                  }
-                  
-              } else {
-                  let newRecordKey = database.ref("orders").push().key;
-                  let recordPayload = {
-                      shop: state.currentShop, mode: state.currentMode, items: flatData,
-                      comment: document.getElementById('comment') ? document.getElementById('comment').value : "",
-                      timestamp: Date.now(), userId: globalTgUserId, svod: false, ordered: false,
-                      lenta_received: false, ozon_received: false, kuper_received: false
-                  };
-
-                  // ⚡ ФОНОВАЯ ОТПРАВКА
-                  database.ref(`orders/${newRecordKey}`).transaction((currentRecord) => {
-                      if (!currentRecord) return recordPayload;
-                      return currentRecord;
-                  });
-              }
-
-              localStorage.removeItem("draft_" + state.currentShop + "_" + state.currentMode);
-          } catch(e) {
-              showPopupError("Ошибка", "Произошла ошибка при отправке.");
-              state.isProcessing = false;
-              if(btn) btn.innerText = "ПОДТВЕРДИТЬ И ОТПРАВИТЬ";
-              if(mainBtn) mainBtn.innerText = "ОТПРАВИТЬ";
-              return;
-          }
-      } 
-
-      // ⚡ МГНОВЕННЫЙ ВИЗУАЛЬНЫЙ ФИДБЕК
-      toggleCartModal(false);
-      document.getElementById('success-screen').style.display = 'flex';
-      
-      setTimeout(() => {
-          document.getElementById('success-screen').style.display = 'none';
-          if(document.getElementById('comment')) document.getElementById('comment').value = "";
-          
-          let previousMode = state.currentMode; 
-          
-          state.userBasket = {};
-          state.isProcessing = false;
-          let btn = document.getElementById('modal-submit-button');
-          let mainBtn = document.getElementById('main-action-button');
-          if(btn) btn.innerText = "ПОДТВЕРДИТЬ И ОТПРАВИТЬ";
-          if(mainBtn) mainBtn.innerText = "ОТПРАВИТЬ";
-          
-          updateBadgeUI();
-          state.screenHistory = [];
-          
-          if (previousMode === 'marketplace') {
-              returnToPanel(); 
-          } else if (previousMode === 'order' || previousMode === 'new_shop') {
-              showScreen('step-sub-orders', false);
-          } else if (previousMode === 'checklist' || previousMode === 'stoplist_fill') {
-              showScreen('step-sub-lists', false);
-          } else {
-              showScreen('step-2', false); 
-          }
-      }, 1500); // ⚡ Ускорили экран Успеха
-   }
+    hideGlobalLoader(); 
+    toggleCartModal(false);
+    document.getElementById('success-screen').style.display = 'flex';
+    
+    setTimeout(() => {
+        document.getElementById('success-screen').style.display = 'none';
+        if(document.getElementById('comment')) document.getElementById('comment').value = "";
+        
+        let previousMode = state.currentMode; 
+        state.userBasket = {};
+        state.isProcessing = false;
+        
+        if(btn) btn.innerText = "ПОДТВЕРДИТЬ И ОТПРАВИТЬ";
+        if(mainBtn) mainBtn.innerText = "ОТПРАВИТЬ";
+        
+        updateBadgeUI();
+        state.screenHistory = [];
+        
+        if (previousMode === 'marketplace') {
+            returnToPanel(); 
+        } else if (previousMode === 'order' || previousMode === 'new_shop') {
+            showScreen('step-sub-orders', false);
+        } else if (previousMode === 'checklist' || previousMode === 'stoplist_fill') {
+            showScreen('step-sub-lists', false);
+        } else {
+            showScreen('step-2', false); 
+        }
+    }, 1200);
+}
   
     function processNoOrder() {
         if(!checkShopSelected()) return;
@@ -3959,41 +3950,25 @@ function showLastOrder() {
     // ⚡ ДВИЖОК НУЛЕВОГО ОЖИДАНИЯ (Фоновая синхронизация)
     // ==========================================
     function startRealtimeUpdates() {
-        // Базовые каталоги
-        const paths = ['order', 'newshop', 'stoplist', 'checklist'];
+        const paths = ['order', 'newshop', 'stoplist', 'checklist', 'menu', 'espresso_recipes', 'tasks_calendar', 'knowledge_base'];
         paths.forEach(p => {
-            database.ref('catalogs/' + p).on('value', snap => {
+            let dbPath = (p === 'menu' || p === 'order' || p === 'newshop' || p === 'stoplist' || p === 'checklist') ? 'catalogs/' + p : p;
+            database.ref(dbPath).on('value', snap => {
                 let fresh = snap.val();
                 if (fresh) {
                     if (!state.cachedCatalogs) state.cachedCatalogs = {};
                     state.cachedCatalogs[p] = fresh;
-                    saveToRealCache(p, fresh);
-                    triggerActiveRender(); 
+                    saveToRealCache(p, fresh); // Записываем в вечную память IndexedDB на телефоне
+                    
+                    if (state.currentMode === 'menu' && p === 'menu') {
+                        state.menuCatalog = Object.assign({}, fresh);
+                        if (typeof renderMenuApp === 'function') renderMenuApp();
+                    }
+                    if (state.currentMode === 'espresso' && p === 'espresso_recipes') renderEspressoApp();
+                    if (state.currentMode === 'calendar_tasks' && p === 'tasks_calendar') renderMiniCalendar(new Date());
                 }
             });
         });
-
-        // ⚡ ОТЛОЖЕННАЯ ЗАГРУЗКА ТЯЖЕЛЫХ И НОВЫХ ВКЛАДОК (Эспрессо, Календарь, БЗ)
-        setTimeout(() => {
-            ['menu', 'espresso_recipes', 'tasks_calendar', 'knowledge_base'].forEach(p => {
-                let dbPath = p === 'menu' ? 'catalogs/menu' : p;
-                database.ref(dbPath).on('value', snap => {
-                    let fresh = snap.val();
-                    if (fresh) {
-                        if (!state.cachedCatalogs) state.cachedCatalogs = {};
-                        state.cachedCatalogs[p] = fresh;
-                        saveToRealCache(p, fresh);
-                        
-                        if (state.currentMode === 'menu' && p === 'menu') {
-                            state.menuCatalog = Object.assign({}, fresh);
-                            if (typeof renderMenuApp === 'function') renderMenuApp();
-                        }
-                        if (state.currentMode === 'espresso' && p === 'espresso_recipes') renderEspressoApp();
-                        if (state.currentMode === 'calendar_tasks' && p === 'tasks_calendar') renderMiniCalendar(new Date());
-                    }
-                });
-            });
-        }, 2000);
     }
 
   function startShopDataSync() {
@@ -4062,26 +4037,14 @@ function showLastOrder() {
   // ==========================================
     // ☕ РЕЦЕПТЫ ЭСПРЕССО (СВАЙП ОДИНАРНЫЙ/ДВОЙНОЙ И МГНОВЕННАЯ ЗАГРУЗКА)
     // ==========================================
+    let currentEspressoWindow = 'double'; // Окно по умолчанию
+
     async function initEspressoWorkflow() {
         if(!checkShopSelected()) return;
         triggerHaptic();
         state.currentMode = 'espresso';
         showScreen('step-espresso');
-        
-        if (state.cachedCatalogs && state.cachedCatalogs['espresso_recipes']) {
-            renderEspressoApp();
-        } else {
-            showGlobalLoader("Загрузка рецептов...");
-            let [espSnap, kbSnap] = await Promise.all([
-                database.ref('espresso_recipes').once('value'),
-                database.ref('knowledge_base').once('value')
-            ]);
-            if (!state.cachedCatalogs) state.cachedCatalogs = {};
-            state.cachedCatalogs['espresso_recipes'] = espSnap.val() || {};
-            state.cachedCatalogs['knowledge_base'] = kbSnap.val() || {};
-            hideGlobalLoader();
-            renderEspressoApp();
-        }
+        renderEspressoApp(); // ⚡ МГНОВЕННОЕ ОТКРЫТИЕ ИЗ ОФЛАЙН-КЭША
     }
 
     window.renderEspressoApp = function() {
@@ -4092,14 +4055,19 @@ function showLastOrder() {
         let currD = sData.current_double || sData.current || { in: "-", out: "-", time: "-", result: "-", roast: "---", brand: "---" };
         let currS = sData.current_single || { in: "-", out: "-", time: "-", result: "-", roast: "---", brand: "---" };
         
-        let kbEspresso = Object.values(kbData).filter(k => 
-            (k.cat && k.cat.toLowerCase().includes('эспрессо')) || 
-            (k.title && k.title.toLowerCase().includes('эспрессо'))
-        );
+        // Связываем инструкцию
+        let linkedKbId = sData.linked_kb_id || espData.linked_kb_id || "";
+        let linkedDoc = kbData[linkedKbId];
 
-        const buildCard = (title, curr) => `
-            <div class="report-card" style="min-width:100%; scroll-snap-align: start; flex-shrink:0; background: linear-gradient(135deg, #795548 0%, #4E342E 100%); color:#fff; border:none; margin-bottom:0;">
-                <div style="font-weight:900; font-size:20px; text-align:center; margin-bottom:15px;">${title}</div>
+        let html = `
+        <!-- Вкладки окон эспрессо -->
+        <div style="display: flex; gap: 10px; margin-bottom: 15px; background: #fff; padding: 6px; border-radius: 14px; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
+            <button onclick="currentEspressoWindow = 'double'; renderEspressoApp();" style="flex: 1; padding: 12px; border: none; border-radius: 10px; font-size: 15px; font-weight: 900; ${currentEspressoWindow === 'double' ? 'background: #4E342E; color: #fff;' : 'background: transparent; color: #888;'}">Двойной эспрессо</button>
+            <button onclick="currentEspressoWindow = 'single'; renderEspressoApp();" style="flex: 1; padding: 12px; border: none; border-radius: 10px; font-size: 15px; font-weight: 900; ${currentEspressoWindow === 'single' ? 'background: #4E342E; color: #fff;' : 'background: transparent; color: #888;'}">Одинарный эспрессо</button>
+        </div>`;
+
+        const renderCard = (title, curr) => `
+            <div class="report-card" style="background: linear-gradient(135deg, #795548 0%, #4E342E 100%); color:#fff; border:none; margin-bottom:15px;">
                 <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; text-align:center; margin-bottom:15px;">
                     <div style="background:rgba(255,255,255,0.1); padding:10px; border-radius:12px;">
                         <div style="font-size:12px; opacity:0.8;">Вход</div>
@@ -4123,29 +4091,27 @@ function showLastOrder() {
                 </div>
             </div>`;
 
-        let html = `
-            <div style="text-align:center; color:#888; font-size:13px; font-weight:bold; margin-bottom:10px;">← Свайп вбок для переключения →</div>
-            <div style="display:flex; overflow-x:auto; scroll-snap-type: x mandatory; scroll-behavior: smooth; gap:15px; padding-bottom:15px;">
-                ${buildCard('☕ Двойной эспрессо', currD)}
-                ${buildCard('☕ Одинарный эспрессо', currS)}
-            </div>`;
+        if (currentEspressoWindow === 'double') {
+            html += renderCard('Двойной эспрессо', currD);
+        } else {
+            html += renderCard('Одинарный эспрессо', currS);
+        }
 
-        if (kbEspresso.length > 0) {
-            html += `<h4 style="margin-top:10px; color:#4E342E; font-size:18px;">📚 Инструкции по настройке</h4>`;
-            kbEspresso.forEach(doc => {
-                let formattedText = doc.text ? doc.text.replace(/\n/g, '<br>') : '';
-                let regex = /\[ФОТО_(\d+)\](.*?)\[\/ФОТО_\d+\]/g;
-                formattedText = formattedText.replace(regex, (match, n, word) => {
-                    let photoData = doc[`photo_${n}`] || "";
-                    if (photoData) return `<span style="color:#0288d1; border-bottom:1px dashed #0288d1; cursor:pointer; font-weight:bold;" onclick="openPhotoModal('${escapeName(word)}', '${photoData}')">📷 ${word}</span>`;
-                    return `<b>${word}</b>`;
-                });
-
-                html += `<div class="report-card" style="padding:15px; border:1px solid #ddd; margin-bottom:10px;">
-                            <div style="font-weight:900; color:#4E342E; font-size:16px; margin-bottom:10px;">${doc.title}</div>
-                            <div style="font-size:14px; line-height:1.5;">${formattedText}</div>
-                         </div>`;
+        // Выводим прикрепленную инструкцию из БЗ
+        if (linkedDoc) {
+            let formattedText = linkedDoc.text ? linkedDoc.text.replace(/\n/g, '<br>') : '';
+            let regex = /\[ФОТО_(\d+)\](.*?)\[\/ФОТО_\d+\]/g;
+            formattedText = formattedText.replace(regex, (match, n, word) => {
+                let photoData = linkedDoc[`photo_${n}`] || "";
+                if (photoData) return `<span style="color:#0288d1; border-bottom:1px dashed #0288d1; cursor:pointer; font-weight:bold;" onclick="openPhotoModal('${escapeName(word)}', '${photoData}')">📷 ${word}</span>`;
+                return `<b>${word}</b>`;
             });
+
+            html += `<h4 style="margin-top:20px; color:#4E342E; font-size:18px;">📚 Справочная информация:</h4>
+                     <div class="report-card" style="padding:15px; border:1px solid #ddd;">
+                        <div style="font-weight:900; color:#4E342E; font-size:16px; margin-bottom:10px;">${linkedDoc.title}</div>
+                        <div style="font-size:14px; line-height:1.5;">${formattedText}</div>
+                     </div>`;
         }
 
         document.getElementById('espresso-container').innerHTML = html;
@@ -4154,26 +4120,12 @@ function showLastOrder() {
     // ==========================================
     // 📝 КАЛЕНДАРЬ ЗАДАЧ (МГНОВЕННАЯ ЗАГРУЗКА И ФИОЛЕТОВЫЙ ДИЗАЙН)
     // ==========================================
-    async function initCalendarTasksWorkflow() {
+   async function initCalendarTasksWorkflow() {
         if(!checkShopSelected()) return;
         triggerHaptic();
         state.currentMode = 'calendar_tasks';
         showScreen('step-tasks-calendar');
-        
-        if (state.cachedCatalogs && state.cachedCatalogs['tasks_calendar']) {
-            renderMiniCalendar(new Date());
-        } else {
-            showGlobalLoader("Загрузка задач...");
-            let [calSnap, kbSnap] = await Promise.all([
-                database.ref('tasks_calendar').once('value'),
-                database.ref('knowledge_base').once('value')
-            ]);
-            if (!state.cachedCatalogs) state.cachedCatalogs = {};
-            state.cachedCatalogs['tasks_calendar'] = calSnap.val() || {};
-            state.cachedCatalogs['knowledge_base'] = kbSnap.val() || {};
-            hideGlobalLoader();
-            renderMiniCalendar(new Date());
-        }
+        renderMiniCalendar(new Date()); // ⚡ МГНОВЕННЫЙ ОТКРЫТИЕ
     }
 
     window.renderMiniCalendar = function(targetDate) {
@@ -4187,26 +4139,25 @@ function showLastOrder() {
         let firstDay = new Date(year, month, 1).getDay();
         let startOffset = (firstDay || 7) - 1; 
         let daysInMonth = new Date(year, month + 1, 0).getDate();
-        
         let monthNames = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
 
-        // ⚡ НЕЖНО-ФИОЛЕТОВЫЙ ГРАДИЕНТ (#B39DDB -> #7E57C2)
+        // ⚡ НЕЖНО-ФИОЛЕТОВЫЙ ДИЗАЙН КЕНЛАДАРЯ
         let html = `
-        <div class="report-card" style="padding:15px; margin-bottom:15px; background:linear-gradient(135deg, #B39DDB 0%, #7E57C2 100%); color:#fff; border:none;">
+        <div class="report-card" style="padding:15px; margin-bottom:15px; background:linear-gradient(135deg, #ede7f6 0%, #d1c4e9 100%); color:#311B92; border:1px solid #b39ddb; box-shadow:none;">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
-                <button onclick="changeMiniCalMonth(-1, ${year}, ${month})" style="background:rgba(255,255,255,0.2); border:none; color:#fff; font-size:18px; padding:5px 15px; border-radius:8px; font-weight:bold;">◀</button>
-                <div style="font-size:18px; font-weight:900; text-transform:uppercase;">${monthNames[month]} ${year}</div>
-                <button onclick="changeMiniCalMonth(1, ${year}, ${month})" style="background:rgba(255,255,255,0.2); border:none; color:#fff; font-size:18px; padding:5px 15px; border-radius:8px; font-weight:bold;">▶</button>
+                <button onclick="changeMiniCalMonth(-1, ${year}, ${month})" style="background:#7E57C2; border:none; color:#fff; font-size:16px; padding:6px 14px; border-radius:8px; font-weight:bold; cursor:pointer;">◀</button>
+                <div style="font-size:18px; font-weight:900; text-transform:uppercase; color:#311B92;">${monthNames[month]} ${year}</div>
+                <button onclick="changeMiniCalMonth(1, ${year}, ${month})" style="background:#7E57C2; border:none; color:#fff; font-size:16px; padding:6px 14px; border-radius:8px; font-weight:bold; cursor:pointer;">▶</button>
             </div>
             
-            <div class="cal-grid" style="gap:2px;">
-                <div class="cal-header" style="color:#fff; opacity:0.9;">Пн</div><div class="cal-header" style="color:#fff; opacity:0.9;">Вт</div>
-                <div class="cal-header" style="color:#fff; opacity:0.9;">Ср</div><div class="cal-header" style="color:#fff; opacity:0.9;">Чт</div>
-                <div class="cal-header" style="color:#fff; opacity:0.9;">Пт</div><div class="cal-header" style="color:#FFD54F;">Сб</div>
-                <div class="cal-header" style="color:#FFD54F;">Вс</div>
+            <div class="cal-grid" style="gap:4px;">
+                <div class="cal-header" style="color:#311B92;">Пн</div><div class="cal-header" style="color:#311B92;">Вт</div>
+                <div class="cal-header" style="color:#311B92;">Ср</div><div class="cal-header" style="color:#311B92;">Чт</div>
+                <div class="cal-header" style="color:#311B92;">Пт</div><div class="cal-header" style="color:#e53935;">Сб</div>
+                <div class="cal-header" style="color:#e53935;">Вс</div>
         `;
         
-        for (let i = 0; i < startOffset; i++) { html += `<div style="background:transparent;"></div>`; }
+        for (let i = 0; i < startOffset; i++) { html += `<div></div>`; }
 
         for (let d = 1; d <= daysInMonth; d++) {
             let curr = new Date(year, month, d);
@@ -4214,23 +4165,29 @@ function showLastOrder() {
             
             let dayTasks = getTasksForDate(curr, state.tasksArray);
             
-            let bg = isToday ? "#FFF3E0" : "#fff";
-            let color = isToday ? "#e65100" : "#4A148C";
-            let dotHtml = dayTasks.length > 0 ? `<div style="width:6px; height:6px; background:#e53935; border-radius:50%; position:absolute; bottom:4px;"></div>` : "";
+            let bg = isToday ? "#ffb74d" : "#fff";
+            let color = isToday ? "#fff" : "#311B92";
             
-            html += `<div class="cal-cell" style="background:${bg}; border:none; cursor:pointer;" onclick="showTasksForDay(${year}, ${month}, ${d})">
+            // ⚡ ТЕКСТОВЫЕ МАРКЕРЫ В КЛЕТКАХ КАЛЕНДАРЯ
+            let labelHtml = "";
+            if (dayTasks.length > 0) {
+                let lbl = dayTasks[0].name.substring(0,4);
+                let plus = dayTasks.length > 1 ? "+" : "";
+                labelHtml = `<div style="font-size:9px; background:#7E57C2; color:#fff; padding:1px 3px; border-radius:3px; max-width:100%; overflow:hidden; text-transform:uppercase; margin-top:2px; font-weight:bold;">${lbl}${plus}</div>`;
+            }
+            
+            html += `<div class="cal-cell" style="background:${bg}; border:1px solid #e1bee7; border-radius:10px; min-height:55px; justify-content:flex-start; padding-top:4px;" onclick="showTasksForDay(${year}, ${month}, ${d})">
                         <span style="font-weight:900; color:${color}; font-size:14px;">${d}</span>
-                        ${dotHtml}
+                        ${labelHtml}
                      </div>`;
         }
         html += `</div></div><div id="daily-tasks-list"></div>`;
         
         document.getElementById('tasks-calendar-container').innerHTML = html;
-        
         if (month === today.getMonth() && year === today.getFullYear()) showTasksForDay(year, month, today.getDate());
         else showTasksForDay(year, month, 1);
     }
-
+  
     window.getTasksForDate = function(dateObj, tasksArray) {
         let tasksForDay = [];
         let dayOfWeek = dateObj.getDay(); 
@@ -4409,7 +4366,7 @@ function showLastOrder() {
         updateHeaderSelectOptions();
         state.cachedCatalogs = {};
         
-        const paths = ['order', 'newshop', 'stoplist', 'checklist', 'menu'];
+        const paths = ['order', 'newshop', 'stoplist', 'checklist', 'menu', 'espresso_recipes', 'tasks_calendar', 'knowledge_base'];
         for (let p of paths) {
             let cachedData = await loadFromRealCache(p);
             if (cachedData) state.cachedCatalogs[p] = cachedData;

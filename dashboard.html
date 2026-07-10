@@ -6007,8 +6007,10 @@ async function exportGraphsToExcel() {
     }
 
     // ==========================================
-    // 📅 ВКЛАДКА: КАЛЕНДАРЬ ЗАДАЧ
+    // 📅 ВКЛАДКА: КАЛЕНДАРЬ ЗАДАЧ (ДАШБОРД)
     // ==========================================
+    let adminCalDate = new Date();
+
     window.renderCalendarTab = function() {
         const box = document.getElementById('content');
         setupUniversalActionBar(`
@@ -6021,7 +6023,7 @@ async function exportGraphsToExcel() {
             </div>
         `, true, '');
 
-        let kbOptions = `<option value="">-- Не прикреплять базу знаний --</option>`;
+        let kbOptions = `<option value="">-- Без инструкции --</option>`;
         Object.keys(cachedData.knowledge || {}).forEach(k => {
             let item = cachedData.knowledge[k];
             kbOptions += `<option value="${k}">${item.title} (${item.cat})</option>`;
@@ -6030,23 +6032,39 @@ async function exportGraphsToExcel() {
         let tasks = cachedData.calendar || {};
         
         let html = `<h3 style="color:#4A148C; font-size:24px; margin-top:0; margin-bottom:15px;">📅 Регулярные задачи сотрудников</h3>`;
-        html += `<div style="overflow-x:auto;"><table style="min-width:1000px;" id="tasks-table">
+        
+        // ⚡ РАЗДЕЛЯЕМ ЭКРАН НА ДВЕ ЧАСТИ: ТАБЛИЦА (СЛЕВА) И КАЛЕНДАРЬ-ПРЕВЬЮ (СПРАВА)
+        html += `<div style="display:flex; gap:20px; align-items:flex-start; flex-wrap:wrap;">`;
+        
+        // --- ЛЕВАЯ ЧАСТЬ: ТАБЛИЦА ---
+        html += `<div style="flex:2; min-width:700px; overflow-x:auto;">
+                    <table style="width:100%;" id="tasks-table">
                     <tr>
-                        <th style="width:300px;">Название задачи</th>
-                        <th style="width:250px;">Периодичность</th>
-                        <th>Прикрепить инструкцию из Базы Знаний</th>
-                        <th style="width:80px; text-align:center;">Удалить</th>
+                        <th style="width:250px;">Название задачи</th>
+                        <th style="width:200px;">Периодичность</th>
+                        <th style="width:160px;">Точка отсчета</th>
+                        <th>Инструкция (База Знаний)</th>
+                        <th style="width:60px; text-align:center;">Удалить</th>
                     </tr>`;
 
         if (Object.keys(tasks).length === 0) {
-            html += `<tr id="no-tasks-row"><td colspan="4" style="text-align:center; padding:20px; color:#888; font-weight:bold;">Задач пока нет. Свобода!</td></tr>`;
+            html += `<tr id="no-tasks-row"><td colspan="5" style="text-align:center; padding:20px; color:#888; font-weight:bold;">Задач пока нет.</td></tr>`;
         } else {
             Object.keys(tasks).forEach(k => {
                 html += generateTaskRowHtml(k, tasks[k], kbOptions);
             });
         }
         html += `</table></div>`;
+
+        // --- ПРАВАЯ ЧАСТЬ: ВИЗУАЛЬНЫЙ КАЛЕНДАРЬ ---
+        html += `<div style="flex:1; min-width:320px; background:#fff; padding:20px; border-radius:16px; box-shadow:0 4px 20px rgba(0,0,0,0.05); border:2px solid #e1bee7;" id="admin-calendar-preview">
+                    <!-- Календарь отрисуется тут -->
+                 </div>`;
+                 
+        html += `</div>`;
         box.innerHTML = html;
+        
+        renderAdminCalendar(); // Запускаем отрисовку визуального календаря
     }
 
     window.generateTaskRowHtml = function(k, t, kbOptions) {
@@ -6059,17 +6077,19 @@ async function exportGraphsToExcel() {
             <option value="every_fri" ${t.period === 'every_fri'?'selected':''}>Каждую Пятницу</option>
             <option value="every_sat" ${t.period === 'every_sat'?'selected':''}>Каждую Субботу</option>
             <option value="every_sun" ${t.period === 'every_sun'?'selected':''}>Каждое Воскресенье</option>
-            <option value="1st_week" ${t.period === '1st_week'?'selected':''}>Первая неделя месяца</option>
+            <option value="1st_week" ${t.period === '1st_week'?'selected':''}>Первая неделя (1-7 числа)</option>
             <option value="every_3_days" ${t.period === 'every_3_days'?'selected':''}>Раз в 3 дня</option>
-            <option value="monthly" ${t.period === 'monthly'?'selected':''}>Раз в месяц (1 число)</option>
+            <option value="monthly" ${t.period === 'monthly'?'selected':''}>Раз в месяц</option>
         `;
         let modifiedKbOptions = kbOptions.replace(`value="${t.kb_id}"`, `value="${t.kb_id}" selected`);
+        let startD = t.startDate ? t.startDate : new Date().toISOString().split('T')[0];
 
         return `<tr class="task-row" data-id="${k}" style="background:#fff;">
-            <td><input type="text" class="task-name" value="${t.name || ''}" placeholder="Название задачи" style="width:100%; border:2px solid #ccc; font-weight:bold; color:#311b92;"></td>
-            <td><select class="task-period" style="width:100%; font-size:14px; border:2px solid #ccc;">${perOptions}</select></td>
+            <td><input type="text" class="task-name" value="${t.name || ''}" placeholder="Название задачи" style="width:100%; border:2px solid #ccc; font-weight:bold; color:#311b92;" onchange="renderAdminCalendar()"></td>
+            <td><select class="task-period" style="width:100%; font-size:14px; border:2px solid #ccc;" onchange="renderAdminCalendar()">${perOptions}</select></td>
+            <td><input type="date" class="task-start" value="${startD}" style="width:100%; font-size:14px; border:2px solid #ccc; padding:10px; font-weight:bold; color:#e65100; background:#fff3e0;" title="Дата отсчета (важно для 'Раз в X дней')" onchange="renderAdminCalendar()"></td>
             <td><select class="task-kb" style="width:100%; font-size:14px; border:2px solid #ccc;">${modifiedKbOptions}</select></td>
-            <td style="text-align:center;"><button class="btn-del" onclick="this.closest('tr').remove()">🗑</button></td>
+            <td style="text-align:center;"><button class="btn-del" onclick="this.closest('tr').remove(); renderAdminCalendar();">🗑</button></td>
         </tr>`;
     }
 
@@ -6078,13 +6098,14 @@ async function exportGraphsToExcel() {
         if (noTasks) noTasks.remove();
         
         let k = "task_" + Date.now();
-        let kbOptions = `<option value="">-- Не прикреплять базу знаний --</option>`;
+        let kbOptions = `<option value="">-- Без инструкции --</option>`;
         Object.keys(cachedData.knowledge || {}).forEach(kbId => {
-            kbOptions += `<option value="${kbId}">${cachedData.knowledge[kbId].title} (${cachedData.knowledge[kbId].cat})</option>`;
+            kbOptions += `<option value="${kbId}">${cachedData.knowledge[kbId].title}</option>`;
         });
         
-        let html = generateTaskRowHtml(k, {name: "", period: "every_day", kb_id: ""}, kbOptions);
+        let html = generateTaskRowHtml(k, {name: "", period: "every_day", kb_id: "", startDate: new Date().toISOString().split('T')[0]}, kbOptions);
         document.getElementById('tasks-table').insertAdjacentHTML('beforeend', html);
+        renderAdminCalendar();
     }
 
     window.saveCalendarTasks = async function() {
@@ -6092,10 +6113,12 @@ async function exportGraphsToExcel() {
         document.querySelectorAll('.task-row').forEach(row => {
             let id = row.getAttribute('data-id');
             let name = row.querySelector('.task-name').value.trim();
+            let startDate = row.querySelector('.task-start').value;
             if (name) {
                 updates[id] = { 
                     name: name, 
                     period: row.querySelector('.task-period').value, 
+                    startDate: startDate,
                     kb_id: row.querySelector('.task-kb').value 
                 };
             }
@@ -6115,6 +6138,123 @@ async function exportGraphsToExcel() {
             alert("❌ Ошибка: " + e.message);
         }
     }
+
+    // ⚡ ЛОГИКА ОТРИСОВКИ МИНИ-КАЛЕНДАРЯ В ДАШБОРДЕ
+    window.renderAdminCalendar = function(deltaMonth = 0) {
+        let container = document.getElementById('admin-calendar-preview');
+        if (!container) return;
+
+        adminCalDate.setMonth(adminCalDate.getMonth() + deltaMonth);
+        let year = adminCalDate.getFullYear();
+        let month = adminCalDate.getMonth();
+        let today = new Date();
+        
+        let firstDay = new Date(year, month, 1).getDay();
+        let startOffset = (firstDay || 7) - 1; 
+        let daysInMonth = new Date(year, month + 1, 0).getDate();
+        let monthNames = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
+
+        // Собираем текущие задачи прямо из таблицы (чтобы превью работало до сохранения)
+        let currentTasks = [];
+        document.querySelectorAll('.task-row').forEach(row => {
+            let name = row.querySelector('.task-name').value.trim();
+            if (name) {
+                currentTasks.push({
+                    name: name,
+                    period: row.querySelector('.task-period').value,
+                    startDate: row.querySelector('.task-start').value
+                });
+            }
+        });
+
+        let html = `
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px; background:#4A148C; color:#fff; padding:10px; border-radius:10px;">
+            <button onclick="renderAdminCalendar(-1)" style="background:rgba(255,255,255,0.2); border:none; color:#fff; font-size:16px; padding:5px 12px; border-radius:6px; cursor:pointer;">◀</button>
+            <div style="font-size:16px; font-weight:900;">${monthNames[month]} ${year}</div>
+            <button onclick="renderAdminCalendar(1)" style="background:rgba(255,255,255,0.2); border:none; color:#fff; font-size:16px; padding:5px 12px; border-radius:6px; cursor:pointer;">▶</button>
+        </div>
+        
+        <div style="display:grid; grid-template-columns: repeat(7, 1fr); gap:4px; text-align:center; margin-bottom:5px;">
+            <div style="font-weight:900; font-size:12px; color:#888;">Пн</div><div style="font-weight:900; font-size:12px; color:#888;">Вт</div>
+            <div style="font-weight:900; font-size:12px; color:#888;">Ср</div><div style="font-weight:900; font-size:12px; color:#888;">Чт</div>
+            <div style="font-weight:900; font-size:12px; color:#888;">Пт</div><div style="font-weight:900; font-size:12px; color:#f57c00;">Сб</div>
+            <div style="font-weight:900; font-size:12px; color:#f57c00;">Вс</div>
+        </div>
+        <div style="display:grid; grid-template-columns: repeat(7, 1fr); gap:4px; text-align:center;">`;
+        
+        for (let i = 0; i < startOffset; i++) { html += `<div></div>`; }
+
+        for (let d = 1; d <= daysInMonth; d++) {
+            let curr = new Date(year, month, d);
+            let isToday = (curr.getDate() === today.getDate() && curr.getMonth() === today.getMonth() && curr.getFullYear() === today.getFullYear());
+            
+            let dayTasks = getTasksForDateLogic(curr, currentTasks);
+            
+            let bg = isToday ? "#FFF3E0" : "#fafafa";
+            let border = isToday ? "2px solid #FF9800" : "1px solid #eee";
+            let color = isToday ? "#e65100" : "#333";
+            
+            let dots = "";
+            if (dayTasks.length > 0) {
+                let maxDots = Math.min(dayTasks.length, 3);
+                for(let i=0; i<maxDots; i++) dots += `<div style="width:6px; height:6px; background:#4A148C; border-radius:50%; display:inline-block; margin:1px;"></div>`;
+                if (dayTasks.length > 3) dots += `<div style="font-size:10px; color:#4A148C; line-height:6px; font-weight:bold;">+</div>`;
+            }
+
+            let tooltip = dayTasks.length > 0 ? dayTasks.map(t=>t.name).join('&#10;') : "Нет задач";
+
+            html += `<div title="${tooltip}" style="aspect-ratio:1; background:${bg}; border:${border}; border-radius:8px; display:flex; flex-direction:column; align-items:center; justify-content:flex-start; padding-top:4px; cursor:help;">
+                        <span style="font-weight:900; color:${color}; font-size:14px;">${d}</span>
+                        <div style="margin-top:auto; padding-bottom:4px;">${dots}</div>
+                     </div>`;
+        }
+        html += `</div>`;
+        html += `<div style="margin-top:15px; font-size:12px; color:#888; text-align:center;">Наведите курсор на день с точками, чтобы увидеть превью задач на этот день.</div>`;
+        
+        container.innerHTML = html;
+    }
+
+    // ⚡ ГЛОБАЛЬНАЯ ЛОГИКА РАСЧЕТА ЗАДАЧ 
+    window.getTasksForDateLogic = function(dateObj, tasksArray) {
+        let tasksForDay = [];
+        let dayOfWeek = dateObj.getDay(); 
+        let d = dateObj.getDate();
+        
+        // Сброс часов для точного сравнения
+        let currentTarget = new Date(dateObj);
+        currentTarget.setHours(0,0,0,0);
+        
+        tasksArray.forEach(t => {
+            let p = t.period;
+            let isMatch = false;
+            
+            // Если дата отсчета не указана, считаем с 1 января 2024 года (старый вариант)
+            let startD = t.startDate ? new Date(t.startDate) : new Date(2024, 0, 1);
+            startD.setHours(0,0,0,0);
+
+            // Задача не может начаться ДО даты её старта
+            if (currentTarget >= startD) {
+                if (p === 'every_day') isMatch = true;
+                else if (p === 'every_mon' && dayOfWeek === 1) isMatch = true;
+                else if (p === 'every_tue' && dayOfWeek === 2) isMatch = true;
+                else if (p === 'every_wed' && dayOfWeek === 3) isMatch = true;
+                else if (p === 'every_thu' && dayOfWeek === 4) isMatch = true;
+                else if (p === 'every_fri' && dayOfWeek === 5) isMatch = true;
+                else if (p === 'every_sat' && dayOfWeek === 6) isMatch = true;
+                else if (p === 'every_sun' && dayOfWeek === 0) isMatch = true;
+                else if (p === 'monthly' && d === startD.getDate()) isMatch = true; // Привязка к числу старта
+                else if (p === '1st_week' && d <= 7) isMatch = true;
+                else if (p === 'every_3_days') {
+                    let diffTime = Math.abs(currentTarget - startD);
+                    let diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24)); 
+                    if (diffDays % 3 === 0) isMatch = true;
+                }
+            }
+            
+            if (isMatch) tasksForDay.push(t);
+        });
+        return tasksForDay;
+    }
     
     // ==========================================
     // ⚡ LIVE-ОБНОВЛЕНИЕ ДАШБОРДА В РЕАЛЬНОМ ВРЕМЕНИ (СИНХРОНИЗАЦИЯ КЭША)
@@ -6132,6 +6272,7 @@ async function exportGraphsToExcel() {
         if (currentTabType === 'checks_table' && !isChecklistEditMode) renderChecksTable();
         if (currentTabType === 'stats') renderStats();
     });
+    
 
     // 2. Все Справочники и Меню
     db.ref('catalogs').on('value', (snapshot) => {

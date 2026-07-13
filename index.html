@@ -4389,7 +4389,22 @@ function showLastOrder() {
     };
   
 // ==========================================
-    // ⚡ ГЛАВНЫЙ СТАРТ ПРИЛОЖЕНИЯ (ИСПРАВЛЕНА АВТОРИЗАЦИЯ)
+    // ⚡ ФОНОВАЯ СИНХРОНИЗАЦИЯ ДЛЯ АДМИНА/БОССА
+    // ==========================================
+    function startBossDataSync() {
+        database.ref("orders").orderByKey().limitToLast(300).on('value', snap => {
+            let arr = [];
+            snap.forEach(c => { 
+                let val = c.val(); 
+                if(val) { val.key = c.key; arr.push(val); } 
+            });
+            state.globalBossOrders = arr;
+            saveToRealCache('boss_orders', arr); // Сохраняем в вечную память телефона
+        });
+    }
+
+    // ==========================================
+    // ⚡ ГЛАВНЫЙ СТАРТ ПРИЛОЖЕНИЯ
     // ==========================================
    window.onload = async () => { 
         showGlobalLoader("Запуск приложения..."); 
@@ -4413,7 +4428,8 @@ function showLastOrder() {
         updateHeaderSelectOptions();
         state.cachedCatalogs = {};
         
-        const paths = const paths = ['order', 'newshop', 'stoplist', 'checklist', 'menu', 'espresso_recipes', 'tasks_calendar', 'knowledge_base'];
+        // ⚡ ИСПРАВЛЕНА ОПЕЧАТКА ТУТ:
+        const paths = ['order', 'newshop', 'stoplist', 'checklist', 'menu', 'espresso_recipes', 'tasks_calendar', 'knowledge_base'];
         for (let p of paths) {
             let cachedData = await loadFromRealCache(p);
             if (cachedData) state.cachedCatalogs[p] = cachedData;
@@ -4423,10 +4439,8 @@ function showLastOrder() {
         restoreMpDraft(); 
         if(typeof startRealtimeUpdates === 'function') startRealtimeUpdates(); 
 
-        // ⚡ 1. Ищем адрес локально
         let savedShop = localStorage.getItem("teiku_main_shop");
         
-        // ⚡ 2. Если локально пусто, тянем из облака Telegram (защита от сброса кэша)
         if (!savedShop && window.Telegram && Telegram.WebApp && Telegram.WebApp.CloudStorage) {
             savedShop = await new Promise((resolve) => {
                 Telegram.WebApp.CloudStorage.getItem("teiku_main_shop", (err, val) => {
@@ -4440,6 +4454,11 @@ function showLastOrder() {
         
         // ЛОГИКА РАСПРЕДЕЛЕНИЯ
         if (isAdmin || isBoss) {
+            // ⚡ Внедрен кэш Босса для мгновенного открытия отчетов
+            let cachedBoss = await loadFromRealCache('boss_orders');
+            if (cachedBoss) state.globalBossOrders = cachedBoss;
+            startBossDataSync(); 
+            
             openControlPanel(isAdmin ? 'admin' : 'boss'); 
         } else {
             if (savedShop) {

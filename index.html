@@ -2692,203 +2692,207 @@
     }
 
    async function validateAndSubmit(isFromModal) {
-    if (!isFromModal && (state.currentMode === 'order' || state.currentMode === 'new_shop' || state.currentMode === 'marketplace')) { toggleCartModal(true); return; }
-    if (state.isProcessing) return;
+        if (!isFromModal && (state.currentMode === 'order' || state.currentMode === 'new_shop' || state.currentMode === 'marketplace')) { toggleCartModal(true); return; }
+        if (state.isProcessing) return;
 
-    if (state.currentMode === 'marketplace') {
-        if (state.mpBasket.length === 0) return showPopupError("Внимание", "Корзина пуста!");
-        if (state.isMpEditMode) return showPopupError("Внимание", "Сначала сохраните изменения");
-        
-        state.isProcessing = true;
-        let btn = document.getElementById('modal-submit-button'); btn.innerText = "ОТПРАВЛЯЮ...";
-        showGlobalLoader("Отправка данных...");
-        
-        try {
-            let submitTimestamp = firebase.database.ServerValue.TIMESTAMP;
-            if (state.mpMonthOption === 'prev') {
-                let now = new Date();
-                let prevMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
-                submitTimestamp = prevMonthEnd.getTime();
-            }
-
-            let promises = [];
-            for(let item of state.mpBasket) {
-                promises.push(database.ref("marketplace_records").push({
-                    vendor: item.vendor,
-                    type: item.amount < 0 ? 'refund' : 'purchase',
-                    address: item.address,
-                    amount: parseFloat(item.amount),
-                    timestamp: submitTimestamp,
-                    userId: globalTgUserId
-                }));
-            }
-            await Promise.all(promises); // ⚡ Гарантированно ждем отправки всех записей маркетплейса
-            state.mpBasket = [];
-            localStorage.removeItem("draft_marketplace");
-        } catch(e) {
-            hideGlobalLoader();
-            showPopupError("Ошибка", e.message);
-            state.isProcessing = false; btn.innerText = "ПОДТВЕРДИТЬ И ОТПРАВИТЬ";
-            return;
-        }
-    } else {
-        if (state.currentMode === 'checklist') {
-            let missingCategories = new Set(); 
-            let totalMissing = 0;
-            for (let key in state.productCatalog) {
-                let item = state.productCatalog[key];
-                if (item && item.cat && item.name !== "Товар" && item.name !== "Дата заполнения") {
-                    let val = state.userBasket[item.name];
-                    if (val === undefined || val === null || String(val).trim() === "" || String(val).trim() === "-" || String(val).trim() === "--") { 
-                        missingCategories.add(item.cat); 
-                        totalMissing++; 
-                    }
-                }
-            }
-            if (totalMissing > 0) {
-                triggerHaptic(); 
-                let catList = Array.from(missingCategories).join(', ');
-                showPopupError("Чек-лист заполнен не полностью!", `Осталось позиций: ${totalMissing}.<br><small>Пожалуйста, проверьте: ${catList}</small>`);
-                return;
-            }
-        }
-
-        let flatData = Object.entries(state.userBasket).filter(([n,q]) => {
-            if (n === "_catinfo") return false;
-            if (String(q).trim() === "-" || String(q).trim() === "--" || String(q).trim() === "") return false;
-            if (state.currentMode !== 'checklist' && (q == 0 || String(q) === "0")) return false; 
+        if (state.currentMode === 'marketplace') {
+            if (state.mpBasket.length === 0) return showPopupError("Внимание", "Корзина пуста!");
+            if (state.isMpEditMode) return showPopupError("Внимание", "Сначала сохраните изменения");
             
-            if (state.currentMode === 'order' || state.currentMode === 'new_shop') {
-                let itemExists = Object.values(state.productCatalog).some(c => c && c.name === n);
-                if (!itemExists) return false;
-            }
-            return true;
-        }).map(([n,q]) => {
-            let catName = (state.userBasket["_catinfo"] && state.userBasket["_catinfo"][n]) || (state.productCatalog[n] ? state.productCatalog[n].cat : "Прочее");
-            return {name: n, qty: q, cat: catName};
-        });
+            state.isProcessing = true;
+            let btn = document.getElementById('modal-submit-button'); btn.innerText = "ОТПРАВЛЯЮ...";
+            showGlobalLoader("Отправка данных...");
+            
+            try {
+                let submitTimestamp = firebase.database.ServerValue.TIMESTAMP;
+                if (state.mpMonthOption === 'prev') {
+                    let now = new Date();
+                    let prevMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
+                    submitTimestamp = prevMonthEnd.getTime();
+                }
 
-        if (flatData.length === 0 && state.currentMode !== 'checklist') return showPopupError("Внимание", "Заполните данные перед отправкой!");
-
-        // ⚡ ПРОВЕРКА МИНИМАЛЬНЫХ СУММ ДЛЯ КОРЗИНЫ
-        if ((state.currentMode === 'order' || state.currentMode === 'new_shop') && state.tempTotalKuper !== undefined) {
-            if (state.tempTotalKuper > 0 && state.tempTotalKuper < 1000) {
-                let diff = 1000 - state.tempTotalKuper;
-                showPopupError("Минимальная сумма", `Не хватает до минимальной суммы Купера: <b>~ ${Math.round(diff)} ₽</b><br><small>Текущая сумма: ${Math.round(state.tempTotalKuper)} ₽</small>`);
+                let promises = [];
+                for(let item of state.mpBasket) {
+                    promises.push(database.ref("marketplace_records").push({
+                        vendor: item.vendor,
+                        type: item.amount < 0 ? 'refund' : 'purchase',
+                        address: item.address,
+                        amount: parseFloat(item.amount),
+                        timestamp: submitTimestamp,
+                        userId: globalTgUserId
+                    }));
+                }
+                await Promise.all(promises); 
+                state.mpBasket = [];
+                localStorage.removeItem("draft_marketplace");
+            } catch(e) {
+                hideGlobalLoader();
+                showPopupError("Ошибка", e.message);
+                state.isProcessing = false; btn.innerText = "ПОДТВЕРДИТЬ И ОТПРАВИТЬ";
                 return;
             }
-        }
-
-        state.isProcessing = true;
-        let btn = document.getElementById('modal-submit-button'); if(btn) btn.innerText = "ОТПРАВЛЯЮ...";
-        let mainBtn = document.getElementById('main-action-button'); if(mainBtn) mainBtn.innerText = "ОТПРАВЛЯЮ...";
-        showGlobalLoader("Отправка данных..."); 
-
-        try {
-            if (state.currentMode === 'order' || state.currentMode === 'new_shop') {
-                const existingSnap = await database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(10).once("value");
-                let pendingKeyToUpdate = null;
-                let mergedComments = [];
-
-                let newComment = document.getElementById('comment') ? document.getElementById('comment').value.trim() : "";
-                if (newComment) mergedComments.push(newComment);
-
-                existingSnap.forEach(c => {
-                    let o = c.val();
-                    if (o && (o.mode === 'order' || o.mode === 'new_shop') && o.svod === false && o.ordered === false) {
-                        if (!pendingKeyToUpdate) pendingKeyToUpdate = c.key;
-                        else database.ref(`orders/${c.key}`).remove();
+        } else {
+            if (state.currentMode === 'checklist') {
+                let missingCategories = new Set(); 
+                let totalMissing = 0;
+                for (let key in state.productCatalog) {
+                    let item = state.productCatalog[key];
+                    if (item && item.cat && item.name !== "Товар" && item.name !== "Дата заполнения") {
+                        let val = state.userBasket[item.name];
+                        if (val === undefined || val === null || String(val).trim() === "" || String(val).trim() === "-" || String(val).trim() === "--") { 
+                            missingCategories.add(item.cat); 
+                            totalMissing++; 
+                        }
                     }
-                });
-
-                let finalDataToSave = {
-                    shop: state.currentShop, mode: state.currentMode, items: flatData,
-                    comment: mergedComments.join(" | "), timestamp: Date.now(), userId: globalTgUserId,
-                    svod: false, ordered: false, lenta_received: false, ozon_received: false, kuper_received: false
-                };
-
-                // ⚡ ЖЕСТКИЙ СИНХРОННЫЙ АПДЕЙТ: Ждем завершения записи, чтобы корзина не слетала впустую
-                if (pendingKeyToUpdate) {
-                    let mergedItems = {};
-                    let snapNode = await database.ref(`orders/${pendingKeyToUpdate}`).once('value');
-                    let currentOrder = snapNode.val();
-                    
-                    if (currentOrder) {
-                        let oldItems = Array.isArray(currentOrder.items) ? currentOrder.items : Object.values(currentOrder.items || {});
-                        oldItems.forEach(i => {
-                            if (i && i.name && i.name !== "НЕТ ЗАКАЗА") {
-                                mergedItems[i.name] = { ...i, qty: parseFloat(i.qty) || 0 };
-                            }
-                        });
-                        flatData.forEach(item => {
-                            if (!mergedItems[item.name]) {
-                                mergedItems[item.name] = { ...item, qty: parseFloat(item.qty) || 0 };
-                            } else {
-                                mergedItems[item.name].qty += parseFloat(item.qty) || 0;
-                            }
-                        });
-                        finalDataToSave.items = Object.values(mergedItems);
-                        
-                        let comments = [];
-                        if (currentOrder.comment && currentOrder.comment.trim() !== "") comments.push(currentOrder.comment.trim());
-                        if (newComment) comments.push(newComment);
-                        finalDataToSave.comment = comments.join(" | ");
-                    }
-                    await database.ref(`orders/${pendingKeyToUpdate}`).set(finalDataToSave);
-                } else {
-                    await database.ref("orders").push(finalDataToSave);
                 }
-                
-            } else {
-                let recordPayload = {
-                    shop: state.currentShop, mode: state.currentMode, items: flatData,
-                    comment: document.getElementById('comment') ? document.getElementById('comment').value : "",
-                    timestamp: Date.now(), userId: globalTgUserId, svod: false, ordered: false,
-                    lenta_received: false, ozon_received: false, kuper_received: false
-                };
-                await database.ref("orders").push(recordPayload);
+                if (totalMissing > 0) {
+                    triggerHaptic(); 
+                    let catList = Array.from(missingCategories).join(', ');
+                    showPopupError("Чек-лист заполнен не полностью!", `Осталось позиций: ${totalMissing}.<br><small>Пожалуйста, проверьте: ${catList}</small>`);
+                    return;
+                }
             }
 
-            localStorage.removeItem("draft_" + state.currentShop + "_" + state.currentMode);
-        } catch(e) {
-            hideGlobalLoader(); 
-            showPopupError("Ошибка", "Произошла ошибка при отправке.");
-            state.isProcessing = false;
+            let flatData = Object.entries(state.userBasket).filter(([n,q]) => {
+                if (n === "_catinfo") return false;
+                if (String(q).trim() === "-" || String(q).trim() === "--" || String(q).trim() === "") return false;
+                if (state.currentMode !== 'checklist' && (q == 0 || String(q) === "0")) return false; 
+                
+                if (state.currentMode === 'order' || state.currentMode === 'new_shop') {
+                    let itemExists = Object.values(state.productCatalog).some(c => c && c.name === n);
+                    if (!itemExists) return false;
+                }
+                return true;
+            }).map(([n,q]) => {
+                let catName = (state.userBasket["_catinfo"] && state.userBasket["_catinfo"][n]) || (state.productCatalog[n] ? state.productCatalog[n].cat : "Прочее");
+                return {name: n, qty: q, cat: catName};
+            });
+
+            if (flatData.length === 0 && state.currentMode !== 'checklist') return showPopupError("Внимание", "Заполните данные перед отправкой!");
+
+            if ((state.currentMode === 'order' || state.currentMode === 'new_shop') && state.tempTotalKuper !== undefined) {
+                if (state.tempTotalKuper > 0 && state.tempTotalKuper < 1000) {
+                    let diff = 1000 - state.tempTotalKuper;
+                    showPopupError("Минимальная сумма", `Не хватает до минимальной суммы Купера: <b>~ ${Math.round(diff)} ₽</b><br><small>Текущая сумма: ${Math.round(state.tempTotalKuper)} ₽</small>`);
+                    return;
+                }
+            }
+
+            state.isProcessing = true;
+            let btn = document.getElementById('modal-submit-button'); if(btn) btn.innerText = "ОТПРАВЛЯЮ...";
+            let mainBtn = document.getElementById('main-action-button'); if(mainBtn) mainBtn.innerText = "ОТПРАВЛЯЮ...";
+            showGlobalLoader("Отправка данных..."); 
+
+            try {
+                if (state.currentMode === 'order' || state.currentMode === 'new_shop') {
+                    const existingSnap = await database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(10).once("value");
+                    let pendingKeyToUpdate = null;
+                    let mergedComments = [];
+
+                    let newComment = document.getElementById('comment') ? document.getElementById('comment').value.trim() : "";
+                    if (newComment) mergedComments.push(newComment);
+
+                    existingSnap.forEach(c => {
+                        let o = c.val();
+                        if (o && (o.mode === 'order' || o.mode === 'new_shop') && o.svod === false && o.ordered === false) {
+                            if (!pendingKeyToUpdate) pendingKeyToUpdate = c.key;
+                            else database.ref(`orders/${c.key}`).remove();
+                        }
+                    });
+
+                    let finalDataToSave = {
+                        shop: state.currentShop, mode: state.currentMode, items: flatData,
+                        comment: mergedComments.join(" | "), timestamp: Date.now(), userId: globalTgUserId,
+                        svod: false, ordered: false, lenta_received: false, ozon_received: false, kuper_received: false
+                    };
+
+                    if (pendingKeyToUpdate) {
+                        let mergedItems = {};
+                        let snapNode = await database.ref(`orders/${pendingKeyToUpdate}`).once('value');
+                        let currentOrder = snapNode.val();
+                        
+                        if (currentOrder) {
+                            let oldItems = Array.isArray(currentOrder.items) ? currentOrder.items : Object.values(currentOrder.items || {});
+                            oldItems.forEach(i => {
+                                if (i && i.name && i.name !== "НЕТ ЗАКАЗА") {
+                                    mergedItems[i.name] = { ...i, qty: parseFloat(i.qty) || 0 };
+                                }
+                            });
+                            flatData.forEach(item => {
+                                if (!mergedItems[item.name]) {
+                                    mergedItems[item.name] = { ...item, qty: parseFloat(item.qty) || 0 };
+                                } else {
+                                    mergedItems[item.name].qty += parseFloat(item.qty) || 0;
+                                }
+                            });
+                            finalDataToSave.items = Object.values(mergedItems);
+                            
+                            let comments = [];
+                            if (currentOrder.comment && currentOrder.comment.trim() !== "") comments.push(currentOrder.comment.trim());
+                            if (newComment) comments.push(newComment);
+                            finalDataToSave.comment = comments.join(" | ");
+                        }
+                        await database.ref(`orders/${pendingKeyToUpdate}`).set(finalDataToSave);
+                    } else {
+                        await database.ref("orders").push(finalDataToSave);
+                    }
+                    
+                } else {
+                    let recordPayload = {
+                        shop: state.currentShop, mode: state.currentMode, items: flatData,
+                        comment: document.getElementById('comment') ? document.getElementById('comment').value : "",
+                        timestamp: Date.now(), userId: globalTgUserId, svod: false, ordered: false,
+                        lenta_received: false, ozon_received: false, kuper_received: false
+                    };
+                    await database.ref("orders").push(recordPayload);
+                }
+
+                localStorage.removeItem("draft_" + state.currentShop + "_" + state.currentMode);
+            } catch(e) {
+                hideGlobalLoader(); 
+                showPopupError("Ошибка", "Произошла ошибка при отправке.");
+                state.isProcessing = false;
+                if(btn) btn.innerText = "ПОДТВЕРДИТЬ И ОТПРАВИТЬ";
+                if(mainBtn) mainBtn.innerText = "ОТПРАВИТЬ";
+                return;
+            }
+        } 
+
+        hideGlobalLoader(); 
+        toggleCartModal(false);
+        document.getElementById('success-screen').style.display = 'flex';
+        
+        setTimeout(() => {
+            document.getElementById('success-screen').style.display = 'none';
+            if(document.getElementById('comment')) document.getElementById('comment').value = "";
+            
+            let previousMode = state.currentMode; 
+            state.userBasket = {};
+            
+            let btn = document.getElementById('modal-submit-button');
+            let mainBtn = document.getElementById('main-action-button');
             if(btn) btn.innerText = "ПОДТВЕРДИТЬ И ОТПРАВИТЬ";
             if(mainBtn) mainBtn.innerText = "ОТПРАВИТЬ";
-            return;
-        }
-    } 
+            
+            updateBadgeUI();
+            state.screenHistory = [];
+            
+            if (previousMode === 'marketplace') {
+                returnToPanel(); 
+            } else if (previousMode === 'order' || previousMode === 'new_shop') {
+                showScreen('step-sub-orders', false);
+            } else if (previousMode === 'checklist' || previousMode === 'stoplist_fill') {
+                showScreen('step-sub-lists', false);
+            } else {
+                showScreen('step-2', false); 
+            }
 
-    hideGlobalLoader(); 
-    toggleCartModal(false);
-    document.getElementById('success-screen').style.display = 'flex';
-    
-    setTimeout(() => {
-        document.getElementById('success-screen').style.display = 'none';
-        if(document.getElementById('comment')) document.getElementById('comment').value = "";
-        
-        let previousMode = state.currentMode; 
-        state.userBasket = {};
-        state.isProcessing = false;
-        
-        if(btn) btn.innerText = "ПОДТВЕРДИТЬ И ОТПРАВИТЬ";
-        if(mainBtn) mainBtn.innerText = "ОТПРАВИТЬ";
-        
-        updateBadgeUI();
-        state.screenHistory = [];
-        
-        if (previousMode === 'marketplace') {
-            returnToPanel(); 
-        } else if (previousMode === 'order' || previousMode === 'new_shop') {
-            showScreen('step-sub-orders', false);
-        } else if (previousMode === 'checklist' || previousMode === 'stoplist_fill') {
-            showScreen('step-sub-lists', false);
-        } else {
-            showScreen('step-2', false); 
-        }
-    }, 1200);
-}
+            // ⚡ ИСПРАВЛЕНИЕ ФАНТОМНОГО КЛИКА: Кнопка разблокируется только после того, 
+            // как полностью скрылся экран успеха и перерисовалось меню (через 300мс)
+            setTimeout(() => { state.isProcessing = false; }, 300);
+            
+        }, 1200);
+    }
   
     function processNoOrder() {
         if(!checkShopSelected()) return;
@@ -3062,6 +3066,49 @@
             document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; color:red; font-weight:bold;">Ошибка загрузки</div></div>`;
         }
     }
+
+  window.repeatMyOrder = function(aggStr) {
+        triggerHaptic();
+        try {
+            let aggData = JSON.parse(aggStr);
+            
+            // Восстанавливаем состояние как при обычном заказе
+            state.userBasket = {};
+            state.userBasket["_catinfo"] = {};
+            
+            // ⚡ ИСПРАВЛЕНИЕ: Берем каталоги напрямую из кэша, так как на этом экране они в спящем режиме
+            let orderCat = state.cachedCatalogs['order'] || {};
+            let newshopCat = state.cachedCatalogs['newshop'] || {};
+            let checklistCat = state.cachedCatalogs['checklist'] || {};
+            let allProds = {...orderCat, ...newshopCat, ...checklistCat};
+            let allProdsArr = Object.values(allProds);
+
+            for (let name in aggData) {
+                let catItem = allProdsArr.find(c => c && c.name === name);
+                if (catItem) {
+                    state.userBasket[name] = aggData[name].qty;
+                    state.userBasket["_catinfo"][name] = catItem.cat || "Прочее";
+                } else {
+                    // Если товара вдруг нет в каталоге, всё равно добавляем
+                    state.userBasket[name] = aggData[name].qty;
+                    state.userBasket["_catinfo"][name] = "Прочее";
+                }
+            }
+            
+            persistDraft();
+            hideReportOverlay();
+            
+            // Запускаем воркфлоу обычной закупки, корзина уже заполнена!
+            initWorkflow('order');
+            
+            setTimeout(() => {
+                toggleCartModal(true); // Сразу открываем корзину
+            }, 800);
+            
+        } catch(e) {
+            showPopupError("Ошибка", "Не удалось повторить заказ: " + e.message);
+        }
+    };
     
   async function fetchBossReport(category) {
       showReportOverlay("Формирование отчета: " + category + "...");

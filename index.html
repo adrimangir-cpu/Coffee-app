@@ -3070,149 +3070,157 @@
         }
     }
 
-async function viewStopList() {
+window.viewStopList = function() {
         if(!checkShopSelected()) return;
         triggerHaptic();
         document.getElementById('report-overlay').style.display = 'flex';
         document.getElementById('report-header').innerText = "Актуальный стоп-лист";
         
+        // ⚡ Моментально показываем кэш, пока данные собираются
         let localHtml = localStorage.getItem("cache_html_stoplist_" + state.currentShop);
-        if (localHtml) {
-            document.getElementById('report-content-area').innerHTML = localHtml;
-        } else {
-            document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div class="loading-pulse">⏳ Синхронизация данных...</div></div>`;
-        }
+        if (localHtml) document.getElementById('report-content-area').innerHTML = localHtml;
+        else document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div class="loading-pulse">⏳ Синхронизация данных...</div></div>`;
 
-        try {
-            let stopCatalog = (state.cachedCatalogs && state.cachedCatalogs.stoplist) ? state.cachedCatalogs.stoplist : {};
-            
-            // Собираем все продукты, чтобы отличить ингредиенты от готовых напитков
-            let allProducts = {};
-            if (state.cachedCatalogs) {
-                ['order', 'newshop', 'checklist'].forEach(catKey => {
-                    let cat = state.cachedCatalogs[catKey] || {};
-                    Object.values(cat).forEach(c => {
-                        if (c && c.name) allProducts[getStatusKey(c.name)] = c;
+        // Даем интерфейсу 50мс на отрисовку кэша, потом берем свежие данные из фоновой памяти
+        setTimeout(() => {
+            try {
+                let stopCatalog = (state.cachedCatalogs && state.cachedCatalogs.stoplist) ? state.cachedCatalogs.stoplist : {};
+                let allProducts = {};
+                if (state.cachedCatalogs) {
+                    ['order', 'newshop', 'checklist'].forEach(catKey => {
+                        let cat = state.cachedCatalogs[catKey] || {};
+                        Object.values(cat).forEach(c => { if (c && c.name) allProducts[getStatusKey(c.name)] = c; });
                     });
+                }
+
+                let stopInfoMap = {};
+                Object.values(stopCatalog).forEach(c => {
+                    if (c && c.name) {
+                        let nameClean = getStatusKey(c.name); 
+                        if (!stopInfoMap[nameClean]) stopInfoMap[nameClean] = { sez: new Set(), main: new Set(), cat: c.cat || "" };
+                        if (c.sez) c.sez.split(',').forEach(s => { if (s.trim()) stopInfoMap[nameClean].sez.add(s.trim()); });
+                        if (c.main) c.main.split(',').forEach(s => { if (s.trim()) stopInfoMap[nameClean].main.add(s.trim()); });
+                    }
                 });
-            }
 
-            let stopInfoMap = {};
-            Object.values(stopCatalog).forEach(c => {
-                if (c && c.name) {
-                    let nameClean = getStatusKey(c.name); 
-                    if (!stopInfoMap[nameClean]) stopInfoMap[nameClean] = { sez: new Set(), main: new Set(), cat: c.cat || "" };
-                    if (c.sez) c.sez.split(',').forEach(s => { if (s.trim()) stopInfoMap[nameClean].sez.add(s.trim()); });
-                    if (c.main) c.main.split(',').forEach(s => { if (s.trim()) stopInfoMap[nameClean].main.add(s.trim()); });
-                }
-            });
+                // ⚡ ИСПРАВЛЕНИЕ: Берем данные напрямую из фоновой синхронизации (лимит 300 записей вместо 50)
+                let shopOrders = state.globalOrders || [];
+                let globalMissingFresh = state.globalMissing || [];
 
-            let statusMap = {}; 
-            let seenInOrders = new Set();
-            let cutoffTime = Date.now() - (14 * 24 * 60 * 60 * 1000); 
+                let statusMap = {}; 
+                let seenInOrders = new Set();
+                let cutoffTime = Date.now() - (14 * 24 * 60 * 60 * 1000); 
 
-            state.globalMissing.forEach(m => {
-                if (!m || !m.name || m.timestamp < cutoffTime) return;
-                let pKey = getStatusKey(m.name);
-                if (m.status === 'transit') {
-                    statusMap[pKey] = { locked: true, text: 'В пути (Недовоз) 🚚', color: '#1565C0' };
-                    seenInOrders.add(pKey);
-                } else if (m.status === 'pending') {
-                    statusMap[pKey] = { locked: true, text: 'Проверка админом ⏳', color: '#E65100' };
-                    seenInOrders.add(pKey);
-                }
-            });
+                globalMissingFresh.forEach(m => {
+                    if (!m || !m.name || m.timestamp < cutoffTime) return;
+                    let pKey = getStatusKey(m.name);
+                    if (m.status === 'transit') {
+                        statusMap[pKey] = { locked: true, text: 'В пути (Недовоз) 🚚', color: '#1565C0' };
+                        seenInOrders.add(pKey);
+                    } else if (m.status === 'pending') {
+                        statusMap[pKey] = { locked: true, text: 'Проверка админом ⏳', color: '#E65100' };
+                        seenInOrders.add(pKey);
+                    }
+                });
 
-            state.globalOrders.forEach(o => {
-                if ((o.mode === 'order' || o.mode === 'new_shop') && o.timestamp >= cutoffTime) {
-                    let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
-                    itemsArr.forEach(i => {
-                        if (i && i.name && i.name !== "НЕТ ЗАКАЗА") {
-                            let pKey = getStatusKey(i.name);
-                            if (seenInOrders.has(pKey)) return; 
-                            seenInOrders.add(pKey);
-                            
-                            let catItem = allProducts[pKey];
-                            let vRaw = (i.vendor || (catItem ? catItem.vendor : 'Лента') || 'Лента').toLowerCase();
-                            let isOzon = vRaw.includes('озон') || vRaw.includes('ozon');
-                            let isKuper = vRaw.includes('купер') || vRaw.includes('kuper');
-                            let isReceived = isOzon ? o.ozon_received : (isKuper ? o.kuper_received : o.lenta_received);
-                            
-                            let isOrderedByAdmin = (i.status === 'ordered' || i.status === 'from_stoplist');
+                shopOrders.forEach(o => {
+                    if ((o.mode === 'order' || o.mode === 'new_shop') && o.timestamp >= cutoffTime) {
+                        let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
+                        itemsArr.forEach(i => {
+                            if (i && i.name && i.name !== "НЕТ ЗАКАЗА") {
+                                let pKey = getStatusKey(i.name);
+                                if (seenInOrders.has(pKey)) return; 
+                                seenInOrders.add(pKey);
+                                
+                                let catItem = allProducts[pKey];
+                                let vRaw = (i.vendor || (catItem ? catItem.vendor : 'Лента') || 'Лента').toLowerCase();
+                                let isOzon = vRaw.includes('озон') || vRaw.includes('ozon');
+                                let isKuper = vRaw.includes('купер') || vRaw.includes('kuper');
+                                let isReceived = isOzon ? o.ozon_received : (isKuper ? o.kuper_received : o.lenta_received);
+                                
+                                let isOrderedByAdmin = (i.status === 'ordered' || i.status === 'from_stoplist');
 
-                            if (i.status === 'error' || i.bot_error === true || i.status === 'not_needed') {
-                                // ничего
-                            } else if (isOrderedByAdmin && !isReceived) {
-                                statusMap[pKey] = { locked: true, text: 'Оформлено (В пути) 🚚', color: '#2e7d32' };
-                            } else if (!isOrderedByAdmin && !isReceived) {
-                                statusMap[pKey] = { locked: true, text: 'Ожидает оформления ⏳', color: '#F57C00' };
+                                if (i.status === 'error' || i.bot_error === true || i.status === 'not_needed') { } 
+                                else if (isOrderedByAdmin && !isReceived) statusMap[pKey] = { locked: true, text: 'Оформлено (В пути) 🚚', color: '#2e7d32' };
+                                else if (!isOrderedByAdmin && !isReceived) statusMap[pKey] = { locked: true, text: 'Ожидает оформления ⏳', color: '#F57C00' };
                             }
-                        }
-                    });
-                }
-            });
+                        });
+                    }
+                });
 
-            let shopOrders = state.globalOrders.filter(o => o && typeof o === 'object');
-            let latest = shopOrders.find(o => o.mode === 'stoplist_fill');
-            
-            if(!latest || !latest.items) {
-                document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; font-weight:900;">Сегодня стоп-лист не заполнялся.</div></div>`;
-                return;
-            }
-
-            let html = `<div class="report-card">
-                        <div style='font-size: 19px; color: #D50000; font-weight: 900; margin-bottom: 8px; text-align:center;'>🛑 АКТУАЛЬНЫЙ СТОП-ЛИСТ</div>
-                        <div style='font-size: 14px; color: #888; text-align:center; margin-bottom:15px; font-weight:700;'>(от ${new Date(latest.timestamp).toLocaleString()})</div>`;
-
-            let allSyrups = [], mainListItems = [], seenNames = new Set();
-            let itemsArr = Array.isArray(latest.items) ? latest.items : Object.values(latest.items);
-
-            itemsArr.forEach(i => {
-                if(!i || !i.name || i.qty !== 'Закончилось' || i.name === 'Всё в наличии') return;
-                let cleanedItemName = getStatusKey(i.name);
-                if (seenNames.has(cleanedItemName)) return;
-                seenNames.add(cleanedItemName);
-
-                let stopInfo = stopInfoMap[cleanedItemName] || { sez: new Set(), main: new Set(), cat: "" };
-                let info = { sez: Array.from(stopInfo.sez).join(", "), main: Array.from(stopInfo.main).join(", "), cat: stopInfo.cat };
-
-                let statHtml = "";
-                let statusObj = statusMap[cleanedItemName];
+                let latest = shopOrders.find(o => o.mode === 'stoplist_fill');
                 
-                if (statusObj) {
-                    let bgColor = statusObj.color === '#2e7d32' ? '#e8f5e9' : (statusObj.color === '#1565C0' ? '#e3f2fd' : '#fff3e0');
-                    statHtml = `<span style="background:${bgColor}; color:${statusObj.color}; padding:2px 5px; border-radius:4px; font-size:11px; font-weight:900; margin-left:5px;">${statusObj.text}</span>`;
-                } else if (allProducts[cleanedItemName]) {
-                    // Ингредиент, но нет активного заказа
-                    statHtml = `<span style="background:#f5f5f5; color:#888; padding:2px 5px; border-radius:4px; font-size:11px; font-weight:900; margin-left:5px;">Не заказано ➖</span>`;
+                if(!latest || !latest.items) {
+                    let html = `<div class="report-card"><div style="text-align:center; font-weight:900;">Сегодня стоп-лист не заполнялся.</div></div>`;
+                    document.getElementById('report-content-area').innerHTML = html;
+                    localStorage.setItem("cache_html_stoplist_" + state.currentShop, html);
+                    return;
                 }
 
-                let isSyrup = (info.cat && String(info.cat).toLowerCase().includes("сироп")) || cleanedItemName.includes("сироп");
+                let html = `<div class="report-card">
+                            <div style='font-size: 19px; color: #D50000; font-weight: 900; margin-bottom: 8px; text-align:center;'>🛑 АКТУАЛЬНЫЙ СТОП-ЛИСТ</div>
+                            <div style='font-size: 14px; color: #888; text-align:center; margin-bottom:15px; font-weight:700;'>(от ${new Date(latest.timestamp).toLocaleString()})</div>`;
 
-                let affectedHtml = "";
-                if (info.sez.trim() !== "" || info.main.trim() !== "") {
-                    affectedHtml += `<div style="font-size:13px; color:#d32f2f; margin-top:8px; padding:8px; background:#ffebee; border-radius:8px; border:1px dashed #ef9a9a; line-height:1.4;">`;
-                    if (info.sez.trim() !== "") affectedHtml += `<div style="margin-bottom:4px;"><b>Отключает сезон:</b> ${info.sez}</div>`;
-                    if (info.main.trim() !== "") affectedHtml += `<div><b>Отключает основу:</b> ${info.main}</div>`;
-                    affectedHtml += `</div>`;
+                let allSyrups = [], mainListItems = [], seenNames = new Set();
+                let itemsArr = Array.isArray(latest.items) ? latest.items : Object.values(latest.items);
+                let hasStoppedItems = false;
+
+                itemsArr.forEach(i => {
+                    if(!i || !i.name || i.qty !== 'Закончилось' || i.name === 'Всё в наличии') return;
+                    hasStoppedItems = true;
+                    
+                    let cleanedItemName = getStatusKey(i.name);
+                    if (seenNames.has(cleanedItemName)) return;
+                    seenNames.add(cleanedItemName);
+
+                    let stopInfo = stopInfoMap[cleanedItemName] || { sez: new Set(), main: new Set(), cat: "" };
+                    let info = { sez: Array.from(stopInfo.sez).join(", "), main: Array.from(stopInfo.main).join(", "), cat: stopInfo.cat };
+
+                    let statHtml = "";
+                    let statusObj = statusMap[cleanedItemName];
+                    
+                    if (statusObj) {
+                        let bgColor = statusObj.color === '#2e7d32' ? '#e8f5e9' : (statusObj.color === '#1565C0' ? '#e3f2fd' : '#fff3e0');
+                        statHtml = `<span style="background:${bgColor}; color:${statusObj.color}; padding:2px 5px; border-radius:4px; font-size:11px; font-weight:900; margin-left:5px;">${statusObj.text}</span>`;
+                    } else if (allProducts[cleanedItemName]) {
+                        statHtml = `<span style="background:#f5f5f5; color:#888; padding:2px 5px; border-radius:4px; font-size:11px; font-weight:900; margin-left:5px;">Не заказано ➖</span>`;
+                    }
+
+                    let isSyrup = (info.cat && String(info.cat).toLowerCase().includes("сироп")) || cleanedItemName.includes("сироп");
+                    let affectedHtml = "";
+                    if (info.sez.trim() !== "" || info.main.trim() !== "") {
+                        affectedHtml += `<div style="font-size:13px; color:#d32f2f; margin-top:8px; padding:8px; background:#ffebee; border-radius:8px; border:1px dashed #ef9a9a; line-height:1.4;">`;
+                        if (info.sez.trim() !== "") affectedHtml += `<div style="margin-bottom:4px;"><b>Отключает сезон:</b> ${info.sez}</div>`;
+                        if (info.main.trim() !== "") affectedHtml += `<div><b>Отключает основу:</b> ${info.main}</div>`;
+                        affectedHtml += `</div>`;
+                    }
+
+                    mainListItems.push(`
+                    <div style="padding:12px 0; border-bottom:1px dashed #f0f0f0; display:flex; flex-direction:column;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; width:100%;"><b style="color:#333; font-size:15px;">${i.name}</b> <div style="float:right; display:flex; align-items:center;">${statHtml}</div></div>
+                        ${affectedHtml}
+                    </div>`);
+                    if (isSyrup) allSyrups.push(`▪️ ${i.name}`);
+                });
+
+                if (!hasStoppedItems) {
+                    html += `<div style="text-align:center; padding:20px; font-size:16px; font-weight:bold; color:#2e7d32;">🎉 Все товары в наличии!</div>`;
+                } else {
+                    html += mainListItems.join("");
+                    if (allSyrups.length > 0) {
+                        html += `<div style='margin-top: 20px; padding-top: 15px; border-top: 2px dashed #ddd; color:#7E57C2;'>🍾 <b>Сиропы на стопе:</b><br><span style="color:#333; font-size:14px; line-height:1.5;">${allSyrups.join("<br>")}</span></div>`;
+                    }
                 }
-
-                mainListItems.push(`
-                <div style="padding:12px 0; border-bottom:1px dashed #f0f0f0; display:flex; flex-direction:column;">
-                    <div style="display:flex; justify-content:space-between; align-items:center; width:100%;"><b style="color:#333; font-size:15px;">${i.name}</b> <div style="float:right; display:flex; align-items:center;">${statHtml}</div></div>
-                    ${affectedHtml}
-                </div>`);
-                if (isSyrup) allSyrups.push(`▪️ ${i.name}`);
-            });
-
-            html += mainListItems.join("");
-            if (allSyrups.length > 0) {
-                html += `<div style='margin-top: 20px; padding-top: 15px; border-top: 2px dashed #ddd; color:#7E57C2;'>🍾 <b>Сиропы на стопе:</b><br><span style="color:#333; font-size:14px; line-height:1.5;">${allSyrups.join("<br>")}</span></div>`;
+                
+                html += "</div>";
+                document.getElementById('report-content-area').innerHTML = html;
+                localStorage.setItem("cache_html_stoplist_" + state.currentShop, html); 
+            } catch (err) { 
+                console.log(err); 
+                document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; color:red; font-weight:900;">Ошибка синхронизации данных</div></div>`;
             }
-            document.getElementById('report-content-area').innerHTML = html + "</div>";
-            localStorage.setItem("cache_html_stoplist_" + state.currentShop, html); 
-        } catch (err) { console.log(err); }
-    }
+        }, 50);
+    };
   
     function toggleMissingArrived(key, nameStr, btnId) {
         triggerHaptic();

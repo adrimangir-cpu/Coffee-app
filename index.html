@@ -2779,26 +2779,35 @@
             }
 
             state.isProcessing = true;
-            let btn = document.getElementById('modal-submit-button'); if(btn) btn.innerText = "ОТПРАВЛЯЮ...";
-            let mainBtn = document.getElementById('main-action-button'); if(mainBtn) mainBtn.innerText = "ОТПРАВЛЯЮ...";
+            if(btn) { btn.innerText = "ОТПРАВЛЯЮ..."; btn.disabled = true; }
+            if(mainBtn) { mainBtn.innerText = "ОТПРАВЛЯЮ..."; mainBtn.disabled = true; }
             showGlobalLoader("Отправка данных..."); 
 
             try {
                 if (state.currentMode === 'order' || state.currentMode === 'new_shop') {
-                    const existingSnap = await database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(10).once("value");
+                    // Фоновый запрос без зависания
+                    let existingSnap = null;
+                    try {
+                        existingSnap = await Promise.race([
+                            database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(10).once("value"),
+                            new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 1500))
+                        ]);
+                    } catch(e) { existingSnap = null; }
+
                     let pendingKeyToUpdate = null;
                     let mergedComments = [];
-
                     let newComment = document.getElementById('comment') ? document.getElementById('comment').value.trim() : "";
                     if (newComment) mergedComments.push(newComment);
 
-                    existingSnap.forEach(c => {
-                        let o = c.val();
-                        if (o && (o.mode === 'order' || o.mode === 'new_shop') && o.svod === false && o.ordered === false) {
-                            if (!pendingKeyToUpdate) pendingKeyToUpdate = c.key;
-                            else database.ref(`orders/${c.key}`).remove();
-                        }
-                    });
+                    if (existingSnap) {
+                        existingSnap.forEach(c => {
+                            let o = c.val();
+                            if (o && (o.mode === 'order' || o.mode === 'new_shop') && o.svod === false && o.ordered === false) {
+                                if (!pendingKeyToUpdate) pendingKeyToUpdate = c.key;
+                                else database.ref(`orders/${c.key}`).remove(); 
+                            }
+                        });
+                    }
 
                     let finalDataToSave = {
                         shop: state.currentShop, mode: state.currentMode, items: flatData,
@@ -2808,35 +2817,32 @@
 
                     if (pendingKeyToUpdate) {
                         let mergedItems = {};
-                        let snapNode = await database.ref(`orders/${pendingKeyToUpdate}`).once('value');
-                        let currentOrder = snapNode.val();
+                        let currentOrder = null;
+                        try {
+                            let snapNode = await Promise.race([
+                                database.ref(`orders/${pendingKeyToUpdate}`).once('value'),
+                                new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 1000))
+                            ]);
+                            currentOrder = snapNode.val();
+                        } catch(e) {}
                         
                         if (currentOrder) {
                             let oldItems = Array.isArray(currentOrder.items) ? currentOrder.items : Object.values(currentOrder.items || {});
-                            oldItems.forEach(i => {
-                                if (i && i.name && i.name !== "НЕТ ЗАКАЗА") {
-                                    mergedItems[i.name] = { ...i, qty: parseFloat(i.qty) || 0 };
-                                }
-                            });
+                            oldItems.forEach(i => { if (i && i.name && i.name !== "НЕТ ЗАКАЗА") mergedItems[i.name] = { ...i, qty: parseFloat(i.qty) || 0 }; });
                             flatData.forEach(item => {
-                                if (!mergedItems[item.name]) {
-                                    mergedItems[item.name] = { ...item, qty: parseFloat(item.qty) || 0 };
-                                } else {
-                                    mergedItems[item.name].qty += parseFloat(item.qty) || 0;
-                                }
+                                if (!mergedItems[item.name]) mergedItems[item.name] = { ...item, qty: parseFloat(item.qty) || 0 };
+                                else mergedItems[item.name].qty += parseFloat(item.qty) || 0;
                             });
                             finalDataToSave.items = Object.values(mergedItems);
-                            
                             let comments = [];
                             if (currentOrder.comment && currentOrder.comment.trim() !== "") comments.push(currentOrder.comment.trim());
                             if (newComment) comments.push(newComment);
                             finalDataToSave.comment = comments.join(" | ");
                         }
-                        await database.ref(`orders/${pendingKeyToUpdate}`).set(finalDataToSave);
+                        database.ref(`orders/${pendingKeyToUpdate}`).set(finalDataToSave); // Отправка в фоне
                     } else {
-                        await database.ref("orders").push(finalDataToSave);
+                        database.ref("orders").push(finalDataToSave); // Отправка в фоне
                     }
-                    
                 } else {
                     let recordPayload = {
                         shop: state.currentShop, mode: state.currentMode, items: flatData,
@@ -2844,7 +2850,7 @@
                         timestamp: Date.now(), userId: globalTgUserId, svod: false, ordered: false,
                         lenta_received: false, ozon_received: false, kuper_received: false
                     };
-                    await database.ref("orders").push(recordPayload);
+                    database.ref("orders").push(recordPayload); // Отправка в фоне
                 }
 
                 localStorage.removeItem("draft_" + state.currentShop + "_" + state.currentMode);
@@ -2852,8 +2858,8 @@
                 hideGlobalLoader(); 
                 showPopupError("Ошибка", "Произошла ошибка при отправке.");
                 state.isProcessing = false;
-                if(btn) btn.innerText = "ПОДТВЕРДИТЬ И ОТПРАВИТЬ";
-                if(mainBtn) mainBtn.innerText = "ОТПРАВИТЬ";
+                if(btn) { btn.innerText = "ПОДТВЕРДИТЬ И ОТПРАВИТЬ"; btn.disabled = false; }
+                if(mainBtn) { mainBtn.innerText = "ОТПРАВИТЬ"; mainBtn.disabled = false; }
                 return;
             }
         } 
@@ -2865,32 +2871,22 @@
         setTimeout(() => {
             document.getElementById('success-screen').style.display = 'none';
             if(document.getElementById('comment')) document.getElementById('comment').value = "";
-            
             let previousMode = state.currentMode; 
-            state.userBasket = {};
-            
-            let btn = document.getElementById('modal-submit-button');
-            let mainBtn = document.getElementById('main-action-button');
-            if(btn) btn.innerText = "ПОДТВЕРДИТЬ И ОТПРАВИТЬ";
-            if(mainBtn) mainBtn.innerText = "ОТПРАВИТЬ";
-            
+            state.userBasket = {}; 
             updateBadgeUI();
             state.screenHistory = [];
             
-            if (previousMode === 'marketplace') {
-                returnToPanel(); 
-            } else if (previousMode === 'order' || previousMode === 'new_shop') {
-                showScreen('step-sub-orders', false);
-            } else if (previousMode === 'checklist' || previousMode === 'stoplist_fill') {
-                showScreen('step-sub-lists', false);
-            } else {
-                showScreen('step-2', false); 
-            }
+            if (previousMode === 'marketplace') returnToPanel(); 
+            else if (previousMode === 'order' || previousMode === 'new_shop') showScreen('step-sub-orders', false);
+            else if (previousMode === 'checklist' || previousMode === 'stoplist_fill') showScreen('step-sub-lists', false);
+            else showScreen('step-2', false); 
 
-            // ⚡ ИСПРАВЛЕНИЕ ФАНТОМНОГО КЛИКА: Кнопка разблокируется только после того, 
-            // как полностью скрылся экран успеха и перерисовалось меню (через 300мс)
-            setTimeout(() => { state.isProcessing = false; }, 300);
-            
+            // Разблокировка только после ухода с экрана
+            setTimeout(() => { 
+                state.isProcessing = false; 
+                if(btn) { btn.innerText = "ПОДТВЕРДИТЬ И ОТПРАВИТЬ"; btn.disabled = false; }
+                if(mainBtn) { mainBtn.innerText = "ОТПРАВИТЬ"; mainBtn.disabled = false; }
+            }, 500);
         }, 1200);
     }
   
@@ -3071,40 +3067,30 @@
         triggerHaptic();
         try {
             let aggData = JSON.parse(aggStr);
+            let newBasket = {};
+            let newCatInfo = {};
             
-            // Восстанавливаем состояние как при обычном заказе
-            state.userBasket = {};
-            state.userBasket["_catinfo"] = {};
-            
-            // ⚡ ИСПРАВЛЕНИЕ: Берем каталоги напрямую из кэша, так как на этом экране они в спящем режиме
+            // Читаем напрямую из кэша
             let orderCat = state.cachedCatalogs['order'] || {};
             let newshopCat = state.cachedCatalogs['newshop'] || {};
             let checklistCat = state.cachedCatalogs['checklist'] || {};
-            let allProds = {...orderCat, ...newshopCat, ...checklistCat};
-            let allProdsArr = Object.values(allProds);
+            let allProdsArr = Object.values({...orderCat, ...newshopCat, ...checklistCat});
 
             for (let name in aggData) {
                 let catItem = allProdsArr.find(c => c && c.name === name);
-                if (catItem) {
-                    state.userBasket[name] = aggData[name].qty;
-                    state.userBasket["_catinfo"][name] = catItem.cat || "Прочее";
-                } else {
-                    // Если товара вдруг нет в каталоге, всё равно добавляем
-                    state.userBasket[name] = aggData[name].qty;
-                    state.userBasket["_catinfo"][name] = "Прочее";
-                }
+                newBasket[name] = aggData[name].qty;
+                newCatInfo[name] = catItem ? (catItem.cat || "Прочее") : "Прочее";
             }
             
-            persistDraft();
-            hideReportOverlay();
+            state.userBasket = newBasket;
+            state.userBasket["_catinfo"] = newCatInfo;
             
-            // Запускаем воркфлоу обычной закупки, корзина уже заполнена!
+            localStorage.setItem("draft_" + state.currentShop + "_order", JSON.stringify({basket: newBasket, time: Date.now()}));
+            
+            hideReportOverlay();
             initWorkflow('order');
             
-            setTimeout(() => {
-                toggleCartModal(true); // Сразу открываем корзину
-            }, 800);
-            
+            setTimeout(() => { toggleCartModal(true); }, 800);
         } catch(e) {
             showPopupError("Ошибка", "Не удалось повторить заказ: " + e.message);
         }
@@ -4005,19 +3991,21 @@ function showLastOrder() {
                 if (fresh) {
                     if (!state.cachedCatalogs) state.cachedCatalogs = {};
                     state.cachedCatalogs[p] = fresh;
-                    saveToRealCache(p, fresh); // Записываем в вечную память IndexedDB на телефоне
+                    saveToRealCache(p, fresh); // Сохраняем в вечную память
                     
                     if (state.currentMode === 'menu' && p === 'menu') {
                         state.menuCatalog = Object.assign({}, fresh);
                         if (typeof renderMenuApp === 'function') renderMenuApp();
                     }
                     if (state.currentMode === 'espresso' && p === 'espresso_recipes') renderEspressoApp();
-                    if (state.currentMode === 'calendar_tasks' && p === 'tasks_calendar') renderMiniCalendar(new Date());
+                    if (state.currentMode === 'calendar_tasks' && p === 'tasks_calendar') {
+                        let viewDate = state.selectedCalDate || new Date();
+                        renderMiniCalendar(new Date(viewDate.getFullYear(), viewDate.getMonth(), 1));
+                    }
                 }
             });
         });
     }
-
   function startShopDataSync() {
         if (!state.currentShop) return;
         
@@ -4084,67 +4072,44 @@ function showLastOrder() {
   // ==========================================
     // ☕ РЕЦЕПТЫ ЭСПРЕССО (СВАЙП ОДИНАРНЫЙ/ДВОЙНОЙ И МГНОВЕННАЯ ЗАГРУЗКА)
     // ==========================================
-    let currentEspressoWindow = 'double'; // Окно по умолчанию
+    let currentEspressoWindow = 'double'; 
 
     async function initEspressoWorkflow() {
         if(!checkShopSelected()) return;
         triggerHaptic();
         state.currentMode = 'espresso';
         showScreen('step-espresso');
-        renderEspressoApp(); // ⚡ МГНОВЕННОЕ ОТКРЫТИЕ ИЗ ОФЛАЙН-КЭША
+        renderEspressoApp(); 
     }
 
     window.renderEspressoApp = function() {
         let espData = state.cachedCatalogs['espresso_recipes'] || {};
         let kbData = state.cachedCatalogs['knowledge_base'] || {};
-        
         let sData = (espData.overrides && espData.overrides[state.currentShop]) ? espData.overrides[state.currentShop] : (espData.default || {});
         let currD = sData.current_double || sData.current || { in: "-", out: "-", time: "-", result: "-", roast: "---", brand: "---" };
         let currS = sData.current_single || { in: "-", out: "-", time: "-", result: "-", roast: "---", brand: "---" };
-        
-        // Связываем инструкцию
         let linkedKbId = sData.linked_kb_id || espData.linked_kb_id || "";
         let linkedDoc = kbData[linkedKbId];
 
         let html = `
-        <!-- Вкладки окон эспрессо -->
         <div style="display: flex; gap: 10px; margin-bottom: 15px; background: #fff; padding: 6px; border-radius: 14px; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
             <button onclick="currentEspressoWindow = 'double'; renderEspressoApp();" style="flex: 1; padding: 12px; border: none; border-radius: 10px; font-size: 15px; font-weight: 900; ${currentEspressoWindow === 'double' ? 'background: #4E342E; color: #fff;' : 'background: transparent; color: #888;'}">Двойной эспрессо</button>
             <button onclick="currentEspressoWindow = 'single'; renderEspressoApp();" style="flex: 1; padding: 12px; border: none; border-radius: 10px; font-size: 15px; font-weight: 900; ${currentEspressoWindow === 'single' ? 'background: #4E342E; color: #fff;' : 'background: transparent; color: #888;'}">Одинарный эспрессо</button>
         </div>`;
 
-        const renderCard = (title, curr) => `
+        const renderCard = (curr) => `
             <div class="report-card" style="background: linear-gradient(135deg, #795548 0%, #4E342E 100%); color:#fff; border:none; margin-bottom:15px;">
                 <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; text-align:center; margin-bottom:15px;">
-                    <div style="background:rgba(255,255,255,0.1); padding:10px; border-radius:12px;">
-                        <div style="font-size:12px; opacity:0.8;">Вход</div>
-                        <div style="font-weight:900; font-size:22px;">${curr.in || '-'} г</div>
-                    </div>
-                    <div style="background:rgba(255,255,255,0.1); padding:10px; border-radius:12px;">
-                        <div style="font-size:12px; opacity:0.8;">Выход</div>
-                        <div style="font-weight:900; font-size:22px;">${curr.out || '-'} г</div>
-                    </div>
-                    <div style="background:rgba(255,255,255,0.1); padding:10px; border-radius:12px;">
-                        <div style="font-size:12px; opacity:0.8;">Время</div>
-                        <div style="font-weight:900; font-size:22px;">${curr.time || '-'} с</div>
-                    </div>
-                    <div style="background:rgba(255,255,255,0.2); padding:10px; border-radius:12px; box-shadow:0 2px 10px rgba(0,0,0,0.1);">
-                        <div style="font-size:12px; opacity:0.9; font-weight:bold;">Итог</div>
-                        <div style="font-weight:900; font-size:22px;">${curr.result || '-'}</div>
-                    </div>
+                    <div style="background:rgba(255,255,255,0.1); padding:10px; border-radius:12px;"><div style="font-size:12px; opacity:0.8;">Вход</div><div style="font-weight:900; font-size:22px;">${curr.in || '-'} г</div></div>
+                    <div style="background:rgba(255,255,255,0.1); padding:10px; border-radius:12px;"><div style="font-size:12px; opacity:0.8;">Выход</div><div style="font-weight:900; font-size:22px;">${curr.out || '-'} г</div></div>
+                    <div style="background:rgba(255,255,255,0.1); padding:10px; border-radius:12px;"><div style="font-size:12px; opacity:0.8;">Время</div><div style="font-weight:900; font-size:22px;">${curr.time || '-'} с</div></div>
+                    <div style="background:rgba(255,255,255,0.2); padding:10px; border-radius:12px; box-shadow:0 2px 10px rgba(0,0,0,0.1);"><div style="font-size:12px; opacity:0.9; font-weight:bold;">Итог</div><div style="font-weight:900; font-size:22px;">${curr.result || '-'}</div></div>
                 </div>
-                <div style="font-size:14px; text-align:center;">
-                    Бренд: <b>${curr.brand || '---'}</b> | Обжарка: <b>${curr.roast || '---'}</b>
-                </div>
+                <div style="font-size:14px; text-align:center;">Бренд: <b>${curr.brand || '---'}</b> | Обжарка: <b>${curr.roast || '---'}</b></div>
             </div>`;
 
-        if (currentEspressoWindow === 'double') {
-            html += renderCard('Двойной эспрессо', currD);
-        } else {
-            html += renderCard('Одинарный эспрессо', currS);
-        }
+        html += currentEspressoWindow === 'double' ? renderCard(currD) : renderCard(currS);
 
-        // Выводим прикрепленную инструкцию из БЗ
         if (linkedDoc) {
             let formattedText = linkedDoc.text ? linkedDoc.text.replace(/\n/g, '<br>') : '';
             let regex = /\[ФОТО_(\d+)\](.*?)\[\/ФОТО_\d+\]/g;
@@ -4153,14 +4118,12 @@ function showLastOrder() {
                 if (photoData) return `<span style="color:#0288d1; border-bottom:1px dashed #0288d1; cursor:pointer; font-weight:bold;" onclick="openPhotoModal('${escapeName(word)}', '${photoData}')">📷 ${word}</span>`;
                 return `<b>${word}</b>`;
             });
-
             html += `<h4 style="margin-top:20px; color:#4E342E; font-size:18px;">📚 Справочная информация:</h4>
                      <div class="report-card" style="padding:15px; border:1px solid #ddd;">
                         <div style="font-weight:900; color:#4E342E; font-size:16px; margin-bottom:10px;">${linkedDoc.title}</div>
                         <div style="font-size:14px; line-height:1.5;">${formattedText}</div>
                      </div>`;
         }
-
         document.getElementById('espresso-container').innerHTML = html;
     }
 
@@ -4173,40 +4136,33 @@ function showLastOrder() {
         state.currentMode = 'calendar_tasks';
         showScreen('step-tasks-calendar');
         
-        // Сбрасываем выбранную дату на сегодня при входе
-        state.selectedCalDate = new Date();
-        state.selectedCalDate.setHours(0,0,0,0);
+        let d = new Date(); d.setHours(0,0,0,0);
+        state.selectedCalDate = d;
 
         if (state.cachedCatalogs && state.cachedCatalogs['tasks_calendar']) {
-            renderMiniCalendar(state.selectedCalDate); 
+            renderMiniCalendar(new Date(d.getFullYear(), d.getMonth(), 1)); 
         } else {
             showGlobalLoader("Загрузка задач...");
-            let [calSnap, kbSnap] = await Promise.all([
-                database.ref('tasks_calendar').once('value'),
-                database.ref('knowledge_base').once('value')
-            ]);
+            let [calSnap, kbSnap] = await Promise.all([database.ref('tasks_calendar').once('value'), database.ref('knowledge_base').once('value')]);
             if (!state.cachedCatalogs) state.cachedCatalogs = {};
             state.cachedCatalogs['tasks_calendar'] = calSnap.val() || {};
             state.cachedCatalogs['knowledge_base'] = kbSnap.val() || {};
             hideGlobalLoader();
-            renderMiniCalendar(state.selectedCalDate);
+            renderMiniCalendar(new Date(d.getFullYear(), d.getMonth(), 1));
         }
     }
 
-    // ⚡ ВОССТАНОВЛЕННАЯ ФУНКЦИЯ ПЕРЕКЛЮЧЕНИЯ МЕСЯЦЕВ
     window.changeMiniCalMonth = function(delta) {
         triggerHaptic();
         let currentView = state.currentCalView || new Date();
         let newDate = new Date(currentView.getFullYear(), currentView.getMonth() + delta, 1);
         
-        // При смене месяца автоматически выбираем 1-е число или сегодня (если это текущий месяц)
         let today = new Date();
         if (newDate.getFullYear() === today.getFullYear() && newDate.getMonth() === today.getMonth()) {
             state.selectedCalDate = new Date(today.getFullYear(), today.getMonth(), today.getDate());
         } else {
             state.selectedCalDate = new Date(newDate.getFullYear(), newDate.getMonth(), 1);
         }
-        
         renderMiniCalendar(newDate);
     }
 
@@ -4216,47 +4172,38 @@ function showLastOrder() {
         
         let year = targetDate.getFullYear();
         let month = targetDate.getMonth();
-        let today = new Date();
-        today.setHours(0,0,0,0);
+        let today = new Date(); today.setHours(0,0,0,0);
         
         let firstDay = new Date(year, month, 1).getDay();
         let startOffset = (firstDay || 7) - 1; 
         let daysInMonth = new Date(year, month + 1, 0).getDate();
-        
         let monthNames = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
 
-        // Устанавливаем текущий месяц для работы кнопок навигации
         state.currentCalView = new Date(year, month, 1);
 
         let html = `
         <div class="report-card" style="padding:15px; margin-bottom:15px; background:linear-gradient(135deg, #ede7f6 0%, #d1c4e9 100%); border:1px solid #b39ddb; box-shadow:0 4px 15px rgba(0,0,0,0.05);">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
-                <button onclick="changeMiniCalMonth(-1)" style="background:#7E57C2; border:none; color:#fff; font-size:18px; padding:8px 20px; border-radius:8px; font-weight:bold; cursor:pointer; box-shadow:0 2px 5px rgba(0,0,0,0.1); position:relative; z-index:10;">◀</button>
+                <button onclick="changeMiniCalMonth(-1)" style="background:#7E57C2; border:none; color:#fff; font-size:18px; padding:8px 20px; border-radius:8px; font-weight:bold; cursor:pointer;">◀</button>
                 <div style="font-size:18px; font-weight:900; text-transform:uppercase; color:#311B92;">${monthNames[month]} ${year}</div>
-                <button onclick="changeMiniCalMonth(1)" style="background:#7E57C2; border:none; color:#fff; font-size:18px; padding:8px 20px; border-radius:8px; font-weight:bold; cursor:pointer; box-shadow:0 2px 5px rgba(0,0,0,0.1); position:relative; z-index:10;">▶</button>
+                <button onclick="changeMiniCalMonth(1)" style="background:#7E57C2; border:none; color:#fff; font-size:18px; padding:8px 20px; border-radius:8px; font-weight:bold; cursor:pointer;">▶</button>
             </div>
-            
             <div class="cal-grid" style="display:grid; grid-template-columns: repeat(7, 1fr); gap:4px; text-align:center; margin-bottom:5px;">
                 <div style="font-weight:900; font-size:13px; color:#311B92;">Пн</div><div style="font-weight:900; font-size:13px; color:#311B92;">Вт</div>
                 <div style="font-weight:900; font-size:13px; color:#311B92;">Ср</div><div style="font-weight:900; font-size:13px; color:#311B92;">Чт</div>
                 <div style="font-weight:900; font-size:13px; color:#311B92;">Пт</div><div style="font-weight:900; font-size:13px; color:#e53935;">Сб</div>
                 <div style="font-weight:900; font-size:13px; color:#e53935;">Вс</div>
             </div>
-            <div class="cal-grid" style="display:grid; grid-template-columns: repeat(7, 1fr); gap:4px; text-align:center;">
-        `;
+            <div class="cal-grid" style="display:grid; grid-template-columns: repeat(7, 1fr); gap:4px; text-align:center;">`;
         
         for (let i = 0; i < startOffset; i++) { html += `<div></div>`; }
 
-        // ⚡ ПАЛИТРА ЦВЕТОВ ДЛЯ ЗАДАЧ
         let badgeColors = ['#E53935', '#43A047', '#1E88E5', '#8E24AA', '#F4511E', '#00ACC1', '#3949AB', '#00897B'];
 
         for (let d = 1; d <= daysInMonth; d++) {
-            let curr = new Date(year, month, d);
-            curr.setHours(0,0,0,0);
-            
+            let curr = new Date(year, month, d); curr.setHours(0,0,0,0);
             let isToday = curr.getTime() === today.getTime();
             let isSelected = state.selectedCalDate && curr.getTime() === state.selectedCalDate.getTime();
-            
             let dayTasks = getTasksForDate(curr, state.tasksArray);
             
             let bg = isSelected ? "#311B92" : (isToday ? "#ffb74d" : "#fff");
@@ -4267,16 +4214,11 @@ function showLastOrder() {
             if (dayTasks.length > 0) {
                 let maxPills = Math.min(dayTasks.length, 3);
                 for(let i=0; i<maxPills; i++) {
-                    let taskObj = dayTasks[i];
-                    let colorIdx = state.tasksArray.indexOf(taskObj) % badgeColors.length;
-                    let taskColor = badgeColors[colorIdx];
-                    
-                    let shortName = taskObj.name.substring(0, 5); 
+                    let taskColor = badgeColors[state.tasksArray.indexOf(dayTasks[i]) % badgeColors.length];
+                    let shortName = dayTasks[i].name.substring(0, 5); 
                     pillsHtml += `<div style="font-size:8px; line-height:1.2; background:${taskColor}; color:#fff; border-radius:3px; padding:2px; margin-bottom:2px; width:100%; text-overflow:ellipsis; overflow:hidden; white-space:nowrap; font-weight:bold; box-shadow:0 1px 2px rgba(0,0,0,0.1); border:${isSelected ? '1px solid #fff' : 'none'};">${shortName}</div>`;
                 }
-                if (dayTasks.length > 3) {
-                    pillsHtml += `<div style="font-size:9px; color:${isSelected ? '#fff' : '#7E57C2'}; font-weight:bold; text-align:center;">+${dayTasks.length - 3}</div>`;
-                }
+                if (dayTasks.length > 3) pillsHtml += `<div style="font-size:9px; color:${isSelected ? '#fff' : '#7E57C2'}; font-weight:bold; text-align:center;">+${dayTasks.length - 3}</div>`;
             }
             
             html += `<div style="background:${bg}; border:2px solid ${borderColor}; border-radius:8px; min-height:55px; display:flex; flex-direction:column; align-items:center; padding:4px 2px; cursor:pointer; position:relative; z-index:5; overflow:hidden;" onclick="showTasksForDay(${year}, ${month}, ${d})">
@@ -4285,7 +4227,6 @@ function showLastOrder() {
                      </div>`;
         }
         html += `</div></div><div id="daily-tasks-list"></div>`;
-        
         document.getElementById('tasks-calendar-container').innerHTML = html;
         
         if (state.selectedCalDate && state.selectedCalDate.getMonth() === month && state.selectedCalDate.getFullYear() === year) {
@@ -4297,16 +4238,12 @@ function showLastOrder() {
 
     window.showTasksForDay = function(y, m, d, reRenderCalendar = true) {
         triggerHaptic();
-        let dateObj = new Date(y, m, d);
-        dateObj.setHours(0,0,0,0);
+        let dateObj = new Date(y, m, d); dateObj.setHours(0,0,0,0);
         state.selectedCalDate = dateObj; 
         
-        if (reRenderCalendar) {
-            renderMiniCalendar(new Date(y, m, 1)); 
-        }
+        if (reRenderCalendar) renderMiniCalendar(new Date(y, m, 1)); 
         
         let tasks = getTasksForDate(dateObj, state.tasksArray);
-        
         let html = `<h4 style="color:#01579B; margin-bottom:10px; font-size:18px;">📌 Задачи на ${dateObj.toLocaleDateString('ru-RU')}</h4>`;
         
         if (tasks.length === 0) {
@@ -4314,28 +4251,22 @@ function showLastOrder() {
         } else {
             tasks.forEach((t, idx) => {
                 let kbHtml = "";
-                
                 if (t.kb_id && state.cachedCatalogs['knowledge_base'] && state.cachedCatalogs['knowledge_base'][t.kb_id]) {
                     let doc = state.cachedCatalogs['knowledge_base'][t.kb_id];
                     let formattedText = doc.text ? doc.text.replace(/\n/g, '<br>') : '';
                     let regex = /\[ФОТО_(\d+)\](.*?)\[\/ФОТО_\d+\]/g;
                     formattedText = formattedText.replace(regex, (match, n, word) => {
                         let photoData = doc[`photo_${n}`] || "";
-                        if (photoData) {
-                            return `<span style="color:#0288d1; border-bottom:1px dashed #0288d1; cursor:pointer; font-weight:bold;" onclick="openPhotoModal('${escapeName(word)}', '${photoData}')">📷 ${word}</span>`;
-                        }
+                        if (photoData) return `<span style="color:#0288d1; border-bottom:1px dashed #0288d1; cursor:pointer; font-weight:bold;" onclick="openPhotoModal('${escapeName(word)}', '${photoData}')">📷 ${word}</span>`;
                         return `<b>${word}</b>`;
                     });
 
                     let safeId = getSafeId("task_kb_" + idx);
                     kbHtml = `<div style="margin-top:10px; padding-top:10px; border-top:1px dashed #ccc; font-size:14px; line-height:1.4;">
                                 <div style="color:#0288D1; font-weight:900; margin-bottom:5px; cursor:pointer; display:flex; justify-content:space-between; align-items:center;" onclick="toggleElements('kb_task_${safeId}', 'arr_kb_task_${safeId}')">
-                                    <span>📖 Инструкция: ${doc.title}</span>
-                                    <span id="arr_kb_task_${safeId}" style="color:#0288D1; font-size:12px;">▼</span>
+                                    <span>📖 Инструкция: ${doc.title}</span><span id="arr_kb_task_${safeId}" style="color:#0288D1; font-size:12px;">▼</span>
                                 </div>
-                                <div class="kb_task_${safeId}" style="display:none; margin-top:8px;">
-                                    ${formattedText}
-                                </div>
+                                <div class="kb_task_${safeId}" style="display:none; margin-top:8px;">${formattedText}</div>
                               </div>`;
                 }
 
@@ -4345,7 +4276,6 @@ function showLastOrder() {
                          </div>`;
             });
         }
-        
         html += `<div style="height: 50px;"></div>`;
         document.getElementById('daily-tasks-list').innerHTML = html;
     }
@@ -4355,9 +4285,7 @@ function showLastOrder() {
         let dayOfWeek = dateObj.getDay(); 
         let d = dateObj.getDate();
         
-        let currentTarget = new Date(dateObj);
-        currentTarget.setHours(0,0,0,0);
-
+        let currentTarget = new Date(dateObj); currentTarget.setHours(0,0,0,0);
         let firstDayOfMonth = new Date(currentTarget.getFullYear(), currentTarget.getMonth(), 1).getDay();
         let startOff = (firstDayOfMonth || 7) - 1; 
         let weekRowNumber = Math.ceil((d + startOff) / 7);
@@ -4365,7 +4293,6 @@ function showLastOrder() {
         tasksArray.forEach(t => {
             let periods = Array.isArray(t.period) ? t.period : [t.period || 'every_day'];
             let isMatch = false;
-            
             let startD = t.startDate ? new Date(t.startDate) : new Date(2024, 0, 1);
             startD.setHours(0,0,0,0);
 
@@ -4486,7 +4413,7 @@ function showLastOrder() {
         updateHeaderSelectOptions();
         state.cachedCatalogs = {};
         
-        const paths = ['order', 'newshop', 'stoplist', 'checklist', 'menu', 'espresso_recipes', 'tasks_calendar', 'knowledge_base'];
+        const paths = const paths = ['order', 'newshop', 'stoplist', 'checklist', 'menu', 'espresso_recipes', 'tasks_calendar', 'knowledge_base'];
         for (let p of paths) {
             let cachedData = await loadFromRealCache(p);
             if (cachedData) state.cachedCatalogs[p] = cachedData;

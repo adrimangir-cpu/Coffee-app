@@ -2218,6 +2218,8 @@
             let seenInOrders = new Set();
             let cutoffTime = Date.now() - (14 * 24 * 60 * 60 * 1000); 
 
+            let restoredItems = []; // ⚡ Собираем названия возвращенных товаров
+
             state.globalMissing.forEach(m => {
                 if (!m || !m.name || m.timestamp < cutoffTime) return;
                 let pKey = getStatusKey(m.name);
@@ -2238,11 +2240,18 @@
                             state.userBasket["_catinfo"][catItem.name] = catItem.cat || "Прочее";
                             persistDraft(); 
                             updateBadgeUI(); 
+                            database.ref("missing_items/" + m.key).update({added_to_basket: true}); 
+                            
+                            restoredItems.push(catItem.name); // ⚡ Запоминаем для алерта
                         }
                     }
-                    database.ref("missing_items/" + m.key).update({added_to_basket: true}); 
                 }
             });
+
+            // ⚡ Выводим алерт баристе, если что-то вернулось
+            if (restoredItems.length > 0) {
+                alert("🔄 АДМИН ОТМЕНИЛ НЕДОВОЗЫ!\nСледующие товары возвращены вам в корзину для повторного заказа:\n\n" + restoredItems.join("\n"));
+            }
 
             state.globalOrders.forEach(o => {
                 if ((o.mode === 'order' || o.mode === 'new_shop') && o.timestamp >= cutoffTime) {
@@ -3589,6 +3598,10 @@ window.showLastOrder = async function() {
 
             if (arrivedItemsToClear.length > 0) {
                 await autoRemoveFromStoplist(state.currentShop, arrivedItemsToClear);
+                // ⚡ Уведомляем бариста, что товары убраны из стоп-листа
+                setTimeout(() => {
+                    alert("✅ ПРИЕМКА УСПЕШНА!\n\nТовары, которые вы только что приняли, были автоматически удалены из Стоп-листа и снова доступны в Тех. картах.");
+                }, 800);
             }
             
             if (state.receivingChoices) {
@@ -3629,6 +3642,11 @@ window.showLastOrder = async function() {
             }
             
             await autoRemoveFromStoplist(state.currentShop, namesToRemove);
+            
+            // ⚡ Уведомляем бариста
+            setTimeout(() => {
+                alert("✅ НЕДОВОЗЫ ДОЕХАЛИ!\n\nЭти товары были автоматически удалены из Стоп-листа и снова доступны в Тех. картах.");
+            }, 800);
             
             state.missingChoices = {};
             hideGlobalLoader(); 

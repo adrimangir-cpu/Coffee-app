@@ -90,28 +90,45 @@
         }
 
         /* =========================================
-           ДИНАМИЧЕСКАЯ ПАНЕЛЬ ДЕЙСТВИЙ (Глобальная)
+           ДИНАМИЧЕСКАЯ ПАНЕЛЬ ДЕЙСТВИЙ (Глобальная - Плавающая)
         ========================================= */
         #dynamic-action-bar {
             display: none; 
             margin-top: 10px;
             background: rgba(255, 255, 255, 0.95);
-            backdrop-filter: blur(5px);
+            backdrop-filter: blur(8px);
             padding: 15px;
             border-radius: 16px;
-            box-shadow: 0 10px 30px rgba(49, 27, 146, 0.1); 
+            box-shadow: 0 10px 30px rgba(49, 27, 146, 0.15); 
             border: 2px solid #e1bee7;
+            position: sticky;
+            top: 75px; /* Сразу под сиреневой шапкой */
+            z-index: 1999;
+            max-height: 80vh;
+            overflow-y: auto;
+            transition: max-height 0.3s ease-in-out, padding 0.3s ease-in-out;
         }
 
-        .action-container {
-            display: flex;
-            gap: 10px;
-            flex-wrap: wrap;
+        #dynamic-action-bar.collapsed {
+            max-height: 0;
+            padding-top: 0;
+            padding-bottom: 0;
+            border: none;
+            overflow: hidden;
+            margin-top: 0;
         }
-        
-        .action-container button, .action-container .tab-btn {
-            flex: 1 1 auto; 
-            min-width: 140px; 
+
+        .action-bar-toggle-btn {
+            background: #ede7f6;
+            color: #4A148C;
+            font-weight: 900;
+            text-align: center;
+            padding: 10px;
+            border-radius: 10px;
+            cursor: pointer;
+            border: 1px solid #d1c4e9;
+            margin-top: 5px;
+            display: none; /* Покажется только если есть action bar */
         }
 
         /* =========================================
@@ -397,6 +414,12 @@
             min-width: 110px !important;
             width: 130px !important;
         }
+        
+        input[list]:focus, input[type="text"]:focus, input[type="number"]:focus {
+        background-color: #ffffff !important;
+        border-color: #4CAF50 !important;
+    }
+        
     </style>
 </head>
 <body>
@@ -733,13 +756,46 @@
 
     function setupUniversalActionBar(htmlContent, isOpen, toggleId) {
         let uab = document.getElementById('dynamic-action-bar');
+        
+        // Создаем кнопку переключателя, если её еще нет
+        let toggleBtn = document.getElementById('main-action-toggle');
+        if (!toggleBtn) {
+            toggleBtn = document.createElement('div');
+            toggleBtn.id = 'main-action-toggle';
+            toggleBtn.className = 'action-bar-toggle-btn';
+            toggleBtn.innerHTML = '⚙️ Показать действия и настройки ▼';
+            let stickyWrapper = document.querySelector('.sticky-top-wrapper');
+            stickyWrapper.insertBefore(toggleBtn, uab);
+            
+            toggleBtn.onclick = function() {
+                uab.classList.toggle('collapsed');
+                let isCollapsed = uab.classList.contains('collapsed');
+                toggleBtn.innerHTML = isCollapsed ? '⚙️ Показать действия и настройки ▼' : '⚙️ Скрыть панель действий ▲';
+            };
+        }
+
         if (!htmlContent) { 
             uab.style.display = 'none'; 
             uab.innerHTML = ''; 
+            toggleBtn.style.display = 'none';
             return; 
         }
+        
+        // Вставляем контент, но делаем его по умолчанию свернутым
         uab.innerHTML = htmlContent; 
         uab.style.display = 'block';
+        uab.classList.add('collapsed'); 
+        toggleBtn.style.display = 'block';
+        toggleBtn.innerHTML = '⚙️ Показать действия и настройки ▼';
+        
+        // Убираем старые внутренние хедеры из самого HTML (так как теперь есть главная кнопка)
+        let internalHeaders = uab.querySelectorAll('.cat-group-header');
+        internalHeaders.forEach(h => h.style.display = 'none');
+        let dropdowns = uab.querySelectorAll('.action-panel-dropdown');
+        dropdowns.forEach(d => {
+            d.style.display = 'flex'; // Всегда flex, так как скрытие идет через весь блок
+            d.style.marginTop = '0';
+        });
     }
 
     function toggleCatElements(cls, arrowId) { 
@@ -5251,7 +5307,7 @@ async function exportGraphsToExcel() {
             let newCat = prompt("Введите название новой категории:");
             if (newCat) {
                 currentCatalog[id][field] = newCat;
-                catalogChanges[id] = currentCatalog[id]; // ⚡ Размечаем ДО рендера
+                catalogChanges[id] = currentCatalog[id];
                 if (currentPath.includes('order')) renderCatalogOrder();
                 else if (currentPath.includes('stoplist')) renderCatalogStoplist();
                 else renderCatalogChecklist();
@@ -5262,7 +5318,13 @@ async function exportGraphsToExcel() {
             }
         } else {
             currentCatalog[id][field] = val; 
-            catalogChanges[id] = currentCatalog[id]; // ⚡ Размечаем
+            catalogChanges[id] = currentCatalog[id];
+            
+            if (field === 'globalCat' || field === 'cat') {
+                 if (currentPath.includes('order')) renderCatalogOrder();
+                 else if (currentPath.includes('stoplist')) renderCatalogStoplist();
+                 else renderCatalogChecklist();
+            }
         }
     }
     
@@ -5890,14 +5952,21 @@ async function exportGraphsToExcel() {
 
         let shops = ["Бояринова", "Гагарина", "Вертолетчиков", "Липчанского", "Новокосино", "Новокосино 2", "Старое Павлино", "Красноказарменная", "Ухтомского ополчения"];
         let espressoData = cachedData.espresso || {};
+        let kbData = cachedData.knowledge || {};
         
         let defaultData = espressoData.default || { current: {}, history: {} };
         let overridesData = espressoData.overrides || {};
         
+        // ⚡ Генерируем опции Базы знаний
+        let kbOptions = `<option value="">-- Без инструкции --</option>`;
+        Object.keys(kbData).forEach(k => {
+            kbOptions += `<option value="${k}">${kbData[k].title}</option>`;
+        });
+
         let html = `<h3 style="color:#4A148C; font-size:24px; margin-top:0; margin-bottom:15px;">☕ Рецепты эспрессо</h3>`;
         
         // --- 1. ОБЩИЙ РЕЦЕПТ ---
-        html += renderEspressoBlock('default', '🌍 ОБЩИЙ РЕЦЕПТ (Для всех адресов по умолчанию)', defaultData, true);
+        html += renderEspressoBlock('default', '🌍 ОБЩИЙ РЕЦЕПТ (Для всех адресов по умолчанию)', defaultData, true, kbOptions);
         
         // --- 2. ДОБАВЛЕНИЕ ИСКЛЮЧЕНИЯ ---
         let overrideOpts = shops.filter(s => !overridesData[s]).map(s => `<option value="${s}">${s}</option>`).join('');
@@ -5911,15 +5980,16 @@ async function exportGraphsToExcel() {
 
         // --- 3. ИСКЛЮЧЕНИЯ ---
         Object.keys(overridesData).forEach(shop => {
-             html += renderEspressoBlock(shop, `📍 ИСКЛЮЧЕНИЕ: ${shop === 'Красноказарменная' ? 'МЭИ' : shop}`, overridesData[shop], false);
+             html += renderEspressoBlock(shop, `📍 ИСКЛЮЧЕНИЕ: ${shop === 'Красноказарменная' ? 'МЭИ' : shop}`, overridesData[shop], false, kbOptions);
         });
 
         box.innerHTML = html;
     }
 
-   function renderEspressoBlock(shopKey, title, sData, isDefault) {
+   function renderEspressoBlock(shopKey, title, sData, isDefault, kbOptions) {
         let currD = sData.current_double || sData.current || { in: "", out: "", time: "", result: "", roast: "", brand: "" };
         let currS = sData.current_single || { in: "", out: "", time: "", result: "", roast: "", brand: "" };
+        let linkedKb = sData.linked_kb_id || ""; // ⚡ Читаем привязанную инструкцию
         
         let safeShop = getSafeId('esp_' + shopKey);
         let isOpen = expandedDivs.has(safeShop) || isDefault; 
@@ -5928,6 +5998,9 @@ async function exportGraphsToExcel() {
         let bgHeader = isDefault ? '#c5cae9' : '#ffcc80';
         let colorTitle = isDefault ? '#1a237e' : '#e65100';
         let delBtn = isDefault ? '' : `<button onclick="deleteEspressoOverride('${shopKey}')" style="float:right; background:#e53935; color:#fff; border:none; padding:4px 10px; border-radius:6px; font-weight:bold; cursor:pointer; margin-right:15px;">🗑 Удалить исключение</button>`;
+
+        // Подставляем selected в селект Базы знаний
+        let specificKbOptions = kbOptions.replace(`value="${linkedKb}"`, `value="${linkedKb}" selected`);
 
         let createTable = (prefix, label, curr) => `
             <div style="flex:1; min-width:300px; background:#fafafa; border:1px solid #ccc; border-radius:12px; padding:10px;">
@@ -5959,6 +6032,15 @@ async function exportGraphsToExcel() {
             ${delBtn}
         </div>
         <div class="esp_box_${safeShop}" style="display:${isOpen ? 'block' : 'none'}; padding:15px; background:white; border-radius: 0 0 12px 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.05); margin-bottom:10px; border:2px solid ${bgHeader}; border-top:none;">
+            
+            <div style="margin-bottom:15px; padding:10px; background:#f5f5f5; border-radius:8px; border:1px dashed #ccc;">
+                <b style="font-size:14px; color:#311b92;">📖 Прикрепить инструкцию из Базы знаний:</b>
+                <select id="esp_kb_${safeShop}" style="width:100%; padding:8px; margin-top:5px; border-radius:6px; border:1px solid #7E57C2;">
+                    ${specificKbOptions}
+                </select>
+                <div style="font-size:11px; color:#888; margin-top:4px;">Эта инструкция будет отображаться у бариста при просмотре рецепта.</div>
+            </div>
+
             <div style="display:flex; gap:15px; flex-wrap:wrap; margin-bottom:15px;">
                 ${createTable('espd', 'Двойной эспрессо', currD)}
                 ${createTable('esps', 'Одинарный эспрессо', currS)}
@@ -5982,19 +6064,23 @@ async function exportGraphsToExcel() {
 
         let dData = getVals('espd');
         let sData = getVals('esps');
+        let kbId = document.getElementById(`esp_kb_${safeId}`).value; // ⚡ Считываем селект Базы Знаний
         
         let basePath = shopKey === 'default' ? 'default' : `overrides/${shopKey}`;
         let updates = {};
         
         updates[`${basePath}/current_double`] = dData;
         updates[`${basePath}/current_single`] = sData;
+        updates[`${basePath}/linked_kb_id`] = kbId; // ⚡ Сохраняем в базу
 
         showReportOverlay("Сохранение рецепта...");
         try {
             await fetch(`${FB_URL}/espresso_recipes.json`, { method: 'PATCH', body: JSON.stringify(updates) });
+            // Тихо обновляем кэш
             let fresh = await fetch(`${FB_URL}/espresso_recipes.json`).then(r=>r.json());
             cachedData.espresso = fresh;
             saveToCache('espresso_recipes', fresh);
+            
             hideReportOverlay();
             renderEspressoTab();
             alert("✅ Рецепты успешно сохранены!");
@@ -6101,40 +6187,41 @@ async function exportGraphsToExcel() {
     }
 
     window.generateTaskRowHtml = function(k, t, kbOptions) {
-        let periods = Array.isArray(t.period) ? t.period : [t.period || 'every_day'];
+        let currentPeriod = Array.isArray(t.period) ? t.period[0] : (t.period || 'every_day');
         
         const pOpts = [
-            {val: 'every_day', label: 'Каждый день', c: '#4caf50'},
-            {val: 'every_mon', label: 'Пн', c: '#3f51b5'}, {val: 'every_tue', label: 'Вт', c: '#3f51b5'},
-            {val: 'every_wed', label: 'Ср', c: '#3f51b5'}, {val: 'every_thu', label: 'Чт', c: '#3f51b5'},
-            {val: 'every_fri', label: 'Пт', c: '#3f51b5'}, {val: 'every_sat', label: 'Сб', c: '#e65100'}, {val: 'every_sun', label: 'Вс', c: '#e65100'},
-            {val: '1st_week', label: '1-я неделя', c: '#8e24aa'}, {val: '2nd_week', label: '2-я неделя', c: '#8e24aa'},
-            {val: '3rd_week', label: '3-я неделя', c: '#8e24aa'}, {val: '4th_week', label: '4-я неделя', c: '#8e24aa'},
-            {val: 'monthly', label: 'Раз в месяц', c: '#00838f'}, {val: 'every_3_days', label: 'Раз в 3 дня', c: '#00838f'}
+            {val: 'every_day', label: 'Каждый день'},
+            {val: 'every_mon', label: 'Каждый Понедельник'}, 
+            {val: 'every_tue', label: 'Каждый Вторник'},
+            {val: 'every_wed', label: 'Каждую Среду'}, 
+            {val: 'every_thu', label: 'Каждый Четверг'},
+            {val: 'every_fri', label: 'Каждую Пятницу'}, 
+            {val: 'every_sat', label: 'Каждую Субботу'}, 
+            {val: 'every_sun', label: 'Каждое Воскресенье'},
+            {val: '1st_week', label: '1-я неделя месяца'}, 
+            {val: '2nd_week', label: '2-я неделя месяца'},
+            {val: '3rd_week', label: '3-я неделя месяца'}, 
+            {val: '4th_week', label: '4-я неделя месяца'},
+            {val: 'monthly', label: 'Раз в месяц (в дату отсчета)'}, 
+            {val: 'every_3_days', label: 'Раз в 3 дня'}
         ];
 
-        let checkboxesHtml = pOpts.map(o => {
-            let isChecked = periods.includes(o.val);
-            return `
-            <label style="display:inline-flex; align-items:center; margin:3px; cursor:pointer; background:${isChecked ? o.c : '#f5f5f5'}; color:${isChecked ? '#fff' : '#555'}; padding:4px 8px; border-radius:12px; font-size:12px; font-weight:bold; border:1px solid ${isChecked ? o.c : '#ddd'}; transition:0.2s;">
-                <input type="checkbox" value="${o.val}" class="task-period-cb" ${isChecked?'checked':''} onchange="this.parentElement.style.background=this.checked?'${o.c}':'#f5f5f5'; this.parentElement.style.color=this.checked?'#fff':'#555'; this.parentElement.style.borderColor=this.checked?'${o.c}':'#ddd'; renderAdminCalendar();" style="display:none;">
-                ${o.label}
-            </label>`;
-        }).join('');
+        let selectHtml = `<select class="task-period-cb" style="width:100%; border:2px solid #7E57C2; border-radius:8px; padding:8px; font-size:14px; font-weight:bold; color:#4A148C; cursor:pointer;" onchange="renderAdminCalendar()">`;
+        pOpts.forEach(o => {
+            let isSelected = currentPeriod === o.val ? 'selected' : '';
+            selectHtml += `<option value="${o.val}" ${isSelected}>${o.label}</option>`;
+        });
+        selectHtml += `</select>`;
 
         let modifiedKbOptions = kbOptions.replace(`value="${t.kb_id}"`, `value="${t.kb_id}" selected`);
         let startD = t.startDate ? t.startDate : new Date().toISOString().split('T')[0];
 
         return `<tr class="task-row" data-id="${k}" style="background:#fff; border-bottom:2px dashed #eee;">
-            <td style="vertical-align:top; padding:10px;"><input type="text" class="task-name" value="${t.name || ''}" placeholder="Название задачи" style="width:100%; border:2px solid #ccc; font-weight:bold; color:#311b92;" onchange="renderAdminCalendar()"></td>
-            <td style="vertical-align:top; padding:10px;">
-                <div class="task-period-container" style="display:flex; flex-wrap:wrap; border: 1px dashed #ccc; padding: 6px; border-radius: 8px; background: #fafafa;">
-                    ${checkboxesHtml}
-                </div>
-            </td>
-            <td style="vertical-align:top; padding:10px;"><input type="date" class="task-start" value="${startD}" style="width:100%; font-size:14px; border:2px solid #ccc; padding:10px; font-weight:bold; color:#e65100; background:#fff3e0;" title="Дата отсчета (важно для 'Раз в X дней')" onchange="renderAdminCalendar()"></td>
-            <td style="vertical-align:top; padding:10px;"><select class="task-kb" style="width:100%; font-size:14px; border:2px solid #ccc;">${modifiedKbOptions}</select></td>
-            <td style="text-align:center; vertical-align:top; padding:10px;"><button class="btn-del" onclick="this.closest('tr').remove(); renderAdminCalendar();">🗑</button></td>
+            <td style="vertical-align:middle; padding:10px;"><input type="text" class="task-name" value="${t.name || ''}" placeholder="Название задачи" style="width:100%; border:2px solid #ccc; font-weight:bold; color:#311b92;" onchange="renderAdminCalendar()"></td>
+            <td style="vertical-align:middle; padding:10px;">${selectHtml}</td>
+            <td style="vertical-align:middle; padding:10px;"><input type="date" class="task-start" value="${startD}" style="width:100%; font-size:14px; border:2px solid #ccc; padding:10px; font-weight:bold; color:#e65100; background:#fff3e0;" title="Дата отсчета (важно для 'Раз в X дней')" onchange="renderAdminCalendar()"></td>
+            <td style="vertical-align:middle; padding:10px;"><select class="task-kb" style="width:100%; font-size:14px; border:2px solid #ccc;">${modifiedKbOptions}</select></td>
+            <td style="text-align:center; vertical-align:middle; padding:10px;"><button class="btn-del" onclick="this.closest('tr').remove(); renderAdminCalendar();">🗑</button></td>
         </tr>`;
     }
 

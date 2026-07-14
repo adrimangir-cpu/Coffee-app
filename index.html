@@ -1392,7 +1392,14 @@
             btnHistory.style.background = 'transparent'; btnHistory.style.color = '#888';
             
             state.invoiceData = state.invoiceDataFull.active.items || state.invoiceDataFull.active;
-            renderInvoices(state.invoiceData, state.invoiceDataFull.activeTimestamp);
+            
+            // Если в строке поиска уже что-то введено, применяем поиск
+            let searchInput = document.getElementById('invoice-search-input');
+            if (searchInput && searchInput.value.trim() !== "") {
+                filterInvoices(searchInput.value);
+            } else {
+                renderInvoices(state.invoiceData, state.invoiceDataFull.activeTimestamp, "");
+            }
         } else {
             btnHistory.style.background = '#9C27B0'; btnHistory.style.color = '#fff';
             btnActive.style.background = 'transparent'; btnActive.style.color = '#888';
@@ -1438,7 +1445,7 @@
         return grouped;
     }
 
-    function generateInvoiceItemsHtml(grouped) {
+    function generateInvoiceItemsHtml(grouped, searchQuery = "") {
         let html = "";
         let sortedCats = Object.keys(grouped).sort();
         if(sortedCats.length === 0) return "<div style='text-align:center; padding:10px;'>Нет товаров</div>";
@@ -1447,10 +1454,19 @@
             html += `<div style="font-weight:900; color:#7E57C2; padding:8px 5px; border-bottom:2px dashed #eee; margin-top:10px; font-size:15px;">📂 ${cat}</div>`;
             grouped[cat].sort((a,b) => a.name.localeCompare(b.name)).forEach(item => {
                 let imgHtml = (item.photo && item.photo.startsWith("data:image")) ? `<img src="${item.photo}" style="width:35px; height:35px; border-radius:6px; object-fit:cover; margin-right:10px; border:1px solid #ddd;">` : `<div style="width:35px; height:35px; border-radius:6px; background:#f0f0f0; margin-right:10px; display:flex; align-items:center; justify-content:center; font-size:9px; color:#aaa; border:1px dashed #ccc;">Нет<br>фото</div>`;
+                
+                let displayName = item.name;
+                
+                // ⚡ УМНАЯ ПОДСВЕТКА ИСКОМОГО СЛОВА
+                if (searchQuery !== "") {
+                    let searchRegex = new RegExp(`(${searchQuery})`, 'gi');
+                    displayName = displayName.replace(searchRegex, `<span style="background-color: #ffeb3b; padding: 2px 4px; border-radius: 4px; font-weight: bold; color: #000;">$1</span>`);
+                }
+
                 html += `<div style="display:flex; align-items:center; justify-content:space-between; padding:10px 0; border-bottom:1px solid #f9f9f9;">
                             <div style="display:flex; align-items:center; flex:1;">
                                 ${imgHtml}
-                                <span style="font-weight:bold; font-size:15px; color:#311b92;">${item.name}</span>
+                                <span style="font-weight:bold; font-size:15px; color:#311b92;">${displayName}</span>
                             </div>
                             <span style="font-weight:900; font-size:16px; color:#2e7d32; white-space:nowrap;">${item.price} ₽</span>
                          </div>`;
@@ -1459,7 +1475,7 @@
         return html;
     }
 
-    function renderInvoices(invData, timestamp) {
+    function renderInvoices(invData, timestamp, searchQuery = "") {
         if (state.currentInvoiceTab !== 'active') return;
         
         let html = "";
@@ -1476,14 +1492,19 @@
             return;
         }
 
+        let isSearch = searchQuery !== "";
+
         sortedCats.forEach(cat => {
-            // ⚡ ИСПРАВЛЕНИЕ: Убрали класс "open", теперь категории свернуты по умолчанию
-            html += `<div class="category-block" style="margin-bottom:15px; border:2px solid #e1bee7; background:#fff;">
+            // ⚡ ЕСЛИ ЭТО ПОИСК - СРАЗУ РАЗВОРАЧИВАЕМ ПАПКУ И МЕНЯЕМ СТРЕЛКУ
+            let isOpenClass = isSearch ? "open" : "";
+            let arrowSymbol = isSearch ? "▲" : "▼";
+
+            html += `<div class="category-block ${isOpenClass}" style="margin-bottom:15px; border:2px solid #e1bee7; background:#fff;">
                         <div class="category-header" style="background:#f3e5f5; color:#4A148C;" onclick="handleCategoryToggle(this)">
-                            <span>📂 ${cat}</span> <span style="opacity:0.5; font-size:14px;">▼</span>
+                            <span>📂 ${cat}</span> <span style="opacity:0.5; font-size:14px;">${arrowSymbol}</span>
                         </div>
                         <div class="category-content" style="padding:10px;">`;
-            html += generateInvoiceItemsHtml({ [cat]: grouped[cat] }).replace(`<div style="font-weight:900; color:#7E57C2; padding:8px 5px; border-bottom:2px dashed #eee; margin-top:10px; font-size:15px;">📂 ${cat}</div>`, "");
+            html += generateInvoiceItemsHtml({ [cat]: grouped[cat] }, searchQuery).replace(`<div style="font-weight:900; color:#7E57C2; padding:8px 5px; border-bottom:2px dashed #eee; margin-top:10px; font-size:15px;">📂 ${cat}</div>`, "");
             html += `</div></div>`;
         });
         document.getElementById('invoices-container').innerHTML = html;
@@ -1498,6 +1519,7 @@
         
         if (q === "") {
             filtered = state.invoiceData;
+            renderInvoices(filtered, state.invoiceDataFull.activeTimestamp, ""); // Пустой поиск = папки свернуты
         } else {
             Object.keys(state.invoiceData).forEach(k => {
                 let doc = state.invoiceData[k];
@@ -1505,8 +1527,8 @@
                     filtered[k] = doc;
                 }
             });
+            renderInvoices(filtered, state.invoiceDataFull.activeTimestamp, q); // Передаем текст поиска для выделения
         }
-        renderInvoices(filtered, state.invoiceDataFull.activeTimestamp);
     }
 
     // ==========================================
@@ -2790,27 +2812,35 @@
         state.currentMode = ""; 
     }
     
-   function showMyLastOrder() {
+   window.showMyLastOrder = async function() {
         if(!checkShopSelected()) return;
         triggerHaptic();
         state.currentMode = 'my_last_order'; 
         document.getElementById('report-overlay').style.display = 'flex';
         document.getElementById('report-header').innerText = "Последний заказ";
         
-        if (!state.ordersLoaded || !state.missingLoaded) {
-            document.getElementById('report-content-area').innerHTML = `
-                <div class="report-card">
-                    <div class="loading-pulse" style="text-align:center; font-weight:900; color:#7E57C2; padding: 20px;">
-                        ⏳ Синхронизация с базой...<br>
-                        <span style="font-size:13px; color:#888; margin-top:10px; display:block;">Загружаю ваши заказы, секундочку...</span>
-                    </div>
-                </div>`;
-            return; 
+        document.getElementById('report-content-area').innerHTML = `
+            <div class="report-card">
+                <div class="loading-pulse" style="text-align:center; font-weight:900; color:#7E57C2; padding: 20px;">
+                    ⏳ Синхронизация с базой...<br>
+                    <span style="font-size:13px; color:#888; margin-top:10px; display:block;">Загружаю ваши заказы, секундочку...</span>
+                </div>
+            </div>`;
+
+        // ⚡ Гарантированная загрузка данных, если фон не успел
+        if (!state.ordersLoaded || !state.globalOrders || state.globalOrders.length === 0) {
+            try {
+                let snap = await database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(50).once("value");
+                let arr = [];
+                snap.forEach(c => { let v = c.val(); if(v){ v.key = c.key; arr.push(v); } });
+                state.globalOrders = arr.sort((a,b) => b.timestamp - a.timestamp);
+                state.ordersLoaded = true;
+            } catch(e) {}
         }
         
         try {
             let allOrders = [];
-            state.globalOrders.forEach(o => { 
+            (state.globalOrders || []).forEach(o => { 
                 if (o && (o.mode === 'order' || o.mode === 'new_shop')) allOrders.push(o); 
             });
 
@@ -2840,7 +2870,7 @@
             let prevAgg = aggregateSingleOrder(prevOrderObj);
 
             let activeMissing = {};
-            state.globalMissing.forEach(m => { 
+            (state.globalMissing || []).forEach(m => { 
                 if (m && m.status !== 'arrived' && m.status !== 'canceled') activeMissing[m.name] = true; 
             });
 
@@ -2872,14 +2902,11 @@
                 return blockHtml + `</div>`;
             };
 
-            // Высчитываем даты
             let currentOrderDateStr = currentOrderObj ? new Date(currentOrderObj.timestamp).toLocaleString('ru-RU', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'}) : '---';
             let prevOrderDateStr = prevOrderObj ? new Date(prevOrderObj.timestamp).toLocaleString('ru-RU', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'}) : '---';
 
-            // Отрисовываем нужный блок
             html += (state.currentMyOrderTab === 'current') ? renderOrderBlock(currentAgg, currentOrderDateStr, "Текущий заказ", true) : renderOrderBlock(prevAgg, prevOrderDateStr, "Прошлый заказ", false);
 
-            // ⚡ КНОПКА ПОВТОРА ЗАКАЗА (Отрисовываем, только если открыта вкладка "Текущий заказ")
             if (state.currentMyOrderTab === 'current' && Object.keys(currentAgg).length > 0) {
                 let safeAggStr = escapeName(JSON.stringify(currentAgg));
                 html += `<button class="btn-mode" style="background: var(--btn-order-grad); margin-top:20px;" onclick="repeatMyOrder('${safeAggStr}')">🔄 ПОВТОРИТЬ ЭТОТ ЗАКАЗ</button>`;
@@ -2887,43 +2914,9 @@
 
             document.getElementById('report-content-area').innerHTML = html;
         } catch(e) { 
-            console.log(e); 
             document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; color:red; font-weight:bold;">Ошибка загрузки</div></div>`;
         }
     }
-
-  window.repeatMyOrder = function(aggStr) {
-        triggerHaptic();
-        try {
-            let aggData = JSON.parse(aggStr);
-            let newBasket = {};
-            let newCatInfo = {};
-            
-            // Читаем напрямую из кэша
-            let orderCat = state.cachedCatalogs['order'] || {};
-            let newshopCat = state.cachedCatalogs['newshop'] || {};
-            let checklistCat = state.cachedCatalogs['checklist'] || {};
-            let allProdsArr = Object.values({...orderCat, ...newshopCat, ...checklistCat});
-
-            for (let name in aggData) {
-                let catItem = allProdsArr.find(c => c && c.name === name);
-                newBasket[name] = aggData[name].qty;
-                newCatInfo[name] = catItem ? (catItem.cat || "Прочее") : "Прочее";
-            }
-            
-            state.userBasket = newBasket;
-            state.userBasket["_catinfo"] = newCatInfo;
-            
-            localStorage.setItem("draft_" + state.currentShop + "_order", JSON.stringify({basket: newBasket, time: Date.now()}));
-            
-            hideReportOverlay();
-            initWorkflow('order');
-            
-            setTimeout(() => { toggleCartModal(true); }, 800);
-        } catch(e) {
-            showPopupError("Ошибка", "Не удалось повторить заказ: " + e.message);
-        }
-    };
     
   async function fetchBossReport(category) {
       showReportOverlay("Формирование отчета: " + category + "...");
@@ -3096,156 +3089,172 @@
         }
     }
 
-window.viewStopList = function() {
+window.viewStopList = async function() {
         if(!checkShopSelected()) return;
         triggerHaptic();
+        state.currentMode = 'stoplist_view';
         document.getElementById('report-overlay').style.display = 'flex';
         document.getElementById('report-header').innerText = "Актуальный стоп-лист";
         
-        // ⚡ Моментально показываем кэш, пока данные собираются
         let localHtml = localStorage.getItem("cache_html_stoplist_" + state.currentShop);
-        if (localHtml) document.getElementById('report-content-area').innerHTML = localHtml;
-        else document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div class="loading-pulse">⏳ Синхронизация данных...</div></div>`;
+        if (localHtml) {
+            document.getElementById('report-content-area').innerHTML = localHtml;
+        } else {
+            document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div class="loading-pulse" style="text-align:center; font-weight:900; color:#7E57C2; padding: 20px;">⏳ Загрузка стоп-листа...</div></div>`;
+        }
 
-        // Даем интерфейсу 50мс на отрисовку кэша, потом берем свежие данные из фоновой памяти
-        setTimeout(() => {
+        // ⚡ Гарантированно подгружаем базу для этого экрана
+        if (!state.ordersLoaded || !state.globalOrders || state.globalOrders.length === 0) {
             try {
-                let stopCatalog = (state.cachedCatalogs && state.cachedCatalogs.stoplist) ? state.cachedCatalogs.stoplist : {};
-                let allProducts = {};
-                if (state.cachedCatalogs) {
-                    ['order', 'newshop', 'checklist'].forEach(catKey => {
-                        let cat = state.cachedCatalogs[catKey] || {};
-                        Object.values(cat).forEach(c => { if (c && c.name) allProducts[getStatusKey(c.name)] = c; });
+                let snap = await database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(50).once("value");
+                let arr = [];
+                snap.forEach(c => { let v = c.val(); if(v){ v.key = c.key; arr.push(v); } });
+                state.globalOrders = arr.sort((a,b) => b.timestamp - a.timestamp);
+                state.ordersLoaded = true;
+            } catch(e) {}
+        }
+
+        try {
+            let stopCatalog = (state.cachedCatalogs && state.cachedCatalogs.stoplist) ? state.cachedCatalogs.stoplist : {};
+            let allProducts = {};
+            if (state.cachedCatalogs) {
+                ['order', 'newshop', 'checklist'].forEach(catKey => {
+                    let cat = state.cachedCatalogs[catKey] || {};
+                    Object.values(cat).forEach(c => {
+                        if (c && c.name) allProducts[getStatusKey(c.name)] = c;
+                    });
+                });
+            }
+
+            let stopInfoMap = {};
+            Object.values(stopCatalog).forEach(c => {
+                if (c && c.name) {
+                    let nameClean = getStatusKey(c.name); 
+                    if (!stopInfoMap[nameClean]) stopInfoMap[nameClean] = { sez: new Set(), main: new Set(), cat: c.cat || "" };
+                    if (c.sez) c.sez.split(',').forEach(s => { if (s.trim()) stopInfoMap[nameClean].sez.add(s.trim()); });
+                    if (c.main) c.main.split(',').forEach(s => { if (s.trim()) stopInfoMap[nameClean].main.add(s.trim()); });
+                }
+            });
+
+            let shopOrders = state.globalOrders || [];
+            let globalMissingFresh = state.globalMissing || [];
+
+            let statusMap = {}; 
+            let seenInOrders = new Set();
+            let cutoffTime = Date.now() - (14 * 24 * 60 * 60 * 1000); 
+
+            globalMissingFresh.forEach(m => {
+                if (!m || !m.name || m.timestamp < cutoffTime) return;
+                let pKey = getStatusKey(m.name);
+                if (m.status === 'transit') {
+                    statusMap[pKey] = { locked: true, text: 'В пути (Недовоз) 🚚', color: '#1565C0' };
+                    seenInOrders.add(pKey);
+                } else if (m.status === 'pending') {
+                    statusMap[pKey] = { locked: true, text: 'Проверка админом ⏳', color: '#E65100' };
+                    seenInOrders.add(pKey);
+                }
+            });
+
+            shopOrders.forEach(o => {
+                if ((o.mode === 'order' || o.mode === 'new_shop') && o.timestamp >= cutoffTime) {
+                    let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
+                    itemsArr.forEach(i => {
+                        if (i && i.name && i.name !== "НЕТ ЗАКАЗА") {
+                            let pKey = getStatusKey(i.name);
+                            if (seenInOrders.has(pKey)) return; 
+                            seenInOrders.add(pKey);
+                            
+                            let catItem = allProducts[pKey];
+                            let vRaw = (i.vendor || (catItem ? catItem.vendor : 'Лента') || 'Лента').toLowerCase();
+                            let isOzon = vRaw.includes('озон') || vRaw.includes('ozon');
+                            let isKuper = vRaw.includes('купер') || vRaw.includes('kuper');
+                            let isReceived = isOzon ? o.ozon_received : (isKuper ? o.kuper_received : o.lenta_received);
+                            
+                            let isOrderedByAdmin = (i.status === 'ordered' || i.status === 'from_stoplist');
+
+                            if (i.status === 'error' || i.bot_error === true || i.status === 'not_needed') {
+                                // ничего
+                            } else if (isOrderedByAdmin && !isReceived) {
+                                statusMap[pKey] = { locked: true, text: 'Оформлено (В пути) 🚚', color: '#2e7d32' };
+                            } else if (!isOrderedByAdmin && !isReceived) {
+                                statusMap[pKey] = { locked: true, text: 'Ожидает оформления ⏳', color: '#F57C00' };
+                            }
+                        }
                     });
                 }
+            });
 
-                let stopInfoMap = {};
-                Object.values(stopCatalog).forEach(c => {
-                    if (c && c.name) {
-                        let nameClean = getStatusKey(c.name); 
-                        if (!stopInfoMap[nameClean]) stopInfoMap[nameClean] = { sez: new Set(), main: new Set(), cat: c.cat || "" };
-                        if (c.sez) c.sez.split(',').forEach(s => { if (s.trim()) stopInfoMap[nameClean].sez.add(s.trim()); });
-                        if (c.main) c.main.split(',').forEach(s => { if (s.trim()) stopInfoMap[nameClean].main.add(s.trim()); });
-                    }
-                });
-
-                // ⚡ ИСПРАВЛЕНИЕ: Берем данные напрямую из фоновой синхронизации (лимит 300 записей вместо 50)
-                let shopOrders = state.globalOrders || [];
-                let globalMissingFresh = state.globalMissing || [];
-
-                let statusMap = {}; 
-                let seenInOrders = new Set();
-                let cutoffTime = Date.now() - (14 * 24 * 60 * 60 * 1000); 
-
-                globalMissingFresh.forEach(m => {
-                    if (!m || !m.name || m.timestamp < cutoffTime) return;
-                    let pKey = getStatusKey(m.name);
-                    if (m.status === 'transit') {
-                        statusMap[pKey] = { locked: true, text: 'В пути (Недовоз) 🚚', color: '#1565C0' };
-                        seenInOrders.add(pKey);
-                    } else if (m.status === 'pending') {
-                        statusMap[pKey] = { locked: true, text: 'Проверка админом ⏳', color: '#E65100' };
-                        seenInOrders.add(pKey);
-                    }
-                });
-
-                shopOrders.forEach(o => {
-                    if ((o.mode === 'order' || o.mode === 'new_shop') && o.timestamp >= cutoffTime) {
-                        let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
-                        itemsArr.forEach(i => {
-                            if (i && i.name && i.name !== "НЕТ ЗАКАЗА") {
-                                let pKey = getStatusKey(i.name);
-                                if (seenInOrders.has(pKey)) return; 
-                                seenInOrders.add(pKey);
-                                
-                                let catItem = allProducts[pKey];
-                                let vRaw = (i.vendor || (catItem ? catItem.vendor : 'Лента') || 'Лента').toLowerCase();
-                                let isOzon = vRaw.includes('озон') || vRaw.includes('ozon');
-                                let isKuper = vRaw.includes('купер') || vRaw.includes('kuper');
-                                let isReceived = isOzon ? o.ozon_received : (isKuper ? o.kuper_received : o.lenta_received);
-                                
-                                let isOrderedByAdmin = (i.status === 'ordered' || i.status === 'from_stoplist');
-
-                                if (i.status === 'error' || i.bot_error === true || i.status === 'not_needed') { } 
-                                else if (isOrderedByAdmin && !isReceived) statusMap[pKey] = { locked: true, text: 'Оформлено (В пути) 🚚', color: '#2e7d32' };
-                                else if (!isOrderedByAdmin && !isReceived) statusMap[pKey] = { locked: true, text: 'Ожидает оформления ⏳', color: '#F57C00' };
-                            }
-                        });
-                    }
-                });
-
-                let latest = shopOrders.find(o => o.mode === 'stoplist_fill');
-                
-                if(!latest || !latest.items) {
-                    let html = `<div class="report-card"><div style="text-align:center; font-weight:900;">Сегодня стоп-лист не заполнялся.</div></div>`;
-                    document.getElementById('report-content-area').innerHTML = html;
-                    localStorage.setItem("cache_html_stoplist_" + state.currentShop, html);
-                    return;
-                }
-
-                let html = `<div class="report-card">
-                            <div style='font-size: 19px; color: #D50000; font-weight: 900; margin-bottom: 8px; text-align:center;'>🛑 АКТУАЛЬНЫЙ СТОП-ЛИСТ</div>
-                            <div style='font-size: 14px; color: #888; text-align:center; margin-bottom:15px; font-weight:700;'>(от ${new Date(latest.timestamp).toLocaleString()})</div>`;
-
-                let allSyrups = [], mainListItems = [], seenNames = new Set();
-                let itemsArr = Array.isArray(latest.items) ? latest.items : Object.values(latest.items);
-                let hasStoppedItems = false;
-
-                itemsArr.forEach(i => {
-                    if(!i || !i.name || i.qty !== 'Закончилось' || i.name === 'Всё в наличии') return;
-                    hasStoppedItems = true;
-                    
-                    let cleanedItemName = getStatusKey(i.name);
-                    if (seenNames.has(cleanedItemName)) return;
-                    seenNames.add(cleanedItemName);
-
-                    let stopInfo = stopInfoMap[cleanedItemName] || { sez: new Set(), main: new Set(), cat: "" };
-                    let info = { sez: Array.from(stopInfo.sez).join(", "), main: Array.from(stopInfo.main).join(", "), cat: stopInfo.cat };
-
-                    let statHtml = "";
-                    let statusObj = statusMap[cleanedItemName];
-                    
-                    if (statusObj) {
-                        let bgColor = statusObj.color === '#2e7d32' ? '#e8f5e9' : (statusObj.color === '#1565C0' ? '#e3f2fd' : '#fff3e0');
-                        statHtml = `<span style="background:${bgColor}; color:${statusObj.color}; padding:2px 5px; border-radius:4px; font-size:11px; font-weight:900; margin-left:5px;">${statusObj.text}</span>`;
-                    } else if (allProducts[cleanedItemName]) {
-                        statHtml = `<span style="background:#f5f5f5; color:#888; padding:2px 5px; border-radius:4px; font-size:11px; font-weight:900; margin-left:5px;">Не заказано ➖</span>`;
-                    }
-
-                    let isSyrup = (info.cat && String(info.cat).toLowerCase().includes("сироп")) || cleanedItemName.includes("сироп");
-                    let affectedHtml = "";
-                    if (info.sez.trim() !== "" || info.main.trim() !== "") {
-                        affectedHtml += `<div style="font-size:13px; color:#d32f2f; margin-top:8px; padding:8px; background:#ffebee; border-radius:8px; border:1px dashed #ef9a9a; line-height:1.4;">`;
-                        if (info.sez.trim() !== "") affectedHtml += `<div style="margin-bottom:4px;"><b>Отключает сезон:</b> ${info.sez}</div>`;
-                        if (info.main.trim() !== "") affectedHtml += `<div><b>Отключает основу:</b> ${info.main}</div>`;
-                        affectedHtml += `</div>`;
-                    }
-
-                    mainListItems.push(`
-                    <div style="padding:12px 0; border-bottom:1px dashed #f0f0f0; display:flex; flex-direction:column;">
-                        <div style="display:flex; justify-content:space-between; align-items:center; width:100%;"><b style="color:#333; font-size:15px;">${i.name}</b> <div style="float:right; display:flex; align-items:center;">${statHtml}</div></div>
-                        ${affectedHtml}
-                    </div>`);
-                    if (isSyrup) allSyrups.push(`▪️ ${i.name}`);
-                });
-
-                if (!hasStoppedItems) {
-                    html += `<div style="text-align:center; padding:20px; font-size:16px; font-weight:bold; color:#2e7d32;">🎉 Все товары в наличии!</div>`;
-                } else {
-                    html += mainListItems.join("");
-                    if (allSyrups.length > 0) {
-                        html += `<div style='margin-top: 20px; padding-top: 15px; border-top: 2px dashed #ddd; color:#7E57C2;'>🍾 <b>Сиропы на стопе:</b><br><span style="color:#333; font-size:14px; line-height:1.5;">${allSyrups.join("<br>")}</span></div>`;
-                    }
-                }
-                
-                html += "</div>";
+            let latest = shopOrders.find(o => o.mode === 'stoplist_fill');
+            
+            if(!latest || !latest.items) {
+                let html = `<div class="report-card"><div style="text-align:center; font-weight:900; padding:20px; color:#555;">Актуальный стоп-лист не найден.</div></div>`;
                 document.getElementById('report-content-area').innerHTML = html;
-                localStorage.setItem("cache_html_stoplist_" + state.currentShop, html); 
-            } catch (err) { 
-                console.log(err); 
-                document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; color:red; font-weight:900;">Ошибка синхронизации данных</div></div>`;
+                localStorage.setItem("cache_html_stoplist_" + state.currentShop, html);
+                return;
             }
-        }, 50);
+
+            let html = `<div class="report-card">
+                        <div style='font-size: 19px; color: #D50000; font-weight: 900; margin-bottom: 8px; text-align:center;'>🛑 АКТУАЛЬНЫЙ СТОП-ЛИСТ</div>
+                        <div style='font-size: 14px; color: #888; text-align:center; margin-bottom:15px; font-weight:700;'>(от ${new Date(latest.timestamp).toLocaleString()})</div>`;
+
+            let allSyrups = [], mainListItems = [], seenNames = new Set();
+            let itemsArr = Array.isArray(latest.items) ? latest.items : Object.values(latest.items);
+            let hasStoppedItems = false;
+
+            itemsArr.forEach(i => {
+                if(!i || !i.name || i.qty !== 'Закончилось' || i.name === 'Всё в наличии') return;
+                hasStoppedItems = true;
+                
+                let cleanedItemName = getStatusKey(i.name);
+                if (seenNames.has(cleanedItemName)) return;
+                seenNames.add(cleanedItemName);
+
+                let stopInfo = stopInfoMap[cleanedItemName] || { sez: new Set(), main: new Set(), cat: "" };
+                let info = { sez: Array.from(stopInfo.sez).join(", "), main: Array.from(stopInfo.main).join(", "), cat: stopInfo.cat };
+
+                let statHtml = "";
+                let statusObj = statusMap[cleanedItemName];
+                
+                if (statusObj) {
+                    let bgColor = statusObj.color === '#2e7d32' ? '#e8f5e9' : (statusObj.color === '#1565C0' ? '#e3f2fd' : '#fff3e0');
+                    statHtml = `<span style="background:${bgColor}; color:${statusObj.color}; padding:2px 5px; border-radius:4px; font-size:11px; font-weight:900; margin-left:5px;">${statusObj.text}</span>`;
+                } else if (allProducts[cleanedItemName]) {
+                    statHtml = `<span style="background:#f5f5f5; color:#888; padding:2px 5px; border-radius:4px; font-size:11px; font-weight:900; margin-left:5px;">Не заказано ➖</span>`;
+                }
+
+                let isSyrup = (info.cat && String(info.cat).toLowerCase().includes("сироп")) || cleanedItemName.includes("сироп");
+
+                let affectedHtml = "";
+                if (info.sez.trim() !== "" || info.main.trim() !== "") {
+                    affectedHtml += `<div style="font-size:13px; color:#d32f2f; margin-top:8px; padding:8px; background:#ffebee; border-radius:8px; border:1px dashed #ef9a9a; line-height:1.4;">`;
+                    if (info.sez.trim() !== "") affectedHtml += `<div style="margin-bottom:4px;"><b>Отключает сезон:</b> ${info.sez}</div>`;
+                    if (info.main.trim() !== "") affectedHtml += `<div><b>Отключает основу:</b> ${info.main}</div>`;
+                    affectedHtml += `</div>`;
+                }
+
+                mainListItems.push(`
+                <div style="padding:12px 0; border-bottom:1px dashed #f0f0f0; display:flex; flex-direction:column;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; width:100%;"><b style="color:#333; font-size:15px;">${i.name}</b> <div style="float:right; display:flex; align-items:center;">${statHtml}</div></div>
+                    ${affectedHtml}
+                </div>`);
+                if (isSyrup) allSyrups.push(`▪️ ${i.name}`);
+            });
+
+            if (!hasStoppedItems) {
+                html += `<div style="text-align:center; padding:20px; font-size:16px; font-weight:bold; color:#2e7d32;">🎉 Все товары в наличии!</div>`;
+            } else {
+                html += mainListItems.join("");
+                if (allSyrups.length > 0) {
+                    html += `<div style='margin-top: 20px; padding-top: 15px; border-top: 2px dashed #ddd; color:#7E57C2;'>🍾 <b>Сиропы на стопе:</b><br><span style="color:#333; font-size:14px; line-height:1.5;">${allSyrups.join("<br>")}</span></div>`;
+                }
+            }
+            
+            html += "</div>";
+            document.getElementById('report-content-area').innerHTML = html;
+            localStorage.setItem("cache_html_stoplist_" + state.currentShop, html); 
+        } catch (err) { 
+            document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; color:red; font-weight:900;">Ошибка синхронизации данных</div></div>`;
+        }
     };
   
     function toggleMissingArrived(key, nameStr, btnId) {
@@ -3308,7 +3317,7 @@ window.viewStopList = function() {
     }
     
 
-function showLastOrder() {
+window.showLastOrder = async function() {
         if(!checkShopSelected()) return;
         triggerHaptic();
         hideGlobalLoader(); 
@@ -3316,15 +3325,32 @@ function showLastOrder() {
         document.getElementById('report-overlay').style.display = 'flex';
         document.getElementById('report-header').innerText = "Приемка закупки";
 
-        if (!state.ordersLoaded || !state.missingLoaded) {
-            document.getElementById('report-content-area').innerHTML = `
-                <div class="report-card">
-                    <div class="loading-pulse" style="text-align:center; font-weight:900; color:#7E57C2; padding: 20px;">
-                        ⏳ Поиск приемок в базе данных...<br>
-                        <span style="font-size:13px; color:#888; margin-top:10px; display:block;">Загружаю актуальную информацию, пожалуйста подождите...</span>
-                    </div>
-                </div>`;
-            return; 
+        document.getElementById('report-content-area').innerHTML = `
+            <div class="report-card">
+                <div class="loading-pulse" style="text-align:center; font-weight:900; color:#7E57C2; padding: 20px;">
+                    ⏳ Поиск приемок в базе данных...<br>
+                    <span style="font-size:13px; color:#888; margin-top:10px; display:block;">Пожалуйста, подождите...</span>
+                </div>
+            </div>`;
+
+        // ⚡ Гарантированная загрузка данных
+        if (!state.ordersLoaded || !state.globalOrders || state.globalOrders.length === 0) {
+            try {
+                let snap = await database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(50).once("value");
+                let arr = [];
+                snap.forEach(c => { let v = c.val(); if(v){ v.key = c.key; arr.push(v); } });
+                state.globalOrders = arr.sort((a,b) => b.timestamp - a.timestamp);
+                state.ordersLoaded = true;
+            } catch(e) {}
+        }
+        if (!state.missingLoaded || !state.globalMissing || state.globalMissing.length === 0) {
+            try {
+                let mSnap = await database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value");
+                let mArr = [];
+                mSnap.forEach(c => { let v = c.val(); if(v){ v.key = c.key; mArr.push(v); } });
+                state.globalMissing = mArr;
+                state.missingLoaded = true;
+            } catch(e) {}
         }
 
         let orderCatalog = (state.cachedCatalogs && state.cachedCatalogs.order) ? state.cachedCatalogs.order : {};
@@ -3332,7 +3358,7 @@ function showLastOrder() {
         Object.values(orderCatalog).forEach(c => { if (c && c.name) orderCatMapFast[c.name] = c; });
 
         let activeMissing = [], historyMissing = [];
-        state.globalMissing.forEach(m => {
+        (state.globalMissing || []).forEach(m => {
             if(m && m.name) {
                 if(m.status !== 'arrived' && m.status !== 'canceled') activeMissing.push(m);
                 else if (m.status === 'arrived') historyMissing.push(m);
@@ -3341,7 +3367,7 @@ function showLastOrder() {
 
         let fourteenDaysAgo = Date.now() - (14 * 24 * 60 * 60 * 1000);
         let ordersArr = [];
-        state.globalOrders.forEach(val => {
+        (state.globalOrders || []).forEach(val => {
             if(val && typeof val === 'object' && (val.mode === 'order' || val.mode === 'new_shop') && val.timestamp >= fourteenDaysAgo) ordersArr.push(val);
         });
 
@@ -3408,7 +3434,6 @@ function showLastOrder() {
                     const renderList = (grpData, keysSet, vendorKey, bClass, bText) => {
                         let names = Object.keys(grpData).sort(); if(names.length === 0) return "";
                         let listId = getSafeId(dateStr + vendorKey), kStr = Array.from(keysSet).join(',');
-                        // ⚡ Цвета поставщиков (синий Озон, зеленый Купер, оранжевая Лента)
                         let borderColor = vendorKey === 'ozon' ? '#1565c0' : (vendorKey === 'kuper' ? '#2e7d32' : '#f57f17');
                         
                         let res = `<div class="report-card" style="margin-top:10px; border-left:4px solid ${borderColor};">

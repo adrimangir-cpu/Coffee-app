@@ -278,13 +278,37 @@
         background-color: #ffffff !important;
         border-color: #4CAF50 !important;
     }
+
+        /* ⚡ АДАПТАЦИЯ ДЛЯ ТЕЛЕФОНОВ (MOBILE FRIENDLY) */
+        @media (max-width: 900px) {
+            .sidebar { transform: translateX(-100%); z-index: 4000; width: 280px; }
+            .sidebar.open { transform: translateX(0); }
+            .main-content { margin-left: 0 !important; min-width: 100vw !important; width: 100vw; padding: 10px; overflow-x: hidden; }
+            .top-nav { flex-direction: column; align-items: stretch; gap: 10px; }
+            .top-nav h2 { font-size: 18px !important; }
+            
+            #mobile-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 3500; }
+            #mobile-overlay.show { display: block; }
+            
+            .action-container { flex-direction: column !important; }
+            .action-container button { width: 100%; margin-left: 0 !important; margin-right: 0 !important; }
+            
+            .summary-block { flex-direction: column; align-items: center; text-align: center; }
+            .summary-total { border-left: none !important; border-top: 2px solid #eee; padding-left: 0 !important; padding-top: 15px; width: 100%; }
+            
+            #dynamic-action-bar { padding: 10px; }
+        }
         
     </style>
 </head>
 <body>
 
+<!-- ⚡ ЗАТЕМНЕНИЕ ФОНА НА ТЕЛЕФОНАХ -->
+<div id="mobile-overlay" onclick="toggleSidebar()"></div>
+
 <!-- ⚡ САЙДБАР С ВЫБОРОМ ВКЛАДОК -->
 <div id="sidebar" class="sidebar closed">
+    
     <div class="sidebar-header">
         <h2>💼 TEIKU CRM</h2>
         <button onclick="toggleSidebar()" class="close-sidebar-btn">✖</button>
@@ -625,13 +649,22 @@
         document.getElementById('report-overlay').style.display = 'none';
     }
 
-    // ⚡ БОКОВОЕ МЕНЮ (САЙДБАР)
+    // ⚡ БОКОВОЕ МЕНЮ (САЙДБАР) И МОБИЛЬНЫЙ ОВЕРЛЕЙ
     window.toggleSidebar = function() {
-        document.getElementById('sidebar').classList.toggle('closed');
-        document.getElementById('main-content').classList.toggle('expanded');
+        let sb = document.getElementById('sidebar');
+        let mc = document.getElementById('main-content');
+        let overlay = document.getElementById('mobile-overlay');
+        
+        if (window.innerWidth <= 900) {
+            sb.classList.toggle('open');
+            if (overlay) overlay.classList.toggle('show');
+        } else {
+            sb.classList.toggle('closed');
+            mc.classList.toggle('expanded');
+        }
     }
 
-    // ⚡ ЕДИНАЯ ПЛАВАЮЩАЯ ПАНЕЛЬ (БЕЗ ДУБЛЕЙ)
+   // ⚡ ЕДИНАЯ ПЛАВАЮЩАЯ ПАНЕЛЬ (БЕЗ ДУБЛЕЙ И ОБРЕЗАНИЙ)
     function setupUniversalActionBar(htmlContent, isOpen, toggleId) {
         let uab = document.getElementById('dynamic-action-bar');
         let wrapper = document.getElementById('action-bar-wrapper');
@@ -644,9 +677,13 @@
             wrapper.insertBefore(toggleBtn, uab);
             
             toggleBtn.onclick = function() {
-                uab.classList.toggle('collapsed');
-                let isCollapsed = uab.classList.contains('collapsed');
-                toggleBtn.innerHTML = isCollapsed ? '⚙️ Показать действия и настройки ▼' : '⚙️ Скрыть панель действий ▲';
+                let contentDiv = uab.querySelector('.action-panel-dropdown');
+                if (contentDiv) {
+                    let isHidden = contentDiv.style.display === 'none';
+                    contentDiv.style.display = isHidden ? 'flex' : 'none';
+                    toggleBtn.innerHTML = isHidden ? '⚙️ Скрыть панель действий ▲' : '⚙️ Показать действия и настройки ▼';
+                    updateExpanded('main_action_bar_state', isHidden); // Запоминаем состояние
+                }
             };
         }
 
@@ -661,19 +698,19 @@
         uab.style.display = 'block';
         toggleBtn.style.display = 'block';
 
-        if (isOpen) {
-            uab.classList.remove('collapsed');
-            toggleBtn.innerHTML = '⚙️ Скрыть панель действий ▲';
-        } else {
-            uab.classList.add('collapsed');
-            toggleBtn.innerHTML = '⚙️ Показать действия и настройки ▼';
+        // ⚡ Берем состояние из памяти
+        let isMemoryOpen = expandedDivs.has('main_action_bar_state');
+        let finalOpen = isOpen || isMemoryOpen;
+
+        let contentDiv = uab.querySelector('.action-panel-dropdown');
+        if (contentDiv) {
+            contentDiv.style.display = finalOpen ? 'flex' : 'none';
+            toggleBtn.innerHTML = finalOpen ? '⚙️ Скрыть панель действий ▲' : '⚙️ Показать действия и настройки ▼';
         }
         
-        // Убираем старые "шапки" у кнопок, так как теперь есть единая
+        // Убираем старые "шапки" у кнопок внутри экшен-бара, так как теперь есть единая главная кнопка
         let internalHeaders = uab.querySelectorAll('.cat-group-header');
         internalHeaders.forEach(h => h.style.display = 'none');
-        let dropdowns = uab.querySelectorAll('.action-panel-dropdown');
-        dropdowns.forEach(d => { d.style.display = 'flex'; d.style.marginTop = '0'; });
     }
 
 
@@ -1291,13 +1328,20 @@
         if (activeBtn) {
             activeBtn.classList.add('active');
             let titleEl = document.getElementById('page-title-display');
-            if (titleEl) titleEl.innerText = activeBtn.innerText.replace(/[^\а-яА-Яa-zA-Z\s\-]/g, '').trim(); // ⚡ Меняем заголовок
+            if (titleEl) titleEl.innerText = activeBtn.innerText.replace(/[^\а-яА-Яa-zA-Z\s\-]/g, '').trim(); 
         }
         
-        // ⚡ Закрываем сайдбар на мобилках после клика
-        if (window.innerWidth < 900) {
-            document.getElementById('sidebar').classList.add('closed');
-            document.getElementById('main-content').classList.add('expanded');
+        // ⚡ АВТОСВОРАЧИВАНИЕ: Меню закрывается СРАЗУ после клика (и на ПК, и на телефоне)
+        let sb = document.getElementById('sidebar');
+        let mc = document.getElementById('main-content');
+        let overlay = document.getElementById('mobile-overlay');
+        
+        if (window.innerWidth <= 900) {
+            sb.classList.remove('open');
+            if (overlay) overlay.classList.remove('show');
+        } else {
+            sb.classList.add('closed');
+            mc.classList.add('expanded');
         }
         
         currentTabType = type;
@@ -1305,8 +1349,6 @@
         
         const box = document.getElementById('content');
         setupUniversalActionBar('', false); // Очищаем старую панель
-        const actionBar = document.getElementById('dynamic-action-bar');
-        actionBar.style.display = 'none'; 
         
         box.innerHTML = "<div class='loading-pulse' style='font-size:20px; color:#7E57C2;'>⌛ Загрузка...</div>";
 
@@ -2238,7 +2280,8 @@
             
             if(name && qty > 0) calculateRow(shop, name, date, qty, vendor, status, false, false);
         });
-        
+        let sb = document.getElementById('svod-summary-block');
+        if(sb) sb.style.display = 'flex';
         let elLenta = document.getElementById('svod-total-lenta');
         let remLenta = document.getElementById('svod-rem-lenta');
         let elOzon = document.getElementById('svod-total-ozon');
@@ -2558,23 +2601,22 @@ async function renderOrdersSvod() {
         let sortedDates = Object.keys(svodDataByDate).sort((a,b) => { let [d1, m1, y1] = a.split('.'), [d2, m2, y2] = b.split('.'); return new Date(y2, m2-1, d2) - new Date(y1, m1-1, d1); });
         let isActionsOpen = expandedDivs.has('svod-action-buttons-container');
 
+        // ⚡ Передаем кнопки в умную плавающую панель!
         if (sortedDates.length > 0 || isSvodEditMode) {
-            svodActionBar.innerHTML = `
-            <div class="cat-group-header" style="padding: 12px 15px; border-radius: 12px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 8px rgba(0,0,0,0.05);" onclick="toggleCatElements('svod-action-buttons-container', 'arrow_svod_actions')">
-                <span style="font-size:16px; color:#311B92; font-weight:900;">⚡ Действия с заказами</span>
-                <span id="arrow_svod_actions">${isActionsOpen ? '▲' : '▼'}</span>
-            </div>
-            <div class="svod-action-buttons-container action-container action-panel-dropdown" style="display: ${isActionsOpen ? 'flex' : 'none'}; gap: 10px; flex-wrap: wrap; margin-top: 10px; margin-bottom: 0;">
-                <button onclick="compareStoplistWithOrders()" class="btn-add" style="background: linear-gradient(135deg, #E53935 0%, #B71C1C 100%);">🔍 Сравнить со стоп-листом</button>
-                <button onclick="buildSvodReport()" class="btn-add" style="background: linear-gradient(135deg, #FF9800 0%, #F57C00 100%);">📋 Собрать свод</button>
-                <button onclick="mergePendingOrders()" class="btn-add" style="background: linear-gradient(135deg, #9C27B0 0%, #4A148C 100%);">🔗 Объединить</button>
-                <button onclick="triggerPcBuild('START_OZON')" class="btn-add" style="background: linear-gradient(135deg, #2196F3 0%, #1976D2 100%);">🔵 Авто-Озон</button>
-                <button onclick="triggerPcBuild('START_LENTA')" class="btn-add" style="background: linear-gradient(135deg, #FFC107 0%, #F57C00 100%);">🟡 Авто-Лента</button>
-                <button onclick="markOrdersAsPlaced()" class="btn-add" style="background: linear-gradient(135deg, #4caf50 0%, #2e7d32 100%);">✅ Заказы оформлены</button>
-                <button id="svod-btn-edit" onclick="isSvodEditMode ? saveSvodEdits() : toggleSvodEdit()" class="btn-add" style="background:${btnEditColor};">${btnEditText}</button>
-            </div>`;
-            svodActionBar.style.display = 'block';
-        } else { svodActionBar.style.display = 'none'; }
+            setupUniversalActionBar(`
+                <div class="action-container action-panel-dropdown" style="gap: 10px; flex-wrap: wrap; width: 100%;">
+                    <button onclick="compareStoplistWithOrders()" class="btn-add" style="background: linear-gradient(135deg, #E53935 0%, #B71C1C 100%);">🔍 Сравнить со стоп-листом</button>
+                    <button onclick="buildSvodReport()" class="btn-add" style="background: linear-gradient(135deg, #FF9800 0%, #F57C00 100%);">📋 Собрать свод</button>
+                    <button onclick="mergePendingOrders()" class="btn-add" style="background: linear-gradient(135deg, #9C27B0 0%, #4A148C 100%);">🔗 Объединить</button>
+                    <button onclick="triggerPcBuild('START_OZON')" class="btn-add" style="background: linear-gradient(135deg, #2196F3 0%, #1976D2 100%);">🔵 Авто-Озон</button>
+                    <button onclick="triggerPcBuild('START_LENTA')" class="btn-add" style="background: linear-gradient(135deg, #FFC107 0%, #F57C00 100%);">🟡 Авто-Лента</button>
+                    <button onclick="markOrdersAsPlaced()" class="btn-add" style="background: linear-gradient(135deg, #4caf50 0%, #2e7d32 100%);">✅ Заказы оформлены</button>
+                    <button id="svod-btn-edit" onclick="isSvodEditMode ? saveSvodEdits() : toggleSvodEdit()" class="btn-add" style="background:${btnEditColor};">${btnEditText}</button>
+                </div>
+            `, isActionsOpen);
+        } else { 
+            setupUniversalActionBar('', false); 
+        }
 
         // ⚡ ГЕНЕРИРУЕМ СПИСОК ТОВАРОВ ДЛЯ НОВЫХ ПОЗИЦИЙ С ЧЕРНЫМ ПОИСКОМ
         let allPurchaseItems = [];
@@ -2776,15 +2818,14 @@ async function renderOrdersSvod() {
         
         html += `</table>`;
 
-        // ⚡ ВЫВОДИМ ОСТАТКИ В ИТОГАХ
-        if (totalLentaAll > 0 || totalOzonAll > 0 || totalKuperAll > 0) {
-            html += `<div class="summary-block">
-                        <div class="summary-item">🛒 Лента<br><b id="svod-total-lenta" style="font-size:20px; color:#2e7d32;">${Math.round(totalLentaAll)} ₽</b><br><span style="font-size:14px; color:#e65100;">Остаток: <span id="svod-rem-lenta">${Math.round(totalLentaRem)} ₽</span></span></div>
-                        <div class="summary-item">📦 Озон<br><b id="svod-total-ozon" style="font-size:20px; color:#0288d1;">${Math.round(totalOzonAll)} ₽</b><br><span style="font-size:14px; color:#e65100;">Остаток: <span id="svod-rem-ozon">${Math.round(totalOzonRem)} ₽</span></span></div>
-                        <div class="summary-item">🛵 Купер<br><b id="svod-total-kuper" style="font-size:20px; color:#c2185b;">${Math.round(totalKuperAll)} ₽</b><br><span style="font-size:14px; color:#e65100;">Остаток: <span id="svod-rem-kuper">${Math.round(totalKuperRem)} ₽</span></span></div>
-                        <div class="summary-total">💵 ИТОГО<br><b id="svod-total-all" style="font-size:24px; color:#4A148C;">${Math.round(totalLentaAll+totalOzonAll+totalKuperAll)} ₽</b><br><span style="font-size:15px; color:#e65100; font-weight:bold;">Остаток: <span id="svod-rem-all">${Math.round(totalLentaRem+totalOzonRem+totalKuperRem)} ₽</span></span></div>
-                    </div>`;
-        }
+        // ⚡ ВЫВОДИМ ОСТАТКИ В ИТОГАХ (ВСЕГДА РЕНДЕРИМ ДЛЯ АВТОКАЛЬКУЛЯТОРА)
+        let displaySum = (totalLentaAll > 0 || totalOzonAll > 0 || totalKuperAll > 0 || isSvodEditMode) ? 'flex' : 'none';
+        html += `<div class="summary-block" id="svod-summary-block" style="display:${displaySum};">
+                    <div class="summary-item">🛒 Лента<br><b id="svod-total-lenta" style="font-size:20px; color:#2e7d32;">${Math.round(totalLentaAll)} ₽</b><br><span style="font-size:14px; color:#e65100;">Остаток: <span id="svod-rem-lenta">${Math.round(totalLentaRem)} ₽</span></span></div>
+                    <div class="summary-item">📦 Озон<br><b id="svod-total-ozon" style="font-size:20px; color:#0288d1;">${Math.round(totalOzonAll)} ₽</b><br><span style="font-size:14px; color:#e65100;">Остаток: <span id="svod-rem-ozon">${Math.round(totalOzonRem)} ₽</span></span></div>
+                    <div class="summary-item">🛵 Купер<br><b id="svod-total-kuper" style="font-size:20px; color:#c2185b;">${Math.round(totalKuperAll)} ₽</b><br><span style="font-size:14px; color:#e65100;">Остаток: <span id="svod-rem-kuper">${Math.round(totalKuperRem)} ₽</span></span></div>
+                    <div class="summary-total" style="width:100%; border-top:2px solid #eee; padding-top:10px; margin-top:10px;">💵 ИТОГО<br><b id="svod-total-all" style="font-size:24px; color:#4A148C;">${Math.round(totalLentaAll+totalOzonAll+totalKuperAll)} ₽</b><br><span style="font-size:15px; color:#e65100; font-weight:bold;">Остаток: <span id="svod-rem-all">${Math.round(totalLentaRem+totalOzonRem+totalKuperRem)} ₽</span></span></div>
+                </div>`;
 
         html += `
             <div class="cat-group-header" style="margin-top:40px; padding: 14px 20px; border-radius: 12px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.05);" onclick="toggleCatElements('history_orders_list', 'arrow_hist_ord')">

@@ -1080,21 +1080,83 @@
         fetchExistingSchedule(target.month, target.year, name);
     }
 
-   function fetchExistingSchedule(m, y, name) {
-        let monthNames = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
-        document.getElementById('schedule-month-title').innerText = `График на ${monthNames[m]} ${y}`;
-        document.getElementById('schedule-user-title').innerText = `Сотрудник: ${name}`;
+   async function goToScheduleCalendar() {
+        try {
+            triggerHaptic();
+            let nameInput = document.getElementById('schedule-name-input');
+            if (!nameInput) {
+                alert("Ошибка: Поле ввода не найдено");
+                return;
+            }
+            
+            let name = nameInput.value.trim();
+            if (!name) {
+                alert("Внимание: Пожалуйста, введите ваше Имя и Фамилию.");
+                return;
+            }
+            
+            localStorage.setItem("teiku_employee_name", name);
+            state.schedule = { name: name, days: {}, currentTool: "MORNING" };
+            
+            let target = getTargetDateLogic();
+            let shopsMap = [
+                { name: "Бояринова", val: "Б" }, { name: "Гагарина", val: "Г" },
+                { name: "Вертолетчиков", val: "В" }, { name: "Липчанского", val: "Л" },
+                { name: "Новокосино", val: "НК" }, { name: "Новокосино 2", val: "НК2" },
+                { name: "Старое Павлино", val: "СП" }, { name: "Красноказарменная", val: "МЭИ" },
+                { name: "Ухтомского ополчения", val: "ЛЯ" }
+            ];
 
-        let cachedSched = state.cachedCatalogs['schedules'] || {};
-        let data = (cachedSched[`${y}_${m}`] && cachedSched[`${y}_${m}`][name]) ? cachedSched[`${y}_${m}`][name] : {};
+            let selectHtml = shopsMap.map(s => {
+                let isSelected = (s.name === state.currentShop || (state.currentShop === "МЭИ" && s.name === "Красноказарменная")) ? 'selected' : '';
+                return `<option value="${s.val}" ${isSelected}>${s.name === 'Красноказарменная' ? 'МЭИ' : s.name}</option>`;
+            }).join('');
+            
+            let selectEl = document.getElementById('schedule-shop-select');
+            if (selectEl) selectEl.innerHTML = selectHtml;
+
+            showGlobalLoader("Открываю график...");
+            
+            // ⚡ Вызываем загрузку и ждем ее завершения
+            await fetchExistingSchedule(target.month, target.year, name);
+            
+            hideGlobalLoader();
+        } catch(e) {
+            hideGlobalLoader();
+            alert("Ошибка загрузки графика: " + e.message);
+        }
+    }
+
+    async function fetchExistingSchedule(m, y, name) {
+        let monthNames = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
+        let titleEl = document.getElementById('schedule-month-title');
+        let userEl = document.getElementById('schedule-user-title');
+        if (titleEl) titleEl.innerText = `График на ${monthNames[m]} ${y}`;
+        if (userEl) userEl.innerText = `Сотрудник: ${name}`;
+
+        let data = null;
+        let cachedSched = (state.cachedCatalogs && state.cachedCatalogs['schedules']) ? state.cachedCatalogs['schedules'] : null;
         
-        // ⚡ ИСПРАВЛЕНИЕ ЗАВИСАНИЯ: Защита от пустых данных
+        // ⚡ НАДЕЖНАЯ ПРОВЕРКА: Если есть в кэше - берем оттуда, если нет - качаем из базы
+        if (cachedSched && cachedSched[`${y}_${m}`] && cachedSched[`${y}_${m}`][name]) {
+            data = cachedSched[`${y}_${m}`][name];
+        } else {
+            try {
+                let snap = await database.ref(`schedules/${y}_${m}/${name}`).once('value');
+                data = snap.val();
+            } catch(e) { 
+                console.log("Ошибка сети:", e); 
+            }
+        }
+
         let safeData = {};
-        if (data) {
+        if (data && typeof data === 'object') {
             safeData = JSON.parse(JSON.stringify(data));
         }
 
-        document.getElementById('schedule-comment').value = safeData.comment || "";
+        let commentEl = document.getElementById('schedule-comment');
+        if (commentEl) commentEl.value = safeData.comment || "";
+        
         delete safeData.comment; 
         state.schedule.days = safeData;
         
@@ -1312,11 +1374,9 @@
         }
     }
 
-    // ==========================================
-    // 📦 НАКЛАДНЫЕ ТОВАРЫ (МОМЕНТАЛЬНОЕ ОТКРЫТИЕ)
-    // ==========================================
-    // ==========================================
-    // 📦 НАКЛАДНЫЕ ТОВАРЫ (ОПТИМИЗИРОВАНО)
+   
+  // ==========================================
+    // 📦 НАКЛАДНЫЕ ТОВАРЫ (С НАДЕЖНОЙ ЗАГРУЗКОЙ)
     // ==========================================
     function initInvoiceWorkflow() {
         if(!checkShopSelected()) return;
@@ -1326,32 +1386,56 @@
         
         showScreen('step-invoices'); 
         
-        // ⚡ ИСПРАВЛЕНИЕ: Клонируем объект из кэша, чтобы данные не пропадали
+        // 1. Показываем из кэша для моментальной отрисовки (если есть)
         let cachedActive = state.cachedCatalogs ? state.cachedCatalogs['invoices'] : null;
-        let invData = cachedActive ? Object.assign({}, cachedActive) : {};
-        let activeTimestamp = invData._meta ? invData._meta.timestamp : null;
-        if(invData._meta) delete invData._meta; 
+        if (cachedActive) {
+            let invData = Object.assign({}, cachedActive);
+            let activeTimestamp = invData._meta ? invData._meta.timestamp : null;
+            if(invData._meta) delete invData._meta; 
+            
+            state.invoiceDataFull = {
+                active: invData,
+                activeTimestamp: activeTimestamp,
+                history: state.invoiceDataFull ? state.invoiceDataFull.history : []
+            };
+            switchInvoiceTab('active');
+        } else {
+            document.getElementById('invoices-container').innerHTML = "<div class='loading-pulse' style='text-align:center; padding:20px; font-weight:bold; color:#7E57C2;'>⏳ Загрузка базы...</div>";
+        }
         
-        state.invoiceDataFull = {
-            active: invData,
-            activeTimestamp: activeTimestamp,
-            history: state.invoiceDataFull ? state.invoiceDataFull.history : []
-        };
-        
-        switchInvoiceTab('active'); 
-        
-        database.ref('catalogs/invoices_history').orderByKey().limitToLast(2).once('value').then(historySnap => {
+        // 2. Всегда запрашиваем с сервера свежие данные на фоне
+        Promise.all([
+            database.ref('catalogs/invoices').once('value'),
+            database.ref('catalogs/invoices_history').orderByKey().limitToLast(2).once('value')
+        ]).then(([activeSnap, historySnap]) => {
+            let freshInv = activeSnap.val() || {};
+            let activeTimestamp = freshInv._meta ? freshInv._meta.timestamp : null;
+            if(freshInv._meta) delete freshInv._meta;
+            
             let historyData = [];
             historySnap.forEach(child => {
                 historyData.push({ key: child.key, ...child.val() });
             });
             historyData.sort((a, b) => b.timestamp - a.timestamp);
-            state.invoiceDataFull.history = historyData;
             
-            if (state.currentInvoiceTab === 'history') {
-                renderInvoiceHistory();
+            state.invoiceDataFull = {
+                active: freshInv,
+                activeTimestamp: activeTimestamp,
+                history: historyData
+            };
+            
+            if (!state.cachedCatalogs) state.cachedCatalogs = {};
+            state.cachedCatalogs['invoices'] = activeSnap.val() || {}; 
+            saveToRealCache('invoices', state.cachedCatalogs['invoices']);
+            
+            // Если пользователь еще на этой вкладке - обновляем экран
+            if (state.currentMode === 'invoices') {
+                switchInvoiceTab(state.currentInvoiceTab);
             }
-        }).catch(e => console.log(e));
+        }).catch(e => {
+            console.log(e);
+            if (!cachedActive) document.getElementById('invoices-container').innerHTML = "<div class='report-card' style='color:red;'>Ошибка загрузки сети</div>";
+        });
     }
     
     function switchInvoiceTab(tab) {

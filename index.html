@@ -3879,33 +3879,49 @@ window.showLastOrder = async function() {
         return (state.cachedCatalogs && state.cachedCatalogs[name]) ? state.cachedCatalogs[name] : {};
     }
 
-    // ==========================================
+   // ==========================================
     // ⚡ ДВИЖОК НУЛЕВОГО ОЖИДАНИЯ (Фоновая синхронизация)
     // ==========================================
     function startRealtimeUpdates() {
-        const paths = ['order', 'newshop', 'stoplist', 'checklist', 'menu', 'espresso_recipes', 'tasks_calendar', 'knowledge_base'];
+        // ⚡ Включили invoices и schedules в фоновую синхронизацию
+        const paths = [
+            'order', 'newshop', 'stoplist', 'checklist', 'menu', 
+            'espresso_recipes', 'tasks_calendar', 'knowledge_base', 
+            'invoices', 'schedules'
+        ];
+        
         paths.forEach(p => {
-            let dbPath = (p === 'menu' || p === 'order' || p === 'newshop' || p === 'stoplist' || p === 'checklist') ? 'catalogs/' + p : p;
+            // Умная маршрутизация: каталоги лежат в папке catalogs/
+            let dbPath = (p === 'menu' || p === 'order' || p === 'newshop' || p === 'stoplist' || p === 'checklist' || p === 'invoices') ? 'catalogs/' + p : p;
+            
             database.ref(dbPath).on('value', snap => {
                 let fresh = snap.val();
                 if (fresh) {
                     if (!state.cachedCatalogs) state.cachedCatalogs = {};
                     state.cachedCatalogs[p] = fresh;
-                    saveToRealCache(p, fresh); // Сохраняем в вечную память
+                    saveToRealCache(p, fresh); // Тихо сохраняем обновления в память
                     
+                    // Триггеры бесшовной перерисовки открытых экранов
                     if (state.currentMode === 'menu' && p === 'menu') {
                         state.menuCatalog = Object.assign({}, fresh);
                         if (typeof renderMenuApp === 'function') renderMenuApp();
                     }
-                    if (state.currentMode === 'espresso' && p === 'espresso_recipes') renderEspressoApp();
+                    if (state.currentMode === 'espresso' && p === 'espresso_recipes') {
+                        if (typeof renderEspressoApp === 'function') renderEspressoApp();
+                    }
                     if (state.currentMode === 'calendar_tasks' && p === 'tasks_calendar') {
                         let viewDate = state.selectedCalDate || new Date();
-                        renderMiniCalendar(new Date(viewDate.getFullYear(), viewDate.getMonth(), 1));
+                        if (typeof renderMiniCalendar === 'function') renderMiniCalendar(new Date(viewDate.getFullYear(), viewDate.getMonth(), 1));
+                    }
+                    if (state.currentMode === 'invoices' && p === 'invoices') {
+                        // Если открыта вкладка накладных, обновляем её на лету
+                        if (typeof switchInvoiceTab === 'function') switchInvoiceTab(state.currentInvoiceTab || 'active');
                     }
                 }
             });
         });
     }
+  
   function startShopDataSync() {
         if (!state.currentShop) return;
         
@@ -4461,7 +4477,7 @@ window.showLastOrder = async function() {
     }
 
     // ==========================================
-    // ⚡ ГЛАВНЫЙ СТАРТ ПРИЛОЖЕНИЯ (БЕЗ ЗАПОМИНАНИЯ ЭКРАНОВ)
+    // ⚡ ГЛАВНЫЙ СТАРТ ПРИЛОЖЕНИЯ (ОПТИМИЗИРОВАННЫЙ КЭШ)
     // ==========================================
     window.onload = async () => { 
         showGlobalLoader("Запуск приложения..."); 
@@ -4487,8 +4503,14 @@ window.showLastOrder = async function() {
         updateHeaderSelectOptions();
         state.cachedCatalogs = {};
         
-        // 2. Быстрая загрузка из локального кэша устройства
-        const paths = ['order', 'newshop', 'stoplist', 'checklist', 'menu', 'espresso_recipes', 'tasks_calendar', 'knowledge_base'];
+        // 2. ⚡ РАСШИРЕННАЯ БЫСТРАЯ ЗАГРУЗКА ИЗ КЭША ТЕЛЕФОНА
+        // Теперь Графики и Накладные загружаются за 0.05 сек при старте
+        const paths = [
+            'order', 'newshop', 'stoplist', 'checklist', 'menu', 
+            'espresso_recipes', 'tasks_calendar', 'knowledge_base', 
+            'invoices', 'schedules'
+        ];
+        
         for (let p of paths) {
             let cachedData = await loadFromRealCache(p);
             if (cachedData) state.cachedCatalogs[p] = cachedData;
@@ -4511,12 +4533,12 @@ window.showLastOrder = async function() {
 
         hideGlobalLoader(); 
         
-        // 4. ⚡ ЧЕТКОЕ РАСПРЕДЕЛЕНИЕ (Кто куда попадает при открытии)
+        // 4. ⚡ ЧЕТКОЕ РАСПРЕДЕЛЕНИЕ РОЛЕЙ
         if (isAdmin || isBoss) {
             let cachedBoss = await loadFromRealCache('boss_orders');
             if (cachedBoss) state.globalBossOrders = cachedBoss;
             startBossDataSync(); 
-            openControlPanel(isAdmin ? 'admin' : 'boss'); // Админ всегда в админку
+            openControlPanel(isAdmin ? 'admin' : 'boss'); // Руководство всегда в админку
         } else {
             if (savedShop) {
                 state.currentShop = savedShop;

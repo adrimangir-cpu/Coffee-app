@@ -1085,12 +1085,14 @@
         document.getElementById('schedule-month-title').innerText = `График на ${monthNames[m]} ${y}`;
         document.getElementById('schedule-user-title').innerText = `Сотрудник: ${name}`;
 
-        // ⚡ Мгновенно берем из кэша, который загрузился при старте приложения
         let cachedSched = state.cachedCatalogs['schedules'] || {};
         let data = (cachedSched[`${y}_${m}`] && cachedSched[`${y}_${m}`][name]) ? cachedSched[`${y}_${m}`][name] : {};
         
-        // Клонируем, чтобы случайно не сломать кэш при редактировании
-        let safeData = JSON.parse(JSON.stringify(data));
+        // ⚡ ИСПРАВЛЕНИЕ ЗАВИСАНИЯ: Защита от пустых данных
+        let safeData = {};
+        if (data) {
+            safeData = JSON.parse(JSON.stringify(data));
+        }
 
         document.getElementById('schedule-comment').value = safeData.comment || "";
         delete safeData.comment; 
@@ -1313,16 +1315,20 @@
     // ==========================================
     // 📦 НАКЛАДНЫЕ ТОВАРЫ (МОМЕНТАЛЬНОЕ ОТКРЫТИЕ)
     // ==========================================
+    // ==========================================
+    // 📦 НАКЛАДНЫЕ ТОВАРЫ (ОПТИМИЗИРОВАНО)
+    // ==========================================
     function initInvoiceWorkflow() {
         if(!checkShopSelected()) return;
         triggerHaptic();
         state.currentMode = 'invoices';
         state.currentInvoiceTab = 'active'; 
         
-        showScreen('step-invoices'); // ⚡ Открываем экран мгновенно без лоадеров
+        showScreen('step-invoices'); 
         
-        // 1. Сразу берем актуальную базу из кэша телефона
-        let invData = state.cachedCatalogs['invoices'] || {};
+        // ⚡ ИСПРАВЛЕНИЕ: Клонируем объект из кэша, чтобы данные не пропадали
+        let cachedActive = state.cachedCatalogs ? state.cachedCatalogs['invoices'] : null;
+        let invData = cachedActive ? Object.assign({}, cachedActive) : {};
         let activeTimestamp = invData._meta ? invData._meta.timestamp : null;
         if(invData._meta) delete invData._meta; 
         
@@ -1332,9 +1338,8 @@
             history: state.invoiceDataFull ? state.invoiceDataFull.history : []
         };
         
-        switchInvoiceTab('active'); // ⚡ Отрисовываем за 0.01 сек
+        switchInvoiceTab('active'); 
         
-        // 2. Тихо на фоне подтягиваем архив (2 последние записи), не блокируя работу бариста
         database.ref('catalogs/invoices_history').orderByKey().limitToLast(2).once('value').then(historySnap => {
             let historyData = [];
             historySnap.forEach(child => {
@@ -1343,7 +1348,6 @@
             historyData.sort((a, b) => b.timestamp - a.timestamp);
             state.invoiceDataFull.history = historyData;
             
-            // Если пользователь переключился на вкладку истории - тихо обновляем
             if (state.currentInvoiceTab === 'history') {
                 renderInvoiceHistory();
             }
@@ -3880,7 +3884,15 @@ window.showLastOrder = async function() {
                         if (typeof renderMiniCalendar === 'function') renderMiniCalendar(new Date(viewDate.getFullYear(), viewDate.getMonth(), 1));
                     }
                     if (state.currentMode === 'invoices' && p === 'invoices') {
-                        // Если открыта вкладка накладных, обновляем её на лету
+                        // ⚡ ИСПРАВЛЕНИЕ ПУСТЫХ НАКЛАДНЫХ: правильно обновляем объект
+                        let invData = Object.assign({}, fresh);
+                        let activeTimestamp = invData._meta ? invData._meta.timestamp : null;
+                        if(invData._meta) delete invData._meta; 
+                        
+                        if (!state.invoiceDataFull) state.invoiceDataFull = {};
+                        state.invoiceDataFull.active = invData;
+                        state.invoiceDataFull.activeTimestamp = activeTimestamp;
+                        
                         if (typeof switchInvoiceTab === 'function') switchInvoiceTab(state.currentInvoiceTab || 'active');
                     }
                 }

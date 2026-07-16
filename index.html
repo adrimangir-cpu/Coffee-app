@@ -1363,7 +1363,7 @@
 
    
   // ==========================================
-    // 📦 НАКЛАДНЫЕ ТОВАРЫ (С НАДЕЖНОЙ ЗАГРУЗКОЙ)
+    // 📦 НАКЛАДНЫЕ ТОВАРЫ (С ЗАЩИТОЙ ОТ ЗАВИСАНИЙ)
     // ==========================================
     function initInvoiceWorkflow() {
         if(!checkShopSelected()) return;
@@ -1373,9 +1373,9 @@
         
         showScreen('step-invoices'); 
         
-        // 1. Показываем из кэша для моментальной отрисовки (если есть)
+        // 1. Показываем кэш мгновенно (если он есть)
         let cachedActive = state.cachedCatalogs ? state.cachedCatalogs['invoices'] : null;
-        if (cachedActive) {
+        if (cachedActive && Object.keys(cachedActive).length > 0) {
             let invData = Object.assign({}, cachedActive);
             let activeTimestamp = invData._meta ? invData._meta.timestamp : null;
             if(invData._meta) delete invData._meta; 
@@ -1387,14 +1387,20 @@
             };
             switchInvoiceTab('active');
         } else {
-            document.getElementById('invoices-container').innerHTML = "<div class='loading-pulse' style='text-align:center; padding:20px; font-weight:bold; color:#7E57C2;'>⏳ Загрузка базы...</div>";
+            document.getElementById('invoices-container').innerHTML = "<div class='loading-pulse' style='text-align:center; padding:20px; font-weight:bold; color:#7E57C2;'>⏳ Загрузка накладных...<br><span style='font-size:12px; color:#aaa;'>Ожидание ответа сервера</span></div>";
         }
         
-        // 2. Всегда запрашиваем с сервера свежие данные на фоне
-        Promise.all([
+        // 2. Делаем запрос с защитой от бесконечного зависания (таймаут 5 секунд)
+        let fetchPromises = Promise.all([
             database.ref('catalogs/invoices').once('value'),
             database.ref('catalogs/invoices_history').orderByKey().limitToLast(2).once('value')
-        ]).then(([activeSnap, historySnap]) => {
+        ]);
+
+        let timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error("Сервер не отвечает (таймаут)")), 5000)
+        );
+
+        Promise.race([fetchPromises, timeoutPromise]).then(([activeSnap, historySnap]) => {
             let freshInv = activeSnap.val() || {};
             let activeTimestamp = freshInv._meta ? freshInv._meta.timestamp : null;
             if(freshInv._meta) delete freshInv._meta;
@@ -1411,17 +1417,22 @@
                 history: historyData
             };
             
+            // Сохраняем в кэш
             if (!state.cachedCatalogs) state.cachedCatalogs = {};
-            state.cachedCatalogs['invoices'] = activeSnap.val() || {}; 
-            saveToRealCache('invoices', state.cachedCatalogs['invoices']);
+            let cacheCopy = Object.assign({}, freshInv);
+            if (activeTimestamp) cacheCopy._meta = { timestamp: activeTimestamp };
+            state.cachedCatalogs['invoices'] = cacheCopy; 
+            saveToRealCache('invoices', cacheCopy);
             
-            // Если пользователь еще на этой вкладке - обновляем экран
+            // Обновляем экран
             if (state.currentMode === 'invoices') {
                 switchInvoiceTab(state.currentInvoiceTab);
             }
         }).catch(e => {
-            console.log(e);
-            if (!cachedActive) document.getElementById('invoices-container').innerHTML = "<div class='report-card' style='color:red;'>Ошибка загрузки сети</div>";
+            console.log("Ошибка загрузки накладных:", e);
+            if (!cachedActive || Object.keys(cachedActive).length === 0) {
+                document.getElementById('invoices-container').innerHTML = `<div class='report-card' style='text-align:center; color:#d32f2f; font-weight:bold;'>⚠️ Не удалось загрузить данные.<br><span style='font-size:13px; color:#888;'>Проверьте интернет и попробуйте снова.</span></div>`;
+            }
         });
     }
     

@@ -1358,53 +1358,36 @@
   // ==========================================
     // НАКЛАДНЫЕ ТОВАРЫ (МГНОВЕННОЕ ОТКРЫТИЕ)
     // ==========================================
-    function initInvoiceWorkflow() {
+   function initInvoiceWorkflow() {
         if(!checkShopSelected()) return;
         triggerHaptic();
         state.currentMode = 'invoices';
-        state.currentInvoiceTab = 'active'; 
+        if (!state.currentInvoiceTab) state.currentInvoiceTab = 'active'; 
 
-        // 1. Мгновенно переключаем экран без лоадеров
+        // Показываем экран без лоадера за 0.1 сек
         showScreen('step-invoices');
+
+        // Моментально берем из вечной памяти телефона
+        let invData = (state.cachedCatalogs && state.cachedCatalogs['invoices']) ? state.cachedCatalogs['invoices'] : {};
+        let historyDataRaw = (state.cachedCatalogs && state.cachedCatalogs['invoices_history']) ? state.cachedCatalogs['invoices_history'] : {};
         
-        // 2. Достаем данные из памяти телефона (как в Приемке)
-        let cached = localStorage.getItem("data_invoices_full");
-        if (cached) {
-            state.invoiceDataFull = JSON.parse(cached);
-            switchInvoiceTab('active');
-        } else {
-            document.getElementById('invoices-container').innerHTML = `<div class="report-card"><div class="loading-pulse" style="text-align:center; font-weight:900; color:#7E57C2; padding: 20px;">⏳ Синхронизация с базой...</div></div>`;
-        }
+        let activeTimestamp = invData._meta ? invData._meta.timestamp : null;
+        let activeItems = Object.assign({}, invData);
+        if(activeItems._meta) delete activeItems._meta; 
+        
+        let historyData = [];
+        Object.keys(historyDataRaw).forEach(k => {
+            historyData.push({ key: k, ...historyDataRaw[k] });
+        });
+        historyData.sort((a, b) => b.timestamp - a.timestamp);
 
-        // 3. Тихо обновляем в фоне (через Promise.then, без await!)
-        Promise.all([
-            database.ref('catalogs/invoices').once('value'),
-            database.ref('catalogs/invoices_history').orderByKey().limitToLast(2).once('value')
-        ]).then(([activeSnap, historySnap]) => {
-            let invData = activeSnap.val() || {};
-            let activeTimestamp = invData._meta ? invData._meta.timestamp : null;
-            if(invData._meta) delete invData._meta; 
-            
-            let historyData = [];
-            historySnap.forEach(child => {
-                historyData.push({ key: child.key, ...child.val() });
-            });
-            historyData.sort((a, b) => b.timestamp - a.timestamp);
-
-            state.invoiceDataFull = {
-                active: invData,
-                activeTimestamp: activeTimestamp,
-                history: historyData
-            };
-            
-            // Обновляем память телефона
-            localStorage.setItem("data_invoices_full", JSON.stringify(state.invoiceDataFull));
-            
-            // Если бариста все еще на этом экране - тихо перерисовываем
-            if (state.currentMode === 'invoices') {
-                switchInvoiceTab(state.currentInvoiceTab);
-            }
-        }).catch(e => console.log("Фоновая ошибка:", e));
+        state.invoiceDataFull = {
+            active: activeItems,
+            activeTimestamp: activeTimestamp,
+            history: historyData
+        };
+        
+        switchInvoiceTab(state.currentInvoiceTab);
     }
     
     function switchInvoiceTab(tab) {
@@ -3901,13 +3884,12 @@ window.showLastOrder = async function() {
             });
         });
 
-        // 2. Все "информационные" вкладки подгружаются через 6 секунд, чтобы старт был мгновенным
+        // 2. Все информационные вкладки подгружаются через 6 секунд
         setTimeout(() => {
-            const delayedPaths = ['menu', 'espresso_recipes', 'tasks_calendar', 'knowledge_base'];
+            const delayedPaths = ['menu', 'espresso_recipes', 'tasks_calendar', 'knowledge_base', 'invoices'];
             
             delayedPaths.forEach(p => {
-                // Меню лежит в папке catalogs, остальное в корне базы
-                let dbPath = (p === 'menu') ? 'catalogs/menu' : p;
+                let dbPath = (p === 'menu' || p === 'invoices') ? 'catalogs/' + p : p;
                 
                 database.ref(dbPath).on('value', snap => {
                     let fresh = snap.val();
@@ -3918,7 +3900,6 @@ window.showLastOrder = async function() {
                         state.cachedCatalogs[p] = fresh;
                         saveToRealCache(p, fresh);
                         
-                        // Мгновенная перерисовка, если пользователь прямо сейчас смотрит на эту вкладку
                         if (state.currentMode === 'menu' && p === 'menu') {
                             state.menuCatalog = Object.assign({}, fresh);
                             if (typeof renderMenuApp === 'function') renderMenuApp();
@@ -3934,9 +3915,29 @@ window.showLastOrder = async function() {
                             state.knowledgeData = fresh;
                             if (typeof renderKnowledge === 'function') renderKnowledge(fresh);
                         }
+                        if (state.currentMode === 'invoices' && p === 'invoices') {
+                            if (typeof initInvoiceWorkflow === 'function') initInvoiceWorkflow();
+                        }
                     }
                 });
             });
+
+            // ⚡ ИСТОРИЯ НАКЛАДНЫХ: Грузим ТОЛЬКО 2 последние записи, чтобы не забить память телефона!
+            database.ref('catalogs/invoices_history').orderByKey().limitToLast(2).on('value', snap => {
+                let fresh = snap.val();
+                if (fresh) {
+                    if (!state.cachedCatalogs) state.cachedCatalogs = {};
+                    if (JSON.stringify(state.cachedCatalogs['invoices_history']) === JSON.stringify(fresh)) return;
+                    
+                    state.cachedCatalogs['invoices_history'] = fresh;
+                    saveToRealCache('invoices_history', fresh);
+                    
+                    if (state.currentMode === 'invoices') {
+                        if (typeof initInvoiceWorkflow === 'function') initInvoiceWorkflow();
+                    }
+                }
+            });
+
         }, 6000);
     }
   
@@ -4519,7 +4520,8 @@ window.showLastOrder = async function() {
         updateHeaderSelectOptions();
         state.cachedCatalogs = {};
         
-        const paths = ['order', 'newshop', 'stoplist', 'checklist', 'menu'];
+        // ⚡ Добавили invoices и invoices_history для мгновенного старта из памяти
+        const paths = ['order', 'newshop', 'stoplist', 'checklist', 'menu', 'espresso_recipes', 'tasks_calendar', 'knowledge_base', 'invoices', 'invoices_history'];
         for (let p of paths) {
             let cachedData = await loadFromRealCache(p);
             if (cachedData) state.cachedCatalogs[p] = cachedData;

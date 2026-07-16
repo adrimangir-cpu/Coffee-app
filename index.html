@@ -1016,23 +1016,14 @@
         return { sez: Array.from(sezSet).join(", "), main: Array.from(mainSet).join(", "), cat: cat };
     }
 
-    // ==========================================
-    // ГРАФИКИ С ПЕРЕКЛЮЧЕНИЕМ МЕСЯЦА
-    // ==========================================
-    function getTargetDateLogic() {
-      let now = new Date();
-      let tMonth = now.getMonth();
-      let tYear = now.getFullYear();
-      if (state.scheduleMonthOffset === 1) { 
-          tMonth++; 
-          if (tMonth > 11) { tMonth = 0; tYear++; } 
-      }
-      return { month: tMonth, year: tYear };
-    }
+    
 
+    // ==========================================
+    // 📅 ГРАФИКИ: ПЕРЕКЛЮЧЕНИЕ МЕСЯЦА И ЗАГРУЗКА (БЕЗ ОЖИДАНИЯ)
+    // ==========================================
     function changeScheduleMonth(offset) {
         triggerHaptic();
-        showGlobalLoader("Переключение месяца..."); 
+        
         state.scheduleMonthOffset = offset;
         document.getElementById('btn-month-0').style.background = offset === 0 ? 'var(--admin-gradient)' : '#ccc';
         document.getElementById('btn-month-0').style.color = offset === 0 ? '#fff' : '#333';
@@ -1089,35 +1080,24 @@
         fetchExistingSchedule(target.month, target.year, name);
     }
 
-   async function fetchExistingSchedule(m, y, name) {
-        showReportOverlay("Загрузка вашего графика...");
-        try {
-            let monthNames = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
-            document.getElementById('schedule-month-title').innerText = `График на ${monthNames[m]} ${y}`;
-            document.getElementById('schedule-user-title').innerText = `Сотрудник: ${name}`;
+   function fetchExistingSchedule(m, y, name) {
+        let monthNames = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
+        document.getElementById('schedule-month-title').innerText = `График на ${monthNames[m]} ${y}`;
+        document.getElementById('schedule-user-title').innerText = `Сотрудник: ${name}`;
 
-            // ⚡ Сначала ищем в кэше
-            let cachedSched = state.cachedCatalogs && state.cachedCatalogs['schedules'] ? state.cachedCatalogs['schedules'] : null;
-            let data = {};
-            
-            if (cachedSched && cachedSched[`${y}_${m}`] && cachedSched[`${y}_${m}`][name]) {
-                data = cachedSched[`${y}_${m}`][name];
-            } else {
-                let snap = await database.ref(`schedules/${y}_${m}/${name}`).once("value");
-                data = snap.val() || {};
-            }
+        // ⚡ Мгновенно берем из кэша, который загрузился при старте приложения
+        let cachedSched = state.cachedCatalogs['schedules'] || {};
+        let data = (cachedSched[`${y}_${m}`] && cachedSched[`${y}_${m}`][name]) ? cachedSched[`${y}_${m}`][name] : {};
+        
+        // Клонируем, чтобы случайно не сломать кэш при редактировании
+        let safeData = JSON.parse(JSON.stringify(data));
 
-            document.getElementById('schedule-comment').value = data.comment || "";
-            delete data.comment; 
-            state.schedule.days = data;
-            
-            renderScheduleCalendar(m, y);
-            hideReportOverlay();
-            showScreen('step-schedule-calendar');
-        } catch(e) {
-            hideReportOverlay();
-            showPopupError("Ошибка", "Не удалось загрузить график: " + e.message);
-        }
+        document.getElementById('schedule-comment').value = safeData.comment || "";
+        delete safeData.comment; 
+        state.schedule.days = safeData;
+        
+        renderScheduleCalendar(m, y);
+        showScreen('step-schedule-calendar');
     }
 
     function setScheduleTool(tool) {
@@ -1331,57 +1311,43 @@
     }
 
     // ==========================================
-    // НАКЛАДНЫЕ ТОВАРЫ, АРХИВ (ОПТИМИЗИРОВАНО)
+    // 📦 НАКЛАДНЫЕ ТОВАРЫ (МОМЕНТАЛЬНОЕ ОТКРЫТИЕ)
     // ==========================================
-    async function initInvoiceWorkflow() {
+    function initInvoiceWorkflow() {
         if(!checkShopSelected()) return;
         triggerHaptic();
         state.currentMode = 'invoices';
         state.currentInvoiceTab = 'active'; 
         
-        showScreen('step-invoices');
+        showScreen('step-invoices'); // ⚡ Открываем экран мгновенно без лоадеров
         
-        // ⚡ МГНОВЕННЫЙ ЗАПУСК: Берем накладные из кэша телефона
-        let cachedActive = state.cachedCatalogs ? state.cachedCatalogs['invoices'] : null;
-        if (cachedActive) {
-            state.invoiceDataFull = { active: cachedActive, activeTimestamp: cachedActive._meta ? cachedActive._meta.timestamp : null, history: [] };
-            switchInvoiceTab('active'); // Отрисовываем мгновенно
-        } else {
-            showGlobalLoader("Загрузка накладных...");
-        }
-
-        try {
-            // ⚡ Фоновая дозагрузка с сервера (не блокирует экран)
-            const [activeSnap, historySnap] = await Promise.all([
-                database.ref('catalogs/invoices').once('value'),
-                database.ref('catalogs/invoices_history').orderByKey().limitToLast(2).once('value')
-            ]);
-            
-            let invData = activeSnap.val() || {};
-            let activeTimestamp = invData._meta ? invData._meta.timestamp : null;
-            if(invData._meta) delete invData._meta; 
-            
+        // 1. Сразу берем актуальную базу из кэша телефона
+        let invData = state.cachedCatalogs['invoices'] || {};
+        let activeTimestamp = invData._meta ? invData._meta.timestamp : null;
+        if(invData._meta) delete invData._meta; 
+        
+        state.invoiceDataFull = {
+            active: invData,
+            activeTimestamp: activeTimestamp,
+            history: state.invoiceDataFull ? state.invoiceDataFull.history : []
+        };
+        
+        switchInvoiceTab('active'); // ⚡ Отрисовываем за 0.01 сек
+        
+        // 2. Тихо на фоне подтягиваем архив (2 последние записи), не блокируя работу бариста
+        database.ref('catalogs/invoices_history').orderByKey().limitToLast(2).once('value').then(historySnap => {
             let historyData = [];
             historySnap.forEach(child => {
                 historyData.push({ key: child.key, ...child.val() });
             });
             historyData.sort((a, b) => b.timestamp - a.timestamp);
-
-            state.invoiceDataFull = {
-                active: invData,
-                activeTimestamp: activeTimestamp,
-                history: historyData
-            };
+            state.invoiceDataFull.history = historyData;
             
-            if (!state.cachedCatalogs) state.cachedCatalogs = {};
-            state.cachedCatalogs['invoices'] = invData;
-            saveToRealCache('invoices', invData); // Обновляем кэш
-            
-            switchInvoiceTab(state.currentInvoiceTab); // Тихо обновляем цифры на экране
-        } catch(e) {
-            document.getElementById('invoices-container').innerHTML = "<div class='report-card'>Ошибка загрузки</div>";
-        }
-        hideGlobalLoader();
+            // Если пользователь переключился на вкладку истории - тихо обновляем
+            if (state.currentInvoiceTab === 'history') {
+                renderInvoiceHistory();
+            }
+        }).catch(e => console.log(e));
     }
     
     function switchInvoiceTab(tab) {

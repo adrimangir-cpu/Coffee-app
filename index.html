@@ -1355,19 +1355,46 @@
     }
 
    
-  // ==========================================
-    // НАКЛАДНЫЕ ТОВАРЫ (МГНОВЕННОЕ ОТКРЫТИЕ)
+  
+    // НАКЛАДНЫЕ ТОВАРЫ (ГИБРИДНАЯ ЗАГРУЗКА)
     // ==========================================
-   function initInvoiceWorkflow() {
+  
+    async function initInvoiceWorkflow() {
         if(!checkShopSelected()) return;
         triggerHaptic();
         state.currentMode = 'invoices';
         if (!state.currentInvoiceTab) state.currentInvoiceTab = 'active'; 
 
-        // Показываем экран без лоадера за 0.1 сек
-        showScreen('step-invoices');
+        // 1. Проверяем, есть ли уже данные в кэше телефона
+        let hasCache = state.cachedCatalogs && state.cachedCatalogs['invoices'] && Object.keys(state.cachedCatalogs['invoices']).length > 0;
 
-        // Моментально берем из вечной памяти телефона
+        if (!hasCache) {
+            // ⚡ Если мы зашли впервые и кэш пуст — показываем загрузку и качаем принудительно
+            showGlobalLoader("Загрузка накладных...");
+            showScreen('step-invoices');
+            try {
+                const [activeSnap, historySnap] = await Promise.all([
+                    database.ref('catalogs/invoices').once('value'),
+                    database.ref('catalogs/invoices_history').orderByKey().limitToLast(2).once('value')
+                ]);
+                
+                if (!state.cachedCatalogs) state.cachedCatalogs = {};
+                state.cachedCatalogs['invoices'] = activeSnap.val() || {};
+                state.cachedCatalogs['invoices_history'] = historySnap.val() || {};
+                
+                saveToRealCache('invoices', state.cachedCatalogs['invoices']);
+                saveToRealCache('invoices_history', state.cachedCatalogs['invoices_history']);
+            } catch(e) {
+                console.error("Ошибка сети:", e);
+                document.getElementById('invoices-container').innerHTML = "<div class='report-card'>Ошибка загрузки</div>";
+            }
+            hideGlobalLoader();
+        } else {
+            // ⚡ Если кэш есть — открываем моментально за 0.01 сек
+            showScreen('step-invoices');
+        }
+
+        // 2. Обрабатываем данные и рисуем
         let invData = (state.cachedCatalogs && state.cachedCatalogs['invoices']) ? state.cachedCatalogs['invoices'] : {};
         let historyDataRaw = (state.cachedCatalogs && state.cachedCatalogs['invoices_history']) ? state.cachedCatalogs['invoices_history'] : {};
         
@@ -1387,7 +1414,9 @@
             history: historyData
         };
         
-        switchInvoiceTab(state.currentInvoiceTab);
+        if (state.currentMode === 'invoices') {
+            switchInvoiceTab(state.currentInvoiceTab);
+        }
     }
     
     function switchInvoiceTab(tab) {

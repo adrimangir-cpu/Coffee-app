@@ -785,19 +785,20 @@
         }
     }
 
-    function updateNavButtons(screenId) {
+   function updateNavButtons(screenId) {
         let nav = document.getElementById('nav-buttons');
         let cartFab = document.getElementById('cart-fab');
         let mainBtn = document.getElementById('main-action-button');
-        let backBtn = document.getElementById('nav-back-btn'); // ⚡ ДОБАВЛЕНО
+        let backBtn = document.getElementById('nav-back-btn'); 
 
         if (screenId === 'step-panel' || screenId === 'step-1' || screenId === 'step-2') {
-            backBtn.style.display = 'none'; // ⚡ СКРЫВАЕМ
+            backBtn.style.display = 'none'; 
         } else {
-            backBtn.style.display = 'flex'; // ⚡ ПОКАЗЫВАЕМ
+            backBtn.style.display = 'flex'; 
         }
 
-        if (['step-3', 'step-mp-month', 'step-mp-vendor', 'step-mp-mode', 'step-mp-address', 'step-mp-keypad', 'step-menu'].includes(screenId)) {
+        // ⚡ Добавлены все экраны, где нужна нижняя панель с кнопками
+        if (['step-3', 'step-mp-month', 'step-mp-vendor', 'step-mp-mode', 'step-mp-address', 'step-mp-keypad', 'step-menu', 'step-espresso', 'step-tasks-calendar', 'step-invoices', 'step-knowledge'].includes(screenId)) {
             nav.style.display = 'flex';
         } else {
             nav.style.display = 'none';
@@ -889,13 +890,10 @@
     function handleShopSelection(name) {
       triggerHaptic(); 
       
-      // ⚡ Защита: Админ и Босс не перезаписывают сохраненный адрес кофейни
-      let isPrivileged = TG_BOSS_IDS.includes(String(globalTgUserId)) || TG_ADMIN_IDS.includes(String(globalTgUserId));
-      if (!isPrivileged) {
-          localStorage.setItem("teiku_main_shop", name); 
-          if (window.Telegram && Telegram.WebApp && Telegram.WebApp.CloudStorage) {
-              Telegram.WebApp.CloudStorage.setItem("teiku_main_shop", name);
-          }
+      // Разрешаем админам и боссам сохранять адрес для тестов (раньше тут была блокировка)
+      localStorage.setItem("teiku_main_shop", name); 
+      if (window.Telegram && Telegram.WebApp && Telegram.WebApp.CloudStorage) {
+          Telegram.WebApp.CloudStorage.setItem("teiku_main_shop", name);
       }
       
       state.currentShop = name; 
@@ -903,41 +901,30 @@
       if(sel) sel.value = name;
       state.screenHistory = []; 
 
-      showGlobalLoader("Настройка кофейни..."); 
       startShopDataSync(); 
-      setTimeout(() => { 
-          hideGlobalLoader(); 
-          showScreen('step-2', false); 
-          loadSettings();
-      }, 1500); 
+      loadSettings();
+      
+      showScreen('step-2', false); // Мгновенный переход
     }
 
     // ⚡ ФУНКЦИЯ ДЛЯ БЫСТРОЙ СМЕНЫ КОФЕЙНИ В ШАПКЕ
     function handleHeaderShopChange(name) {
         triggerHaptic();
         
-        // ⚡ Защита: Админ и Босс не перезаписывают сохраненный адрес кофейни
-        let isPrivileged = TG_BOSS_IDS.includes(String(globalTgUserId)) || TG_ADMIN_IDS.includes(String(globalTgUserId));
-        if (!isPrivileged) {
-            localStorage.setItem("teiku_main_shop", name);
-            if (window.Telegram && Telegram.WebApp && Telegram.WebApp.CloudStorage) {
-                Telegram.WebApp.CloudStorage.setItem("teiku_main_shop", name);
-            }
+        localStorage.setItem("teiku_main_shop", name);
+        if (window.Telegram && Telegram.WebApp && Telegram.WebApp.CloudStorage) {
+            Telegram.WebApp.CloudStorage.setItem("teiku_main_shop", name);
         }
         
         state.currentShop = name;
-        
-        showGlobalLoader("Смена кофейни...");
         state.screenHistory = []; 
-        startShopDataSync();
         
-        setTimeout(() => { 
-            hideGlobalLoader(); 
-            showScreen('step-2', false); 
-            loadSettings();
-        }, 1200);
+        startShopDataSync();
+        loadSettings();
+        
+        showScreen('step-2', false); // Мгновенный переход без лоадеров
     }
-
+  
     function enterBaristaMode() {
         triggerHaptic();
         let isPrivileged = TG_BOSS_IDS.includes(String(globalTgUserId)) || TG_ADMIN_IDS.includes(String(globalTgUserId));
@@ -2150,7 +2137,7 @@
         }
     }
     
-    async function initWorkflow(mode) {
+   async function initWorkflow(mode) {
       if(!checkShopSelected()) return;
       triggerHaptic(); 
       state.currentMode = mode; 
@@ -2183,6 +2170,7 @@
               state.cachedCatalogs[pathKey] = fresh;
               saveToRealCache(pathKey, fresh);
           } catch(e) { console.error("Ошибка загрузки:", e); }
+          // ⚡ ГАРАНТИРОВАННОЕ СКРЫТИЕ ЛОАДЕРА
           hideGlobalLoader(); 
       }
       
@@ -2560,18 +2548,24 @@
         if(!state.userBasket["_catinfo"]) state.userBasket["_catinfo"] = {};
         state.userBasket["_catinfo"][name] = cat;
         
+        // ⚡ Обновляем инпут в основном списке (если он видим)
         let input = document.getElementById('input-' + safeId);
         if (input) input.value = newVal; 
+        
+        // ⚡ Обновляем инпут ВНУТРИ корзины (чтобы не приходилось закрывать-открывать)
+        let cartInput = document.getElementById('cart-input-' + safeId);
+        if (cartInput) cartInput.value = newVal;
         
         updateCategoryHighlight(cat);
         updateBadgeUI(); 
         persistDraft();
         
-        if (document.getElementById('cart-modal').style.display === 'flex') {
+        // Если корзина открыта, перерисовываем только если удалили товар в 0
+        if (document.getElementById('cart-modal').style.display === 'flex' && newVal === 0) {
             renderCartItemsInModal();
         }
     }
-
+  
     function registerInputChange(name, val, cat) { 
         state.userBasket[name] = val; 
         if(!state.userBasket["_catinfo"]) state.userBasket["_catinfo"] = {};
@@ -4423,70 +4417,7 @@ window.showLastOrder = async function() {
         }, 1200);
     };
   
-    // ==========================================
-    // ⚡ СОХРАНЕНИЕ ЭКРАНА В TELEGRAM CLOUD STORAGE
-    // ==========================================
-    function saveCurrentScreenState() {
-        if (window.Telegram && Telegram.WebApp && Telegram.WebApp.CloudStorage) {
-            let activeScreen = "step-1";
-            let screens = ['step-1', 'step-2', 'step-sub-lists', 'step-sub-orders', 'step-sub-profile', 'step-sub-info', 'step-invoices', 'step-knowledge', 'step-stoplist', 'step-panel', 'step-admin-purchase', 'step-3', 'step-mp-month', 'step-mp-vendor', 'step-mp-mode', 'step-mp-address', 'step-mp-keypad', 'step-menu', 'step-schedule-name', 'step-schedule-calendar', 'step-espresso', 'step-tasks-calendar'];
-            
-            for (let s of screens) {
-                let el = document.getElementById(s);
-                if (el && el.style.display === 'block') {
-                    activeScreen = s;
-                    break;
-                }
-            }
-            
-            let stateToSave = {
-                screen: activeScreen,
-                history: state.screenHistory,
-                mode: state.currentMode,
-                shop: state.currentShop,
-                role: state.currentControlRole
-            };
-            
-            Telegram.WebApp.CloudStorage.setItem("teiku_screen_state", JSON.stringify(stateToSave));
-        }
-    }
-
-    setInterval(saveCurrentScreenState, 2000); // Сохраняем стейт каждые 2 секунды на фон
-
-    // Обновляем функцию window.onload для загрузки стейта
-    const originalOnLoad = window.onload;
-    window.onload = async () => { 
-        await originalOnLoad();
-        
-        if (window.Telegram && Telegram.WebApp && Telegram.WebApp.CloudStorage) {
-            Telegram.WebApp.CloudStorage.getItem("teiku_screen_state", (err, val) => {
-                if (!err && val) {
-                    try {
-                        let savedState = JSON.parse(val);
-                        if (savedState.shop) {
-                            state.currentShop = savedShop; // Если кофейня была выбрана
-                        }
-                        if (savedState.screen && savedState.screen !== 'step-1') {
-                            state.screenHistory = savedState.history || [];
-                            state.currentMode = savedState.mode || "";
-                            state.currentControlRole = savedState.role || "";
-                            
-                            // Восстанавливаем конкретные экраны, если они требуют вызова загрузки данных
-                            if (savedState.screen === 'step-3') initWorkflow(state.currentMode);
-                            else if (savedState.screen === 'step-menu') initMenuWorkflow();
-                            else if (savedState.screen === 'step-espresso') initEspressoWorkflow();
-                            else if (savedState.screen === 'step-tasks-calendar') initCalendarTasksWorkflow();
-                            else if (savedState.screen === 'step-invoices') initInvoiceWorkflow();
-                            else if (savedState.screen === 'step-knowledge') initKnowledgeWorkflow();
-                            else if (savedState.screen === 'step-schedule-calendar') goToScheduleCalendar();
-                            else if (savedState.screen.startsWith('step-mp')) initMarketplace();
-                            else showScreen(savedState.screen, false);
-                        }
-                    } catch(e) {}
-                }
-            });
-        }
-    };
+   
   
 // ==========================================
     // ⚡ ФОНОВАЯ СИНХРОНИЗАЦИЯ ДЛЯ АДМИНА/БОССА
@@ -4499,15 +4430,17 @@ window.showLastOrder = async function() {
                 if(val) { val.key = c.key; arr.push(val); } 
             });
             state.globalBossOrders = arr;
-            saveToRealCache('boss_orders', arr); // Сохраняем в вечную память телефона
+            saveToRealCache('boss_orders', arr); // Сохраняем в вечную память
         });
     }
 
     // ==========================================
-    // ⚡ ГЛАВНЫЙ СТАРТ ПРИЛОЖЕНИЯ
+    // ⚡ ГЛАВНЫЙ СТАРТ ПРИЛОЖЕНИЯ (БЕЗ ЗАПОМИНАНИЯ ЭКРАНОВ)
     // ==========================================
-   window.onload = async () => { 
+    window.onload = async () => { 
         showGlobalLoader("Запуск приложения..."); 
+        
+        // 1. Инициализация Telegram
         try { 
             if (window.Telegram && Telegram.WebApp) {
                 Telegram.WebApp.ready(); 
@@ -4528,7 +4461,7 @@ window.showLastOrder = async function() {
         updateHeaderSelectOptions();
         state.cachedCatalogs = {};
         
-        // ⚡ ИСПРАВЛЕНА ОПЕЧАТКА ТУТ:
+        // 2. Быстрая загрузка из локального кэша устройства
         const paths = ['order', 'newshop', 'stoplist', 'checklist', 'menu', 'espresso_recipes', 'tasks_calendar', 'knowledge_base'];
         for (let p of paths) {
             let cachedData = await loadFromRealCache(p);
@@ -4539,8 +4472,8 @@ window.showLastOrder = async function() {
         restoreMpDraft(); 
         if(typeof startRealtimeUpdates === 'function') startRealtimeUpdates(); 
 
+        // 3. Получаем сохраненную кофейню
         let savedShop = localStorage.getItem("teiku_main_shop");
-        
         if (!savedShop && window.Telegram && Telegram.WebApp && Telegram.WebApp.CloudStorage) {
             savedShop = await new Promise((resolve) => {
                 Telegram.WebApp.CloudStorage.getItem("teiku_main_shop", (err, val) => {
@@ -4549,57 +4482,24 @@ window.showLastOrder = async function() {
             });
             if (savedShop) localStorage.setItem("teiku_main_shop", savedShop);
         }
-        
-        // ⚡ ВОССТАНОВЛЕНИЕ СОСТОЯНИЯ ЭКРАНА
-        if (window.Telegram && Telegram.WebApp && Telegram.WebApp.CloudStorage) {
-            Telegram.WebApp.CloudStorage.getItem("teiku_screen_state", (err, val) => {
-                if (!err && val) {
-                    try {
-                        let savedState = JSON.parse(val);
-                        if (savedState.shop) {
-                            state.currentShop = savedState.shop; 
-                        }
-                        if (savedState.screen && savedState.screen !== 'step-1') {
-                            state.screenHistory = savedState.history || [];
-                            state.currentMode = savedState.mode || "";
-                            state.currentControlRole = savedState.role || "";
-                            
-                            if (savedState.screen === 'step-3') initWorkflow(state.currentMode);
-                            else if (savedState.screen === 'step-menu') initMenuWorkflow();
-                            else if (savedState.screen === 'step-espresso') initEspressoWorkflow();
-                            else if (savedState.screen === 'step-tasks-calendar') initCalendarTasksWorkflow();
-                            else if (savedState.screen === 'step-invoices') initInvoiceWorkflow();
-                            else if (savedState.screen === 'step-knowledge') initKnowledgeWorkflow();
-                            else if (savedState.screen === 'step-schedule-calendar') goToScheduleCalendar();
-                            else if (savedState.screen.startsWith('step-mp')) initMarketplace();
-                            else showScreen(savedState.screen, false);
-                        }
-                    } catch(e) {}
-                }
-            });
-        }
 
         hideGlobalLoader(); 
         
-      
-        
-        // ЛОГИКА РАСПРЕДЕЛЕНИЯ
+        // 4. ⚡ ЧЕТКОЕ РАСПРЕДЕЛЕНИЕ (Кто куда попадает при открытии)
         if (isAdmin || isBoss) {
-            // ⚡ Внедрен кэш Босса для мгновенного открытия отчетов
             let cachedBoss = await loadFromRealCache('boss_orders');
             if (cachedBoss) state.globalBossOrders = cachedBoss;
             startBossDataSync(); 
-            
-            openControlPanel(isAdmin ? 'admin' : 'boss'); 
+            openControlPanel(isAdmin ? 'admin' : 'boss'); // Админ всегда в админку
         } else {
             if (savedShop) {
                 state.currentShop = savedShop;
                 let sel = document.getElementById('header-shop-select');
                 if (sel) sel.value = savedShop;
                 startShopDataSync();
-                showScreen('step-2', false); 
+                showScreen('step-2', false); // Бариста с выбранным адресом — в меню
             } else {
-                showScreen('step-1', false); 
+                showScreen('step-1', false); // Бариста без адреса — выбор адреса
             }
         }
     };

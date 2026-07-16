@@ -1023,13 +1023,8 @@
     // ==========================================
 
   function getTargetDateLogic() {
-      let now = new Date();
-      let tMonth = now.getMonth();
-      let tYear = now.getFullYear();
-      if (state.scheduleMonthOffset === 1) { 
-          tMonth++; 
-          if (tMonth > 11) { tMonth = 0; tYear++; } 
-      }
+      let now = new Date(), tMonth = now.getMonth(), tYear = now.getFullYear();
+      if (state.scheduleMonthOffset === 1) { tMonth++; if (tMonth > 11) { tMonth = 0; tYear++; } }
       return { month: tMonth, year: tYear };
     }
   
@@ -1362,78 +1357,44 @@
     }
 
    
-  // ==========================================
-    // 📦 НАКЛАДНЫЕ ТОВАРЫ (С ЗАЩИТОЙ ОТ ЗАВИСАНИЙ)
-    // ==========================================
-    function initInvoiceWorkflow() {
+  async function initInvoiceWorkflow() {
         if(!checkShopSelected()) return;
         triggerHaptic();
         state.currentMode = 'invoices';
         state.currentInvoiceTab = 'active'; 
         
-        showScreen('step-invoices'); 
+        showGlobalLoader("Загрузка накладных...");
+        showScreen('step-invoices');
         
-        // 1. Показываем кэш мгновенно (если он есть)
-        let cachedActive = state.cachedCatalogs ? state.cachedCatalogs['invoices'] : null;
-        if (cachedActive && Object.keys(cachedActive).length > 0) {
-            let invData = Object.assign({}, cachedActive);
+        try {
+            // Прямой запрос к базе ТОЛЬКО в момент открытия, как было раньше
+            const [activeSnap, historySnap] = await Promise.all([
+                database.ref('catalogs/invoices').once('value'),
+                database.ref('catalogs/invoices_history').orderByKey().limitToLast(2).once('value')
+            ]);
+            
+            let invData = activeSnap.val() || {};
             let activeTimestamp = invData._meta ? invData._meta.timestamp : null;
             if(invData._meta) delete invData._meta; 
-            
-            state.invoiceDataFull = {
-                active: invData,
-                activeTimestamp: activeTimestamp,
-                history: state.invoiceDataFull ? state.invoiceDataFull.history : []
-            };
-            switchInvoiceTab('active');
-        } else {
-            document.getElementById('invoices-container').innerHTML = "<div class='loading-pulse' style='text-align:center; padding:20px; font-weight:bold; color:#7E57C2;'>⏳ Загрузка накладных...<br><span style='font-size:12px; color:#aaa;'>Ожидание ответа сервера</span></div>";
-        }
-        
-        // 2. Делаем запрос с защитой от бесконечного зависания (таймаут 5 секунд)
-        let fetchPromises = Promise.all([
-            database.ref('catalogs/invoices').once('value'),
-            database.ref('catalogs/invoices_history').orderByKey().limitToLast(2).once('value')
-        ]);
-
-        let timeoutPromise = new Promise((_, reject) => 
-            setTimeout(() => reject(new Error("Сервер не отвечает (таймаут)")), 5000)
-        );
-
-        Promise.race([fetchPromises, timeoutPromise]).then(([activeSnap, historySnap]) => {
-            let freshInv = activeSnap.val() || {};
-            let activeTimestamp = freshInv._meta ? freshInv._meta.timestamp : null;
-            if(freshInv._meta) delete freshInv._meta;
             
             let historyData = [];
             historySnap.forEach(child => {
                 historyData.push({ key: child.key, ...child.val() });
             });
             historyData.sort((a, b) => b.timestamp - a.timestamp);
-            
+
             state.invoiceDataFull = {
-                active: freshInv,
+                active: invData,
                 activeTimestamp: activeTimestamp,
                 history: historyData
             };
             
-            // Сохраняем в кэш
-            if (!state.cachedCatalogs) state.cachedCatalogs = {};
-            let cacheCopy = Object.assign({}, freshInv);
-            if (activeTimestamp) cacheCopy._meta = { timestamp: activeTimestamp };
-            state.cachedCatalogs['invoices'] = cacheCopy; 
-            saveToRealCache('invoices', cacheCopy);
-            
-            // Обновляем экран
-            if (state.currentMode === 'invoices') {
-                switchInvoiceTab(state.currentInvoiceTab);
-            }
-        }).catch(e => {
-            console.log("Ошибка загрузки накладных:", e);
-            if (!cachedActive || Object.keys(cachedActive).length === 0) {
-                document.getElementById('invoices-container').innerHTML = `<div class='report-card' style='text-align:center; color:#d32f2f; font-weight:bold;'>⚠️ Не удалось загрузить данные.<br><span style='font-size:13px; color:#888;'>Проверьте интернет и попробуйте снова.</span></div>`;
-            }
-        });
+            switchInvoiceTab('active');
+        } catch(e) {
+            console.error(e);
+            document.getElementById('invoices-container').innerHTML = "<div class='report-card'>Ошибка загрузки сети</div>";
+        }
+        hideGlobalLoader();
     }
     
     function switchInvoiceTab(tab) {
@@ -3934,26 +3895,20 @@ window.showLastOrder = async function() {
    // ==========================================
     // ⚡ ДВИЖОК НУЛЕВОГО ОЖИДАНИЯ (Фоновая синхронизация)
     // ==========================================
-    function startRealtimeUpdates() {
-        // ⚡ Включили invoices и schedules в фоновую синхронизацию
-        const paths = [
-            'order', 'newshop', 'stoplist', 'checklist', 'menu', 
-            'espresso_recipes', 'tasks_calendar', 'knowledge_base', 
-            'invoices', 'schedules'
-        ];
+   function startRealtimeUpdates() {
+        // Убрали invoices и schedules отсюда
+        const paths = ['order', 'newshop', 'stoplist', 'checklist', 'menu', 'espresso_recipes', 'tasks_calendar', 'knowledge_base'];
         
         paths.forEach(p => {
-            // Умная маршрутизация: каталоги лежат в папке catalogs/
-            let dbPath = (p === 'menu' || p === 'order' || p === 'newshop' || p === 'stoplist' || p === 'checklist' || p === 'invoices') ? 'catalogs/' + p : p;
+            let dbPath = (p === 'menu' || p === 'order' || p === 'newshop' || p === 'stoplist' || p === 'checklist') ? 'catalogs/' + p : p;
             
             database.ref(dbPath).on('value', snap => {
                 let fresh = snap.val();
                 if (fresh) {
                     if (!state.cachedCatalogs) state.cachedCatalogs = {};
                     state.cachedCatalogs[p] = fresh;
-                    saveToRealCache(p, fresh); // Тихо сохраняем обновления в память
+                    saveToRealCache(p, fresh); 
                     
-                    // Триггеры бесшовной перерисовки открытых экранов
                     if (state.currentMode === 'menu' && p === 'menu') {
                         state.menuCatalog = Object.assign({}, fresh);
                         if (typeof renderMenuApp === 'function') renderMenuApp();
@@ -3964,18 +3919,6 @@ window.showLastOrder = async function() {
                     if (state.currentMode === 'calendar_tasks' && p === 'tasks_calendar') {
                         let viewDate = state.selectedCalDate || new Date();
                         if (typeof renderMiniCalendar === 'function') renderMiniCalendar(new Date(viewDate.getFullYear(), viewDate.getMonth(), 1));
-                    }
-                    if (state.currentMode === 'invoices' && p === 'invoices') {
-                        // ⚡ ИСПРАВЛЕНИЕ ПУСТЫХ НАКЛАДНЫХ: правильно обновляем объект
-                        let invData = Object.assign({}, fresh);
-                        let activeTimestamp = invData._meta ? invData._meta.timestamp : null;
-                        if(invData._meta) delete invData._meta; 
-                        
-                        if (!state.invoiceDataFull) state.invoiceDataFull = {};
-                        state.invoiceDataFull.active = invData;
-                        state.invoiceDataFull.activeTimestamp = activeTimestamp;
-                        
-                        if (typeof switchInvoiceTab === 'function') switchInvoiceTab(state.currentInvoiceTab || 'active');
                     }
                 }
             });
@@ -4537,79 +4480,133 @@ window.showLastOrder = async function() {
     }
 
     // ==========================================
-    // ⚡ ГЛАВНЫЙ СТАРТ ПРИЛОЖЕНИЯ (ОПТИМИЗИРОВАННЫЙ КЭШ)
+
+    // ⚡ ГЛАВНЫЙ СТАРТ ПРИЛОЖЕНИЯ (ИСПРАВЛЕНА АВТОРИЗАЦИЯ)
+
     // ==========================================
-    window.onload = async () => { 
+
+   window.onload = async () => { 
+
         showGlobalLoader("Запуск приложения..."); 
-        
-        // 1. Инициализация Telegram
+
         try { 
+
             if (window.Telegram && Telegram.WebApp) {
+
                 Telegram.WebApp.ready(); 
+
                 Telegram.WebApp.expand(); 
+
                 if (Telegram.WebApp.initDataUnsafe && Telegram.WebApp.initDataUnsafe.user) {
+
                     globalTgUserId = String(Telegram.WebApp.initDataUnsafe.user.id);
+
                 } else {
+
                     globalTgUserId = "unknown_user";
+
                 }
+
             } else {
+
                 globalTgUserId = "unknown_user";
+
             }
+
         } catch(e){ globalTgUserId = "unknown_user"; }
+
         
+
         let isBoss = TG_BOSS_IDS.includes(globalTgUserId);
+
         let isAdmin = TG_ADMIN_IDS.includes(globalTgUserId);
 
+
+
         updateHeaderSelectOptions();
+
         state.cachedCatalogs = {};
+
         
-        // 2. ⚡ РАСШИРЕННАЯ БЫСТРАЯ ЗАГРУЗКА ИЗ КЭША ТЕЛЕФОНА
-        // Теперь Графики и Накладные загружаются за 0.05 сек при старте
-        const paths = [
-            'order', 'newshop', 'stoplist', 'checklist', 'menu', 
-            'espresso_recipes', 'tasks_calendar', 'knowledge_base', 
-            'invoices', 'schedules'
-        ];
-        
+
+        const paths = ['order', 'newshop', 'stoplist', 'checklist', 'menu', 'espresso_recipes', 'tasks_calendar', 'knowledge_base'];
+
         for (let p of paths) {
+
             let cachedData = await loadFromRealCache(p);
+
             if (cachedData) state.cachedCatalogs[p] = cachedData;
+
         }
+
         
+
         state.globalOrders = []; state.globalMissing = [];
+
         restoreMpDraft(); 
+
         if(typeof startRealtimeUpdates === 'function') startRealtimeUpdates(); 
 
-        // 3. Получаем сохраненную кофейню
+
+
+        // ⚡ 1. Ищем адрес локально
+
         let savedShop = localStorage.getItem("teiku_main_shop");
+
+        
+
+        // ⚡ 2. Если локально пусто, тянем из облака Telegram (защита от сброса кэша)
+
         if (!savedShop && window.Telegram && Telegram.WebApp && Telegram.WebApp.CloudStorage) {
+
             savedShop = await new Promise((resolve) => {
+
                 Telegram.WebApp.CloudStorage.getItem("teiku_main_shop", (err, val) => {
+
                     resolve(err ? null : val);
+
                 });
+
             });
+
             if (savedShop) localStorage.setItem("teiku_main_shop", savedShop);
+
         }
 
-        hideGlobalLoader(); 
         
-        // 4. ⚡ ЧЕТКОЕ РАСПРЕДЕЛЕНИЕ РОЛЕЙ
+
+        hideGlobalLoader(); 
+
+        
+
+        // ЛОГИКА РАСПРЕДЕЛЕНИЯ
+
         if (isAdmin || isBoss) {
-            let cachedBoss = await loadFromRealCache('boss_orders');
-            if (cachedBoss) state.globalBossOrders = cachedBoss;
-            startBossDataSync(); 
-            openControlPanel(isAdmin ? 'admin' : 'boss'); // Руководство всегда в админку
+
+            openControlPanel(isAdmin ? 'admin' : 'boss'); 
+
         } else {
+
             if (savedShop) {
+
                 state.currentShop = savedShop;
+
                 let sel = document.getElementById('header-shop-select');
+
                 if (sel) sel.value = savedShop;
+
                 startShopDataSync();
-                showScreen('step-2', false); // Бариста с выбранным адресом — в меню
+
+                showScreen('step-2', false); 
+
             } else {
-                showScreen('step-1', false); // Бариста без адреса — выбор адреса
+
+                showScreen('step-1', false); 
+
             }
+
         }
+
     };
   
   </script>

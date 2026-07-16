@@ -1019,18 +1019,22 @@
     
 
     // ==========================================
-    // 📅 ГРАФИКИ: ПЕРЕКЛЮЧЕНИЕ МЕСЯЦА И ЗАГРУЗКА (БЕЗ ОЖИДАНИЯ)
+    // ГРАФИКИ С ПЕРЕКЛЮЧЕНИЕМ МЕСЯЦА
     // ==========================================
-
-  function getTargetDateLogic() {
-      let now = new Date(), tMonth = now.getMonth(), tYear = now.getFullYear();
-      if (state.scheduleMonthOffset === 1) { tMonth++; if (tMonth > 11) { tMonth = 0; tYear++; } }
+    function getTargetDateLogic() {
+      let now = new Date();
+      let tMonth = now.getMonth();
+      let tYear = now.getFullYear();
+      if (state.scheduleMonthOffset === 1) { 
+          tMonth++; 
+          if (tMonth > 11) { tMonth = 0; tYear++; } 
+      }
       return { month: tMonth, year: tYear };
     }
-  
+
     function changeScheduleMonth(offset) {
         triggerHaptic();
-        
+        showGlobalLoader("Переключение месяца..."); 
         state.scheduleMonthOffset = offset;
         document.getElementById('btn-month-0').style.background = offset === 0 ? 'var(--admin-gradient)' : '#ccc';
         document.getElementById('btn-month-0').style.color = offset === 0 ? '#fff' : '#333';
@@ -1060,9 +1064,7 @@
         hideGlobalLoader(); 
     }
 
-    
-
-   function goToScheduleCalendar() {
+    function goToScheduleCalendar() {
         triggerHaptic();
         let name = document.getElementById('schedule-name-input').value.trim();
         if (!name) return showPopupError("Внимание", "Пожалуйста, введите ваше Имя и Фамилию.");
@@ -1327,7 +1329,7 @@
 
    
   // ==========================================
-    // НАКЛАДНЫЕ ТОВАРЫ, АРХИВ (ИЗ СТАРОЙ ВЕРСИИ)
+    // НАКЛАДНЫЕ ТОВАРЫ, АРХИВ
     // ==========================================
     async function initInvoiceWorkflow() {
         if(!checkShopSelected()) return;
@@ -1345,8 +1347,9 @@
             ]);
             
             let invData = activeSnap.val() || {};
+            // Вытаскиваем дату из специального технического поля _meta
             let activeTimestamp = invData._meta ? invData._meta.timestamp : null;
-            if(invData._meta) delete invData._meta; 
+            if(invData._meta) delete invData._meta; // Убираем, чтобы не выводилось как товар
             
             let historyData = [];
             historySnap.forEach(child => {
@@ -1366,7 +1369,7 @@
         }
         hideGlobalLoader();
     }
-  
+    
     function switchInvoiceTab(tab) {
         triggerHaptic();
         state.currentInvoiceTab = tab;
@@ -1379,14 +1382,7 @@
             btnHistory.style.background = 'transparent'; btnHistory.style.color = '#888';
             
             state.invoiceData = state.invoiceDataFull.active.items || state.invoiceDataFull.active;
-            
-            // Если в строке поиска уже что-то введено, применяем поиск
-            let searchInput = document.getElementById('invoice-search-input');
-            if (searchInput && searchInput.value.trim() !== "") {
-                filterInvoices(searchInput.value);
-            } else {
-                renderInvoices(state.invoiceData, state.invoiceDataFull.activeTimestamp, "");
-            }
+            renderInvoices(state.invoiceData, state.invoiceDataFull.activeTimestamp);
         } else {
             btnHistory.style.background = '#9C27B0'; btnHistory.style.color = '#fff';
             btnActive.style.background = 'transparent'; btnActive.style.color = '#888';
@@ -1432,7 +1428,7 @@
         return grouped;
     }
 
-    function generateInvoiceItemsHtml(grouped, searchQuery = "") {
+    function generateInvoiceItemsHtml(grouped) {
         let html = "";
         let sortedCats = Object.keys(grouped).sort();
         if(sortedCats.length === 0) return "<div style='text-align:center; padding:10px;'>Нет товаров</div>";
@@ -1441,19 +1437,10 @@
             html += `<div style="font-weight:900; color:#7E57C2; padding:8px 5px; border-bottom:2px dashed #eee; margin-top:10px; font-size:15px;">📂 ${cat}</div>`;
             grouped[cat].sort((a,b) => a.name.localeCompare(b.name)).forEach(item => {
                 let imgHtml = (item.photo && item.photo.startsWith("data:image")) ? `<img src="${item.photo}" style="width:35px; height:35px; border-radius:6px; object-fit:cover; margin-right:10px; border:1px solid #ddd;">` : `<div style="width:35px; height:35px; border-radius:6px; background:#f0f0f0; margin-right:10px; display:flex; align-items:center; justify-content:center; font-size:9px; color:#aaa; border:1px dashed #ccc;">Нет<br>фото</div>`;
-                
-                let displayName = item.name;
-                
-                // ⚡ УМНАЯ ПОДСВЕТКА ИСКОМОГО СЛОВА
-                if (searchQuery !== "") {
-                    let searchRegex = new RegExp(`(${searchQuery})`, 'gi');
-                    displayName = displayName.replace(searchRegex, `<span style="background-color: #ffeb3b; padding: 2px 4px; border-radius: 4px; font-weight: bold; color: #000;">$1</span>`);
-                }
-
                 html += `<div style="display:flex; align-items:center; justify-content:space-between; padding:10px 0; border-bottom:1px solid #f9f9f9;">
                             <div style="display:flex; align-items:center; flex:1;">
                                 ${imgHtml}
-                                <span style="font-weight:bold; font-size:15px; color:#311b92;">${displayName}</span>
+                                <span style="font-weight:bold; font-size:15px; color:#311b92;">${item.name}</span>
                             </div>
                             <span style="font-weight:900; font-size:16px; color:#2e7d32; white-space:nowrap;">${item.price} ₽</span>
                          </div>`;
@@ -1462,7 +1449,7 @@
         return html;
     }
 
-    function renderInvoices(invData, timestamp, searchQuery = "") {
+    function renderInvoices(invData, timestamp) {
         if (state.currentInvoiceTab !== 'active') return;
         
         let html = "";
@@ -1479,19 +1466,14 @@
             return;
         }
 
-        let isSearch = searchQuery !== "";
-
         sortedCats.forEach(cat => {
-            // ⚡ ЕСЛИ ЭТО ПОИСК - СРАЗУ РАЗВОРАЧИВАЕМ ПАПКУ И МЕНЯЕМ СТРЕЛКУ
-            let isOpenClass = isSearch ? "open" : "";
-            let arrowSymbol = isSearch ? "▲" : "▼";
-
-            html += `<div class="category-block ${isOpenClass}" style="margin-bottom:15px; border:2px solid #e1bee7; background:#fff;">
+            // ⚡ ИСПРАВЛЕНИЕ: Убрали класс "open", теперь категории свернуты по умолчанию
+            html += `<div class="category-block" style="margin-bottom:15px; border:2px solid #e1bee7; background:#fff;">
                         <div class="category-header" style="background:#f3e5f5; color:#4A148C;" onclick="handleCategoryToggle(this)">
-                            <span>📂 ${cat}</span> <span style="opacity:0.5; font-size:14px;">${arrowSymbol}</span>
+                            <span>📂 ${cat}</span> <span style="opacity:0.5; font-size:14px;">▼</span>
                         </div>
                         <div class="category-content" style="padding:10px;">`;
-            html += generateInvoiceItemsHtml({ [cat]: grouped[cat] }, searchQuery).replace(`<div style="font-weight:900; color:#7E57C2; padding:8px 5px; border-bottom:2px dashed #eee; margin-top:10px; font-size:15px;">📂 ${cat}</div>`, "");
+            html += generateInvoiceItemsHtml({ [cat]: grouped[cat] }).replace(`<div style="font-weight:900; color:#7E57C2; padding:8px 5px; border-bottom:2px dashed #eee; margin-top:10px; font-size:15px;">📂 ${cat}</div>`, "");
             html += `</div></div>`;
         });
         document.getElementById('invoices-container').innerHTML = html;
@@ -1506,7 +1488,6 @@
         
         if (q === "") {
             filtered = state.invoiceData;
-            renderInvoices(filtered, state.invoiceDataFull.activeTimestamp, ""); // Пустой поиск = папки свернуты
         } else {
             Object.keys(state.invoiceData).forEach(k => {
                 let doc = state.invoiceData[k];
@@ -1514,9 +1495,10 @@
                     filtered[k] = doc;
                 }
             });
-            renderInvoices(filtered, state.invoiceDataFull.activeTimestamp, q); // Передаем текст поиска для выделения
         }
+        renderInvoices(filtered, state.invoiceDataFull.activeTimestamp);
     }
+
 
 
    // ==========================================
@@ -3862,12 +3844,14 @@ window.showLastOrder = async function() {
         return (state.cachedCatalogs && state.cachedCatalogs[name]) ? state.cachedCatalogs[name] : {};
     }
 
+
    // ==========================================
-    // ⚡ ДВИЖОК НУЛЕВОГО ОЖИДАНИЯ (ИЗ СТАРОЙ ВЕРСИИ)
+    // ⚡ ДВИЖОК НУЛЕВОГО ОЖИДАНИЯ (ФОНОВАЯ СИНХРОНИЗАЦИЯ)
     // ==========================================
     function startRealtimeUpdates() {
-        const paths = ['order', 'newshop', 'stoplist', 'checklist', 'menu', 'espresso_recipes', 'tasks_calendar', 'knowledge_base'];
-        paths.forEach(p => {
+        // 1. Жизненно важные рабочие каталоги грузятся сразу (без задержек)
+        const fastPaths = ['order', 'newshop', 'stoplist', 'checklist'];
+        fastPaths.forEach(p => {
             database.ref('catalogs/' + p).on('value', snap => {
                 let fresh = snap.val();
                 if (fresh) {
@@ -3880,20 +3864,41 @@ window.showLastOrder = async function() {
             });
         });
 
-        // Отложенная загрузка меню на 6 секунд, чтобы не тормозить старт
+        // 2. Все "информационные" вкладки подгружаются через 6 секунд, чтобы старт был мгновенным
         setTimeout(() => {
-            database.ref('catalogs/menu').on('value', snap => {
-                let fresh = snap.val();
-                if (fresh) {
-                    if (!state.cachedCatalogs) state.cachedCatalogs = {};
-                    if (JSON.stringify(state.cachedCatalogs['menu']) === JSON.stringify(fresh)) return;
-                    state.cachedCatalogs['menu'] = fresh;
-                    saveToRealCache('menu', fresh);
-                    if (state.currentMode === 'menu') {
-                        state.menuCatalog = Object.assign({}, fresh);
-                        if (typeof renderMenuApp === 'function') renderMenuApp();
+            const delayedPaths = ['menu', 'espresso_recipes', 'tasks_calendar', 'knowledge_base'];
+            
+            delayedPaths.forEach(p => {
+                // Меню лежит в папке catalogs, остальное в корне базы
+                let dbPath = (p === 'menu') ? 'catalogs/menu' : p;
+                
+                database.ref(dbPath).on('value', snap => {
+                    let fresh = snap.val();
+                    if (fresh) {
+                        if (!state.cachedCatalogs) state.cachedCatalogs = {};
+                        if (JSON.stringify(state.cachedCatalogs[p]) === JSON.stringify(fresh)) return;
+                        
+                        state.cachedCatalogs[p] = fresh;
+                        saveToRealCache(p, fresh);
+                        
+                        // Мгновенная перерисовка, если пользователь прямо сейчас смотрит на эту вкладку
+                        if (state.currentMode === 'menu' && p === 'menu') {
+                            state.menuCatalog = Object.assign({}, fresh);
+                            if (typeof renderMenuApp === 'function') renderMenuApp();
+                        }
+                        if (state.currentMode === 'espresso' && p === 'espresso_recipes') {
+                            if (typeof renderEspressoApp === 'function') renderEspressoApp();
+                        }
+                        if (state.currentMode === 'calendar_tasks' && p === 'tasks_calendar') {
+                            let viewDate = state.selectedCalDate || new Date();
+                            if (typeof renderMiniCalendar === 'function') renderMiniCalendar(new Date(viewDate.getFullYear(), viewDate.getMonth(), 1));
+                        }
+                        if (state.currentMode === 'knowledge' && p === 'knowledge_base') {
+                            state.knowledgeData = fresh;
+                            if (typeof renderKnowledge === 'function') renderKnowledge(fresh);
+                        }
                     }
-                }
+                });
             });
         }, 6000);
     }
@@ -4453,131 +4458,71 @@ window.showLastOrder = async function() {
     }
 
     // ==========================================
-
     // ⚡ ГЛАВНЫЙ СТАРТ ПРИЛОЖЕНИЯ (ИСПРАВЛЕНА АВТОРИЗАЦИЯ)
-
     // ==========================================
-
    window.onload = async () => { 
-
         showGlobalLoader("Запуск приложения..."); 
-
         try { 
-
             if (window.Telegram && Telegram.WebApp) {
-
                 Telegram.WebApp.ready(); 
-
                 Telegram.WebApp.expand(); 
-
                 if (Telegram.WebApp.initDataUnsafe && Telegram.WebApp.initDataUnsafe.user) {
-
                     globalTgUserId = String(Telegram.WebApp.initDataUnsafe.user.id);
-
                 } else {
-
                     globalTgUserId = "unknown_user";
-
                 }
-
             } else {
-
                 globalTgUserId = "unknown_user";
-
             }
-
         } catch(e){ globalTgUserId = "unknown_user"; }
-
         
-
         let isBoss = TG_BOSS_IDS.includes(globalTgUserId);
-
         let isAdmin = TG_ADMIN_IDS.includes(globalTgUserId);
 
-
-
         updateHeaderSelectOptions();
-
         state.cachedCatalogs = {};
-
         
-
-        // ⚡ Добавили новые вкладки, чтобы они тоже моментально доставались из памяти телефона!
-        const paths = ['order', 'newshop', 'stoplist', 'checklist', 'menu', 'espresso_recipes', 'tasks_calendar', 'knowledge_base'];
+        const paths = ['order', 'newshop', 'stoplist', 'checklist', 'menu'];
         for (let p of paths) {
             let cachedData = await loadFromRealCache(p);
             if (cachedData) state.cachedCatalogs[p] = cachedData;
         }
-
         
-
         state.globalOrders = []; state.globalMissing = [];
-
         restoreMpDraft(); 
-
         if(typeof startRealtimeUpdates === 'function') startRealtimeUpdates(); 
 
-
-
         // ⚡ 1. Ищем адрес локально
-
         let savedShop = localStorage.getItem("teiku_main_shop");
-
         
-
         // ⚡ 2. Если локально пусто, тянем из облака Telegram (защита от сброса кэша)
-
         if (!savedShop && window.Telegram && Telegram.WebApp && Telegram.WebApp.CloudStorage) {
-
             savedShop = await new Promise((resolve) => {
-
                 Telegram.WebApp.CloudStorage.getItem("teiku_main_shop", (err, val) => {
-
                     resolve(err ? null : val);
-
                 });
-
             });
-
             if (savedShop) localStorage.setItem("teiku_main_shop", savedShop);
-
         }
-
         
-
         hideGlobalLoader(); 
-
         
-
         // ЛОГИКА РАСПРЕДЕЛЕНИЯ
-
         if (isAdmin || isBoss) {
-
             openControlPanel(isAdmin ? 'admin' : 'boss'); 
-
         } else {
-
             if (savedShop) {
-
                 state.currentShop = savedShop;
-
                 let sel = document.getElementById('header-shop-select');
-
                 if (sel) sel.value = savedShop;
-
                 startShopDataSync();
-
                 showScreen('step-2', false); 
-
             } else {
-
                 showScreen('step-1', false); 
-
             }
-
         }
-
     };
+
   
   </script>
 </body>

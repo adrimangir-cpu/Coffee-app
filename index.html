@@ -1091,56 +1091,59 @@
         fetchExistingSchedule(target.month, target.year, name);
     }
 
-    async function fetchExistingSchedule(m, y, name) {
+   // ==========================================
+    // ГРАФИК (МГНОВЕННОЕ ОТКРЫТИЕ)
+    // ==========================================
+    function fetchExistingSchedule(m, y, name) {
         let monthNames = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
         let titleEl = document.getElementById('schedule-month-title'); 
         let userEl = document.getElementById('schedule-user-title');
         if (titleEl) titleEl.innerText = `График на ${monthNames[m]} ${y}`;
         if (userEl) userEl.innerText = `Сотрудник: ${name}`;
 
-        let cacheKey = `sched_${y}_${m}_${name}`;
-        if (!state.scheduleCache) state.scheduleCache = {};
+        let cacheKey = `sched_data_${y}_${m}_${name}`;
 
-        // 1. Пытаемся моментально достать из кэша телефона
-        let cachedData = state.scheduleCache[cacheKey] || await loadFromRealCache(cacheKey);
-        
-        if (cachedData) {
-            state.scheduleCache[cacheKey] = cachedData;
-            let safeData = JSON.parse(JSON.stringify(cachedData));
+        // 1. Мгновенно достаем из памяти телефона
+        let cached = localStorage.getItem(cacheKey);
+        if (cached) {
+            let safeData = JSON.parse(cached);
             let commentEl = document.getElementById('schedule-comment');
             if (commentEl) commentEl.value = safeData.comment || "";
             delete safeData.comment; 
             state.schedule.days = safeData;
-            
-            renderScheduleCalendar(m, y);
-            showScreen('step-schedule-calendar');
         } else {
-            showReportOverlay("Загрузка вашего графика...");
+            state.schedule.days = {};
+            let commentEl = document.getElementById('schedule-comment');
+            if (commentEl) commentEl.value = "";
+            if (userEl) userEl.innerText = `Сотрудник: ${name} (Синхронизация...)`;
         }
+        
+        // Показываем экран СРАЗУ
+        renderScheduleCalendar(m, y);
+        showScreen('step-schedule-calendar');
 
-        // 2. Тихо подтягиваем изменения с сервера
-        try {
-            let snap = await database.ref(`schedules/${y}_${m}/${name}`).once("value");
+        // 2. Фоновый запрос к базе (без блокировки)
+        database.ref(`schedules/${y}_${m}/${name}`).once("value").then(snap => {
             let data = snap.val() || {};
-            
-            state.scheduleCache[cacheKey] = data;
-            saveToRealCache(cacheKey, data); // Сохраняем в вечную память
+            localStorage.setItem(cacheKey, JSON.stringify(data));
             
             let safeData = JSON.parse(JSON.stringify(data));
             let commentEl = document.getElementById('schedule-comment');
-            if (commentEl) commentEl.value = safeData.comment || "";
+            
+            // Чтобы не стереть то, что бариста уже начал печатать
+            if (commentEl && document.activeElement !== commentEl) {
+                commentEl.value = safeData.comment || "";
+            }
             delete safeData.comment; 
             state.schedule.days = safeData;
             
             if (state.currentMode === 'schedule') {
+                if (userEl) userEl.innerText = `Сотрудник: ${name}`; // убираем надпись про синхронизацию
                 renderScheduleCalendar(m, y);
-                showScreen('step-schedule-calendar');
             }
-        } catch(e) {
-            console.log("Ошибка фонового обновления:", e);
-        }
-        hideReportOverlay();
+        }).catch(e => console.log("Фоновая ошибка:", e));
     }
+  
     function setScheduleTool(tool) {
         triggerHaptic();
         state.schedule.currentTool = tool;
@@ -1353,32 +1356,31 @@
 
    
   // ==========================================
-    // НАКЛАДНЫЕ ТОВАРЫ, АРХИВ
+    // НАКЛАДНЫЕ ТОВАРЫ (МГНОВЕННОЕ ОТКРЫТИЕ)
     // ==========================================
-   async function initInvoiceWorkflow() {
+    function initInvoiceWorkflow() {
         if(!checkShopSelected()) return;
         triggerHaptic();
         state.currentMode = 'invoices';
         state.currentInvoiceTab = 'active'; 
 
-        // 1. Пытаемся моментально достать из кэша телефона
-        let cached = state.invoiceDataFull || await loadFromRealCache('invoices_full');
+        // 1. Мгновенно переключаем экран без лоадеров
+        showScreen('step-invoices');
+        
+        // 2. Достаем данные из памяти телефона (как в Приемке)
+        let cached = localStorage.getItem("data_invoices_full");
         if (cached) {
-            state.invoiceDataFull = cached;
-            showScreen('step-invoices');
+            state.invoiceDataFull = JSON.parse(cached);
             switchInvoiceTab('active');
         } else {
-            showGlobalLoader("Загрузка накладных...");
-            showScreen('step-invoices');
+            document.getElementById('invoices-container').innerHTML = `<div class="report-card"><div class="loading-pulse" style="text-align:center; font-weight:900; color:#7E57C2; padding: 20px;">⏳ Синхронизация с базой...</div></div>`;
         }
 
-        // 2. Тихо обновляем свежие данные с сервера в фоне
-        try {
-            const [activeSnap, historySnap] = await Promise.all([
-                database.ref('catalogs/invoices').once('value'),
-                database.ref('catalogs/invoices_history').orderByKey().limitToLast(2).once('value')
-            ]);
-            
+        // 3. Тихо обновляем в фоне (через Promise.then, без await!)
+        Promise.all([
+            database.ref('catalogs/invoices').once('value'),
+            database.ref('catalogs/invoices_history').orderByKey().limitToLast(2).once('value')
+        ]).then(([activeSnap, historySnap]) => {
             let invData = activeSnap.val() || {};
             let activeTimestamp = invData._meta ? invData._meta.timestamp : null;
             if(invData._meta) delete invData._meta; 
@@ -1389,24 +1391,20 @@
             });
             historyData.sort((a, b) => b.timestamp - a.timestamp);
 
-            let newData = {
+            state.invoiceDataFull = {
                 active: invData,
                 activeTimestamp: activeTimestamp,
                 history: historyData
             };
-
-            // Сохраняем в вечную память
-            state.invoiceDataFull = newData;
-            saveToRealCache('invoices_full', newData); 
-
-            // Если вкладка открыта, тихо перерисовываем
+            
+            // Обновляем память телефона
+            localStorage.setItem("data_invoices_full", JSON.stringify(state.invoiceDataFull));
+            
+            // Если бариста все еще на этом экране - тихо перерисовываем
             if (state.currentMode === 'invoices') {
                 switchInvoiceTab(state.currentInvoiceTab);
             }
-        } catch(e) {
-            console.log("Ошибка сети:", e);
-        }
-        hideGlobalLoader();
+        }).catch(e => console.log("Фоновая ошибка:", e));
     }
     
     function switchInvoiceTab(tab) {

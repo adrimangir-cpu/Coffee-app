@@ -785,19 +785,20 @@
         }
     }
 
-    function updateNavButtons(screenId) {
+   function updateNavButtons(screenId) {
         let nav = document.getElementById('nav-buttons');
         let cartFab = document.getElementById('cart-fab');
         let mainBtn = document.getElementById('main-action-button');
-        let backBtn = document.getElementById('nav-back-btn'); // ⚡ ДОБАВЛЕНО
+        let backBtn = document.getElementById('nav-back-btn'); 
 
         if (screenId === 'step-panel' || screenId === 'step-1' || screenId === 'step-2') {
-            backBtn.style.display = 'none'; // ⚡ СКРЫВАЕМ
+            backBtn.style.display = 'none'; 
         } else {
-            backBtn.style.display = 'flex'; // ⚡ ПОКАЗЫВАЕМ
+            backBtn.style.display = 'flex'; 
         }
 
-        if (['step-3', 'step-mp-month', 'step-mp-vendor', 'step-mp-mode', 'step-mp-address', 'step-mp-keypad', 'step-menu'].includes(screenId)) {
+        // ⚡ Добавлены все экраны, где нужна нижняя панель с кнопками
+        if (['step-3', 'step-mp-month', 'step-mp-vendor', 'step-mp-mode', 'step-mp-address', 'step-mp-keypad', 'step-menu', 'step-espresso', 'step-tasks-calendar', 'step-invoices', 'step-knowledge'].includes(screenId)) {
             nav.style.display = 'flex';
         } else {
             nav.style.display = 'none';
@@ -889,13 +890,10 @@
     function handleShopSelection(name) {
       triggerHaptic(); 
       
-      // ⚡ Защита: Админ и Босс не перезаписывают сохраненный адрес кофейни
-      let isPrivileged = TG_BOSS_IDS.includes(String(globalTgUserId)) || TG_ADMIN_IDS.includes(String(globalTgUserId));
-      if (!isPrivileged) {
-          localStorage.setItem("teiku_main_shop", name); 
-          if (window.Telegram && Telegram.WebApp && Telegram.WebApp.CloudStorage) {
-              Telegram.WebApp.CloudStorage.setItem("teiku_main_shop", name);
-          }
+      // Разрешаем админам и боссам сохранять адрес для тестов (раньше тут была блокировка)
+      localStorage.setItem("teiku_main_shop", name); 
+      if (window.Telegram && Telegram.WebApp && Telegram.WebApp.CloudStorage) {
+          Telegram.WebApp.CloudStorage.setItem("teiku_main_shop", name);
       }
       
       state.currentShop = name; 
@@ -903,41 +901,30 @@
       if(sel) sel.value = name;
       state.screenHistory = []; 
 
-      showGlobalLoader("Настройка кофейни..."); 
       startShopDataSync(); 
-      setTimeout(() => { 
-          hideGlobalLoader(); 
-          showScreen('step-2', false); 
-          loadSettings();
-      }, 1500); 
+      loadSettings();
+      
+      showScreen('step-2', false); // Мгновенный переход
     }
 
     // ⚡ ФУНКЦИЯ ДЛЯ БЫСТРОЙ СМЕНЫ КОФЕЙНИ В ШАПКЕ
     function handleHeaderShopChange(name) {
         triggerHaptic();
         
-        // ⚡ Защита: Админ и Босс не перезаписывают сохраненный адрес кофейни
-        let isPrivileged = TG_BOSS_IDS.includes(String(globalTgUserId)) || TG_ADMIN_IDS.includes(String(globalTgUserId));
-        if (!isPrivileged) {
-            localStorage.setItem("teiku_main_shop", name);
-            if (window.Telegram && Telegram.WebApp && Telegram.WebApp.CloudStorage) {
-                Telegram.WebApp.CloudStorage.setItem("teiku_main_shop", name);
-            }
+        localStorage.setItem("teiku_main_shop", name);
+        if (window.Telegram && Telegram.WebApp && Telegram.WebApp.CloudStorage) {
+            Telegram.WebApp.CloudStorage.setItem("teiku_main_shop", name);
         }
         
         state.currentShop = name;
-        
-        showGlobalLoader("Смена кофейни...");
         state.screenHistory = []; 
-        startShopDataSync();
         
-        setTimeout(() => { 
-            hideGlobalLoader(); 
-            showScreen('step-2', false); 
-            loadSettings();
-        }, 1200);
+        startShopDataSync();
+        loadSettings();
+        
+        showScreen('step-2', false); // Мгновенный переход без лоадеров
     }
-
+  
     function enterBaristaMode() {
         triggerHaptic();
         let isPrivileged = TG_BOSS_IDS.includes(String(globalTgUserId)) || TG_ADMIN_IDS.includes(String(globalTgUserId));
@@ -1029,6 +1016,8 @@
         return { sez: Array.from(sezSet).join(", "), main: Array.from(mainSet).join(", "), cat: cat };
     }
 
+    
+
     // ==========================================
     // ГРАФИКИ С ПЕРЕКЛЮЧЕНИЕМ МЕСЯЦА
     // ==========================================
@@ -1103,31 +1092,55 @@
     }
 
     async function fetchExistingSchedule(m, y, name) {
-        showReportOverlay("Загрузка вашего графика...");
-        try {
-            let monthNames = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
-            document.getElementById('schedule-month-title').innerText = `График на ${monthNames[m]} ${y}`;
-            document.getElementById('schedule-user-title').innerText = `Сотрудник: ${name}`;
+        let monthNames = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
+        let titleEl = document.getElementById('schedule-month-title'); 
+        let userEl = document.getElementById('schedule-user-title');
+        if (titleEl) titleEl.innerText = `График на ${monthNames[m]} ${y}`;
+        if (userEl) userEl.innerText = `Сотрудник: ${name}`;
 
-            let snap = await database.ref(`schedules/${y}_${m}/${name}`).once("value");
-            if (snap.exists()) {
-                let data = snap.val() || {};
-                document.getElementById('schedule-comment').value = data.comment || "";
-                delete data.comment; 
-                state.schedule.days = data;
-            } else {
-                state.schedule.days = {};
-                document.getElementById('schedule-comment').value = "";
-            }
+        let cacheKey = `sched_${y}_${m}_${name}`;
+        if (!state.scheduleCache) state.scheduleCache = {};
+
+        // 1. Пытаемся моментально достать из кэша телефона
+        let cachedData = state.scheduleCache[cacheKey] || await loadFromRealCache(cacheKey);
+        
+        if (cachedData) {
+            state.scheduleCache[cacheKey] = cachedData;
+            let safeData = JSON.parse(JSON.stringify(cachedData));
+            let commentEl = document.getElementById('schedule-comment');
+            if (commentEl) commentEl.value = safeData.comment || "";
+            delete safeData.comment; 
+            state.schedule.days = safeData;
+            
             renderScheduleCalendar(m, y);
-            hideReportOverlay();
             showScreen('step-schedule-calendar');
-        } catch(e) {
-            hideReportOverlay();
-            showPopupError("Ошибка", "Не удалось загрузить график: " + e.message);
+        } else {
+            showReportOverlay("Загрузка вашего графика...");
         }
-    }
 
+        // 2. Тихо подтягиваем изменения с сервера
+        try {
+            let snap = await database.ref(`schedules/${y}_${m}/${name}`).once("value");
+            let data = snap.val() || {};
+            
+            state.scheduleCache[cacheKey] = data;
+            saveToRealCache(cacheKey, data); // Сохраняем в вечную память
+            
+            let safeData = JSON.parse(JSON.stringify(data));
+            let commentEl = document.getElementById('schedule-comment');
+            if (commentEl) commentEl.value = safeData.comment || "";
+            delete safeData.comment; 
+            state.schedule.days = safeData;
+            
+            if (state.currentMode === 'schedule') {
+                renderScheduleCalendar(m, y);
+                showScreen('step-schedule-calendar');
+            }
+        } catch(e) {
+            console.log("Ошибка фонового обновления:", e);
+        }
+        hideReportOverlay();
+    }
     function setScheduleTool(tool) {
         triggerHaptic();
         state.schedule.currentTool = tool;
@@ -1238,29 +1251,38 @@
     }
 
     // ==========================================
-    // ⚡ НОВОЕ: ВАЖНАЯ ИНФОРМАЦИЯ (БАЗА ЗНАНИЙ)
+    // ⚡ ВАЖНАЯ ИНФОРМАЦИЯ (БАЗА ЗНАНИЙ)
     // ==========================================
     async function initKnowledgeWorkflow() {
         if(!checkShopSelected()) return;
         triggerHaptic();
         state.currentMode = 'knowledge';
-        showGlobalLoader("Загрузка...");
         showScreen('step-knowledge');
-        try {
-            let snap = await database.ref('knowledge_base').once('value');
-            let data = snap.val() || {};
-            // Защита от дублей: сохраняем данные в state для поиска
-            state.knowledgeData = data; 
-            renderKnowledge(data);
-        } catch(e) {
-            document.getElementById('knowledge-container').innerHTML = "<div class='report-card'>Ошибка загрузки</div>";
+        
+        // ⚡ УСКОРЕНИЕ: Берем сразу из кэша, никаких долгих загрузок!
+        if (state.cachedCatalogs && state.cachedCatalogs['knowledge_base']) {
+            state.knowledgeData = state.cachedCatalogs['knowledge_base'];
+            renderKnowledge(state.knowledgeData);
+        } else {
+            showGlobalLoader("Загрузка...");
+            try {
+                let snap = await database.ref('knowledge_base').once('value');
+                let data = snap.val() || {};
+                state.knowledgeData = data; 
+                if (!state.cachedCatalogs) state.cachedCatalogs = {};
+                state.cachedCatalogs['knowledge_base'] = data;
+                renderKnowledge(data);
+            } catch(e) {
+                document.getElementById('knowledge-container').innerHTML = "<div class='report-card'>Ошибка загрузки</div>";
+            }
+            hideGlobalLoader();
         }
-        hideGlobalLoader();
     }
     
-    function renderKnowledge(data) {
+    function renderKnowledge(data, searchQuery = "") {
         let html = "";
         let sortedKeys = Object.keys(data).sort((a,b) => (data[b].timestamp||0) - (data[a].timestamp||0));
+        
         if(sortedKeys.length === 0) {
             html = "<div class='report-card' style='text-align:center;'>Информации пока нет</div>";
         } else {
@@ -1269,11 +1291,12 @@
                 if(!doc) return;
                 let safeId = getSafeId(k);
                 
-                // ⚡ Читаем смарт-теги из текста
+                // Читаем текст и восстанавливаем переносы строк
                 let formattedText = doc.text ? doc.text.replace(/\n/g, '<br>') : '';
-                let regex = /\[ФОТО_(\d+)\](.*?)\[\/ФОТО_\d+\]/g;
                 
-                formattedText = formattedText.replace(regex, (match, n, word) => {
+                // ⚡ ПОДДЕРЖКА ФОТО В ТЕКСТЕ
+                let photoRegex = /\[ФОТО_(\d+)\](.*?)\[\/ФОТО_\d+\]/g;
+                formattedText = formattedText.replace(photoRegex, (match, n, word) => {
                     let photoData = doc[`photo_${n}`] || "";
                     if (photoData) {
                         return `<span style="color:#0288d1; border-bottom:1px dashed #0288d1; cursor:pointer; font-weight:bold;" onclick="openPhotoModal('${escapeName(word)}', '${photoData}')">📷 ${word}</span>`;
@@ -1281,11 +1304,24 @@
                     return `<b>${word}</b>`;
                 });
 
+                // ⚡ УМНЫЙ ПОИСК С ПОДСВЕТКОЙ
+                let isExpanded = false;
+                if (searchQuery !== "") {
+                    // Разворачиваем карточку, если ищем
+                    isExpanded = true;
+                    // Подсвечиваем найденное слово желтым маркером
+                    let searchRegex = new RegExp(`(${searchQuery})`, 'gi');
+                    formattedText = formattedText.replace(searchRegex, `<span style="background-color: #ffeb3b; padding: 2px 4px; border-radius: 4px; font-weight: bold; color: #000;">$1</span>`);
+                }
+
+                let displayStyle = isExpanded ? 'block' : 'none';
+                let arrowSymbol = isExpanded ? '▲' : '▼';
+
                 html += `<div class="report-card" style="padding:0; overflow:hidden; border:2px solid #D1C4E9; margin-bottom:15px;">
                             <div style="padding:15px; background:#ede7f6; font-weight:900; color:#311b92; font-size:17px; display:flex; justify-content:space-between; align-items:center; cursor:pointer;" onclick="toggleElements('kb_${safeId}', 'arr_kb_${safeId}')">
-                                <span>${doc.title}</span><span id="arr_kb_${safeId}" style="opacity:0.5; font-size:14px;">▼</span>
+                                <span>${doc.title}</span><span id="arr_kb_${safeId}" style="opacity:0.5; font-size:14px;">${arrowSymbol}</span>
                             </div>
-                            <div class="kb_${safeId}" style="display:none; padding:15px; background:#fff; font-size:15px; line-height:1.5;">
+                            <div class="kb_${safeId}" style="display:${displayStyle}; padding:15px; background:#fff; font-size:15px; line-height:1.5;">
                                 ${formattedText}
                             </div>
                          </div>`;
@@ -1301,6 +1337,8 @@
         
         if (q === "") {
             filtered = state.knowledgeData;
+            // Если запрос пустой, передаем пустую строку (карточки будут свернуты и без подсветки)
+            renderKnowledge(filtered, "");
         } else {
             Object.keys(state.knowledgeData).forEach(k => {
                 let doc = state.knowledgeData[k];
@@ -1308,22 +1346,33 @@
                     filtered[k] = doc;
                 }
             });
+            // Передаем запрос для разворачивания и подсветки
+            renderKnowledge(filtered, q);
         }
-        renderKnowledge(filtered);
     }
 
-    // ==========================================
+   
+  // ==========================================
     // НАКЛАДНЫЕ ТОВАРЫ, АРХИВ
     // ==========================================
-    async function initInvoiceWorkflow() {
+   async function initInvoiceWorkflow() {
         if(!checkShopSelected()) return;
         triggerHaptic();
         state.currentMode = 'invoices';
         state.currentInvoiceTab = 'active'; 
-        
-        showGlobalLoader("Загрузка накладных...");
-        showScreen('step-invoices');
-        
+
+        // 1. Пытаемся моментально достать из кэша телефона
+        let cached = state.invoiceDataFull || await loadFromRealCache('invoices_full');
+        if (cached) {
+            state.invoiceDataFull = cached;
+            showScreen('step-invoices');
+            switchInvoiceTab('active');
+        } else {
+            showGlobalLoader("Загрузка накладных...");
+            showScreen('step-invoices');
+        }
+
+        // 2. Тихо обновляем свежие данные с сервера в фоне
         try {
             const [activeSnap, historySnap] = await Promise.all([
                 database.ref('catalogs/invoices').once('value'),
@@ -1331,9 +1380,8 @@
             ]);
             
             let invData = activeSnap.val() || {};
-            // Вытаскиваем дату из специального технического поля _meta
             let activeTimestamp = invData._meta ? invData._meta.timestamp : null;
-            if(invData._meta) delete invData._meta; // Убираем, чтобы не выводилось как товар
+            if(invData._meta) delete invData._meta; 
             
             let historyData = [];
             historySnap.forEach(child => {
@@ -1341,15 +1389,22 @@
             });
             historyData.sort((a, b) => b.timestamp - a.timestamp);
 
-            state.invoiceDataFull = {
+            let newData = {
                 active: invData,
                 activeTimestamp: activeTimestamp,
                 history: historyData
             };
-            
-            switchInvoiceTab('active');
+
+            // Сохраняем в вечную память
+            state.invoiceDataFull = newData;
+            saveToRealCache('invoices_full', newData); 
+
+            // Если вкладка открыта, тихо перерисовываем
+            if (state.currentMode === 'invoices') {
+                switchInvoiceTab(state.currentInvoiceTab);
+            }
         } catch(e) {
-            document.getElementById('invoices-container').innerHTML = "<div class='report-card'>Ошибка загрузки</div>";
+            console.log("Ошибка сети:", e);
         }
         hideGlobalLoader();
     }
@@ -1483,29 +1538,34 @@
         renderInvoices(filtered, state.invoiceDataFull.activeTimestamp);
     }
 
-    // ==========================================
-    // СБОР СВОДА АДМИНОМ ИЗ МИНИ-АПП
+
+
+   // ==========================================
+    // СБОР СВОДА АДМИНОМ ИЗ МИНИ-АПП (ОПТИМИЗИРОВАНО)
     // ==========================================
     async function buildSvodReport() {
         if(!confirm("Вы уверены, что хотите СОБРАТЬ СВОД?\nЭто переведет все ожидающие заказы в статус Свода, посчитает итоги и отправит оповещение в Телеграм.")) return;
         
         showReportOverlay("Сборка закупки (Выполняю команду)...");
         try {
-            const [resOrders, resCatalog, resMissing] = await Promise.all([
-               database.ref("orders").once("value"), 
-               database.ref("catalogs/order").once("value"), 
-               database.ref("missing_items").once("value")
-            ]);
+            // ⚡ ИСПРАВЛЕНИЕ: Не качаем всю базу за 3 года! Берем кэш админа (последние заказы)
+            let ordersSnap = {};
+            if (state.globalBossOrders && state.globalBossOrders.length > 0) {
+                state.globalBossOrders.forEach(o => { ordersSnap[o.key] = o; });
+            } else {
+                let snap = await database.ref("orders").orderByKey().limitToLast(300).once("value");
+                ordersSnap = snap.val() || {};
+            }
             
-            let ordersSnap = resOrders.val() || {};
-            let catalog = resCatalog.val() || {}; 
-            let missingData = resMissing.val() || {};
+            let catalog = state.cachedCatalogs && state.cachedCatalogs['order'] ? state.cachedCatalogs['order'] : (await database.ref("catalogs/order").once("value")).val() || {}; 
+            let missingData = (await database.ref("missing_items").once("value")).val() || {};
             
             let updates = {}; 
             let totalSvod = 0; 
             let totalLentaAll = 0; 
             let totalOzonAll = 0; 
             let totalKuperAll = 0;
+            // ... (остальной код функции оставляете без изменений)
 
             let activeMissing = {};
             Object.values(missingData).forEach(m => {
@@ -2102,7 +2162,7 @@
         }
     }
     
-    async function initWorkflow(mode) {
+   async function initWorkflow(mode) {
       if(!checkShopSelected()) return;
       triggerHaptic(); 
       state.currentMode = mode; 
@@ -2135,6 +2195,7 @@
               state.cachedCatalogs[pathKey] = fresh;
               saveToRealCache(pathKey, fresh);
           } catch(e) { console.error("Ошибка загрузки:", e); }
+          // ⚡ ГАРАНТИРОВАННОЕ СКРЫТИЕ ЛОАДЕРА
           hideGlobalLoader(); 
       }
       
@@ -2170,6 +2231,8 @@
             let seenInOrders = new Set();
             let cutoffTime = Date.now() - (14 * 24 * 60 * 60 * 1000); 
 
+            let restoredItems = []; // ⚡ Собираем названия возвращенных товаров
+
             state.globalMissing.forEach(m => {
                 if (!m || !m.name || m.timestamp < cutoffTime) return;
                 let pKey = getStatusKey(m.name);
@@ -2190,11 +2253,18 @@
                             state.userBasket["_catinfo"][catItem.name] = catItem.cat || "Прочее";
                             persistDraft(); 
                             updateBadgeUI(); 
+                            database.ref("missing_items/" + m.key).update({added_to_basket: true}); 
+                            
+                            restoredItems.push(catItem.name); // ⚡ Запоминаем для алерта
                         }
                     }
-                    database.ref("missing_items/" + m.key).update({added_to_basket: true}); 
                 }
             });
+
+            // ⚡ Выводим алерт баристе, если что-то вернулось
+            if (restoredItems.length > 0) {
+                alert("🔄 АДМИН ОТМЕНИЛ НЕДОВОЗЫ!\nСледующие товары возвращены вам в корзину для повторного заказа:\n\n" + restoredItems.join("\n"));
+            }
 
             state.globalOrders.forEach(o => {
                 if ((o.mode === 'order' || o.mode === 'new_shop') && o.timestamp >= cutoffTime) {
@@ -2503,18 +2573,24 @@
         if(!state.userBasket["_catinfo"]) state.userBasket["_catinfo"] = {};
         state.userBasket["_catinfo"][name] = cat;
         
+        // ⚡ Обновляем инпут в основном списке (если он видим)
         let input = document.getElementById('input-' + safeId);
         if (input) input.value = newVal; 
+        
+        // ⚡ Обновляем инпут ВНУТРИ корзины (чтобы не приходилось закрывать-открывать)
+        let cartInput = document.getElementById('cart-input-' + safeId);
+        if (cartInput) cartInput.value = newVal;
         
         updateCategoryHighlight(cat);
         updateBadgeUI(); 
         persistDraft();
         
-        if (document.getElementById('cart-modal').style.display === 'flex') {
+        // Если корзина открыта, перерисовываем только если удалили товар в 0
+        if (document.getElementById('cart-modal').style.display === 'flex' && newVal === 0) {
             renderCartItemsInModal();
         }
     }
-
+  
     function registerInputChange(name, val, cat) { 
         state.userBasket[name] = val; 
         if(!state.userBasket["_catinfo"]) state.userBasket["_catinfo"] = {};
@@ -2691,204 +2767,7 @@
       setTimeout(() => { banner.style.display = 'none'; }, 6000);
     }
 
-   async function validateAndSubmit(isFromModal) {
-    if (!isFromModal && (state.currentMode === 'order' || state.currentMode === 'new_shop' || state.currentMode === 'marketplace')) { toggleCartModal(true); return; }
-    if (state.isProcessing) return;
-
-    if (state.currentMode === 'marketplace') {
-        if (state.mpBasket.length === 0) return showPopupError("Внимание", "Корзина пуста!");
-        if (state.isMpEditMode) return showPopupError("Внимание", "Сначала сохраните изменения");
-        
-        state.isProcessing = true;
-        let btn = document.getElementById('modal-submit-button'); btn.innerText = "ОТПРАВЛЯЮ...";
-        showGlobalLoader("Отправка данных...");
-        
-        try {
-            let submitTimestamp = firebase.database.ServerValue.TIMESTAMP;
-            if (state.mpMonthOption === 'prev') {
-                let now = new Date();
-                let prevMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
-                submitTimestamp = prevMonthEnd.getTime();
-            }
-
-            let promises = [];
-            for(let item of state.mpBasket) {
-                promises.push(database.ref("marketplace_records").push({
-                    vendor: item.vendor,
-                    type: item.amount < 0 ? 'refund' : 'purchase',
-                    address: item.address,
-                    amount: parseFloat(item.amount),
-                    timestamp: submitTimestamp,
-                    userId: globalTgUserId
-                }));
-            }
-            await Promise.all(promises); // ⚡ Гарантированно ждем отправки всех записей маркетплейса
-            state.mpBasket = [];
-            localStorage.removeItem("draft_marketplace");
-        } catch(e) {
-            hideGlobalLoader();
-            showPopupError("Ошибка", e.message);
-            state.isProcessing = false; btn.innerText = "ПОДТВЕРДИТЬ И ОТПРАВИТЬ";
-            return;
-        }
-    } else {
-        if (state.currentMode === 'checklist') {
-            let missingCategories = new Set(); 
-            let totalMissing = 0;
-            for (let key in state.productCatalog) {
-                let item = state.productCatalog[key];
-                if (item && item.cat && item.name !== "Товар" && item.name !== "Дата заполнения") {
-                    let val = state.userBasket[item.name];
-                    if (val === undefined || val === null || String(val).trim() === "" || String(val).trim() === "-" || String(val).trim() === "--") { 
-                        missingCategories.add(item.cat); 
-                        totalMissing++; 
-                    }
-                }
-            }
-            if (totalMissing > 0) {
-                triggerHaptic(); 
-                let catList = Array.from(missingCategories).join(', ');
-                showPopupError("Чек-лист заполнен не полностью!", `Осталось позиций: ${totalMissing}.<br><small>Пожалуйста, проверьте: ${catList}</small>`);
-                return;
-            }
-        }
-
-        let flatData = Object.entries(state.userBasket).filter(([n,q]) => {
-            if (n === "_catinfo") return false;
-            if (String(q).trim() === "-" || String(q).trim() === "--" || String(q).trim() === "") return false;
-            if (state.currentMode !== 'checklist' && (q == 0 || String(q) === "0")) return false; 
-            
-            if (state.currentMode === 'order' || state.currentMode === 'new_shop') {
-                let itemExists = Object.values(state.productCatalog).some(c => c && c.name === n);
-                if (!itemExists) return false;
-            }
-            return true;
-        }).map(([n,q]) => {
-            let catName = (state.userBasket["_catinfo"] && state.userBasket["_catinfo"][n]) || (state.productCatalog[n] ? state.productCatalog[n].cat : "Прочее");
-            return {name: n, qty: q, cat: catName};
-        });
-
-        if (flatData.length === 0 && state.currentMode !== 'checklist') return showPopupError("Внимание", "Заполните данные перед отправкой!");
-
-        // ⚡ ПРОВЕРКА МИНИМАЛЬНЫХ СУММ ДЛЯ КОРЗИНЫ
-        if ((state.currentMode === 'order' || state.currentMode === 'new_shop') && state.tempTotalKuper !== undefined) {
-            if (state.tempTotalKuper > 0 && state.tempTotalKuper < 1000) {
-                let diff = 1000 - state.tempTotalKuper;
-                showPopupError("Минимальная сумма", `Не хватает до минимальной суммы Купера: <b>~ ${Math.round(diff)} ₽</b><br><small>Текущая сумма: ${Math.round(state.tempTotalKuper)} ₽</small>`);
-                return;
-            }
-        }
-
-        state.isProcessing = true;
-        let btn = document.getElementById('modal-submit-button'); if(btn) btn.innerText = "ОТПРАВЛЯЮ...";
-        let mainBtn = document.getElementById('main-action-button'); if(mainBtn) mainBtn.innerText = "ОТПРАВЛЯЮ...";
-        showGlobalLoader("Отправка данных..."); 
-
-        try {
-            if (state.currentMode === 'order' || state.currentMode === 'new_shop') {
-                const existingSnap = await database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(10).once("value");
-                let pendingKeyToUpdate = null;
-                let mergedComments = [];
-
-                let newComment = document.getElementById('comment') ? document.getElementById('comment').value.trim() : "";
-                if (newComment) mergedComments.push(newComment);
-
-                existingSnap.forEach(c => {
-                    let o = c.val();
-                    if (o && (o.mode === 'order' || o.mode === 'new_shop') && o.svod === false && o.ordered === false) {
-                        if (!pendingKeyToUpdate) pendingKeyToUpdate = c.key;
-                        else database.ref(`orders/${c.key}`).remove();
-                    }
-                });
-
-                let finalDataToSave = {
-                    shop: state.currentShop, mode: state.currentMode, items: flatData,
-                    comment: mergedComments.join(" | "), timestamp: Date.now(), userId: globalTgUserId,
-                    svod: false, ordered: false, lenta_received: false, ozon_received: false, kuper_received: false
-                };
-
-                // ⚡ ЖЕСТКИЙ СИНХРОННЫЙ АПДЕЙТ: Ждем завершения записи, чтобы корзина не слетала впустую
-                if (pendingKeyToUpdate) {
-                    let mergedItems = {};
-                    let snapNode = await database.ref(`orders/${pendingKeyToUpdate}`).once('value');
-                    let currentOrder = snapNode.val();
-                    
-                    if (currentOrder) {
-                        let oldItems = Array.isArray(currentOrder.items) ? currentOrder.items : Object.values(currentOrder.items || {});
-                        oldItems.forEach(i => {
-                            if (i && i.name && i.name !== "НЕТ ЗАКАЗА") {
-                                mergedItems[i.name] = { ...i, qty: parseFloat(i.qty) || 0 };
-                            }
-                        });
-                        flatData.forEach(item => {
-                            if (!mergedItems[item.name]) {
-                                mergedItems[item.name] = { ...item, qty: parseFloat(item.qty) || 0 };
-                            } else {
-                                mergedItems[item.name].qty += parseFloat(item.qty) || 0;
-                            }
-                        });
-                        finalDataToSave.items = Object.values(mergedItems);
-                        
-                        let comments = [];
-                        if (currentOrder.comment && currentOrder.comment.trim() !== "") comments.push(currentOrder.comment.trim());
-                        if (newComment) comments.push(newComment);
-                        finalDataToSave.comment = comments.join(" | ");
-                    }
-                    await database.ref(`orders/${pendingKeyToUpdate}`).set(finalDataToSave);
-                } else {
-                    await database.ref("orders").push(finalDataToSave);
-                }
-                
-            } else {
-                let recordPayload = {
-                    shop: state.currentShop, mode: state.currentMode, items: flatData,
-                    comment: document.getElementById('comment') ? document.getElementById('comment').value : "",
-                    timestamp: Date.now(), userId: globalTgUserId, svod: false, ordered: false,
-                    lenta_received: false, ozon_received: false, kuper_received: false
-                };
-                await database.ref("orders").push(recordPayload);
-            }
-
-            localStorage.removeItem("draft_" + state.currentShop + "_" + state.currentMode);
-        } catch(e) {
-            hideGlobalLoader(); 
-            showPopupError("Ошибка", "Произошла ошибка при отправке.");
-            state.isProcessing = false;
-            if(btn) btn.innerText = "ПОДТВЕРДИТЬ И ОТПРАВИТЬ";
-            if(mainBtn) mainBtn.innerText = "ОТПРАВИТЬ";
-            return;
-        }
-    } 
-
-    hideGlobalLoader(); 
-    toggleCartModal(false);
-    document.getElementById('success-screen').style.display = 'flex';
-    
-    setTimeout(() => {
-        document.getElementById('success-screen').style.display = 'none';
-        if(document.getElementById('comment')) document.getElementById('comment').value = "";
-        
-        let previousMode = state.currentMode; 
-        state.userBasket = {};
-        state.isProcessing = false;
-        
-        if(btn) btn.innerText = "ПОДТВЕРДИТЬ И ОТПРАВИТЬ";
-        if(mainBtn) mainBtn.innerText = "ОТПРАВИТЬ";
-        
-        updateBadgeUI();
-        state.screenHistory = [];
-        
-        if (previousMode === 'marketplace') {
-            returnToPanel(); 
-        } else if (previousMode === 'order' || previousMode === 'new_shop') {
-            showScreen('step-sub-orders', false);
-        } else if (previousMode === 'checklist' || previousMode === 'stoplist_fill') {
-            showScreen('step-sub-lists', false);
-        } else {
-            showScreen('step-2', false); 
-        }
-    }, 1200);
-}
+   
   
     function processNoOrder() {
         if(!checkShopSelected()) return;
@@ -2961,27 +2840,35 @@
         state.currentMode = ""; 
     }
     
-   function showMyLastOrder() {
+   window.showMyLastOrder = async function() {
         if(!checkShopSelected()) return;
         triggerHaptic();
         state.currentMode = 'my_last_order'; 
         document.getElementById('report-overlay').style.display = 'flex';
         document.getElementById('report-header').innerText = "Последний заказ";
         
-        if (!state.ordersLoaded || !state.missingLoaded) {
-            document.getElementById('report-content-area').innerHTML = `
-                <div class="report-card">
-                    <div class="loading-pulse" style="text-align:center; font-weight:900; color:#7E57C2; padding: 20px;">
-                        ⏳ Синхронизация с базой...<br>
-                        <span style="font-size:13px; color:#888; margin-top:10px; display:block;">Загружаю ваши заказы, секундочку...</span>
-                    </div>
-                </div>`;
-            return; 
+        document.getElementById('report-content-area').innerHTML = `
+            <div class="report-card">
+                <div class="loading-pulse" style="text-align:center; font-weight:900; color:#7E57C2; padding: 20px;">
+                    ⏳ Синхронизация с базой...<br>
+                    <span style="font-size:13px; color:#888; margin-top:10px; display:block;">Загружаю ваши заказы, секундочку...</span>
+                </div>
+            </div>`;
+
+        // ⚡ Гарантированная загрузка данных, если фон не успел
+        if (!state.ordersLoaded || !state.globalOrders || state.globalOrders.length === 0) {
+            try {
+                let snap = await database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(50).once("value");
+                let arr = [];
+                snap.forEach(c => { let v = c.val(); if(v){ v.key = c.key; arr.push(v); } });
+                state.globalOrders = arr.sort((a,b) => b.timestamp - a.timestamp);
+                state.ordersLoaded = true;
+            } catch(e) {}
         }
         
         try {
             let allOrders = [];
-            state.globalOrders.forEach(o => { 
+            (state.globalOrders || []).forEach(o => { 
                 if (o && (o.mode === 'order' || o.mode === 'new_shop')) allOrders.push(o); 
             });
 
@@ -3011,7 +2898,7 @@
             let prevAgg = aggregateSingleOrder(prevOrderObj);
 
             let activeMissing = {};
-            state.globalMissing.forEach(m => { 
+            (state.globalMissing || []).forEach(m => { 
                 if (m && m.status !== 'arrived' && m.status !== 'canceled') activeMissing[m.name] = true; 
             });
 
@@ -3043,14 +2930,11 @@
                 return blockHtml + `</div>`;
             };
 
-            // Высчитываем даты
             let currentOrderDateStr = currentOrderObj ? new Date(currentOrderObj.timestamp).toLocaleString('ru-RU', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'}) : '---';
             let prevOrderDateStr = prevOrderObj ? new Date(prevOrderObj.timestamp).toLocaleString('ru-RU', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'}) : '---';
 
-            // Отрисовываем нужный блок
             html += (state.currentMyOrderTab === 'current') ? renderOrderBlock(currentAgg, currentOrderDateStr, "Текущий заказ", true) : renderOrderBlock(prevAgg, prevOrderDateStr, "Прошлый заказ", false);
 
-            // ⚡ КНОПКА ПОВТОРА ЗАКАЗА (Отрисовываем, только если открыта вкладка "Текущий заказ")
             if (state.currentMyOrderTab === 'current' && Object.keys(currentAgg).length > 0) {
                 let safeAggStr = escapeName(JSON.stringify(currentAgg));
                 html += `<button class="btn-mode" style="background: var(--btn-order-grad); margin-top:20px;" onclick="repeatMyOrder('${safeAggStr}')">🔄 ПОВТОРИТЬ ЭТОТ ЗАКАЗ</button>`;
@@ -3058,90 +2942,94 @@
 
             document.getElementById('report-content-area').innerHTML = html;
         } catch(e) { 
-            console.log(e); 
             document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; color:red; font-weight:bold;">Ошибка загрузки</div></div>`;
         }
     }
     
   async function fetchBossReport(category) {
-      showReportOverlay("Формирование отчета: " + category + "...");
-      
-      try {
-          const ordersSnap = await database.ref("orders").orderByKey().limitToLast(150).once("value");
-          
-          let latestChecklists = {}; 
-          ordersSnap.forEach(child => {
-              let o = child.val();
-              if (o && o.mode === 'checklist' && o.items) {
-                  if (!latestChecklists[o.shop] || o.timestamp > latestChecklists[o.shop].timestamp) {
-                      latestChecklists[o.shop] = o;
-                  }
-              }
-          });
-
-          let reportByShop = {}; 
-          let foundAny = false;
-          let reqLow = category.toLowerCase().trim();
-          let isSyrupEmpty = reqLow.includes("исходе");
-          let isSyrupHalf = reqLow.includes("половина");
-          let isSyrupReq = isSyrupEmpty || isSyrupHalf;
-
-          Object.values(latestChecklists).forEach(order => {
-              let itemsArr = Array.isArray(order.items) ? order.items : Object.values(order.items);
-              itemsArr.forEach(item => {
-                if(!item) return;
-                let cat = (item.cat || "").toLowerCase(); 
-                let name = (item.name || "").toLowerCase(); 
-                let val = String(item.qty).trim();
-                let isMatch = false;
-
-                if (isSyrupReq) {
-                  if (cat.includes("сироп") || name.includes("сироп")) {
-                    if (isSyrupHalf && (val.toLowerCase().includes("половина") || val === "0.5")) isMatch = true;
-                    if (isSyrupEmpty && (val === "0" || val.toLowerCase().includes("меньше половины") || val === "Закончилось")) isMatch = true;
-                  }
-                } else { 
-                    if (cat === reqLow) isMatch = true; 
-                }
-
-                if (isMatch && val !== "" && val !== "-") {
-                  foundAny = true;
-                  if (!reportByShop[order.shop]) reportByShop[order.shop] = { date: order.timestamp, items: [] };
-                  
-                  if (isSyrupReq) {
-                      reportByShop[order.shop].items.push(item.name);
-                  } else {
-                      reportByShop[order.shop].items.push(`▪️ ${item.name} — <b>${val}</b>`);
-                  }
-                }
-              });
-          });
-
-          if (!foundAny) { 
-              document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; font-weight:900; padding:10px;">По категории "${category}" актуальных данных нет.</div></div>`; 
-              hideGlobalLoader(); 
-              return; 
-          }
-
-          let html = `<div class="report-card"><div class="report-card-title">${category.toUpperCase()}</div>`;
-          for (let s in reportByShop) {
-            let dateStr = new Date(reportByShop[s].date).toLocaleDateString('ru-RU');
-            let displayName = s === 'Красноказарменная' ? 'МЭИ' : s;
-            if(isSyrupReq) {
-                html += `<div style="margin-bottom:12px; font-size:16px;"><b style="font-size:17px; color:#311B92;">${displayName} <span style="font-size:13px; color:#888;">(${dateStr})</span></b>: ${reportByShop[s].items.join(", ")}</div>`;
-            } else {
-                html += `<div style="margin-bottom:15px; font-size:16px;"><b style="font-size:17px; color:#311B92;">${displayName} <span style="font-size:13px; color:#888;">(${dateStr})</span></b>:<br>${reportByShop[s].items.join("<br>")}</div>`;
+        showReportOverlay("Формирование отчета: " + category + "...");
+        
+        try {
+            // ⚡ ИСПОЛЬЗУЕМ КЭШ БОССА: Моментальная загрузка без ожидания сети!
+            let shopOrders = state.globalBossOrders || [];
+            
+            if (shopOrders.length === 0) {
+                const snap = await database.ref("orders").orderByKey().limitToLast(200).once("value");
+                snap.forEach(c => { let val = c.val(); if(val){ val.key = c.key; shopOrders.push(val); } });
             }
-          }
-          document.getElementById('report-content-area').innerHTML = html + `</div>`;
-          
-          hideGlobalLoader(); 
-          
-      } catch (err) {
-          console.error(err);
-          document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; color:red; font-weight:900;">Ошибка загрузки отчета</div></div>`;
-          hideGlobalLoader(); 
-      }
+            
+            let latestChecklists = {}; 
+            shopOrders.forEach(o => {
+                if (o && o.mode === 'checklist' && o.items) {
+                    if (!latestChecklists[o.shop] || o.timestamp > latestChecklists[o.shop].timestamp) {
+                        latestChecklists[o.shop] = o;
+                    }
+                }
+            });
+
+            let reportByShop = {}; 
+            let foundAny = false;
+            let reqLow = category.toLowerCase().trim();
+            let isSyrupEmpty = reqLow.includes("исходе");
+            let isSyrupHalf = reqLow.includes("половина");
+            let isSyrupReq = isSyrupEmpty || isSyrupHalf;
+
+            Object.values(latestChecklists).forEach(order => {
+                let itemsArr = Array.isArray(order.items) ? order.items : Object.values(order.items);
+                itemsArr.forEach(item => {
+                  if(!item) return;
+                  let cat = (item.cat || "").toLowerCase(); 
+                  let name = (item.name || "").toLowerCase(); 
+                  let val = String(item.qty).trim();
+                  let isMatch = false;
+
+                  if (isSyrupReq) {
+                    if (cat.includes("сироп") || name.includes("сироп")) {
+                      if (isSyrupHalf && (val.toLowerCase().includes("половина") || val === "0.5")) isMatch = true;
+                      if (isSyrupEmpty && (val === "0" || val.toLowerCase().includes("меньше половины") || val === "Закончилось")) isMatch = true;
+                    }
+                  } else { 
+                      if (cat === reqLow) isMatch = true; 
+                  }
+
+                  if (isMatch && val !== "" && val !== "-") {
+                    foundAny = true;
+                    if (!reportByShop[order.shop]) reportByShop[order.shop] = { date: order.timestamp, items: [] };
+                    
+                    if (isSyrupReq) {
+                        reportByShop[order.shop].items.push(item.name);
+                    } else {
+                        reportByShop[order.shop].items.push(`▪️ ${item.name} — <b>${val}</b>`);
+                    }
+                  }
+                });
+            });
+
+            if (!foundAny) { 
+                document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; font-weight:900; padding:10px;">По категории "${category}" актуальных данных нет.</div></div>`; 
+                hideGlobalLoader(); 
+                return; 
+            }
+
+            let html = `<div class="report-card"><div class="report-card-title">${category.toUpperCase()}</div>`;
+            for (let s in reportByShop) {
+              let dateStr = new Date(reportByShop[s].date).toLocaleDateString('ru-RU');
+              let displayName = s === 'Красноказарменная' ? 'МЭИ' : s;
+              if(isSyrupReq) {
+                  html += `<div style="margin-bottom:12px; font-size:16px;"><b style="font-size:17px; color:#311B92;">${displayName} <span style="font-size:13px; color:#888;">(${dateStr})</span></b>: ${reportByShop[s].items.join(", ")}</div>`;
+              } else {
+                  html += `<div style="margin-bottom:15px; font-size:16px;"><b style="font-size:17px; color:#311B92;">${displayName} <span style="font-size:13px; color:#888;">(${dateStr})</span></b>:<br>${reportByShop[s].items.join("<br>")}</div>`;
+              }
+            }
+            document.getElementById('report-content-area').innerHTML = html + `</div>`;
+            
+            hideGlobalLoader(); 
+            
+        } catch (err) {
+            console.error(err);
+            document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; color:red; font-weight:900;">Ошибка загрузки отчета</div></div>`;
+            hideGlobalLoader(); 
+        }
     }
 
     async function executeAdminAction(cmd) {
@@ -3234,9 +3122,10 @@
         }
     }
 
-async function viewStopList() {
+window.viewStopList = async function() {
         if(!checkShopSelected()) return;
         triggerHaptic();
+        state.currentMode = 'stoplist_view';
         document.getElementById('report-overlay').style.display = 'flex';
         document.getElementById('report-header').innerText = "Актуальный стоп-лист";
         
@@ -3244,13 +3133,22 @@ async function viewStopList() {
         if (localHtml) {
             document.getElementById('report-content-area').innerHTML = localHtml;
         } else {
-            document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div class="loading-pulse">⏳ Синхронизация данных...</div></div>`;
+            document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div class="loading-pulse" style="text-align:center; font-weight:900; color:#7E57C2; padding: 20px;">⏳ Загрузка стоп-листа...</div></div>`;
+        }
+
+        // ⚡ Гарантированно подгружаем базу для этого экрана
+        if (!state.ordersLoaded || !state.globalOrders || state.globalOrders.length === 0) {
+            try {
+                let snap = await database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(50).once("value");
+                let arr = [];
+                snap.forEach(c => { let v = c.val(); if(v){ v.key = c.key; arr.push(v); } });
+                state.globalOrders = arr.sort((a,b) => b.timestamp - a.timestamp);
+                state.ordersLoaded = true;
+            } catch(e) {}
         }
 
         try {
             let stopCatalog = (state.cachedCatalogs && state.cachedCatalogs.stoplist) ? state.cachedCatalogs.stoplist : {};
-            
-            // Собираем все продукты, чтобы отличить ингредиенты от готовых напитков
             let allProducts = {};
             if (state.cachedCatalogs) {
                 ['order', 'newshop', 'checklist'].forEach(catKey => {
@@ -3271,11 +3169,14 @@ async function viewStopList() {
                 }
             });
 
+            let shopOrders = state.globalOrders || [];
+            let globalMissingFresh = state.globalMissing || [];
+
             let statusMap = {}; 
             let seenInOrders = new Set();
             let cutoffTime = Date.now() - (14 * 24 * 60 * 60 * 1000); 
 
-            state.globalMissing.forEach(m => {
+            globalMissingFresh.forEach(m => {
                 if (!m || !m.name || m.timestamp < cutoffTime) return;
                 let pKey = getStatusKey(m.name);
                 if (m.status === 'transit') {
@@ -3287,7 +3188,7 @@ async function viewStopList() {
                 }
             });
 
-            state.globalOrders.forEach(o => {
+            shopOrders.forEach(o => {
                 if ((o.mode === 'order' || o.mode === 'new_shop') && o.timestamp >= cutoffTime) {
                     let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
                     itemsArr.forEach(i => {
@@ -3316,11 +3217,12 @@ async function viewStopList() {
                 }
             });
 
-            let shopOrders = state.globalOrders.filter(o => o && typeof o === 'object');
             let latest = shopOrders.find(o => o.mode === 'stoplist_fill');
             
             if(!latest || !latest.items) {
-                document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; font-weight:900;">Сегодня стоп-лист не заполнялся.</div></div>`;
+                let html = `<div class="report-card"><div style="text-align:center; font-weight:900; padding:20px; color:#555;">Актуальный стоп-лист не найден.</div></div>`;
+                document.getElementById('report-content-area').innerHTML = html;
+                localStorage.setItem("cache_html_stoplist_" + state.currentShop, html);
                 return;
             }
 
@@ -3330,9 +3232,12 @@ async function viewStopList() {
 
             let allSyrups = [], mainListItems = [], seenNames = new Set();
             let itemsArr = Array.isArray(latest.items) ? latest.items : Object.values(latest.items);
+            let hasStoppedItems = false;
 
             itemsArr.forEach(i => {
                 if(!i || !i.name || i.qty !== 'Закончилось' || i.name === 'Всё в наличии') return;
+                hasStoppedItems = true;
+                
                 let cleanedItemName = getStatusKey(i.name);
                 if (seenNames.has(cleanedItemName)) return;
                 seenNames.add(cleanedItemName);
@@ -3347,7 +3252,6 @@ async function viewStopList() {
                     let bgColor = statusObj.color === '#2e7d32' ? '#e8f5e9' : (statusObj.color === '#1565C0' ? '#e3f2fd' : '#fff3e0');
                     statHtml = `<span style="background:${bgColor}; color:${statusObj.color}; padding:2px 5px; border-radius:4px; font-size:11px; font-weight:900; margin-left:5px;">${statusObj.text}</span>`;
                 } else if (allProducts[cleanedItemName]) {
-                    // Ингредиент, но нет активного заказа
                     statHtml = `<span style="background:#f5f5f5; color:#888; padding:2px 5px; border-radius:4px; font-size:11px; font-weight:900; margin-left:5px;">Не заказано ➖</span>`;
                 }
 
@@ -3369,14 +3273,22 @@ async function viewStopList() {
                 if (isSyrup) allSyrups.push(`▪️ ${i.name}`);
             });
 
-            html += mainListItems.join("");
-            if (allSyrups.length > 0) {
-                html += `<div style='margin-top: 20px; padding-top: 15px; border-top: 2px dashed #ddd; color:#7E57C2;'>🍾 <b>Сиропы на стопе:</b><br><span style="color:#333; font-size:14px; line-height:1.5;">${allSyrups.join("<br>")}</span></div>`;
+            if (!hasStoppedItems) {
+                html += `<div style="text-align:center; padding:20px; font-size:16px; font-weight:bold; color:#2e7d32;">🎉 Все товары в наличии!</div>`;
+            } else {
+                html += mainListItems.join("");
+                if (allSyrups.length > 0) {
+                    html += `<div style='margin-top: 20px; padding-top: 15px; border-top: 2px dashed #ddd; color:#7E57C2;'>🍾 <b>Сиропы на стопе:</b><br><span style="color:#333; font-size:14px; line-height:1.5;">${allSyrups.join("<br>")}</span></div>`;
+                }
             }
-            document.getElementById('report-content-area').innerHTML = html + "</div>";
+            
+            html += "</div>";
+            document.getElementById('report-content-area').innerHTML = html;
             localStorage.setItem("cache_html_stoplist_" + state.currentShop, html); 
-        } catch (err) { console.log(err); }
-    }
+        } catch (err) { 
+            document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; color:red; font-weight:900;">Ошибка синхронизации данных</div></div>`;
+        }
+    };
   
     function toggleMissingArrived(key, nameStr, btnId) {
         triggerHaptic();
@@ -3438,7 +3350,7 @@ async function viewStopList() {
     }
     
 
-function showLastOrder() {
+window.showLastOrder = async function() {
         if(!checkShopSelected()) return;
         triggerHaptic();
         hideGlobalLoader(); 
@@ -3446,15 +3358,32 @@ function showLastOrder() {
         document.getElementById('report-overlay').style.display = 'flex';
         document.getElementById('report-header').innerText = "Приемка закупки";
 
-        if (!state.ordersLoaded || !state.missingLoaded) {
-            document.getElementById('report-content-area').innerHTML = `
-                <div class="report-card">
-                    <div class="loading-pulse" style="text-align:center; font-weight:900; color:#7E57C2; padding: 20px;">
-                        ⏳ Поиск приемок в базе данных...<br>
-                        <span style="font-size:13px; color:#888; margin-top:10px; display:block;">Загружаю актуальную информацию, пожалуйста подождите...</span>
-                    </div>
-                </div>`;
-            return; 
+        document.getElementById('report-content-area').innerHTML = `
+            <div class="report-card">
+                <div class="loading-pulse" style="text-align:center; font-weight:900; color:#7E57C2; padding: 20px;">
+                    ⏳ Поиск приемок в базе данных...<br>
+                    <span style="font-size:13px; color:#888; margin-top:10px; display:block;">Пожалуйста, подождите...</span>
+                </div>
+            </div>`;
+
+        // ⚡ Гарантированная загрузка данных
+        if (!state.ordersLoaded || !state.globalOrders || state.globalOrders.length === 0) {
+            try {
+                let snap = await database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(50).once("value");
+                let arr = [];
+                snap.forEach(c => { let v = c.val(); if(v){ v.key = c.key; arr.push(v); } });
+                state.globalOrders = arr.sort((a,b) => b.timestamp - a.timestamp);
+                state.ordersLoaded = true;
+            } catch(e) {}
+        }
+        if (!state.missingLoaded || !state.globalMissing || state.globalMissing.length === 0) {
+            try {
+                let mSnap = await database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value");
+                let mArr = [];
+                mSnap.forEach(c => { let v = c.val(); if(v){ v.key = c.key; mArr.push(v); } });
+                state.globalMissing = mArr;
+                state.missingLoaded = true;
+            } catch(e) {}
         }
 
         let orderCatalog = (state.cachedCatalogs && state.cachedCatalogs.order) ? state.cachedCatalogs.order : {};
@@ -3462,7 +3391,7 @@ function showLastOrder() {
         Object.values(orderCatalog).forEach(c => { if (c && c.name) orderCatMapFast[c.name] = c; });
 
         let activeMissing = [], historyMissing = [];
-        state.globalMissing.forEach(m => {
+        (state.globalMissing || []).forEach(m => {
             if(m && m.name) {
                 if(m.status !== 'arrived' && m.status !== 'canceled') activeMissing.push(m);
                 else if (m.status === 'arrived') historyMissing.push(m);
@@ -3471,7 +3400,7 @@ function showLastOrder() {
 
         let fourteenDaysAgo = Date.now() - (14 * 24 * 60 * 60 * 1000);
         let ordersArr = [];
-        state.globalOrders.forEach(val => {
+        (state.globalOrders || []).forEach(val => {
             if(val && typeof val === 'object' && (val.mode === 'order' || val.mode === 'new_shop') && val.timestamp >= fourteenDaysAgo) ordersArr.push(val);
         });
 
@@ -3538,7 +3467,6 @@ function showLastOrder() {
                     const renderList = (grpData, keysSet, vendorKey, bClass, bText) => {
                         let names = Object.keys(grpData).sort(); if(names.length === 0) return "";
                         let listId = getSafeId(dateStr + vendorKey), kStr = Array.from(keysSet).join(',');
-                        // ⚡ Цвета поставщиков (синий Озон, зеленый Купер, оранжевая Лента)
                         let borderColor = vendorKey === 'ozon' ? '#1565c0' : (vendorKey === 'kuper' ? '#2e7d32' : '#f57f17');
                         
                         let res = `<div class="report-card" style="margin-top:10px; border-left:4px solid ${borderColor};">
@@ -3694,6 +3622,10 @@ function showLastOrder() {
 
             if (arrivedItemsToClear.length > 0) {
                 await autoRemoveFromStoplist(state.currentShop, arrivedItemsToClear);
+                // ⚡ Уведомляем бариста, что товары убраны из стоп-листа
+                setTimeout(() => {
+                    alert("✅ ПРИЕМКА УСПЕШНА!\n\nТовары, которые вы только что приняли, были автоматически удалены из Стоп-листа и снова доступны в Тех. картах.");
+                }, 800);
             }
             
             if (state.receivingChoices) {
@@ -3734,6 +3666,11 @@ function showLastOrder() {
             }
             
             await autoRemoveFromStoplist(state.currentShop, namesToRemove);
+            
+            // ⚡ Уведомляем бариста
+            setTimeout(() => {
+                alert("✅ НЕДОВОЗЫ ДОЕХАЛИ!\n\nЭти товары были автоматически удалены из Стоп-листа и снова доступны в Тех. картах.");
+            }, 800);
             
             state.missingChoices = {};
             hideGlobalLoader(); 
@@ -3946,31 +3883,65 @@ function showLastOrder() {
         return (state.cachedCatalogs && state.cachedCatalogs[name]) ? state.cachedCatalogs[name] : {};
     }
 
-    // ==========================================
-    // ⚡ ДВИЖОК НУЛЕВОГО ОЖИДАНИЯ (Фоновая синхронизация)
+
+   // ==========================================
+    // ⚡ ДВИЖОК НУЛЕВОГО ОЖИДАНИЯ (ФОНОВАЯ СИНХРОНИЗАЦИЯ)
     // ==========================================
     function startRealtimeUpdates() {
-        const paths = ['order', 'newshop', 'stoplist', 'checklist', 'menu', 'espresso_recipes', 'tasks_calendar', 'knowledge_base'];
-        paths.forEach(p => {
-            let dbPath = (p === 'menu' || p === 'order' || p === 'newshop' || p === 'stoplist' || p === 'checklist') ? 'catalogs/' + p : p;
-            database.ref(dbPath).on('value', snap => {
+        // 1. Жизненно важные рабочие каталоги грузятся сразу (без задержек)
+        const fastPaths = ['order', 'newshop', 'stoplist', 'checklist'];
+        fastPaths.forEach(p => {
+            database.ref('catalogs/' + p).on('value', snap => {
                 let fresh = snap.val();
                 if (fresh) {
                     if (!state.cachedCatalogs) state.cachedCatalogs = {};
+                    if (JSON.stringify(state.cachedCatalogs[p]) === JSON.stringify(fresh)) return;
                     state.cachedCatalogs[p] = fresh;
-                    saveToRealCache(p, fresh); // Записываем в вечную память IndexedDB на телефоне
-                    
-                    if (state.currentMode === 'menu' && p === 'menu') {
-                        state.menuCatalog = Object.assign({}, fresh);
-                        if (typeof renderMenuApp === 'function') renderMenuApp();
-                    }
-                    if (state.currentMode === 'espresso' && p === 'espresso_recipes') renderEspressoApp();
-                    if (state.currentMode === 'calendar_tasks' && p === 'tasks_calendar') renderMiniCalendar(new Date());
+                    saveToRealCache(p, fresh);
+                    triggerActiveRender(); 
                 }
             });
         });
-    }
 
+        // 2. Все "информационные" вкладки подгружаются через 6 секунд, чтобы старт был мгновенным
+        setTimeout(() => {
+            const delayedPaths = ['menu', 'espresso_recipes', 'tasks_calendar', 'knowledge_base'];
+            
+            delayedPaths.forEach(p => {
+                // Меню лежит в папке catalogs, остальное в корне базы
+                let dbPath = (p === 'menu') ? 'catalogs/menu' : p;
+                
+                database.ref(dbPath).on('value', snap => {
+                    let fresh = snap.val();
+                    if (fresh) {
+                        if (!state.cachedCatalogs) state.cachedCatalogs = {};
+                        if (JSON.stringify(state.cachedCatalogs[p]) === JSON.stringify(fresh)) return;
+                        
+                        state.cachedCatalogs[p] = fresh;
+                        saveToRealCache(p, fresh);
+                        
+                        // Мгновенная перерисовка, если пользователь прямо сейчас смотрит на эту вкладку
+                        if (state.currentMode === 'menu' && p === 'menu') {
+                            state.menuCatalog = Object.assign({}, fresh);
+                            if (typeof renderMenuApp === 'function') renderMenuApp();
+                        }
+                        if (state.currentMode === 'espresso' && p === 'espresso_recipes') {
+                            if (typeof renderEspressoApp === 'function') renderEspressoApp();
+                        }
+                        if (state.currentMode === 'calendar_tasks' && p === 'tasks_calendar') {
+                            let viewDate = state.selectedCalDate || new Date();
+                            if (typeof renderMiniCalendar === 'function') renderMiniCalendar(new Date(viewDate.getFullYear(), viewDate.getMonth(), 1));
+                        }
+                        if (state.currentMode === 'knowledge' && p === 'knowledge_base') {
+                            state.knowledgeData = fresh;
+                            if (typeof renderKnowledge === 'function') renderKnowledge(fresh);
+                        }
+                    }
+                });
+            });
+        }, 6000);
+    }
+  
   function startShopDataSync() {
         if (!state.currentShop) return;
         
@@ -4037,67 +4008,44 @@ function showLastOrder() {
   // ==========================================
     // ☕ РЕЦЕПТЫ ЭСПРЕССО (СВАЙП ОДИНАРНЫЙ/ДВОЙНОЙ И МГНОВЕННАЯ ЗАГРУЗКА)
     // ==========================================
-    let currentEspressoWindow = 'double'; // Окно по умолчанию
+    let currentEspressoWindow = 'double'; 
 
     async function initEspressoWorkflow() {
         if(!checkShopSelected()) return;
         triggerHaptic();
         state.currentMode = 'espresso';
         showScreen('step-espresso');
-        renderEspressoApp(); // ⚡ МГНОВЕННОЕ ОТКРЫТИЕ ИЗ ОФЛАЙН-КЭША
+        renderEspressoApp(); 
     }
 
     window.renderEspressoApp = function() {
         let espData = state.cachedCatalogs['espresso_recipes'] || {};
         let kbData = state.cachedCatalogs['knowledge_base'] || {};
-        
         let sData = (espData.overrides && espData.overrides[state.currentShop]) ? espData.overrides[state.currentShop] : (espData.default || {});
         let currD = sData.current_double || sData.current || { in: "-", out: "-", time: "-", result: "-", roast: "---", brand: "---" };
         let currS = sData.current_single || { in: "-", out: "-", time: "-", result: "-", roast: "---", brand: "---" };
-        
-        // Связываем инструкцию
         let linkedKbId = sData.linked_kb_id || espData.linked_kb_id || "";
         let linkedDoc = kbData[linkedKbId];
 
         let html = `
-        <!-- Вкладки окон эспрессо -->
         <div style="display: flex; gap: 10px; margin-bottom: 15px; background: #fff; padding: 6px; border-radius: 14px; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
             <button onclick="currentEspressoWindow = 'double'; renderEspressoApp();" style="flex: 1; padding: 12px; border: none; border-radius: 10px; font-size: 15px; font-weight: 900; ${currentEspressoWindow === 'double' ? 'background: #4E342E; color: #fff;' : 'background: transparent; color: #888;'}">Двойной эспрессо</button>
             <button onclick="currentEspressoWindow = 'single'; renderEspressoApp();" style="flex: 1; padding: 12px; border: none; border-radius: 10px; font-size: 15px; font-weight: 900; ${currentEspressoWindow === 'single' ? 'background: #4E342E; color: #fff;' : 'background: transparent; color: #888;'}">Одинарный эспрессо</button>
         </div>`;
 
-        const renderCard = (title, curr) => `
+        const renderCard = (curr) => `
             <div class="report-card" style="background: linear-gradient(135deg, #795548 0%, #4E342E 100%); color:#fff; border:none; margin-bottom:15px;">
                 <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; text-align:center; margin-bottom:15px;">
-                    <div style="background:rgba(255,255,255,0.1); padding:10px; border-radius:12px;">
-                        <div style="font-size:12px; opacity:0.8;">Вход</div>
-                        <div style="font-weight:900; font-size:22px;">${curr.in || '-'} г</div>
-                    </div>
-                    <div style="background:rgba(255,255,255,0.1); padding:10px; border-radius:12px;">
-                        <div style="font-size:12px; opacity:0.8;">Выход</div>
-                        <div style="font-weight:900; font-size:22px;">${curr.out || '-'} г</div>
-                    </div>
-                    <div style="background:rgba(255,255,255,0.1); padding:10px; border-radius:12px;">
-                        <div style="font-size:12px; opacity:0.8;">Время</div>
-                        <div style="font-weight:900; font-size:22px;">${curr.time || '-'} с</div>
-                    </div>
-                    <div style="background:rgba(255,255,255,0.2); padding:10px; border-radius:12px; box-shadow:0 2px 10px rgba(0,0,0,0.1);">
-                        <div style="font-size:12px; opacity:0.9; font-weight:bold;">Итог</div>
-                        <div style="font-weight:900; font-size:22px;">${curr.result || '-'}</div>
-                    </div>
+                    <div style="background:rgba(255,255,255,0.1); padding:10px; border-radius:12px;"><div style="font-size:12px; opacity:0.8;">Вход</div><div style="font-weight:900; font-size:22px;">${curr.in || '-'} г</div></div>
+                    <div style="background:rgba(255,255,255,0.1); padding:10px; border-radius:12px;"><div style="font-size:12px; opacity:0.8;">Выход</div><div style="font-weight:900; font-size:22px;">${curr.out || '-'} г</div></div>
+                    <div style="background:rgba(255,255,255,0.1); padding:10px; border-radius:12px;"><div style="font-size:12px; opacity:0.8;">Время</div><div style="font-weight:900; font-size:22px;">${curr.time || '-'} с</div></div>
+                    <div style="background:rgba(255,255,255,0.2); padding:10px; border-radius:12px; box-shadow:0 2px 10px rgba(0,0,0,0.1);"><div style="font-size:12px; opacity:0.9; font-weight:bold;">Итог</div><div style="font-weight:900; font-size:22px;">${curr.result || '-'}</div></div>
                 </div>
-                <div style="font-size:14px; text-align:center;">
-                    Бренд: <b>${curr.brand || '---'}</b> | Обжарка: <b>${curr.roast || '---'}</b>
-                </div>
+                <div style="font-size:14px; text-align:center;">Бренд: <b>${curr.brand || '---'}</b> | Обжарка: <b>${curr.roast || '---'}</b></div>
             </div>`;
 
-        if (currentEspressoWindow === 'double') {
-            html += renderCard('Двойной эспрессо', currD);
-        } else {
-            html += renderCard('Одинарный эспрессо', currS);
-        }
+        html += currentEspressoWindow === 'double' ? renderCard(currD) : renderCard(currS);
 
-        // Выводим прикрепленную инструкцию из БЗ
         if (linkedDoc) {
             let formattedText = linkedDoc.text ? linkedDoc.text.replace(/\n/g, '<br>') : '';
             let regex = /\[ФОТО_(\d+)\](.*?)\[\/ФОТО_\d+\]/g;
@@ -4106,14 +4054,12 @@ function showLastOrder() {
                 if (photoData) return `<span style="color:#0288d1; border-bottom:1px dashed #0288d1; cursor:pointer; font-weight:bold;" onclick="openPhotoModal('${escapeName(word)}', '${photoData}')">📷 ${word}</span>`;
                 return `<b>${word}</b>`;
             });
-
             html += `<h4 style="margin-top:20px; color:#4E342E; font-size:18px;">📚 Справочная информация:</h4>
                      <div class="report-card" style="padding:15px; border:1px solid #ddd;">
                         <div style="font-weight:900; color:#4E342E; font-size:16px; margin-bottom:10px;">${linkedDoc.title}</div>
                         <div style="font-size:14px; line-height:1.5;">${formattedText}</div>
                      </div>`;
         }
-
         document.getElementById('espresso-container').innerHTML = html;
     }
 
@@ -4126,40 +4072,33 @@ function showLastOrder() {
         state.currentMode = 'calendar_tasks';
         showScreen('step-tasks-calendar');
         
-        // Сбрасываем выбранную дату на сегодня при входе
-        state.selectedCalDate = new Date();
-        state.selectedCalDate.setHours(0,0,0,0);
+        let d = new Date(); d.setHours(0,0,0,0);
+        state.selectedCalDate = d;
 
         if (state.cachedCatalogs && state.cachedCatalogs['tasks_calendar']) {
-            renderMiniCalendar(state.selectedCalDate); 
+            renderMiniCalendar(new Date(d.getFullYear(), d.getMonth(), 1)); 
         } else {
             showGlobalLoader("Загрузка задач...");
-            let [calSnap, kbSnap] = await Promise.all([
-                database.ref('tasks_calendar').once('value'),
-                database.ref('knowledge_base').once('value')
-            ]);
+            let [calSnap, kbSnap] = await Promise.all([database.ref('tasks_calendar').once('value'), database.ref('knowledge_base').once('value')]);
             if (!state.cachedCatalogs) state.cachedCatalogs = {};
             state.cachedCatalogs['tasks_calendar'] = calSnap.val() || {};
             state.cachedCatalogs['knowledge_base'] = kbSnap.val() || {};
             hideGlobalLoader();
-            renderMiniCalendar(state.selectedCalDate);
+            renderMiniCalendar(new Date(d.getFullYear(), d.getMonth(), 1));
         }
     }
 
-    // ⚡ ВОССТАНОВЛЕННАЯ ФУНКЦИЯ ПЕРЕКЛЮЧЕНИЯ МЕСЯЦЕВ
     window.changeMiniCalMonth = function(delta) {
         triggerHaptic();
         let currentView = state.currentCalView || new Date();
         let newDate = new Date(currentView.getFullYear(), currentView.getMonth() + delta, 1);
         
-        // При смене месяца автоматически выбираем 1-е число или сегодня (если это текущий месяц)
         let today = new Date();
         if (newDate.getFullYear() === today.getFullYear() && newDate.getMonth() === today.getMonth()) {
             state.selectedCalDate = new Date(today.getFullYear(), today.getMonth(), today.getDate());
         } else {
             state.selectedCalDate = new Date(newDate.getFullYear(), newDate.getMonth(), 1);
         }
-        
         renderMiniCalendar(newDate);
     }
 
@@ -4169,47 +4108,38 @@ function showLastOrder() {
         
         let year = targetDate.getFullYear();
         let month = targetDate.getMonth();
-        let today = new Date();
-        today.setHours(0,0,0,0);
+        let today = new Date(); today.setHours(0,0,0,0);
         
         let firstDay = new Date(year, month, 1).getDay();
         let startOffset = (firstDay || 7) - 1; 
         let daysInMonth = new Date(year, month + 1, 0).getDate();
-        
         let monthNames = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
 
-        // Устанавливаем текущий месяц для работы кнопок навигации
         state.currentCalView = new Date(year, month, 1);
 
         let html = `
         <div class="report-card" style="padding:15px; margin-bottom:15px; background:linear-gradient(135deg, #ede7f6 0%, #d1c4e9 100%); border:1px solid #b39ddb; box-shadow:0 4px 15px rgba(0,0,0,0.05);">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
-                <button onclick="changeMiniCalMonth(-1)" style="background:#7E57C2; border:none; color:#fff; font-size:18px; padding:8px 20px; border-radius:8px; font-weight:bold; cursor:pointer; box-shadow:0 2px 5px rgba(0,0,0,0.1); position:relative; z-index:10;">◀</button>
+                <button onclick="changeMiniCalMonth(-1)" style="background:#7E57C2; border:none; color:#fff; font-size:18px; padding:8px 20px; border-radius:8px; font-weight:bold; cursor:pointer;">◀</button>
                 <div style="font-size:18px; font-weight:900; text-transform:uppercase; color:#311B92;">${monthNames[month]} ${year}</div>
-                <button onclick="changeMiniCalMonth(1)" style="background:#7E57C2; border:none; color:#fff; font-size:18px; padding:8px 20px; border-radius:8px; font-weight:bold; cursor:pointer; box-shadow:0 2px 5px rgba(0,0,0,0.1); position:relative; z-index:10;">▶</button>
+                <button onclick="changeMiniCalMonth(1)" style="background:#7E57C2; border:none; color:#fff; font-size:18px; padding:8px 20px; border-radius:8px; font-weight:bold; cursor:pointer;">▶</button>
             </div>
-            
             <div class="cal-grid" style="display:grid; grid-template-columns: repeat(7, 1fr); gap:4px; text-align:center; margin-bottom:5px;">
                 <div style="font-weight:900; font-size:13px; color:#311B92;">Пн</div><div style="font-weight:900; font-size:13px; color:#311B92;">Вт</div>
                 <div style="font-weight:900; font-size:13px; color:#311B92;">Ср</div><div style="font-weight:900; font-size:13px; color:#311B92;">Чт</div>
                 <div style="font-weight:900; font-size:13px; color:#311B92;">Пт</div><div style="font-weight:900; font-size:13px; color:#e53935;">Сб</div>
                 <div style="font-weight:900; font-size:13px; color:#e53935;">Вс</div>
             </div>
-            <div class="cal-grid" style="display:grid; grid-template-columns: repeat(7, 1fr); gap:4px; text-align:center;">
-        `;
+            <div class="cal-grid" style="display:grid; grid-template-columns: repeat(7, 1fr); gap:4px; text-align:center;">`;
         
         for (let i = 0; i < startOffset; i++) { html += `<div></div>`; }
 
-        // ⚡ ПАЛИТРА ЦВЕТОВ ДЛЯ ЗАДАЧ
         let badgeColors = ['#E53935', '#43A047', '#1E88E5', '#8E24AA', '#F4511E', '#00ACC1', '#3949AB', '#00897B'];
 
         for (let d = 1; d <= daysInMonth; d++) {
-            let curr = new Date(year, month, d);
-            curr.setHours(0,0,0,0);
-            
+            let curr = new Date(year, month, d); curr.setHours(0,0,0,0);
             let isToday = curr.getTime() === today.getTime();
             let isSelected = state.selectedCalDate && curr.getTime() === state.selectedCalDate.getTime();
-            
             let dayTasks = getTasksForDate(curr, state.tasksArray);
             
             let bg = isSelected ? "#311B92" : (isToday ? "#ffb74d" : "#fff");
@@ -4220,16 +4150,11 @@ function showLastOrder() {
             if (dayTasks.length > 0) {
                 let maxPills = Math.min(dayTasks.length, 3);
                 for(let i=0; i<maxPills; i++) {
-                    let taskObj = dayTasks[i];
-                    let colorIdx = state.tasksArray.indexOf(taskObj) % badgeColors.length;
-                    let taskColor = badgeColors[colorIdx];
-                    
-                    let shortName = taskObj.name.substring(0, 5); 
+                    let taskColor = badgeColors[state.tasksArray.indexOf(dayTasks[i]) % badgeColors.length];
+                    let shortName = dayTasks[i].name.substring(0, 5); 
                     pillsHtml += `<div style="font-size:8px; line-height:1.2; background:${taskColor}; color:#fff; border-radius:3px; padding:2px; margin-bottom:2px; width:100%; text-overflow:ellipsis; overflow:hidden; white-space:nowrap; font-weight:bold; box-shadow:0 1px 2px rgba(0,0,0,0.1); border:${isSelected ? '1px solid #fff' : 'none'};">${shortName}</div>`;
                 }
-                if (dayTasks.length > 3) {
-                    pillsHtml += `<div style="font-size:9px; color:${isSelected ? '#fff' : '#7E57C2'}; font-weight:bold; text-align:center;">+${dayTasks.length - 3}</div>`;
-                }
+                if (dayTasks.length > 3) pillsHtml += `<div style="font-size:9px; color:${isSelected ? '#fff' : '#7E57C2'}; font-weight:bold; text-align:center;">+${dayTasks.length - 3}</div>`;
             }
             
             html += `<div style="background:${bg}; border:2px solid ${borderColor}; border-radius:8px; min-height:55px; display:flex; flex-direction:column; align-items:center; padding:4px 2px; cursor:pointer; position:relative; z-index:5; overflow:hidden;" onclick="showTasksForDay(${year}, ${month}, ${d})">
@@ -4238,7 +4163,6 @@ function showLastOrder() {
                      </div>`;
         }
         html += `</div></div><div id="daily-tasks-list"></div>`;
-        
         document.getElementById('tasks-calendar-container').innerHTML = html;
         
         if (state.selectedCalDate && state.selectedCalDate.getMonth() === month && state.selectedCalDate.getFullYear() === year) {
@@ -4250,16 +4174,12 @@ function showLastOrder() {
 
     window.showTasksForDay = function(y, m, d, reRenderCalendar = true) {
         triggerHaptic();
-        let dateObj = new Date(y, m, d);
-        dateObj.setHours(0,0,0,0);
+        let dateObj = new Date(y, m, d); dateObj.setHours(0,0,0,0);
         state.selectedCalDate = dateObj; 
         
-        if (reRenderCalendar) {
-            renderMiniCalendar(new Date(y, m, 1)); 
-        }
+        if (reRenderCalendar) renderMiniCalendar(new Date(y, m, 1)); 
         
         let tasks = getTasksForDate(dateObj, state.tasksArray);
-        
         let html = `<h4 style="color:#01579B; margin-bottom:10px; font-size:18px;">📌 Задачи на ${dateObj.toLocaleDateString('ru-RU')}</h4>`;
         
         if (tasks.length === 0) {
@@ -4267,28 +4187,22 @@ function showLastOrder() {
         } else {
             tasks.forEach((t, idx) => {
                 let kbHtml = "";
-                
                 if (t.kb_id && state.cachedCatalogs['knowledge_base'] && state.cachedCatalogs['knowledge_base'][t.kb_id]) {
                     let doc = state.cachedCatalogs['knowledge_base'][t.kb_id];
                     let formattedText = doc.text ? doc.text.replace(/\n/g, '<br>') : '';
                     let regex = /\[ФОТО_(\d+)\](.*?)\[\/ФОТО_\d+\]/g;
                     formattedText = formattedText.replace(regex, (match, n, word) => {
                         let photoData = doc[`photo_${n}`] || "";
-                        if (photoData) {
-                            return `<span style="color:#0288d1; border-bottom:1px dashed #0288d1; cursor:pointer; font-weight:bold;" onclick="openPhotoModal('${escapeName(word)}', '${photoData}')">📷 ${word}</span>`;
-                        }
+                        if (photoData) return `<span style="color:#0288d1; border-bottom:1px dashed #0288d1; cursor:pointer; font-weight:bold;" onclick="openPhotoModal('${escapeName(word)}', '${photoData}')">📷 ${word}</span>`;
                         return `<b>${word}</b>`;
                     });
 
                     let safeId = getSafeId("task_kb_" + idx);
                     kbHtml = `<div style="margin-top:10px; padding-top:10px; border-top:1px dashed #ccc; font-size:14px; line-height:1.4;">
                                 <div style="color:#0288D1; font-weight:900; margin-bottom:5px; cursor:pointer; display:flex; justify-content:space-between; align-items:center;" onclick="toggleElements('kb_task_${safeId}', 'arr_kb_task_${safeId}')">
-                                    <span>📖 Инструкция: ${doc.title}</span>
-                                    <span id="arr_kb_task_${safeId}" style="color:#0288D1; font-size:12px;">▼</span>
+                                    <span>📖 Инструкция: ${doc.title}</span><span id="arr_kb_task_${safeId}" style="color:#0288D1; font-size:12px;">▼</span>
                                 </div>
-                                <div class="kb_task_${safeId}" style="display:none; margin-top:8px;">
-                                    ${formattedText}
-                                </div>
+                                <div class="kb_task_${safeId}" style="display:none; margin-top:8px;">${formattedText}</div>
                               </div>`;
                 }
 
@@ -4298,7 +4212,6 @@ function showLastOrder() {
                          </div>`;
             });
         }
-        
         html += `<div style="height: 50px;"></div>`;
         document.getElementById('daily-tasks-list').innerHTML = html;
     }
@@ -4308,9 +4221,7 @@ function showLastOrder() {
         let dayOfWeek = dateObj.getDay(); 
         let d = dateObj.getDate();
         
-        let currentTarget = new Date(dateObj);
-        currentTarget.setHours(0,0,0,0);
-
+        let currentTarget = new Date(dateObj); currentTarget.setHours(0,0,0,0);
         let firstDayOfMonth = new Date(currentTarget.getFullYear(), currentTarget.getMonth(), 1).getDay();
         let startOff = (firstDayOfMonth || 7) - 1; 
         let weekRowNumber = Math.ceil((d + startOff) / 7);
@@ -4318,7 +4229,6 @@ function showLastOrder() {
         tasksArray.forEach(t => {
             let periods = Array.isArray(t.period) ? t.period : [t.period || 'every_day'];
             let isMatch = false;
-            
             let startD = t.startDate ? new Date(t.startDate) : new Date(2024, 0, 1);
             startD.setHours(0,0,0,0);
 
@@ -4349,72 +4259,244 @@ function showLastOrder() {
         return tasksForDay;
     }
 
-    // ==========================================
-    // ⚡ СОХРАНЕНИЕ ЭКРАНА В TELEGRAM CLOUD STORAGE
-    // ==========================================
-    function saveCurrentScreenState() {
-        if (window.Telegram && Telegram.WebApp && Telegram.WebApp.CloudStorage) {
-            let activeScreen = "step-1";
-            let screens = ['step-1', 'step-2', 'step-sub-lists', 'step-sub-orders', 'step-sub-profile', 'step-sub-info', 'step-invoices', 'step-knowledge', 'step-stoplist', 'step-panel', 'step-admin-purchase', 'step-3', 'step-mp-month', 'step-mp-vendor', 'step-mp-mode', 'step-mp-address', 'step-mp-keypad', 'step-menu', 'step-schedule-name', 'step-schedule-calendar', 'step-espresso', 'step-tasks-calendar'];
+  // ⚡ ЕДИНСТВЕННАЯ И ЗАЩИЩЕННАЯ ФУНКЦИЯ ОТПРАВКИ (Фоновая отправка без зависаний)
+    window.validateAndSubmit = async function(isFromModal) {
+        // 1. Проверяем, нужно ли открыть корзину
+        if (!isFromModal && (state.currentMode === 'order' || state.currentMode === 'new_shop' || state.currentMode === 'marketplace')) { 
+            toggleCartModal(true); 
+            return; 
+        }
+        
+        // 2. Блокируем двойные нажатия
+        if (state.isProcessing) return;
+
+        let btn = document.getElementById('modal-submit-button'); 
+        let mainBtn = document.getElementById('main-action-button'); 
+
+        // ----------------------------------------------------
+        // МАРКЕТПЛЕЙС
+        // ----------------------------------------------------
+        if (state.currentMode === 'marketplace') {
+            if (state.mpBasket.length === 0) return showPopupError("Внимание", "Корзина пуста!");
+            if (state.isMpEditMode) return showPopupError("Внимание", "Сначала сохраните изменения");
             
-            for (let s of screens) {
-                let el = document.getElementById(s);
-                if (el && el.style.display === 'block') {
-                    activeScreen = s;
-                    break;
+            state.isProcessing = true;
+            if(btn) { btn.innerText = "ОТПРАВЛЯЮ..."; btn.disabled = true; }
+            if(mainBtn) { mainBtn.innerText = "ОТПРАВЛЯЮ..."; mainBtn.disabled = true; }
+            showGlobalLoader("Отправка данных...");
+            
+            try {
+                let submitTimestamp = firebase.database.ServerValue.TIMESTAMP;
+                if (state.mpMonthOption === 'prev') {
+                    let now = new Date();
+                    let prevMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
+                    submitTimestamp = prevMonthEnd.getTime();
+                }
+
+                for(let item of state.mpBasket) {
+                    database.ref("marketplace_records").push({
+                        vendor: item.vendor,
+                        type: item.amount < 0 ? 'refund' : 'purchase',
+                        address: item.address,
+                        amount: parseFloat(item.amount),
+                        timestamp: submitTimestamp,
+                        userId: globalTgUserId
+                    });
+                }
+                
+                state.mpBasket = [];
+                localStorage.removeItem("draft_marketplace");
+            } catch(e) {
+                hideGlobalLoader();
+                showPopupError("Ошибка", e.message);
+                state.isProcessing = false; 
+                if(btn) { btn.innerText = "ПОДТВЕРДИТЬ И ОТПРАВИТЬ"; btn.disabled = false; }
+                if(mainBtn) { mainBtn.innerText = "ОТПРАВИТЬ"; mainBtn.disabled = false; }
+                return;
+            }
+        } 
+        // ----------------------------------------------------
+        // ЗАКУПКИ, ЧЕК-ЛИСТЫ, СТОП-ЛИСТЫ
+        // ----------------------------------------------------
+        else {
+            if (state.currentMode === 'checklist') {
+                let missingCategories = new Set(); 
+                let totalMissing = 0;
+                for (let key in state.productCatalog) {
+                    let item = state.productCatalog[key];
+                    if (item && item.cat && item.name !== "Товар" && item.name !== "Дата заполнения") {
+                        let val = state.userBasket[item.name];
+                        if (val === undefined || val === null || String(val).trim() === "" || String(val).trim() === "-" || String(val).trim() === "--") { 
+                            missingCategories.add(item.cat); 
+                            totalMissing++; 
+                        }
+                    }
+                }
+                if (totalMissing > 0) {
+                    triggerHaptic(); 
+                    let catList = Array.from(missingCategories).join(', ');
+                    showPopupError("Чек-лист заполнен не полностью!", `Осталось позиций: ${totalMissing}.<br><small>Пожалуйста, проверьте: ${catList}</small>`);
+                    return;
                 }
             }
-            
-            let stateToSave = {
-                screen: activeScreen,
-                history: state.screenHistory,
-                mode: state.currentMode,
-                shop: state.currentShop,
-                role: state.currentControlRole
-            };
-            
-            Telegram.WebApp.CloudStorage.setItem("teiku_screen_state", JSON.stringify(stateToSave));
-        }
-    }
 
-    setInterval(saveCurrentScreenState, 2000); // Сохраняем стейт каждые 2 секунды на фон
-
-    // Обновляем функцию window.onload для загрузки стейта
-    const originalOnLoad = window.onload;
-    window.onload = async () => { 
-        await originalOnLoad();
-        
-        if (window.Telegram && Telegram.WebApp && Telegram.WebApp.CloudStorage) {
-            Telegram.WebApp.CloudStorage.getItem("teiku_screen_state", (err, val) => {
-                if (!err && val) {
-                    try {
-                        let savedState = JSON.parse(val);
-                        if (savedState.shop) {
-                            state.currentShop = savedShop; // Если кофейня была выбрана
-                        }
-                        if (savedState.screen && savedState.screen !== 'step-1') {
-                            state.screenHistory = savedState.history || [];
-                            state.currentMode = savedState.mode || "";
-                            state.currentControlRole = savedState.role || "";
-                            
-                            // Восстанавливаем конкретные экраны, если они требуют вызова загрузки данных
-                            if (savedState.screen === 'step-3') initWorkflow(state.currentMode);
-                            else if (savedState.screen === 'step-menu') initMenuWorkflow();
-                            else if (savedState.screen === 'step-espresso') initEspressoWorkflow();
-                            else if (savedState.screen === 'step-tasks-calendar') initCalendarTasksWorkflow();
-                            else if (savedState.screen === 'step-invoices') initInvoiceWorkflow();
-                            else if (savedState.screen === 'step-knowledge') initKnowledgeWorkflow();
-                            else if (savedState.screen === 'step-schedule-calendar') goToScheduleCalendar();
-                            else if (savedState.screen.startsWith('step-mp')) initMarketplace();
-                            else showScreen(savedState.screen, false);
-                        }
-                    } catch(e) {}
+            let flatData = Object.entries(state.userBasket).filter(([n,q]) => {
+                if (n === "_catinfo") return false;
+                if (String(q).trim() === "-" || String(q).trim() === "--" || String(q).trim() === "") return false;
+                if (state.currentMode !== 'checklist' && (q == 0 || String(q) === "0")) return false; 
+                
+                if (state.currentMode === 'order' || state.currentMode === 'new_shop') {
+                    let itemExists = Object.values(state.productCatalog).some(c => c && c.name === n);
+                    if (!itemExists) return false;
                 }
+                return true;
+            }).map(([n,q]) => {
+                let catName = (state.userBasket["_catinfo"] && state.userBasket["_catinfo"][n]) || (state.productCatalog[n] ? state.productCatalog[n].cat : "Прочее");
+                return {name: n, qty: q, cat: catName};
             });
-        }
+
+            if (flatData.length === 0 && state.currentMode !== 'checklist') {
+                return showPopupError("Внимание", "Заполните данные перед отправкой!");
+            }
+
+            if ((state.currentMode === 'order' || state.currentMode === 'new_shop') && state.tempTotalKuper !== undefined) {
+                if (state.tempTotalKuper > 0 && state.tempTotalKuper < 1000) {
+                    let diff = 1000 - state.tempTotalKuper;
+                    showPopupError("Минимальная сумма", `Не хватает до минимальной суммы Купера: <b>~ ${Math.round(diff)} ₽</b><br><small>Текущая сумма: ${Math.round(state.tempTotalKuper)} ₽</small>`);
+                    return;
+                }
+            }
+
+            state.isProcessing = true;
+            if(btn) { btn.innerText = "ОТПРАВЛЯЮ..."; btn.disabled = true; }
+            if(mainBtn) { mainBtn.innerText = "ОТПРАВЛЯЮ..."; mainBtn.disabled = true; }
+            showGlobalLoader("Отправка данных..."); 
+
+            try {
+                if (state.currentMode === 'order' || state.currentMode === 'new_shop') {
+                    let existingSnap = null;
+                    try {
+                        existingSnap = await Promise.race([
+                            database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(10).once("value"),
+                            new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 1500))
+                        ]);
+                    } catch(e) { existingSnap = null; }
+
+                    let pendingKeyToUpdate = null;
+                    let mergedComments = [];
+                    let newComment = document.getElementById('comment') ? document.getElementById('comment').value.trim() : "";
+                    if (newComment) mergedComments.push(newComment);
+
+                    if (existingSnap) {
+                        existingSnap.forEach(c => {
+                            let o = c.val();
+                            if (o && (o.mode === 'order' || o.mode === 'new_shop') && o.svod === false && o.ordered === false) {
+                                if (!pendingKeyToUpdate) pendingKeyToUpdate = c.key;
+                                else database.ref(`orders/${c.key}`).remove(); 
+                            }
+                        });
+                    }
+
+                    let finalDataToSave = {
+                        shop: state.currentShop, mode: state.currentMode, items: flatData,
+                        comment: mergedComments.join(" | "), timestamp: Date.now(), userId: globalTgUserId,
+                        svod: false, ordered: false, lenta_received: false, ozon_received: false, kuper_received: false
+                    };
+
+                    if (pendingKeyToUpdate) {
+                        let mergedItems = {};
+                        let currentOrder = null;
+                        try {
+                            let snapNode = await Promise.race([
+                                database.ref(`orders/${pendingKeyToUpdate}`).once('value'),
+                                new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 1000))
+                            ]);
+                            currentOrder = snapNode.val();
+                        } catch(e) {}
+                        
+                        if (currentOrder) {
+                            let oldItems = Array.isArray(currentOrder.items) ? currentOrder.items : Object.values(currentOrder.items || {});
+                            oldItems.forEach(i => {
+                                if (i && i.name && i.name !== "НЕТ ЗАКАЗА") mergedItems[i.name] = { ...i, qty: parseFloat(i.qty) || 0 };
+                            });
+                            flatData.forEach(item => {
+                                if (!mergedItems[item.name]) mergedItems[item.name] = { ...item, qty: parseFloat(item.qty) || 0 };
+                                else mergedItems[item.name].qty += parseFloat(item.qty) || 0;
+                            });
+                            finalDataToSave.items = Object.values(mergedItems);
+                            let comments = [];
+                            if (currentOrder.comment && currentOrder.comment.trim() !== "") comments.push(currentOrder.comment.trim());
+                            if (newComment) comments.push(newComment);
+                            finalDataToSave.comment = comments.join(" | ");
+                        }
+                        database.ref(`orders/${pendingKeyToUpdate}`).set(finalDataToSave);
+                    } else {
+                        database.ref("orders").push(finalDataToSave);
+                    }
+                } else {
+                    let recordPayload = {
+                        shop: state.currentShop, mode: state.currentMode, items: flatData,
+                        comment: document.getElementById('comment') ? document.getElementById('comment').value : "",
+                        timestamp: Date.now(), userId: globalTgUserId, svod: false, ordered: false,
+                        lenta_received: false, ozon_received: false, kuper_received: false
+                    };
+                    database.ref("orders").push(recordPayload);
+                }
+
+                localStorage.removeItem("draft_" + state.currentShop + "_" + state.currentMode);
+            } catch(e) {
+                hideGlobalLoader(); 
+                showPopupError("Ошибка", "Произошла ошибка при отправке.");
+                state.isProcessing = false;
+                if(btn) { btn.innerText = "ПОДТВЕРДИТЬ И ОТПРАВИТЬ"; btn.disabled = false; }
+                if(mainBtn) { mainBtn.innerText = "ОТПРАВИТЬ"; mainBtn.disabled = false; }
+                return;
+            }
+        } 
+
+        // 3. Мгновенный показ экрана Успеха
+        hideGlobalLoader(); 
+        toggleCartModal(false);
+        document.getElementById('success-screen').style.display = 'flex';
+        
+        setTimeout(() => {
+            document.getElementById('success-screen').style.display = 'none';
+            if(document.getElementById('comment')) document.getElementById('comment').value = "";
+            let previousMode = state.currentMode; 
+            state.userBasket = {}; 
+            updateBadgeUI();
+            state.screenHistory = [];
+            
+            if (previousMode === 'marketplace') returnToPanel(); 
+            else if (previousMode === 'order' || previousMode === 'new_shop') showScreen('step-sub-orders', false);
+            else if (previousMode === 'checklist' || previousMode === 'stoplist_fill') showScreen('step-sub-lists', false);
+            else showScreen('step-2', false); 
+
+            // Жестко разблокируем кнопки только после того, как ушли с экрана
+            state.isProcessing = false; 
+            if(btn) { btn.innerText = "ПОДТВЕРДИТЬ И ОТПРАВИТЬ"; btn.disabled = false; }
+            if(mainBtn) { mainBtn.innerText = "ОТПРАВИТЬ"; mainBtn.disabled = false; }
+        }, 1200);
     };
   
+   
+  
 // ==========================================
+    // ⚡ ФОНОВАЯ СИНХРОНИЗАЦИЯ ДЛЯ АДМИНА/БОССА
+    // ==========================================
+    function startBossDataSync() {
+        database.ref("orders").orderByKey().limitToLast(300).on('value', snap => {
+            let arr = [];
+            snap.forEach(c => { 
+                let val = c.val(); 
+                if(val) { val.key = c.key; arr.push(val); } 
+            });
+            state.globalBossOrders = arr;
+            saveToRealCache('boss_orders', arr); // Сохраняем в вечную память
+        });
+    }
+
+    // ==========================================
     // ⚡ ГЛАВНЫЙ СТАРТ ПРИЛОЖЕНИЯ (ИСПРАВЛЕНА АВТОРИЗАЦИЯ)
     // ==========================================
    window.onload = async () => { 
@@ -4439,7 +4521,7 @@ function showLastOrder() {
         updateHeaderSelectOptions();
         state.cachedCatalogs = {};
         
-        const paths = ['order', 'newshop', 'stoplist', 'checklist', 'menu', 'espresso_recipes', 'tasks_calendar', 'knowledge_base'];
+        const paths = ['order', 'newshop', 'stoplist', 'checklist', 'menu'];
         for (let p of paths) {
             let cachedData = await loadFromRealCache(p);
             if (cachedData) state.cachedCatalogs[p] = cachedData;
@@ -4479,6 +4561,7 @@ function showLastOrder() {
             }
         }
     };
+
   
   </script>
 </body>

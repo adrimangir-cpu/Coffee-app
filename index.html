@@ -1062,88 +1062,57 @@
 
     
 
-   async function goToScheduleCalendar() {
-        try {
-            triggerHaptic();
-            let nameInput = document.getElementById('schedule-name-input');
-            if (!nameInput) {
-                alert("Ошибка: Поле ввода не найдено");
-                return;
-            }
-            
-            let name = nameInput.value.trim();
-            if (!name) {
-                alert("Внимание: Пожалуйста, введите ваше Имя и Фамилию.");
-                return;
-            }
-            
-            localStorage.setItem("teiku_employee_name", name);
-            state.schedule = { name: name, days: {}, currentTool: "MORNING" };
-            
-            let target = getTargetDateLogic();
-            let shopsMap = [
-                { name: "Бояринова", val: "Б" }, { name: "Гагарина", val: "Г" },
-                { name: "Вертолетчиков", val: "В" }, { name: "Липчанского", val: "Л" },
-                { name: "Новокосино", val: "НК" }, { name: "Новокосино 2", val: "НК2" },
-                { name: "Старое Павлино", val: "СП" }, { name: "Красноказарменная", val: "МЭИ" },
-                { name: "Ухтомского ополчения", val: "ЛЯ" }
-            ];
+   function goToScheduleCalendar() {
+        triggerHaptic();
+        let name = document.getElementById('schedule-name-input').value.trim();
+        if (!name) return showPopupError("Внимание", "Пожалуйста, введите ваше Имя и Фамилию.");
+        
+        localStorage.setItem("teiku_employee_name", name);
+        state.schedule = { name: name, days: {}, currentTool: "MORNING" };
+        
+        let target = getTargetDateLogic();
+        let shopsMap = [
+            { name: "Бояринова", val: "Б" }, { name: "Гагарина", val: "Г" },
+            { name: "Вертолетчиков", val: "В" }, { name: "Липчанского", val: "Л" },
+            { name: "Новокосино", val: "НК" }, { name: "Новокосино 2", val: "НК2" },
+            { name: "Старое Павлино", val: "СП" }, { name: "Красноказарменная", val: "МЭИ" },
+            { name: "Ухтомского ополчения", val: "ЛЯ" }
+        ];
 
-            let selectHtml = shopsMap.map(s => {
-                let isSelected = (s.name === state.currentShop || (state.currentShop === "МЭИ" && s.name === "Красноказарменная")) ? 'selected' : '';
-                return `<option value="${s.val}" ${isSelected}>${s.name === 'Красноказарменная' ? 'МЭИ' : s.name}</option>`;
-            }).join('');
-            
-            let selectEl = document.getElementById('schedule-shop-select');
-            if (selectEl) selectEl.innerHTML = selectHtml;
+        let selectHtml = shopsMap.map(s => {
+            let isSelected = (s.name === state.currentShop || (state.currentShop === "МЭИ" && s.name === "Красноказарменная")) ? 'selected' : '';
+            return `<option value="${s.val}" ${isSelected}>${s.name === 'Красноказарменная' ? 'МЭИ' : s.name}</option>`;
+        }).join('');
+        
+        document.getElementById('schedule-shop-select').innerHTML = selectHtml;
 
-            showGlobalLoader("Открываю график...");
-            
-            // ⚡ Вызываем загрузку и ждем ее завершения
-            await fetchExistingSchedule(target.month, target.year, name);
-            
-            hideGlobalLoader();
-        } catch(e) {
-            hideGlobalLoader();
-            alert("Ошибка загрузки графика: " + e.message);
-        }
+        fetchExistingSchedule(target.month, target.year, name);
     }
 
     async function fetchExistingSchedule(m, y, name) {
-        let monthNames = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
-        let titleEl = document.getElementById('schedule-month-title');
-        let userEl = document.getElementById('schedule-user-title');
-        if (titleEl) titleEl.innerText = `График на ${monthNames[m]} ${y}`;
-        if (userEl) userEl.innerText = `Сотрудник: ${name}`;
+        showReportOverlay("Загрузка вашего графика...");
+        try {
+            let monthNames = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
+            document.getElementById('schedule-month-title').innerText = `График на ${monthNames[m]} ${y}`;
+            document.getElementById('schedule-user-title').innerText = `Сотрудник: ${name}`;
 
-        let data = null;
-        let cachedSched = (state.cachedCatalogs && state.cachedCatalogs['schedules']) ? state.cachedCatalogs['schedules'] : null;
-        
-        // ⚡ НАДЕЖНАЯ ПРОВЕРКА: Если есть в кэше - берем оттуда, если нет - качаем из базы
-        if (cachedSched && cachedSched[`${y}_${m}`] && cachedSched[`${y}_${m}`][name]) {
-            data = cachedSched[`${y}_${m}`][name];
-        } else {
-            try {
-                let snap = await database.ref(`schedules/${y}_${m}/${name}`).once('value');
-                data = snap.val();
-            } catch(e) { 
-                console.log("Ошибка сети:", e); 
+            let snap = await database.ref(`schedules/${y}_${m}/${name}`).once("value");
+            if (snap.exists()) {
+                let data = snap.val() || {};
+                document.getElementById('schedule-comment').value = data.comment || "";
+                delete data.comment; 
+                state.schedule.days = data;
+            } else {
+                state.schedule.days = {};
+                document.getElementById('schedule-comment').value = "";
             }
+            renderScheduleCalendar(m, y);
+            hideReportOverlay();
+            showScreen('step-schedule-calendar');
+        } catch(e) {
+            hideReportOverlay();
+            showPopupError("Ошибка", "Не удалось загрузить график: " + e.message);
         }
-
-        let safeData = {};
-        if (data && typeof data === 'object') {
-            safeData = JSON.parse(JSON.stringify(data));
-        }
-
-        let commentEl = document.getElementById('schedule-comment');
-        if (commentEl) commentEl.value = safeData.comment || "";
-        
-        delete safeData.comment; 
-        state.schedule.days = safeData;
-        
-        renderScheduleCalendar(m, y);
-        showScreen('step-schedule-calendar');
     }
 
     function setScheduleTool(tool) {
@@ -1357,7 +1326,10 @@
     }
 
    
-  async function initInvoiceWorkflow() {
+  // ==========================================
+    // НАКЛАДНЫЕ ТОВАРЫ, АРХИВ (ИЗ СТАРОЙ ВЕРСИИ)
+    // ==========================================
+    async function initInvoiceWorkflow() {
         if(!checkShopSelected()) return;
         triggerHaptic();
         state.currentMode = 'invoices';
@@ -1367,7 +1339,6 @@
         showScreen('step-invoices');
         
         try {
-            // Прямой запрос к базе ТОЛЬКО в момент открытия, как было раньше
             const [activeSnap, historySnap] = await Promise.all([
                 database.ref('catalogs/invoices').once('value'),
                 database.ref('catalogs/invoices_history').orderByKey().limitToLast(2).once('value')
@@ -1391,12 +1362,11 @@
             
             switchInvoiceTab('active');
         } catch(e) {
-            console.error(e);
-            document.getElementById('invoices-container').innerHTML = "<div class='report-card'>Ошибка загрузки сети</div>";
+            document.getElementById('invoices-container').innerHTML = "<div class='report-card'>Ошибка загрузки</div>";
         }
         hideGlobalLoader();
     }
-    
+  
     function switchInvoiceTab(tab) {
         triggerHaptic();
         state.currentInvoiceTab = tab;
@@ -3893,36 +3863,39 @@ window.showLastOrder = async function() {
     }
 
    // ==========================================
-    // ⚡ ДВИЖОК НУЛЕВОГО ОЖИДАНИЯ (Фоновая синхронизация)
+    // ⚡ ДВИЖОК НУЛЕВОГО ОЖИДАНИЯ (ИЗ СТАРОЙ ВЕРСИИ)
     // ==========================================
-   function startRealtimeUpdates() {
-        // Убрали invoices и schedules отсюда
+    function startRealtimeUpdates() {
         const paths = ['order', 'newshop', 'stoplist', 'checklist', 'menu', 'espresso_recipes', 'tasks_calendar', 'knowledge_base'];
-        
         paths.forEach(p => {
-            let dbPath = (p === 'menu' || p === 'order' || p === 'newshop' || p === 'stoplist' || p === 'checklist') ? 'catalogs/' + p : p;
-            
-            database.ref(dbPath).on('value', snap => {
+            database.ref('catalogs/' + p).on('value', snap => {
                 let fresh = snap.val();
                 if (fresh) {
                     if (!state.cachedCatalogs) state.cachedCatalogs = {};
+                    if (JSON.stringify(state.cachedCatalogs[p]) === JSON.stringify(fresh)) return;
                     state.cachedCatalogs[p] = fresh;
-                    saveToRealCache(p, fresh); 
-                    
-                    if (state.currentMode === 'menu' && p === 'menu') {
-                        state.menuCatalog = Object.assign({}, fresh);
-                        if (typeof renderMenuApp === 'function') renderMenuApp();
-                    }
-                    if (state.currentMode === 'espresso' && p === 'espresso_recipes') {
-                        if (typeof renderEspressoApp === 'function') renderEspressoApp();
-                    }
-                    if (state.currentMode === 'calendar_tasks' && p === 'tasks_calendar') {
-                        let viewDate = state.selectedCalDate || new Date();
-                        if (typeof renderMiniCalendar === 'function') renderMiniCalendar(new Date(viewDate.getFullYear(), viewDate.getMonth(), 1));
-                    }
+                    saveToRealCache(p, fresh);
+                    triggerActiveRender(); 
                 }
             });
         });
+
+        // Отложенная загрузка меню на 6 секунд, чтобы не тормозить старт
+        setTimeout(() => {
+            database.ref('catalogs/menu').on('value', snap => {
+                let fresh = snap.val();
+                if (fresh) {
+                    if (!state.cachedCatalogs) state.cachedCatalogs = {};
+                    if (JSON.stringify(state.cachedCatalogs['menu']) === JSON.stringify(fresh)) return;
+                    state.cachedCatalogs['menu'] = fresh;
+                    saveToRealCache('menu', fresh);
+                    if (state.currentMode === 'menu') {
+                        state.menuCatalog = Object.assign({}, fresh);
+                        if (typeof renderMenuApp === 'function') renderMenuApp();
+                    }
+                }
+            });
+        }, 6000);
     }
   
   function startShopDataSync() {

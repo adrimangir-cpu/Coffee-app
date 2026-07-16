@@ -1356,67 +1356,84 @@
 
    
   
-    // НАКЛАДНЫЕ ТОВАРЫ (ГИБРИДНАЯ ЗАГРУЗКА)
+   // ==========================================
+    // НАКЛАДНЫЕ ТОВАРЫ (СКОРОСТЬ КАК В ПРИЕМКЕ)
     // ==========================================
-  
-    async function initInvoiceWorkflow() {
+    function initInvoiceWorkflow() {
         if(!checkShopSelected()) return;
         triggerHaptic();
         state.currentMode = 'invoices';
         if (!state.currentInvoiceTab) state.currentInvoiceTab = 'active'; 
 
-        // 1. Проверяем, есть ли уже данные в кэше телефона
-        let hasCache = state.cachedCatalogs && state.cachedCatalogs['invoices'] && Object.keys(state.cachedCatalogs['invoices']).length > 0;
+        // 1. МГНОВЕННЫЙ ПЕРЕХОД (Без блокировки экрана!)
+        showScreen('step-invoices');
 
-        if (!hasCache) {
-            // ⚡ Если мы зашли впервые и кэш пуст — показываем загрузку и качаем принудительно
-            showGlobalLoader("Загрузка накладных...");
-            showScreen('step-invoices');
-            try {
-                const [activeSnap, historySnap] = await Promise.all([
-                    database.ref('catalogs/invoices').once('value'),
-                    database.ref('catalogs/invoices_history').orderByKey().limitToLast(2).once('value')
-                ]);
-                
-                if (!state.cachedCatalogs) state.cachedCatalogs = {};
-                state.cachedCatalogs['invoices'] = activeSnap.val() || {};
-                state.cachedCatalogs['invoices_history'] = historySnap.val() || {};
-                
-                saveToRealCache('invoices', state.cachedCatalogs['invoices']);
-                saveToRealCache('invoices_history', state.cachedCatalogs['invoices_history']);
-            } catch(e) {
-                console.error("Ошибка сети:", e);
-                document.getElementById('invoices-container').innerHTML = "<div class='report-card'>Ошибка загрузки</div>";
+        let invCache = (state.cachedCatalogs && state.cachedCatalogs['invoices']) ? state.cachedCatalogs['invoices'] : null;
+        let histCache = (state.cachedCatalogs && state.cachedCatalogs['invoices_history']) ? state.cachedCatalogs['invoices_history'] : null;
+
+        // Вспомогательная функция для отрисовки
+        const processAndRender = (invDataRaw, historyDataRaw) => {
+            let activeTimestamp = invDataRaw._meta ? invDataRaw._meta.timestamp : null;
+            let activeItems = Object.assign({}, invDataRaw);
+            if(activeItems._meta) delete activeItems._meta; 
+
+            let historyData = [];
+            if (historyDataRaw) {
+                Object.keys(historyDataRaw).forEach(k => {
+                    historyData.push({ key: k, ...historyDataRaw[k] });
+                });
+                historyData.sort((a, b) => b.timestamp - a.timestamp);
             }
-            hideGlobalLoader();
-        } else {
-            // ⚡ Если кэш есть — открываем моментально за 0.01 сек
-            showScreen('step-invoices');
-        }
 
-        // 2. Обрабатываем данные и рисуем
-        let invData = (state.cachedCatalogs && state.cachedCatalogs['invoices']) ? state.cachedCatalogs['invoices'] : {};
-        let historyDataRaw = (state.cachedCatalogs && state.cachedCatalogs['invoices_history']) ? state.cachedCatalogs['invoices_history'] : {};
-        
-        let activeTimestamp = invData._meta ? invData._meta.timestamp : null;
-        let activeItems = Object.assign({}, invData);
-        if(activeItems._meta) delete activeItems._meta; 
-        
-        let historyData = [];
-        Object.keys(historyDataRaw).forEach(k => {
-            historyData.push({ key: k, ...historyDataRaw[k] });
-        });
-        historyData.sort((a, b) => b.timestamp - a.timestamp);
-
-        state.invoiceDataFull = {
-            active: activeItems,
-            activeTimestamp: activeTimestamp,
-            history: historyData
+            state.invoiceDataFull = {
+                active: activeItems,
+                activeTimestamp: activeTimestamp,
+                history: historyData
+            };
+            
+            if (state.currentMode === 'invoices') {
+                switchInvoiceTab(state.currentInvoiceTab);
+            }
         };
-        
-        if (state.currentMode === 'invoices') {
-            switchInvoiceTab(state.currentInvoiceTab);
+
+        // 2. Если есть кэш — рисуем за 0.01 сек
+        if (invCache && Object.keys(invCache).length > 0) {
+            processAndRender(invCache, histCache);
+        } else {
+            // 3. Если кэша еще нет — ставим мягкий пульсирующий лоадер (КАК В ПРИЕМКЕ), телефон НЕ виснет
+            document.getElementById('invoices-container').innerHTML = `
+                <div class="report-card">
+                    <div class="loading-pulse" style="text-align:center; font-weight:900; color:#7E57C2; padding: 20px;">
+                        ⏳ Загрузка накладных...<br>
+                        <span style="font-size:13px; color:#888; margin-top:10px; display:block;">Синхронизация с базой, секундочку...</span>
+                    </div>
+                </div>`;
         }
+
+        // 4. ТИХО В ФОНЕ тянем самые свежие данные (без await!)
+        Promise.all([
+            database.ref('catalogs/invoices').once('value'),
+            database.ref('catalogs/invoices_history').orderByKey().limitToLast(2).once('value')
+        ]).then(([activeSnap, historySnap]) => {
+            let freshInv = activeSnap.val() || {};
+            let freshHist = historySnap.val() || {};
+            
+            if (!state.cachedCatalogs) state.cachedCatalogs = {};
+            state.cachedCatalogs['invoices'] = freshInv;
+            state.cachedCatalogs['invoices_history'] = freshHist;
+            
+            // Сохраняем навсегда в память
+            saveToRealCache('invoices', freshInv);
+            saveToRealCache('invoices_history', freshHist);
+
+            // Перерисовываем экран (пульсирующая надпись сменится на товары)
+            processAndRender(freshInv, freshHist);
+        }).catch(e => {
+            console.log("Ошибка фоновой загрузки накладных:", e);
+            if (!invCache) {
+                document.getElementById('invoices-container').innerHTML = "<div class='report-card' style='text-align:center; color:red; font-weight:bold;'>Ошибка сети</div>";
+            }
+        });
     }
     
     function switchInvoiceTab(tab) {

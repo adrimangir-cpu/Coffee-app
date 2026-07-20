@@ -1008,9 +1008,8 @@ function toggleSvodDate(safeDate) {
         if (!seasonChoice) return;
         seasonChoice = seasonChoice.trim();
 
-        showReportOverlay("Синхронизация баз данных...");
+        showReportOverlay("Синхронизация и сбор напитков...");
         try {
-            // Скачиваем актуальные базы
             let [snapMenu, snapOrd, snapChk] = await Promise.all([
                 db.ref('catalogs/menu').once('value'),
                 db.ref('catalogs/order').once('value'),
@@ -1025,24 +1024,41 @@ function toggleSvodDate(safeDate) {
             let exactGlobalCat = seasonChoice; 
             let drinksCount = 0;
 
-            // 1. Собираем ингредиенты из выбранной категории Меню
+            // 1. Бронебойный сбор ингредиентов и НАЗВАНИЙ НАПИТКОВ
             Object.values(menuData).forEach(drink => {
-                if (!drink || !drink.name) return;
+                if (!drink) return;
+                
+                // ⚡ Ищем имя напитка во всех возможных полях базы
+                let dName = drink.name || drink.title || drink.drink || drink.item; 
+                if (!dName) return; 
                 
                 let gc = drink.globalCat || "Основное меню";
                 if (gc.toLowerCase() === seasonChoice.toLowerCase()) {
                     exactGlobalCat = gc; 
                     drinksCount++;
                     
-                    let blocks = drink.blocks || [drink.recipe || []];
+                    // ⚡ Защита от искривления массивов слоев в Firebase
+                    let blocks = [];
+                    if (Array.isArray(drink.blocks)) blocks = drink.blocks;
+                    else if (drink.blocks && typeof drink.blocks === 'object') blocks = Object.values(drink.blocks);
+                    else if (Array.isArray(drink.recipe)) blocks = [drink.recipe];
+                    else if (drink.recipe && typeof drink.recipe === 'object') blocks = [Object.values(drink.recipe)];
+
                     blocks.forEach(block => {
                         if (!block) return;
-                        block.forEach(ingredient => {
-                            if (!ingredient || !ingredient.name) return;
-                            // Берем название точь-в-точь как оно записано в техкарте
-                            let ingName = ingredient.name.trim();
-                            if (!rawIngredients[ingName]) rawIngredients[ingName] = new Set();
-                            rawIngredients[ingName].add(drink.name);
+                        let items = Array.isArray(block) ? block : Object.values(block);
+                        
+                        items.forEach(ingredient => {
+                            // Вытаскиваем имя ингредиента
+                            let ingName = (typeof ingredient === 'string') ? ingredient : (ingredient && ingredient.name ? ingredient.name : null);
+                            
+                            if (ingName && typeof ingName === 'string') {
+                                ingName = ingName.trim();
+                                if (!rawIngredients[ingName]) rawIngredients[ingName] = new Set();
+                                
+                                // ⚡ Привязываем ИМЯ НАПИТКА к этому ингредиенту
+                                rawIngredients[ingName].add(dName.trim());
+                            }
                         });
                     });
                 }
@@ -1054,31 +1070,27 @@ function toggleSvodDate(safeDate) {
                 return;
             }
 
-            // Уточняем регистр папки по существующему стоп-листу (чтобы точно попасть в нее)
             Object.values(currentCatalog).forEach(c => {
                 if (c && c.globalCat && c.globalCat.toLowerCase() === seasonChoice.toLowerCase()) {
                     exactGlobalCat = c.globalCat;
                 }
             });
 
-            // 2. Объединяем Закупки и Чек-листы для точного поиска
+            // 2. Объединяем Закупки и Чек-листы
             let allCatalogItems = [...Object.values(ordData), ...Object.values(chkData)].filter(c => c && c.name);
             let aggregatedIngredients = {};
 
             for (let prodName in rawIngredients) {
                 let pNameLow = prodName.toLowerCase();
-                
                 let finalProdName = prodName;
                 let catName = "Прочее";
 
-                // ⚡ ИЩЕМ ТОЧНОЕ СОВПАДЕНИЕ ИМЕНИ (потому что названия в базах одинаковые!)
                 let match = allCatalogItems.find(c => c.name.trim().toLowerCase() === pNameLow);
 
                 if (match) {
-                    finalProdName = match.name.trim(); // Забираем идеальное имя из справочника
-                    catName = match.cat || "Прочее";   // Забираем его родную категорию (Сиропы, Жидкости и т.д.)
+                    finalProdName = match.name.trim(); 
+                    catName = match.cat || "Прочее";   
                 } else {
-                    // Резерв на случай, если товара вообще нет в базах закупки/чеков (например, вода из-под крана)
                     if (pNameLow.includes("сироп")) catName = "Сиропы";
                     else if (pNameLow.includes("пюре")) catName = "Пюре";
                     else if (pNameLow.includes("молок") || pNameLow.includes("сливк")) catName = "Молоко";
@@ -1089,6 +1101,7 @@ function toggleSvodDate(safeDate) {
                 if (!aggregatedIngredients[finalProdName]) {
                     aggregatedIngredients[finalProdName] = { drinks: new Set(), cat: catName };
                 }
+                // Сливаем все напитки для этого продукта
                 rawIngredients[prodName].forEach(d => aggregatedIngredients[finalProdName].drinks.add(d));
             }
 
@@ -1098,12 +1111,12 @@ function toggleSvodDate(safeDate) {
 
             let isMainMenu = exactGlobalCat.toLowerCase() === "основное меню";
 
-            // 3. Сохраняем готовую информацию в Справочник Стоп-листа
+            // 3. Сохраняем в Стоп-лист и прописываем напитки
             for (let finalName in aggregatedIngredients) {
+                // ⚡ Склеиваем массив напитков в красивую строку через запятую
                 let seasonDrinksStr = Array.from(aggregatedIngredients[finalName].drinks).sort().join(", ");
                 let catName = aggregatedIngredients[finalName].cat;
 
-                // Ищем, есть ли уже этот продукт в Стоп-листе
                 let existingKey = Object.keys(currentCatalog).find(k => 
                     currentCatalog[k] && 
                     currentCatalog[k].name.trim().toLowerCase() === finalName.toLowerCase() &&
@@ -1113,12 +1126,11 @@ function toggleSvodDate(safeDate) {
                 if (existingKey) {
                     let needsUpdate = false;
                     
-                    // Дописываем новые напитки к старым (без удаления)
                     let currentDrinks = currentCatalog[existingKey][isMainMenu ? 'main' : 'sez'] || "";
                     let combinedDrinksSet = new Set([...currentDrinks.split(',').map(s=>s.trim()).filter(Boolean), ...aggregatedIngredients[finalName].drinks]);
                     let combinedDrinksStr = Array.from(combinedDrinksSet).sort().join(", ");
 
-                    // Разносим по колонкам "Отключает Осн" или "Отключает Сезон"
+                    // ⚡ Прописываем напитки в правильную колонку
                     if (isMainMenu && currentCatalog[existingKey].main !== combinedDrinksStr) {
                         currentCatalog[existingKey].main = combinedDrinksStr;
                         needsUpdate = true;
@@ -1127,7 +1139,6 @@ function toggleSvodDate(safeDate) {
                         needsUpdate = true;
                     }
                     
-                    // Обновляем категорию (если она нашлась в закупке)
                     if (currentCatalog[existingKey].cat !== catName) {
                         currentCatalog[existingKey].cat = catName;
                         needsUpdate = true;
@@ -1138,12 +1149,12 @@ function toggleSvodDate(safeDate) {
                         changes++;
                     }
                 } else {
-                    // Создаем совершенно новую строчку
                     let newId = "stop_auto_" + Date.now() + "_" + Math.random().toString(36).substr(2, 5);
                     currentCatalog[newId] = {
                         globalCat: exactGlobalCat, 
                         cat: catName,
                         name: finalName,
+                        // ⚡ Автоматически заполняем напитки при создании новой строки
                         sez: isMainMenu ? "" : seasonDrinksStr,
                         main: isMainMenu ? seasonDrinksStr : "" 
                     };
@@ -1159,7 +1170,7 @@ function toggleSvodDate(safeDate) {
                 alert(`✅ Синхронизация успешна!\n\nКатегория: "${exactGlobalCat}"\nОбработано напитков: ${drinksCount}\nНайдено продуктов: ${Object.keys(aggregatedIngredients).length}\nДобавлено/обновлено строк: ${changes}\n\nНажмите "💾 Сохранить в базу", чтобы зафиксировать изменения.`);
                 renderCatalogStoplist();
             } else {
-                alert(`ℹ️ Нет новых данных.\nВсе продукты (${Object.keys(aggregatedIngredients).length} шт.) уже есть в стоп-листе с актуальными привязками.`);
+                alert(`ℹ️ Нет новых данных.\nВсе продукты уже есть в стоп-листе с актуальными привязками напитков.`);
             }
             
         } catch (e) {

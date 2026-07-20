@@ -1003,25 +1003,34 @@ function toggleSvodDate(safeDate) {
     // ==========================================
     // ПРАВКА 3: АВТО-СИНХРОНИЗАЦИЯ СТОП-ЛИСТА С ТЕХ. КАРТАМИ
     // ==========================================
-    async function syncStoplistWithMenu() {
-        let seasonChoice = prompt("Введите название сезонной категории (например: Сезонное меню), из которой нужно подтянуть напитки:", "Сезонное меню");
+    window.syncStoplistWithMenu = async function() {
+        let seasonChoice = prompt("Введите название глобальной категории из меню (например: Сезонное меню), из которой нужно подтянуть продукты:", "Сезонное меню");
         if (!seasonChoice) return;
         seasonChoice = seasonChoice.trim();
 
-        showReportOverlay("Синхронизация с техкартами...");
+        showReportOverlay("Анализ техкарт...");
         try {
-            let resMenu = await fetch(`${FB_URL}/catalogs/menu.json`).then(r => r.json()) || {};
-            let resStop = await fetch(`${FB_URL}/catalogs/stoplist.json`).then(r => r.json()) || {};
+            // ⚡ Прямой запрос актуальных данных для справочников
+            const rawFetch = typeof originalFetch !== 'undefined' ? originalFetch : fetch;
             
-            let updatedStoplist = { ...resStop };
+            let [resMenu, resOrd, resChk] = await Promise.all([
+                rawFetch(`${FB_URL}/catalogs/menu.json`).then(r => r.json()).catch(() => ({})),
+                rawFetch(`${FB_URL}/catalogs/order.json`).then(r => r.json()).catch(() => ({})),
+                rawFetch(`${FB_URL}/catalogs/checklist.json`).then(r => r.json()).catch(() => ({}))
+            ]);
+            
+            let menuData = resMenu || {};
+            let ordData = resOrd || {};
+            let chkData = resChk || {};
+
             let seasonIngredients = {};
 
-            // 1. Ищем ингредиенты ТОЛЬКО в выбранном сезоне
-            Object.values(resMenu).forEach(drink => {
+            // 1. Ищем ингредиенты ТОЛЬКО в выбранной глобальной категории меню (seasonChoice)
+            Object.values(menuData).forEach(drink => {
                 if (!drink || !drink.name) return;
                 
                 let gc = drink.globalCat || "Основное меню";
-                if (gc.toLowerCase() !== seasonChoice.toLowerCase()) return; // Пропускаем всё, кроме сезона
+                if (gc.toLowerCase() !== seasonChoice.toLowerCase()) return; 
                 
                 let blocks = drink.blocks || [drink.recipe || []];
                 blocks.forEach(block => {
@@ -1031,61 +1040,78 @@ function toggleSvodDate(safeDate) {
                         
                         let ingName = ingredient.name.trim();
                         if (!seasonIngredients[ingName]) seasonIngredients[ingName] = new Set();
-                        seasonIngredients[ingName].add(drink.name);
+                        seasonIngredients[ingName].add(drink.name); // Привязываем напитки к продукту
                     });
                 });
             });
 
-            // 2. Добавляем/обновляем ТОЛЬКО строки выбранного сезона
+            // 2. Добавляем или дополняем строки в текущем стоп-листе
             let changes = 0;
+            let added = 0;
+
+            if (!window.catalogChanges) window.catalogChanges = {};
+
             for (let prodName in seasonIngredients) {
                 let seasonDrinksStr = Array.from(seasonIngredients[prodName]).sort().join(", ");
                 
-                // Ищем категорию
+                // ⚡ УМНЫЙ ПОИСК КАТЕГОРИИ: Сначала ищем в Закупке, если нет - ищем в Чек-листах
                 let catName = "Прочее";
-                if (cachedData.catalogOrder) {
-                    let foundInOrder = Object.values(cachedData.catalogOrder).find(c => c && cleanName(c.name) === cleanName(prodName));
-                    if (foundInOrder && foundInOrder.cat) catName = foundInOrder.cat;
+                let foundInOrder = Object.values(ordData).find(c => c && cleanName(c.name) === cleanName(prodName));
+                let foundInChk = Object.values(chkData).find(c => c && cleanName(c.name) === cleanName(prodName));
+                
+                if (foundInOrder && foundInOrder.cat) {
+                    catName = foundInOrder.cat;
+                } else if (foundInChk && foundInChk.cat) {
+                    catName = foundInChk.cat;
                 }
+                
                 if (prodName.toLowerCase().includes("сироп")) catName = "Сиропы";
 
-                // Ищем существующую строку ЭТОГО сезона для ЭТОГО продукта
-                let existingKey = Object.keys(updatedStoplist).find(k => 
-                    updatedStoplist[k] && 
-                    cleanName(updatedStoplist[k].name) === cleanName(prodName) &&
-                    (updatedStoplist[k].globalCat || "").toLowerCase() === seasonChoice.toLowerCase()
+                // Ищем, есть ли уже ЭТОТ продукт внутри ЭТОЙ глобальной категории в стоп-листе
+                let existingKey = Object.keys(currentCatalog).find(k => 
+                    currentCatalog[k] && 
+                    cleanName(currentCatalog[k].name) === cleanName(prodName) &&
+                    (currentCatalog[k].globalCat || "Основное меню").toLowerCase() === seasonChoice.toLowerCase()
                 );
 
                 if (existingKey) {
-                    // Обновляем только столбец сезона, столбец основы не трогаем!
-                    updatedStoplist[existingKey].sez = seasonDrinksStr;
-                    if(catName === "Сиропы") updatedStoplist[existingKey].cat = "Сиропы";
-                    changes++;
+                    // Если продукт уже есть в этой глобальной категории — просто обновляем список напитков (вдруг добавились новые) и уточняем подкатегорию
+                    if (currentCatalog[existingKey].sez !== seasonDrinksStr || currentCatalog[existingKey].cat !== catName) {
+                        currentCatalog[existingKey].sez = seasonDrinksStr;
+                        currentCatalog[existingKey].cat = catName;
+                        window.catalogChanges[existingKey] = currentCatalog[existingKey];
+                        changes++;
+                    }
                 } else {
-                    // Создаем новую строку для сезона (Основа пустая)
+                    // Если продукта нет — создаем новую строку (или целую новую глоб. категорию, если её еще не было)
                     let newId = "stop_auto_s_" + Date.now() + Math.floor(Math.random() * 10000);
-                    updatedStoplist[newId] = {
+                    currentCatalog[newId] = {
                         globalCat: seasonChoice, 
                         cat: catName,
                         name: prodName,
                         sez: seasonDrinksStr,
                         main: "" 
                     };
+                    window.catalogChanges[newId] = currentCatalog[newId];
+                    added++;
                     changes++;
                 }
             }
 
-            await fetch(`${FB_URL}/catalogs/stoplist.json`, { method: 'PUT', body: JSON.stringify(updatedStoplist) });
-            currentCatalog = updatedStoplist;
-            
             hideReportOverlay();
-            alert(`✅ Синхронизация завершена!\nНайдено продуктов в сезоне "${seasonChoice}": ${Object.keys(seasonIngredients).length}.\nВсе они записаны в справочник (Отключает Основное = пусто).`);
-            renderCatalogStoplist();
+            
+            if (changes > 0) {
+                alert(`✅ Синхронизация успешно завершена!\n\nГлобальная категория: "${seasonChoice}"\nВсего найдено продуктов: ${Object.keys(seasonIngredients).length}\nДобавлено новых строк (пропущенных): ${added}\n\nНе забудьте нажать "💾 Сохранить в базу".`);
+                renderCatalogStoplist();
+            } else {
+                alert(`ℹ️ Нет новых данных для добавления.\nВ категории "${seasonChoice}" найдено продуктов: ${Object.keys(seasonIngredients).length}, и все они уже присутствуют в справочнике стоп-листа с актуальными напитками.`);
+            }
+            
         } catch (e) {
             hideReportOverlay();
             alert("❌ Ошибка при синхронизации: " + e.message);
         }
-    }
+    };
 
     function crossFillDrinks() {
         let seasonChoice = prompt("С какой сезонной категорией взаимозаполнить Основное меню?\n(Введите название, например: Сезонное меню)", "Сезонное меню");

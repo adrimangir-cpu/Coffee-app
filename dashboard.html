@@ -921,7 +921,7 @@ function toggleSvodDate(safeDate) {
     // ==========================================
     // ПРАВКА 1: ЧЕК-ЛИСТЫ АВТО-ОТПРАВКА АДМИНУ И БОССУ
     // ==========================================
-    async function sendChecklistPdf() {
+   async function sendChecklistPdf() {
         showReportOverlay("Формирование PDF... Подождите");
         document.querySelectorAll('.chk-row').forEach(row => { row.style.display = 'table-row'; });
 
@@ -937,31 +937,52 @@ function toggleSvodDate(safeDate) {
         try {
             const pdfDataUri = await html2pdf().set(opt).from(element).outputPdf('datauristring');
             
-            // Отправка Администратору
-            await fetch(`${FB_URL}/bot_control/notifications.json`, {
-                method: 'POST',
-                body: JSON.stringify({ 
-                    type: "checklist_pdf", chat_id: ADMIN_CHAT_ID.trim(), file_data: pdfDataUri, 
-                    filename: `Отчет_Чеклисты_${new Date().toLocaleDateString('ru-RU')}.pdf`,
-                    text: "✅ Автоматический отчет по чек-листам для Администратора", timestamp: Date.now() 
-                })
-            });
+            // ⚡ 1. УМНОЕ ОПРЕДЕЛЕНИЕ ПОЛУЧАТЕЛЯ
+            let targetChatId = null;
+            let targetName = "Пользователь";
 
-            // Отправка Боссу
+            // Попытка А: Берем ID прямо из Telegram (самый надежный способ, если открыто внутри ТГ)
+            let tgUser = window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initDataUnsafe && window.Telegram.WebApp.initDataUnsafe.user;
+            
+            if (tgUser && tgUser.id) {
+                targetChatId = tgUser.id;
+                targetName = tgUser.first_name || "Пользователь Telegram";
+            } else {
+                // Попытка Б: Если открыто в браузере, определяем по роли аккаунта
+                // (Проверяем стандартные переменные ролей)
+                let role = window.userRole || window.currentUserRole || localStorage.getItem('role') || 'admin'; 
+                
+                if (role.includes('boss')) {
+                    targetChatId = typeof BOSS_CHAT_ID !== 'undefined' ? BOSS_CHAT_ID.trim() : null;
+                    targetName = "Босс";
+                } else {
+                    targetChatId = typeof ADMIN_CHAT_ID !== 'undefined' ? ADMIN_CHAT_ID.trim() : null;
+                    targetName = "Администратор";
+                }
+            }
+
+            if (!targetChatId) {
+                throw new Error("Не удалось определить ваш Telegram ID для отправки отчета.");
+            }
+
+            // ⚡ 2. ЕДИНСТВЕННАЯ ОТПРАВКА (только текущему пользователю)
             await fetch(`${FB_URL}/bot_control/notifications.json`, {
                 method: 'POST',
                 body: JSON.stringify({ 
-                    type: "checklist_pdf", chat_id: BOSS_CHAT_ID.trim(), file_data: pdfDataUri, 
+                    type: "checklist_pdf", 
+                    chat_id: String(targetChatId), 
+                    file_data: pdfDataUri, 
                     filename: `Отчет_Чеклисты_${new Date().toLocaleDateString('ru-RU')}.pdf`,
-                    text: "✅ Автоматический отчет по чек-листам для Босса", timestamp: Date.now() + 50
+                    text: `✅ Автоматический отчет по чек-листам (Запросил: ${targetName})`, 
+                    timestamp: Date.now() 
                 })
             });
 
             hideReportOverlay();
-            alert("✅ PDF-отчет успешно сформирован и отправлен Администратору и Боссу!");
+            alert(`✅ PDF-отчет успешно сформирован и отправлен в ЛС (${targetName})!`);
         } catch (e) {
             hideReportOverlay();
-            alert("❌ Ошибка при создании PDF: " + e.message);
+            alert("❌ Ошибка при создании/отправке PDF: " + e.message);
         }
     }
 

@@ -467,56 +467,67 @@ setTimeout(() => {
 }, 2000);
 
 window.getOzonRepeatStatus = function(shop, itemName, cachedData, vendor) {
-  if (!cachedData || !cachedData.orders) return { isRepeat: false, isReceived: false, dateStr: "" };
-  let pastOrders = Object.values(cachedData.orders)
-    .filter(o => o && (o.mode === 'order' || o.mode === 'new_shop') && o.ordered && o.shop === shop)
-    .sort((a,b) => b.timestamp - a.timestamp);
-  if (pastOrders.length === 0) return { isRepeat: false, isReceived: false, dateStr: "" };
-  let lastOrder = pastOrders[0];
-  let lastOrderItems = Array.isArray(lastOrder.items) ? lastOrder.items : (typeof lastOrder.items === 'object' && lastOrder.items !== null ? Object.values(lastOrder.items) : []);
-  let exactNameLow = String(itemName).trim().toLowerCase();
-  let itemInLast = lastOrderItems.find(i =>
-    i && String(i.name).trim().toLowerCase() === exactNameLow &&
-    (i.status === 'ordered' || i.status === 'already_received' || i.status === 'from_stoplist')
-  );
-  if (!itemInLast) return { isRepeat: false, isReceived: false, dateStr: "" };
-  let isReceived = false;
-  let dateStr = "";
-  let missingData = cachedData.missing || {};
-  let missingItem = Object.values(missingData)
-    .sort((a,b) => b.timestamp - a.timestamp)
-    .find(m => m && m.shop === shop && String(m.name).trim().toLowerCase() === exactNameLow && m.timestamp >= (lastOrder.timestamp - 5000));
-  let vLower = (vendor || 'озон').toLowerCase();
-  let isOzon = vLower.includes('озон') || vLower.includes('ozon');
-  let isKuper = vLower.includes('купер') || vLower.includes('kuper');
-  let isLenta = vLower.includes('лента') || vLower.includes('lenta');
-  let orderReceivedFlag = false;
-  let orderReceivedTs = lastOrder.timestamp;
-  if (isOzon) {
-    orderReceivedFlag = lastOrder.ozon_received;
-    if (lastOrder.ozon_received_ts) orderReceivedTs = lastOrder.ozon_received_ts;
-  } else if (isKuper) {
-    orderReceivedFlag = lastOrder.kuper_received;
-    if (lastOrder.kuper_received_ts) orderReceivedTs = lastOrder.kuper_received_ts;
-  } else if (isLenta) {
-    orderReceivedFlag = lastOrder.lenta_received;
-    if (lastOrder.lenta_received_ts) orderReceivedTs = lastOrder.lenta_received_ts;
-  }
-  if (missingItem) {
-    if (missingItem.status === 'arrived') {
-      isReceived = true;
-      dateStr = new Date(missingItem.timestamp).toLocaleDateString('ru-RU', {day: '2-digit', month: '2-digit'});
-    } else {
-      isReceived = false;
-      dateStr = "";
+    let vLower = (vendor || '').toLowerCase();
+    // ⚡ Жесткое условие: проверка работает ТОЛЬКО для Озона/WB
+    let isOzon = vLower.includes('озон') || vLower.includes('ozon') || vLower.includes('wb') || vLower.includes('wildberries');
+    if (!isOzon) return { isRepeat: false, badgeText: "", rowBg: "" };
+
+    if (!cachedData || !cachedData.orders) return { isRepeat: false, badgeText: "", rowBg: "" };
+    let exactNameLow = String(itemName).trim().toLowerCase();
+    let cutoff = Date.now() - (14 * 24 * 60 * 60 * 1000); // Ищем в заказах за последние 14 дней
+    
+    let pastOrders = Object.values(cachedData.orders)
+        .filter(o => o && (o.mode === 'order' || o.mode === 'new_shop') && o.ordered && o.shop === shop && o.timestamp >= cutoff)
+        .sort((a,b) => b.timestamp - a.timestamp);
+    
+    for (let o of pastOrders) {
+        let items = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
+        let found = items.find(i => i && String(i.name).trim().toLowerCase() === exactNameLow && (i.status === 'ordered' || i.status === 'already_received' || i.status === 'from_stoplist' || i.status === 'error'));
+        
+        if (found) {
+            let badgeText = "Повтор";
+            let dateStr = "";
+            let rowBg = "background:#E3F2FD;"; // Голубой фон по умолчанию (В пути)
+            
+            let missingData = cachedData.missing || {};
+            let missingItem = Object.values(missingData)
+                .sort((a,b) => b.timestamp - a.timestamp)
+                .find(m => m && m.shop === shop && String(m.name).trim().toLowerCase() === exactNameLow && m.timestamp >= (o.timestamp - 86400000));
+            
+            if (missingItem) {
+                if (missingItem.status === 'arrived') {
+                    dateStr = new Date(missingItem.timestamp).toLocaleDateString('ru-RU', {day: '2-digit', month: '2-digit'});
+                    badgeText = `Повтор (Принят ${dateStr})`;
+                    rowBg = "background:#E8F5E9;"; // Светло-зеленый (Принят)
+                } else if (missingItem.status === 'transit') {
+                    badgeText = `Повтор (Недовоз: В пути)`;
+                    rowBg = "background:#FFF3E0;"; // Оранжевый (Недовоз в пути)
+                } else if (missingItem.status === 'reorder') {
+                    badgeText = `Повтор (Перезаказан)`;
+                    rowBg = "background:#F3E5F5;"; // Фиолетовый
+                } else if (missingItem.status === 'canceled') {
+                    badgeText = `Повтор (Отменен)`;
+                    rowBg = "background:#FFEBEE;"; // Красный
+                } else {
+                    badgeText = `Повтор (Недовоз: Ожидает)`;
+                    rowBg = "background:#FFEBEE;"; // Красный (Недовоз проблема)
+                }
+            } else if (found.status === 'error' || found.bot_error) {
+                badgeText = `Повтор (Ошибка заказа)`;
+                rowBg = "background:#FFEBEE;"; // Красный
+            } else if (o.ozon_received) {
+                let ts = o.ozon_received_ts || o.timestamp;
+                dateStr = new Date(ts).toLocaleDateString('ru-RU', {day: '2-digit', month: '2-digit'});
+                badgeText = `Повтор (Принят ${dateStr})`;
+                rowBg = "background:#E8F5E9;"; // Светло-зеленый (Принят)
+            } else {
+                badgeText = `Повтор (В пути / Не принят)`;
+            }
+            
+            return { isRepeat: true, badgeText: badgeText, rowBg: rowBg };
+        }
     }
-  } else {
-    if (orderReceivedFlag) {
-      isReceived = true;
-      dateStr = new Date(orderReceivedTs).toLocaleDateString('ru-RU', {day: '2-digit', month: '2-digit'});
-    }
-  }
-  return { isRepeat: true, isReceived: isReceived, dateStr: dateStr };
+    return { isRepeat: false, badgeText: "", rowBg: "" };
 };
 
 const IDB_NAME = "TeikuDashboardDB";
@@ -1937,6 +1948,7 @@ function toggleSvodDate(safeDate) {
     }
 
     async function saveSvodEdits() {
+        if (document.activeElement) document.activeElement.blur();
         let btn = document.getElementById('svod-btn-edit'); 
         let origText = btn.innerHTML;
         btn.innerHTML = "⌛ СОХРАНЕНИЕ...";
@@ -2588,17 +2600,17 @@ async function renderOrdersSvod() {
                                 else repeatBadge = `<span style='font-size:10px; color:var(--brand-danger); margin-left:8px; text-transform:uppercase;'>Недовоз</span>`;
                             }
 
-                            let isRepeat = false;
+                           let isRepeat = false;
+                            let customRowBg = "";
                             if (isOzon && !isStrictMissing) {
                                 let ozonStat = window.getOzonRepeatStatus(shop, name, cachedData, actualVendor); 
                                 if (ozonStat.isRepeat) {
                                     isRepeat = true;
-                                    if (ozonStat.isReceived) {
-                                        itemArrDate = ozonStat.dateStr ? ` ${ozonStat.dateStr}` : "";
-                                        repeatBadge = `<span style='font-size:10px; color:var(--text-muted); margin-left:8px; text-transform:uppercase;'>Повтор (Принят${itemArrDate})</span>`;
+                                    customRowBg = ozonStat.rowBg; // ⚡ Подтягиваем цвет фона для строки
+                                    repeatBadge = `<span style='font-size:11px; color:#1565C0; background:rgba(255,255,255,0.7); padding:2px 6px; border-radius:4px; margin-left:8px; text-transform:uppercase; font-weight:900; border:1px solid #1565C0;'>${ozonStat.badgeText}</span>`;
+                                    // Авто-проставление статуса "Принят", если он реально принят
+                                    if (ozonStat.badgeText.includes("Принят")) {
                                         baseStatus = 'already_received'; 
-                                    } else {
-                                        repeatBadge = `<span style='font-size:10px; color:var(--text-muted); margin-left:8px; text-transform:uppercase;'>Повтор</span>`;
                                     }
                                 }
                             }
@@ -2649,7 +2661,7 @@ async function renderOrdersSvod() {
                                 </tr>`;
                             } else {
                                 html += `
-                                <tr class="svod-row svoditem_${safeShopDate} svodlvl3_of_${safeDate}" style="display:${displayShop}; ${isRepeat ? 'background:var(--bg-paper);' : ''}">
+                                <tr class="svod-row svoditem_${safeShopDate} svodlvl3_of_${safeDate}" style="display:${displayShop}; ${isRepeat ? customRowBg : ''}">
                                     <td style="text-align:center; color:var(--text-muted); font-size:12px;">${itemIndex}</td>
                                     <td><span style="font-weight:500;">${name}</span> ${repeatBadge}</td>
                                     <td style="text-align:center; font-weight:600; font-family:var(--font-fashion); font-size:18px;">${actualQty}</td>
@@ -3396,55 +3408,45 @@ function renderGraphsTab() {
     }
 
     async function saveMpEdits() {
+        if (document.activeElement) document.activeElement.blur(); // ⚡ Защита ввода
         let btn = document.getElementById('mp-btn-edit'); 
         let origText = btn.innerHTML;
         if(btn) btn.innerHTML = "⌛ СОХРАНЕНИЕ...";
         try {
-            let promises = [];
+            let dbUpdates = {}; // ⚡ Собираем все изменения в один объект
             
-            // 1. МГНОВЕННОЕ УДАЛЕНИЕ: Стираем из локальной памяти и готовим запрос на сервер
             mpDeletions.forEach(key => {
-                promises.push(fetch(`${FB_URL}/marketplace_records/${key}.json`, { method: 'DELETE' }));
-                if (cachedData.marketplace && cachedData.marketplace[key]) {
-                    delete cachedData.marketplace[key]; // Удаляем из кэша устройства
-                }
+                dbUpdates[key] = null;
+                if (cachedData.marketplace && cachedData.marketplace[key]) delete cachedData.marketplace[key]; 
             });
             
-            // 2. МГНОВЕННОЕ ОБНОВЛЕНИЕ: Записываем новые цифры в кэш и готовим запрос
             document.querySelectorAll('input[id^="mp_inp_"]').forEach(inp => {
                 let key = inp.id.replace("mp_inp_", "");
                 if (!mpDeletions.has(key)) {
                     let val = parseFloat(inp.value);
                     if (!isNaN(val) && cachedData.marketplace && cachedData.marketplace[key]) {
                         if (parseFloat(cachedData.marketplace[key].amount) !== val) {
-            // ⚡ Добавляем флаг is_edited: true при сохранении в базу
-            promises.push(fetch(`${FB_URL}/marketplace_records/${key}.json`, { method: 'PATCH', body: JSON.stringify({amount: val, is_edited: true}) }));
-            
-            // ⚡ Синхронизируем локальную память
-            cachedData.marketplace[key].amount = val;
-            cachedData.marketplace[key].is_edited = true;
-        }
+                            dbUpdates[`${key}/amount`] = val;
+                            dbUpdates[`${key}/is_edited`] = true;
+                            cachedData.marketplace[key].amount = val;
+                            cachedData.marketplace[key].is_edited = true;
+                        }
                     }
                 }
             });
 
-            // Отправляем пакет запросов на сервер в фоновом режиме
-            await Promise.all(promises);
+            // ⚡ Отправляем всё ОДНИМ запросом
+            if (Object.keys(dbUpdates).length > 0) {
+                await db.ref('marketplace_records').update(dbUpdates);
+            }
             
             isMpEditMode = false; 
             mpDeletions.clear();
-            
             if(btn) btn.innerHTML = "✅ СОХРАНЕНО!";
-            
-            // ⚡ ТЕПЕРЬ ОНО ЛЕТАЕТ: Перерисовка мгновенно покажет чистые новые данные!
             renderMarketplaceTab(); 
-            
-            setTimeout(() => {
-                if(btn) btn.innerHTML = origText;
-            }, 1000);
+            setTimeout(() => { if(btn) btn.innerHTML = origText; }, 1000);
         } catch(e) { 
-            if(btn) btn.innerHTML = origText; 
-            alert("❌ Ошибка: " + e.message); 
+            if(btn) btn.innerHTML = origText; alert("❌ Ошибка: " + e.message); 
         }
     }
 
@@ -3514,26 +3516,75 @@ function renderGraphsTab() {
     }
 
     async function saveMissingEdits() {
+        if (document.activeElement) document.activeElement.blur();
         const btn = document.getElementById('miss-btn-edit'); 
         let origText = btn.innerHTML;
         if(btn) btn.innerHTML = "⌛ СОХРАНЕНИЕ...";
         try {
             let promises = [];
+            let newOrdersToCreate = {}; // Для создания новых заказов, если текущих нет
+
             missingDeletions.forEach(key => promises.push(fetch(`${FB_URL}/missing_items/${key}.json`, { method: 'DELETE' })));
             
             for (let key in tempMissingStatus) {
                 if (!missingDeletions.has(key)) {
                     let missingItem = cachedData.missing[key]; 
                     let newStatus = tempMissingStatus[key];
+                    
                     if (newStatus === 'arrived' && missingItem) {
                         await autoRemoveFromStoplist(missingItem.shop, [missingItem.name]);
                     }
+                    
+                    // ⚡ ПЕРЕНОС ТОВАРА АДМИНУ В СВОД (если статус "reorder")
+                    if (newStatus === 'reorder' && missingItem) {
+                        let targetOrderKey = Object.keys(cachedData.orders).find(k => {
+                            let o = cachedData.orders[k];
+                            return o && o.shop === missingItem.shop && !o.ordered && (o.mode === 'order' || o.mode === 'new_shop');
+                        });
+                        
+                        let catItem = Object.values(cachedData.catalogOrder || {}).find(c => c && cleanName(c.name) === cleanName(missingItem.name)) || {};
+                        let newItemObj = {
+                            name: missingItem.name,
+                            qty: missingItem.qty,
+                            vendor: catItem.vendor || 'Лента',
+                            status: 'pending',
+                            bot_error: false,
+                            cat: catItem.cat || "Прочее"
+                        };
+
+                        if (targetOrderKey) {
+                            let itemsArr = Array.isArray(cachedData.orders[targetOrderKey].items) ? cachedData.orders[targetOrderKey].items : Object.values(cachedData.orders[targetOrderKey].items || {});
+                            itemsArr = itemsArr.filter(i => i && i.name !== "НЕТ ЗАКАЗА");
+                            let existing = itemsArr.find(i => cleanName(i.name) === cleanName(missingItem.name));
+                            if (!existing) {
+                                itemsArr.push(newItemObj);
+                                promises.push(fetch(`${FB_URL}/orders/${targetOrderKey}/items.json`, { method: 'PUT', body: JSON.stringify(itemsArr) }));
+                            }
+                        } else {
+                            let pseudoKey = "new_" + missingItem.shop;
+                            if(!newOrdersToCreate[pseudoKey]) {
+                                newOrdersToCreate[pseudoKey] = {
+                                    shop: missingItem.shop, mode: 'order', items: [],
+                                    comment: "Перезаказ (Админ)", timestamp: Date.now(),
+                                    svod: false, ordered: false, userId: 'admin_dashboard'
+                                };
+                            }
+                            let existing = newOrdersToCreate[pseudoKey].items.find(i => cleanName(i.name) === cleanName(missingItem.name));
+                            if (!existing) newOrdersToCreate[pseudoKey].items.push(newItemObj);
+                        }
+                    }
+
                     promises.push(fetch(`${FB_URL}/missing_items/${key}.json`, { 
                         method: 'PATCH', 
                         body: JSON.stringify({status: newStatus, timestamp: Date.now()}) 
                     }));
                 }
             }
+            
+            for (let pk in newOrdersToCreate) {
+                promises.push(fetch(`${FB_URL}/orders.json`, { method: 'POST', body: JSON.stringify(newOrdersToCreate[pk]) }));
+            }
+
             await Promise.all(promises);
             isMissingEditMode = false; 
             missingDeletions.clear(); 
@@ -3541,9 +3592,7 @@ function renderGraphsTab() {
 
             if(btn) btn.innerHTML = "✅ СОХРАНЕНО!";
             renderMissing(); 
-            setTimeout(() => {
-                if(btn) btn.innerHTML = origText;
-            }, 1000);
+            setTimeout(() => { if(btn) btn.innerHTML = origText; }, 1000);
         } catch (e) { 
             if(btn) btn.innerHTML = origText; 
             alert("❌ Ошибка при сохранении: " + e.message); 
@@ -4079,9 +4128,11 @@ function renderGraphsTab() {
     }
 
     async function saveChecklistEdits() {
+        if (document.activeElement) document.activeElement.blur(); // ⚡ Защита ввода
         let btn = document.getElementById('chk-btn-edit'); 
         let origText = btn.innerHTML;
         if(btn) btn.innerHTML = "⌛ СОХРАНЕНИЕ...";
+        
         let inputs = document.querySelectorAll('.edit-chk-input');
         let updates = {};
         
@@ -4094,6 +4145,7 @@ function renderGraphsTab() {
         });
         
         try {
+            let dbUpdates = {}; // ⚡ Пакетное обновление для Firebase
             for(let oKey in updates) {
                 let order = cachedData.orders[oKey]; 
                 if(!order) continue;
@@ -4106,18 +4158,20 @@ function renderGraphsTab() {
                         itemsArr.push({name: item, qty: updates[oKey][item], cat: "Прочее"}); 
                     }
                 }
-                await fetch(`${FB_URL}/orders/${oKey}/items.json`, {method:'PUT', body: JSON.stringify(itemsArr)});
+                dbUpdates[`${oKey}/items`] = itemsArr; // Готовим ветку для базы
+            }
+            
+            // ⚡ Отправляем ОДНИМ запросом
+            if (Object.keys(dbUpdates).length > 0) {
+                await db.ref('orders').update(dbUpdates);
             }
             
             isChecklistEditMode = false;
             if(btn) btn.innerHTML = "✅ СОХРАНЕНО!";
-            renderChecksTable(); // ⚡ Мгновенно перерисовываем
-            setTimeout(() => {
-                if(btn) btn.innerHTML = origText;
-            }, 1000);
+            renderChecksTable(); 
+            setTimeout(() => { if(btn) btn.innerHTML = origText; }, 1000);
         } catch(e) { 
-            if(btn) btn.innerHTML = origText; 
-            alert("❌ Ошибка сохранения: " + e.message); 
+            if(btn) btn.innerHTML = origText; alert("❌ Ошибка сохранения: " + e.message); 
         }
     }
 
@@ -5438,8 +5492,8 @@ async function exportGraphsToExcel() {
         renderInvoiceProducts();
     }
 
-    // ⚡ УЛЬТРА-АЛГОРИТМ УМНОГО СЛИЯНИЯ БАЗЫ БЕЗ ДУБЛИКАТОВ
-    async function saveInvoiceCatalog(btn) {
+   async function saveInvoiceCatalog(btn) {
+        if (document.activeElement) document.activeElement.blur(); // ⚡ Защита ввода
         let origText = btn.innerHTML;
         if (Object.keys(window.invoiceChanges || {}).length === 0) {
             btn.innerHTML = "✅ ИЗМЕНЕНИЙ НЕТ";
@@ -5449,56 +5503,36 @@ async function exportGraphsToExcel() {
         btn.disabled = true; btn.innerHTML = "⌛ УМНОЕ СЛИЯНИЕ БАЗЫ...";
         
         try {
-            // Выкачиваем чистую актуальную копию с сервера для горячей сверки перед записью
             let freshSnap = await fetch(`${FB_URL}/catalogs/invoices.json`).then(r => r.json()) || {};
+            let updates = {}; // ⚡ Для пакетного обновления
             let promises = [];
             
-            // ⚡ АРХИВАЦИЯ СТАРОЙ НАКЛАДНОЙ 
             if (window.isNewInvoiceUpload && Object.keys(freshSnap).length > 0) {
-                let archivePayload = {
-                    timestamp: freshSnap._meta ? freshSnap._meta.timestamp : Date.now(),
-                    items: {}
-                };
-                for(let key in freshSnap) {
-                    if(key !== '_meta') archivePayload.items[key] = freshSnap[key];
-                }
-                promises.push(fetch(`${FB_URL}/catalogs/invoices_history.json`, { 
-                    method: 'POST', 
-                    body: JSON.stringify(archivePayload) 
-                }));
-                window.isNewInvoiceUpload = false; // Сбрасываем флаг
+                let archivePayload = { timestamp: freshSnap._meta ? freshSnap._meta.timestamp : Date.now(), items: {} };
+                for(let key in freshSnap) { if(key !== '_meta') archivePayload.items[key] = freshSnap[key]; }
+                promises.push(fetch(`${FB_URL}/catalogs/invoices_history.json`, { method: 'POST', body: JSON.stringify(archivePayload) }));
+                window.isNewInvoiceUpload = false;
             }
             
             for (let id in window.invoiceChanges) {
                 let item = window.invoiceChanges[id];
                 if (item === null) {
-                    // Элемент удален
-                    promises.push(fetch(`${FB_URL}/catalogs/invoices/${id}.json`, { method: 'DELETE' }));
+                    updates[id] = null;
                 } else {
                     let cName = cleanName(item.name);
-                    // Ищем, нет ли товара с таким же чистым именем в базе
                     let existingMatchKey = Object.keys(freshSnap).find(k => freshSnap[k] && cleanName(freshSnap[k].name) === cName);
-                    
                     let targetId = existingMatchKey ? existingMatchKey : id;
                     let targetPayload = { ...item };
                     
-                    // Склеиваем фото
                     if (!targetPayload.photo && freshSnap[targetId] && freshSnap[targetId].photo) {
                         targetPayload.photo = freshSnap[targetId].photo;
                     }
-                    
-                    promises.push(fetch(`${FB_URL}/catalogs/invoices/${targetId}.json`, { 
-                        method: 'PUT', 
-                        body: JSON.stringify(targetPayload) 
-                    }));
+                    updates[targetId] = targetPayload;
                 }
             }
             
-            // ⚡ СОХРАНЯЕМ ВРЕМЯ ЗАГРУЗКИ ТЕКУЩЕЙ НАКЛАДНОЙ
-            promises.push(fetch(`${FB_URL}/catalogs/invoices/_meta.json`, { 
-                method: 'PUT', 
-                body: JSON.stringify({ timestamp: Date.now() }) 
-            }));
+            updates['_meta'] = { timestamp: Date.now() };
+            promises.push(db.ref('catalogs/invoices').update(updates)); // ⚡ Пакетное обновление
             
             await Promise.all(promises);
             window.invoiceChanges = {};
@@ -5510,8 +5544,7 @@ async function exportGraphsToExcel() {
             
             setTimeout(() => { btn.innerHTML = origText; btn.disabled = false; }, 1500);
         } catch(e) {
-            btn.innerHTML = origText; btn.disabled = false;
-            alert("Ошибка слияния данных: " + e.message);
+            btn.innerHTML = origText; btn.disabled = false; alert("Ошибка слияния: " + e.message);
         }
     }
 
@@ -5677,29 +5710,34 @@ async function exportGraphsToExcel() {
     };
 
     async function saveKnowledgeBase(btn) {
+        if (document.activeElement) document.activeElement.blur(); // ⚡ Защита ввода
         let origText = btn.innerHTML;
-        if (Object.keys(window.knowledgeChanges || {}).length === 0) { btn.innerHTML = "✅ ИЗМЕНЕНИЙ НЕТ"; setTimeout(() => btn.innerHTML = origText, 1200); return; }
+        if (Object.keys(window.knowledgeChanges || {}).length === 0) { 
+            btn.innerHTML = "✅ ИЗМЕНЕНИЙ НЕТ"; setTimeout(() => btn.innerHTML = origText, 1200); return; 
+        }
+        
         btn.disabled = true; btn.innerHTML = "⌛ СОХРАНЕНИЕ РЕГЛАМЕНТОВ...";
         try {
-            let promises = [];
+            let updates = {};
             for(let id in window.knowledgeChanges) {
-                if(window.knowledgeChanges[id] === null) {
-                    promises.push(fetch(`${FB_URL}/knowledge_base/${id}.json`, { method: 'DELETE' }));
-                } else {
-                    promises.push(fetch(`${FB_URL}/knowledge_base/${id}.json`, { method: 'PUT', body: JSON.stringify(window.knowledgeChanges[id]) }));
-                }
+                updates[id] = window.knowledgeChanges[id] === null ? null : window.knowledgeChanges[id];
             }
-            await Promise.all(promises);
+            
+            // ⚡ МГНОВЕННЫЙ ПАКЕТНЫЙ ЗАПРОС
+            await db.ref('knowledge_base').update(updates); 
+            
             window.knowledgeChanges = {};
             btn.innerHTML = "✅ ИНСТРУКЦИИ СОХРАНЕНЫ!";
             setTimeout(() => { btn.innerHTML = origText; btn.disabled = false; loadTab('knowledge_base'); }, 1200);
-        } catch(e) { btn.innerHTML = origText; btn.disabled = false; alert("Ошибка: " + e.message); }
+        } catch(e) { 
+            btn.innerHTML = origText; btn.disabled = false; alert("Ошибка: " + e.message); 
+        }
     }
 
     // ==========================================
     // ☕ ВКЛАДКА: РЕЦЕПТЫ ЭСПРЕССО
     // ==========================================
-    window.renderEspressoTab = function() {
+   window.renderEspressoTab = function() {
         const box = document.getElementById('content');
         let html = "";
         let shops = ["Бояринова", "Гагарина", "Вертолетчиков", "Липчанского", "Новокосино", "Новокосино 2", "Старое Павлино", "Красноказарменная", "Ухтомского ополчения"];
@@ -5709,58 +5747,74 @@ async function exportGraphsToExcel() {
         let defaultData = espressoData.default || { current: {}, history: {} };
         let overridesData = espressoData.overrides || {};
         
-        // ⚡ Генерируем выпадающий список Базы знаний
         let kbOptions = `<option value="">-- Без инструкции --</option>`;
         Object.keys(kbData).forEach(k => {
             kbOptions += `<option value="${k}">${kbData[k].title}</option>`;
         });
 
-        // Генерируем список кофеен для создания исключений
-        let overrideOpts = shops.filter(s => !overridesData[s]).map(s => `<option value="${s}">${s}</option>`).join('');
-        
         let isActionsOpen = expandedDivs.has('esp-actions');
 
-        // ⚡ ЗАКРЕПЛЯЕМ ПАНЕЛЬ ДЕЙСТВИЙ И КНОПКИ СОХРАНЕНИЯ НАВЕРХУ
-        let actionBarHtml = `
+        // ⚡ ЗАКРЕПЛЯЕМ ПАНЕЛЬ ДЕЙСТВИЙ
+        setupUniversalActionBar(`
             <div class="cat-group-header" style="padding: 10px 15px; border-radius: 12px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 8px rgba(0,0,0,0.05);" onclick="toggleCatElements('esp-actions', 'arrow_esp_actions')">
                 <span style="font-size:16px; color:#4A148C; font-weight:900;">⚡ Настройки Эспрессо</span>
                 <span id="arrow_esp_actions">${isActionsOpen ? '▲' : '▼'}</span>
             </div>
             <div class="esp-actions action-container sticky-action-panel action-panel-dropdown" style="display: ${isActionsOpen ? 'flex' : 'none'}; flex-wrap:wrap; margin-top:10px; gap:10px;">
+                <button onclick="addEspressoOverrideUI()" class="btn-add" style="flex:1 1 auto;">➕ Создать новое исключение</button>
                 <button class="btn-save" style="flex:1 1 auto; background: linear-gradient(135deg, #0288D1 0%, #01579B 100%);" onclick="saveEspressoAll(this)">💾 Сохранить ВСЕ рецепты</button>
-                ${overrideOpts ? `
-                <div style="flex:1 1 auto; display:flex; gap:10px; align-items:stretch;">
-                    <select id="new-override-shop" style="padding:10px; border-radius:8px; border:1px solid #D1C4E9; flex:1; font-weight:bold; font-size:14px; outline:none; background:white;">${overrideOpts}</select>
-                    <button onclick="addEspressoOverride()" class="btn-add" style="margin:0;">➕ Создать исключение</button>
-                </div>` : ''}
             </div>
-        `;
-        
-        setupUniversalActionBar(actionBarHtml, isActionsOpen, 'arrow_esp_actions');
+        `, isActionsOpen, 'arrow_esp_actions');
         
         // Рендерим общий рецепт
         html += renderEspressoBlock('default', ' ОБЩИЙ РЕЦЕПТ', defaultData, true, kbOptions);
         
-        // Рендерим исключения
+        // Рендерим уже созданные исключения
         Object.keys(overridesData).forEach(shop => {
              html += renderEspressoBlock(shop, ` ИСКЛЮЧЕНИЕ: ${shop === 'Красноказарменная' ? 'МЭИ' : shop}`, overridesData[shop], false, kbOptions);
+        });
+
+        // ⚡ Рендерим НОВЫЕ "пустые" исключения с выбором адреса
+        let availShops = shops.filter(s => !overridesData[s]);
+        (window.state?.tempEspressoOverrides || []).forEach(temp => {
+            let selectHtml = `<select class="temp-esp-shop" data-tempid="${temp.tempId}" style="padding:6px; font-size:16px; font-weight:bold; border-radius:6px; border:2px solid #e65100; color:#e65100; outline:none; margin-left:10px;">
+                <option value="">-- Выберите адрес --</option>
+                ${availShops.map(s => `<option value="${s}">${s === 'Красноказарменная' ? 'МЭИ' : s}</option>`).join('')}
+            </select>`;
+            html += renderEspressoBlock(temp.tempId, `НОВОЕ ИСКЛЮЧЕНИЕ: ${selectHtml}`, {current_double:{}, current_single:{}}, false, kbOptions, true);
         });
 
         box.innerHTML = html;
     }
 
-   function renderEspressoBlock(shopKey, title, sData, isDefault, kbOptions) {
+    // ⚡ Кнопка: добавляет пустой шаблон в интерфейс
+    window.addEspressoOverrideUI = function() {
+        if (!window.state) window.state = {};
+        if (!window.state.tempEspressoOverrides) window.state.tempEspressoOverrides = [];
+        window.state.tempEspressoOverrides.push({ tempId: 'temp_' + Date.now() });
+        renderEspressoTab();
+    };
+
+    window.removeTempEspressoOverride = function(tempId) {
+        window.state.tempEspressoOverrides = window.state.tempEspressoOverrides.filter(t => t.tempId !== tempId);
+        renderEspressoTab();
+    };
+
+    function renderEspressoBlock(shopKey, title, sData, isDefault, kbOptions, isTemp = false) {
         let currD = sData.current_double || sData.current || { in: "", out: "", time: "", result: "", roast: "", brand: "" };
         let currS = sData.current_single || { in: "", out: "", time: "", result: "", roast: "", brand: "" };
         let linkedKb = sData.linked_kb_id || ""; 
         
         let safeShop = getSafeId('esp_' + shopKey);
-        let isOpen = expandedDivs.has(safeShop) || isDefault; 
+        let isOpen = expandedDivs.has(safeShop) || isDefault || isTemp; 
         if(isDefault) expandedDivs.add(safeShop);
 
         let bgHeader = isDefault ? '#c5cae9' : '#ffcc80';
         let colorTitle = isDefault ? '#1a237e' : '#e65100';
-        let delBtn = isDefault ? '' : `<button onclick="deleteEspressoOverride('${shopKey}')" style="float:right; background:#e53935; color:#fff; border:none; padding:4px 10px; border-radius:6px; font-weight:bold; cursor:pointer; margin-right:15px;">🗑 Удалить исключение</button>`;
+        
+        let delBtn = isDefault ? '' : (isTemp ? 
+            `<button onclick="removeTempEspressoOverride('${shopKey}')" style="float:right; background:#e53935; color:#fff; border:none; padding:4px 10px; border-radius:6px; font-weight:bold; cursor:pointer; margin-right:15px;">🗑 Отменить</button>` :
+            `<button onclick="deleteEspressoOverride('${shopKey}')" style="float:right; background:#e53935; color:#fff; border:none; padding:4px 10px; border-radius:6px; font-weight:bold; cursor:pointer; margin-right:15px;">🗑 Удалить исключение</button>`);
 
         let specificKbOptions = kbOptions.replace(`value="${linkedKb}"`, `value="${linkedKb}" selected`);
 
@@ -5794,14 +5848,12 @@ async function exportGraphsToExcel() {
             ${delBtn}
         </div>
         <div class="esp_box_${safeShop}" style="display:${isOpen ? 'block' : 'none'}; padding:15px; background:white; border-radius: 0 0 12px 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.05); margin-bottom:10px; border:2px solid ${bgHeader}; border-top:none;">
-            
             <div style="margin-bottom:15px; padding:10px; background:#f5f5f5; border-radius:8px; border:1px dashed #ccc;">
                 <b style="font-size:14px; color:#311b92;">📖 Прикрепить инструкцию из Базы знаний:</b>
                 <select id="esp_kb_${safeShop}" style="width:100%; padding:8px; margin-top:5px; border-radius:6px; border:1px solid #7E57C2;">
                     ${specificKbOptions}
                 </select>
             </div>
-
             <div style="display:flex; gap:15px; flex-wrap:wrap; margin-bottom:5px;">
                 ${createTable('espd', 'Двойной эспрессо', currD)}
                 ${createTable('esps', 'Одинарный эспрессо', currS)}
@@ -5809,14 +5861,15 @@ async function exportGraphsToExcel() {
         </div>`;
     }
 
+    // ⚡ ЕДИНАЯ КНОПКА СОХРАНЕНИЯ ВСЕГО (заменяет старую `saveEspresso`)
     window.saveEspressoAll = async function(btn) {
+        if (document.activeElement) document.activeElement.blur();
         let origText = btn.innerHTML;
         btn.disabled = true;
         btn.innerHTML = "⏳ СОХРАНЕНИЕ...";
 
         let updates = {};
 
-        // Вспомогательная функция для сбора данных с одной карточки
         const parseBlock = (shopKey) => {
             let safeId = getSafeId('esp_' + shopKey);
             if (!document.getElementById(`espd_in_${safeId}`)) return null;
@@ -5831,16 +5884,14 @@ async function exportGraphsToExcel() {
                 timestamp: Date.now()
             });
 
-            let kbId = document.getElementById(`esp_kb_${safeId}`).value;
-
             return {
                 current_double: getVals('espd'),
                 current_single: getVals('esps'),
-                linked_kb_id: kbId
+                linked_kb_id: document.getElementById(`esp_kb_${safeId}`).value
             };
         };
 
-        // 1. Собираем Общий рецепт
+        // 1. Общий рецепт
         let defaultData = parseBlock('default');
         if (defaultData) {
             updates['default/current_double'] = defaultData.current_double;
@@ -5848,7 +5899,7 @@ async function exportGraphsToExcel() {
             updates['default/linked_kb_id'] = defaultData.linked_kb_id;
         }
 
-        // 2. Собираем все Исключения (если они есть)
+        // 2. Старые исключения
         let overridesData = (cachedData.espresso && cachedData.espresso.overrides) ? cachedData.espresso.overrides : {};
         Object.keys(overridesData).forEach(shop => {
             let shopData = parseBlock(shop);
@@ -5859,6 +5910,28 @@ async function exportGraphsToExcel() {
             }
         });
 
+        // 3. НОВЫЕ исключения
+        let hasErrors = false;
+        (window.state?.tempEspressoOverrides || []).forEach(temp => {
+            let selectEl = document.querySelector(`.temp-esp-shop[data-tempid="${temp.tempId}"]`);
+            if (selectEl && selectEl.value) {
+                let shopData = parseBlock(temp.tempId);
+                if (shopData) {
+                    updates[`overrides/${selectEl.value}/current_double`] = shopData.current_double;
+                    updates[`overrides/${selectEl.value}/current_single`] = shopData.current_single;
+                    updates[`overrides/${selectEl.value}/linked_kb_id`] = shopData.linked_kb_id;
+                }
+            } else if (selectEl && !selectEl.value) {
+                hasErrors = true;
+            }
+        });
+        
+        if (hasErrors) {
+            alert("Пожалуйста, выберите адрес для нового исключения (или отмените его)!");
+            btn.innerHTML = origText; btn.disabled = false;
+            return;
+        }
+
         showReportOverlay("Сохранение всех рецептов...");
         try {
             await fetch(`${FB_URL}/espresso_recipes.json`, { method: 'PATCH', body: JSON.stringify(updates) });
@@ -5866,6 +5939,8 @@ async function exportGraphsToExcel() {
             let fresh = await fetch(`${FB_URL}/espresso_recipes.json`).then(r=>r.json());
             cachedData.espresso = fresh;
             saveToCache('espresso_recipes', fresh);
+            
+            window.state.tempEspressoOverrides = []; // Очищаем временные шаблоны
             
             hideReportOverlay();
             btn.innerHTML = "✅ СОХРАНЕНО!";
@@ -5875,11 +5950,9 @@ async function exportGraphsToExcel() {
                 btn.disabled = false;
                 renderEspressoTab(); 
             }, 1500);
-
         } catch(e) {
             hideReportOverlay();
-            btn.innerHTML = origText;
-            btn.disabled = false;
+            btn.innerHTML = origText; btn.disabled = false;
             alert("❌ Ошибка: " + e.message);
         }
     }
@@ -6411,8 +6484,9 @@ window.onload = () => {
     }
 
     async function saveMenu(btn) {
-        let origText = btn.innerHTML;
+        if (document.activeElement) document.activeElement.blur(); // ⚡ Сбрасываем фокус, чтобы зафиксировать ввод
         
+        let origText = btn.innerHTML;
         if (Object.keys(menuChanges).length === 0) {
             btn.innerHTML = "✅ ИЗМЕНЕНИЙ НЕТ";
             setTimeout(() => { if(btn) btn.innerHTML = origText; }, 1500);
@@ -6423,17 +6497,13 @@ window.onload = () => {
         btn.innerHTML = "⏳ СОХРАНЕНИЕ МЕНЮ...";
         
         try {
-            let promises = [];
-            
+            let updates = {};
             for (let id in menuChanges) {
-                let safeDrink = JSON.parse(JSON.stringify(menuChanges[id]));
-                promises.push(fetch(`${FB_URL}/catalogs/menu/${id}.json`, { 
-                    method: 'PUT', 
-                    body: JSON.stringify(safeDrink) 
-                }));
+                updates[id] = menuChanges[id] === null ? null : menuChanges[id];
             }
             
-            await Promise.all(promises);
+            // ⚡ МГНОВЕННЫЙ ПАКЕТНЫЙ ЗАПРОС
+            await db.ref('catalogs/menu').update(updates);
 
             menuChanges = {}; 
             btn.innerHTML = "✅ СОХРАНЕНО!";
@@ -6445,10 +6515,7 @@ window.onload = () => {
                 }
             }, 1500);
         } catch(e) {
-            if(btn) {
-                btn.innerHTML = origText;
-                btn.disabled = false;
-            }
+            if(btn) { btn.innerHTML = origText; btn.disabled = false; }
             alert("❌ Ошибка сохранения меню: " + e.message);
         }
     }

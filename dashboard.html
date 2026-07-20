@@ -1004,70 +1004,85 @@ function toggleSvodDate(safeDate) {
     // ПРАВКА 3: АВТО-СИНХРОНИЗАЦИЯ СТОП-ЛИСТА С ТЕХ. КАРТАМИ
     // ==========================================
     window.syncStoplistWithMenu = async function() {
-        let seasonChoice = prompt("Введите название глобальной категории из меню (например: Сезонное меню), из которой нужно подтянуть продукты:", "Сезонное меню");
+        let seasonChoice = prompt("Введите название глобальной категории из меню (например: Сезонное меню), из которой нужно подтянуть продукты:", "Летнее меню 2026");
         if (!seasonChoice) return;
         seasonChoice = seasonChoice.trim();
 
         showReportOverlay("Анализ техкарт...");
         try {
-            // ⚡ Прямой запрос актуальных данных для справочников
-            const rawFetch = typeof originalFetch !== 'undefined' ? originalFetch : fetch;
-            
-            let [resMenu, resOrd, resChk] = await Promise.all([
-                rawFetch(`${FB_URL}/catalogs/menu.json`).then(r => r.json()).catch(() => ({})),
-                rawFetch(`${FB_URL}/catalogs/order.json`).then(r => r.json()).catch(() => ({})),
-                rawFetch(`${FB_URL}/catalogs/checklist.json`).then(r => r.json()).catch(() => ({}))
+            // ⚡ БЕЗОТКАЗНЫЙ МЕТОД: Читаем напрямую через Firebase SDK (никаких fetch, которые могут блокироваться Telegram)
+            let [snapMenu, snapOrd, snapChk] = await Promise.all([
+                db.ref('catalogs/menu').once('value'),
+                db.ref('catalogs/order').once('value'),
+                db.ref('catalogs/checklist').once('value')
             ]);
             
-            let menuData = resMenu || {};
-            let ordData = resOrd || {};
-            let chkData = resChk || {};
+            let menuData = snapMenu.val() || {};
+            let ordData = snapOrd.val() || {};
+            let chkData = snapChk.val() || {};
 
             let seasonIngredients = {};
+            let exactGlobalCat = seasonChoice; 
+            let drinksCount = 0;
 
-            // 1. Ищем ингредиенты ТОЛЬКО в выбранной глобальной категории меню (seasonChoice)
+            // 1. Ищем ингредиенты в меню
             Object.values(menuData).forEach(drink => {
                 if (!drink || !drink.name) return;
                 
                 let gc = drink.globalCat || "Основное меню";
-                if (gc.toLowerCase() !== seasonChoice.toLowerCase()) return; 
-                
-                let blocks = drink.blocks || [drink.recipe || []];
-                blocks.forEach(block => {
-                    if (!block) return;
-                    block.forEach(ingredient => {
-                        if (!ingredient || !ingredient.name) return;
-                        
-                        let ingName = ingredient.name.trim();
-                        if (!seasonIngredients[ingName]) seasonIngredients[ingName] = new Set();
-                        seasonIngredients[ingName].add(drink.name); // Привязываем напитки к продукту
+                // Ищем совпадение без учета больших/маленьких букв
+                if (gc.toLowerCase() === seasonChoice.toLowerCase()) {
+                    exactGlobalCat = gc; // Запоминаем правильный регистр папки (как она записана в базе)
+                    drinksCount++;
+                    
+                    let blocks = drink.blocks || [drink.recipe || []];
+                    blocks.forEach(block => {
+                        if (!block) return;
+                        block.forEach(ingredient => {
+                            if (!ingredient || !ingredient.name) return;
+                            let ingName = ingredient.name.trim();
+                            if (!seasonIngredients[ingName]) seasonIngredients[ingName] = new Set();
+                            seasonIngredients[ingName].add(drink.name);
+                        });
                     });
-                });
+                }
             });
 
-            // 2. Добавляем или дополняем строки в текущем стоп-листе
+            // Защита: Если напитков вообще не найдено
+            if (drinksCount === 0) {
+                hideReportOverlay();
+                alert(`❌ Ошибка: В разделе "Меню и Техкарты" не найдено ни одного напитка в категории "${seasonChoice}".\nПроверьте, правильно ли написано название категории!`);
+                return;
+            }
+
+            // Уточняем регистр папки по существующему стоп-листу (чтобы точно попасть в уже открытую папку)
+            Object.values(currentCatalog).forEach(c => {
+                if (c && c.globalCat && c.globalCat.toLowerCase() === seasonChoice.toLowerCase()) {
+                    exactGlobalCat = c.globalCat;
+                }
+            });
+
             let changes = 0;
             let added = 0;
 
             if (!window.catalogChanges) window.catalogChanges = {};
 
+            // 2. Добавляем или дополняем строки
             for (let prodName in seasonIngredients) {
                 let seasonDrinksStr = Array.from(seasonIngredients[prodName]).sort().join(", ");
                 
-                // ⚡ УМНЫЙ ПОИСК КАТЕГОРИИ: Сначала ищем в Закупке, если нет - ищем в Чек-листах
+                // Ищем категорию в Закупках, затем в Чек-листах
                 let catName = "Прочее";
                 let foundInOrder = Object.values(ordData).find(c => c && cleanName(c.name) === cleanName(prodName));
                 let foundInChk = Object.values(chkData).find(c => c && cleanName(c.name) === cleanName(prodName));
                 
-                if (foundInOrder && foundInOrder.cat) {
-                    catName = foundInOrder.cat;
-                } else if (foundInChk && foundInChk.cat) {
-                    catName = foundInChk.cat;
-                }
+                if (foundInOrder && foundInOrder.cat) catName = foundInOrder.cat;
+                else if (foundInChk && foundInChk.cat) catName = foundInChk.cat;
                 
+                // Жесткая проверка: если в названии есть сироп, принудительно ставим категорию Сиропы
                 if (prodName.toLowerCase().includes("сироп")) catName = "Сиропы";
 
-                // Ищем, есть ли уже ЭТОТ продукт внутри ЭТОЙ глобальной категории в стоп-листе
+                // Ищем, есть ли уже этот продукт внутри этой глобальной категории стоп-листа
                 let existingKey = Object.keys(currentCatalog).find(k => 
                     currentCatalog[k] && 
                     cleanName(currentCatalog[k].name) === cleanName(prodName) &&
@@ -1075,7 +1090,7 @@ function toggleSvodDate(safeDate) {
                 );
 
                 if (existingKey) {
-                    // Если продукт уже есть в этой глобальной категории — просто обновляем список напитков (вдруг добавились новые) и уточняем подкатегорию
+                    // Если есть — обновляем список напитков (вдруг добавились) и подкатегорию (вдруг она нашлась в чек-листах)
                     if (currentCatalog[existingKey].sez !== seasonDrinksStr || currentCatalog[existingKey].cat !== catName) {
                         currentCatalog[existingKey].sez = seasonDrinksStr;
                         currentCatalog[existingKey].cat = catName;
@@ -1083,10 +1098,10 @@ function toggleSvodDate(safeDate) {
                         changes++;
                     }
                 } else {
-                    // Если продукта нет — создаем новую строку (или целую новую глоб. категорию, если её еще не было)
-                    let newId = "stop_auto_s_" + Date.now() + Math.floor(Math.random() * 10000);
+                    // Если нет — создаем новую строчку
+                    let newId = "stop_auto_s_" + Date.now() + "_" + Math.random().toString(36).substr(2, 6);
                     currentCatalog[newId] = {
-                        globalCat: seasonChoice, 
+                        globalCat: exactGlobalCat, 
                         cat: catName,
                         name: prodName,
                         sez: seasonDrinksStr,
@@ -1101,10 +1116,10 @@ function toggleSvodDate(safeDate) {
             hideReportOverlay();
             
             if (changes > 0) {
-                alert(`✅ Синхронизация успешно завершена!\n\nГлобальная категория: "${seasonChoice}"\nВсего найдено продуктов: ${Object.keys(seasonIngredients).length}\nДобавлено новых строк (пропущенных): ${added}\n\nНе забудьте нажать "💾 Сохранить в базу".`);
+                alert(`✅ Синхронизация успешна!\n\nКатегория: "${exactGlobalCat}"\nНапитков обработано: ${drinksCount}\nНайдено ингредиентов: ${Object.keys(seasonIngredients).length}\nДобавлено новых строк в стоп-лист: ${added}\n\nНе забудьте нажать "💾 Сохранить в базу".`);
                 renderCatalogStoplist();
             } else {
-                alert(`ℹ️ Нет новых данных для добавления.\nВ категории "${seasonChoice}" найдено продуктов: ${Object.keys(seasonIngredients).length}, и все они уже присутствуют в справочнике стоп-листа с актуальными напитками.`);
+                alert(`ℹ️ Нет новых данных.\nВ категории "${exactGlobalCat}" обработано напитков: ${drinksCount}, найдено ингредиентов: ${Object.keys(seasonIngredients).length}.\nВсе они уже присутствуют в стоп-листе.`);
             }
             
         } catch (e) {

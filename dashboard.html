@@ -5946,7 +5946,7 @@ async function exportGraphsToExcel() {
 
     // ⚡ ЕДИНАЯ КНОПКА СОХРАНЕНИЯ ВСЕГО (заменяет старую `saveEspresso`)
    window.saveEspressoAll = async function(btn) {
-        // ⚡ Снимаем фокус с инпутов, чтобы браузер зафиксировал последние введенные цифры
+        // ⚡ Снимаем фокус с инпутов, чтобы зафиксировать последние введенные цифры
         if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
         await new Promise(r => setTimeout(r, 50));
 
@@ -5977,7 +5977,7 @@ async function exportGraphsToExcel() {
             };
         };
 
-        // 1. Общий рецепт
+        // 1. Собираем Общий рецепт
         let defaultData = parseBlock('default');
         if (defaultData) {
             updates['default/current_double'] = defaultData.current_double;
@@ -5985,7 +5985,7 @@ async function exportGraphsToExcel() {
             updates['default/linked_kb_id'] = defaultData.linked_kb_id;
         }
 
-        // 2. Старые исключения
+        // 2. Собираем старые исключения
         let overridesData = (cachedData.espresso && cachedData.espresso.overrides) ? cachedData.espresso.overrides : {};
         Object.keys(overridesData).forEach(shop => {
             let shopData = parseBlock(shop);
@@ -5996,7 +5996,7 @@ async function exportGraphsToExcel() {
             }
         });
 
-        // 3. НОВЫЕ исключения
+        // 3. Собираем НОВЫЕ исключения
         let hasErrors = false;
         (window.state?.tempEspressoOverrides || []).forEach(temp => {
             let selectEl = document.querySelector(`.temp-esp-shop[data-tempid="${temp.tempId}"]`);
@@ -6018,32 +6018,36 @@ async function exportGraphsToExcel() {
             return;
         }
 
-        showReportOverlay("Сохранение всех рецептов...");
         try {
-            // ⚡ Используем прямой и безотказный HTTP запрос
             const rawFetch = typeof originalFetch !== 'undefined' ? originalFetch : fetch;
+            
+            // ⚡ Отправляем только точечные изменения и ЖДЕМ только их (это занимает 0.1 сек)
             let res = await rawFetch(`${FB_URL}/espresso_recipes.json`, { 
                 method: 'PATCH', 
                 body: JSON.stringify(updates) 
             });
+            
             if(!res.ok) throw new Error("Сетевая ошибка");
-            
-            let fresh = await rawFetch(`${FB_URL}/espresso_recipes.json`).then(r=>r.json());
-            cachedData.espresso = fresh;
-            saveToCache('espresso_recipes', fresh);
-            
-            window.state.tempEspressoOverrides = []; // Очищаем временные шаблоны
-            
-            hideReportOverlay();
+
+            // ⚡ МГНОВЕННЫЙ ОТВЕТ: сразу показываем успех и разблокируем интерфейс
             btn.innerHTML = "✅ СОХРАНЕНО!";
+            window.state.tempEspressoOverrides = []; 
             
+            // ⚡ Фоновое скачивание всей базы для кэша (не тормозит экран и вас не блокирует)
+            rawFetch(`${FB_URL}/espresso_recipes.json`)
+                .then(r => r.json())
+                .then(fresh => {
+                    cachedData.espresso = fresh;
+                    saveToCache('espresso_recipes', fresh);
+                }).catch(()=>{});
+
             setTimeout(() => {
                 btn.innerHTML = origText;
                 btn.disabled = false;
                 renderEspressoTab(); 
-            }, 1500);
+            }, 1000);
+            
         } catch(e) {
-            hideReportOverlay();
             btn.innerHTML = origText; btn.disabled = false;
             alert("❌ Ошибка: " + e.message);
         }
@@ -6078,17 +6082,19 @@ async function exportGraphsToExcel() {
     
     window.deleteEspressoOverride = async function(shop) {
         if (!confirm(`Удалить исключение для ${shop}? Рецепт вернется к общему.`)) return;
-        showReportOverlay("Удаление...");
+        
         try {
-            await fetch(`${FB_URL}/espresso_recipes/overrides/${shop}.json`, { method: 'DELETE' });
-            let fresh = await fetch(`${FB_URL}/espresso_recipes.json`).then(r=>r.json());
-            cachedData.espresso = fresh;
-            saveToCache('espresso_recipes', fresh);
+            // ⚡ Удаляем напрямую и мгновенно, без белого экрана
+            const rawFetch = typeof originalFetch !== 'undefined' ? originalFetch : fetch;
+            await rawFetch(`${FB_URL}/espresso_recipes/overrides/${shop}.json`, { method: 'DELETE' });
+            
+            // Удаляем визуально из локального кэша и сразу перерисовываем
+            if (cachedData.espresso && cachedData.espresso.overrides) {
+                delete cachedData.espresso.overrides[shop];
+            }
             renderEspressoTab();
-            hideReportOverlay();
         } catch(e) {
-            hideReportOverlay();
-            alert(e.message);
+            alert("Ошибка при удалении: " + e.message);
         }
     }
 

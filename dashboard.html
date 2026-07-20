@@ -1361,17 +1361,28 @@ function toggleSvodDate(safeDate) {
             }
             else if (type === 'checks_table') {
                 isChecklistEditMode = false; 
-                let [resCheck, resOrders] = await Promise.all([
+                // ⚡ ФИКС: Теперь мы принудительно подгружаем настройки (resSettings) при открытии вкладки
+                let [resCheck, resOrders, resSettings] = await Promise.all([
                     fetchOptimistic('catalogs/checklist'), 
-                    fetchOptimistic('orders')
+                    fetchOptimistic('orders'),
+                    fetchOptimistic('settings')
                 ]);
                 if (currentTabType !== fetchId) return;
+                
                 cachedData.catalog = resCheck;
+                
+                // ⚡ Применяем настройки скрытия, чтобы вкладка знала, что прятать
+                appSettings = resSettings || {};
+                if (!appSettings.hidden_categories_checklist) {
+                    appSettings.hidden_categories_checklist = appSettings.hidden_categories || {};
+                }
+                
                 let ordersObj = resOrders;
                 Object.keys(ordersObj).forEach(k => { if (ordersObj[k]) ordersObj[k].key = k; });
                 cachedData.orders = ordersObj;
                 renderChecksTable();
             }
+                
             else if (type === 'catalog_order') {
                 isNewShopCatalog = false; currentPath = "catalogs/order";
                 let [res, setRes] = await Promise.all([
@@ -1863,7 +1874,7 @@ function toggleSvodDate(safeDate) {
         recalcSvodTotals();
     }
 
-    function addSvodRowUI(btn, dateStr, shop, safeShopDate, safeDate) {
+   function addSvodRowUI(btn, dateStr, shop, safeShopDate, safeDate) {
         let vendorOptions = ["Лента", "Озон", "Купер", "Wildberries", "Самокат", "METRO"].map(v => `<option value="${v}">${v}</option>`).join('');
 
         let tr = document.createElement('tr');
@@ -1873,9 +1884,9 @@ function toggleSvodDate(safeDate) {
         tr.innerHTML = `
             <td style="text-align:center; font-weight:bold; color:#4caf50; font-size:18px;">+</td>
             <td style="padding-left:15px;">
-                <input type="text" list="svod_items_list" class="new-svod-name" data-date="${dateStr}" data-shop="${shop.replace(/"/g, '&quot;')}" placeholder="Поиск товара..." style="font-size:14px; padding:6px; width:100%; border:2px solid #4caf50; font-weight:bold; background:#212121; color:#fff;" oninput="updateNewRowVendorAndPrice(this)">
+                <input type="text" list="svod_items_list" class="new-svod-name" data-date="${dateStr}" data-shop="${shop.replace(/"/g, '&quot;')}" placeholder="Поиск товара..." style="font-size:15px; padding:6px; width:100%; border:2px solid #4caf50; font-weight:500; background:#212121; color:#fff;" oninput="updateNewRowVendorAndPrice(this)">
             </td>
-            <td style="text-align:center;">
+            <td style="text-align:left;">
                 <input type="number" class="new-svod-qty" value="1" oninput="recalcSvodTotals()" style="width:70px; text-align:center; font-size:15px; font-weight:bold; border:2px solid #4caf50; border-radius:6px; padding:4px;">
             </td>
             <td style="text-align:center;">
@@ -2548,7 +2559,7 @@ async function renderOrdersSvod() {
                     
         if (isSvodEditMode) html += `<div style="margin-bottom:24px; padding:16px 20px; background:var(--bg-paper); color:var(--brand-olive); border-radius:12px; font-size:13px; border: 1px solid var(--border-light);">Режим редактирования активен. Изменения статусов сохраняются мгновенно.</div>`;
         
-        html += `<table style='margin-bottom:0;'><tr><th style="width:40px; text-align:center;">#</th><th>Номенклатура</th><th style="text-align:center; width:100px;">Кол-во</th><th style="text-align:center; width:150px;">Статус</th><th style="width:180px;">Поставщик</th><th style="text-align:center; width:120px;">${isSvodEditMode ? 'Опции' : 'Действие'}</th></tr>`;
+       html += `<table style='margin-bottom:0;'><tr><th style="width:40px; text-align:center;">#</th><th>Номенклатура</th><th style="text-align:left; width:80px;">Кол-во</th><th style="text-align:center; width:150px;">Статус</th><th style="width:180px;">Поставщик</th><th style="text-align:center; width:120px;">${isSvodEditMode ? 'Опции' : 'Действие'}</th></tr>`;
         
         if (sortedDates.length === 0) {
             html += `<tr><td colspan="6" style="text-align:center; padding:60px; color:var(--text-muted);">Нет заказов для отображения</td></tr>`;
@@ -2646,30 +2657,30 @@ async function renderOrdersSvod() {
                             let displayVendorCell = isSvodEditMode ? `<select class="edit-svod-vendor-select" data-shop="${htmlShop}" data-item="${htmlName}" data-date="${dateStr}" onchange="markSvodVendorChange('${dateStr}', '${jsShop}', '${jsName}', this.value)" ${isDeleted ? 'disabled' : ''} style="padding:6px; font-size:13px;">${!["лента", "озон", "купер", "wildberries", "самокат", "metro", "купер (авто)"].includes(actualVendor.toLowerCase()) ? `<option value="${actualVendor}" selected>${actualVendor}</option>` : ''}${["Лента", "Озон", "Купер", "Wildberries", "Самокат", "METRO"].map(v => `<option value="${v}" ${v.toLowerCase() === actualVendor.toLowerCase() ? 'selected' : ''}>${v}</option>`).join('')}</select>` : actualVendor;
 
                             if (isSvodEditMode) {
-                                statusBadge = `<span class="badge-editorial ${badgeClass}" style="cursor:pointer;" onclick="instantStatusToggle('${dateStr}', '${jsShop}', '${jsName}', '${itemStatus}')">${statusText}</span>`;
-                                html += `
-                                <tr class="svod-row svoditem_${safeShopDate} svodlvl3_of_${safeDate}" style="display:${displayShop}; opacity: ${isDeleted ? '0.4' : '1'};">
-                                    <td style="text-align:center; color:var(--text-muted); font-size:12px;">${itemIndex}</td>
-                                    <td>
-                                        <div style="font-weight:500; margin-bottom:6px;">${name} ${repeatBadge}</div>
-                                        <select class="edit-svod-shop-select" data-original-shop="${htmlShop}" data-item="${htmlName}" data-date="${dateStr}" style="font-size: 12px; padding: 6px; width: 100%;" onchange="markSvodShopChange('${dateStr}', '${jsShop}', '${jsName}', this.value)" ${isDeleted ? 'disabled' : ''}>${shopListAll.map(sName => `<option value="${sName}" ${sName === actualShop ? 'selected' : ''}>${sName}</option>`).join('')}</select>
-                                    </td>
-                                    <td style="text-align:center;"><input type="number" class="edit-svod-input" data-date="${dateStr}" data-shop="${htmlShop}" data-item="${htmlName}" data-vendor="${actualVendor}" data-price="${finalPrice}" data-deleted="${isDeleted}" data-status="${itemStatus}" value="${actualQty}" ${isDeleted ? 'disabled' : ''} oninput="recalcSvodTotals()" style="width: 60px; text-align: center; padding: 6px;"></td>
-                                    <td style="text-align:center;">${statusBadge}</td>
-                                    <td style="font-size:13px;">${displayVendorCell}</td>
-                                    <td style="text-align:center;"><button class="btn-del" ${isDeleted ? 'disabled' : ''} onclick="markSvodDelete(this, '${dateStr}', '${jsShop}', '${jsName}')">Удалить</button></td>
-                                </tr>`;
-                            } else {
-                                html += `
-                                <tr class="svod-row svoditem_${safeShopDate} svodlvl3_of_${safeDate}" style="display:${displayShop}; ${isRepeat ? customRowBg : ''}">
-                                    <td style="text-align:center; color:var(--text-muted); font-size:12px;">${itemIndex}</td>
-                                    <td><span style="font-weight:500;">${name}</span> ${repeatBadge}</td>
-                                    <td style="text-align:center; font-weight:600; font-family:var(--font-fashion); font-size:18px;">${actualQty}</td>
-                                    <td style="text-align:center;">${statusBadge}</td>
-                                    <td style="font-size:13px; color:var(--text-muted);">${displayVendorCell}</td>
-                                    <td style="text-align:center;">${linksHtml}</td>
-                                </tr>`;
-                            }
+                                    statusBadge = `<span class="badge-editorial ${badgeClass}" style="cursor:pointer;" onclick="instantStatusToggle('${dateStr}', '${jsShop}', '${jsName}', '${itemStatus}')">${statusText}</span>`;
+                                    html += `
+                                    <tr class="svod-row svoditem_${safeShopDate} svodlvl3_of_${safeDate}" style="display:${displayShop}; opacity: ${isDeleted ? '0.4' : '1'};">
+                                        <td style="text-align:center; color:var(--text-muted); font-size:12px;">${itemIndex}</td>
+                                        <td>
+                                            <div style="font-weight:500; margin-bottom:6px;">${name} ${repeatBadge}</div>
+                                            <select class="edit-svod-shop-select" data-original-shop="${htmlShop}" data-item="${htmlName}" data-date="${dateStr}" style="font-size: 12px; padding: 6px; width: 100%;" onchange="markSvodShopChange('${dateStr}', '${jsShop}', '${jsName}', this.value)" ${isDeleted ? 'disabled' : ''}>${shopListAll.map(sName => `<option value="${sName}" ${sName === actualShop ? 'selected' : ''}>${sName}</option>`).join('')}</select>
+                                        </td>
+                                        <td style="text-align:left;"><input type="number" class="edit-svod-input" data-date="${dateStr}" data-shop="${htmlShop}" data-item="${htmlName}" data-vendor="${actualVendor}" data-price="${finalPrice}" data-deleted="${isDeleted}" data-status="${itemStatus}" value="${actualQty}" ${isDeleted ? 'disabled' : ''} oninput="recalcSvodTotals()" style="width: 60px; text-align: center; padding: 6px; font-weight:bold; font-size:15px;"></td>
+                                        <td style="text-align:center;">${statusBadge}</td>
+                                        <td style="font-size:13px;">${displayVendorCell}</td>
+                                        <td style="text-align:center;"><button class="btn-del" ${isDeleted ? 'disabled' : ''} onclick="markSvodDelete(this, '${dateStr}', '${jsShop}', '${jsName}')">Удалить</button></td>
+                                    </tr>`;
+                                } else {
+                                    html += `
+                                    <tr class="svod-row svoditem_${safeShopDate} svodlvl3_of_${safeDate}" style="display:${displayShop}; ${isRepeat ? customRowBg : ''}">
+                                        <td style="text-align:center; color:var(--text-muted); font-size:12px;">${itemIndex}</td>
+                                        <td><span style="font-weight:500; font-size:15px;">${name}</span> ${repeatBadge}</td>
+                                        <td style="text-align:left; font-weight:700; font-size:15px; color:#311b92;">${actualQty} шт</td>
+                                        <td style="text-align:center;">${statusBadge}</td>
+                                        <td style="font-size:13px; color:var(--text-muted);">${displayVendorCell}</td>
+                                        <td style="text-align:center;">${linksHtml}</td>
+                                    </tr>`;
+                                }
                             itemIndex++; 
                         });
                     }
@@ -2677,8 +2688,8 @@ async function renderOrdersSvod() {
                         tempSvodNewRows.filter(r => r.date === dateStr && r.shop === shop).forEach(r => {
                             html += `<tr class="svod-row svoditem_${safeShopDate} svodlvl3_of_${safeDate} new-svod-row" style="background:var(--bg-paper); display:${displayShop};">
                                 <td style="text-align:center; color:var(--brand-olive); font-weight:800;">+</td>
-                                <td><input type="text" list="svod_items_list" class="new-svod-name" data-date="${dateStr}" data-shop="${htmlShop}" value="${r.name}" placeholder="Поиск товара..." oninput="updateNewRowVendorAndPrice(this)" style="padding:6px;"></td>
-                                <td style="text-align:center;"><input type="number" class="new-svod-qty" value="${r.qty}" oninput="recalcSvodTotals()" style="width:60px; text-align:center; padding:6px;"></td>
+                                <td><input type="text" list="svod_items_list" class="new-svod-name" data-date="${dateStr}" data-shop="${htmlShop}" value="${r.name}" placeholder="Поиск товара..." oninput="updateNewRowVendorAndPrice(this)" style="padding:6px; font-weight:500; font-size:15px;"></td>
+                                <td style="text-align:left;"><input type="number" class="new-svod-qty" value="${r.qty}" oninput="recalcSvodTotals()" style="width:60px; text-align:center; padding:6px; font-weight:bold; font-size:15px;"></td>
                                 <td style="text-align:center;"><select class="new-svod-status" onchange="recalcSvodTotals()" style="padding:6px; font-size:12px;"><option value="pending" ${r.status==='pending'?'selected':''}>Ожидает</option><option value="ordered" ${r.status==='ordered'?'selected':''}>Заказано</option><option value="already_received" ${r.status==='already_received'?'selected':''}>Принят</option><option value="error" ${r.status==='error'?'selected':''}>Ошибка</option></select></td>
                                 <td><select class="new-svod-vendor" onchange="recalcSvodTotals()" style="padding:6px; font-size:12px;">${["Лента", "Озон", "Купер", "Wildberries", "Самокат", "METRO"].map(v => `<option value="${v}" ${v.toLowerCase() === r.vendor.toLowerCase() ? 'selected' : ''}>${v}</option>`).join('')}</select></td>
                                 <td style="text-align:center;"><button class="btn-del" onclick="this.closest('tr').remove(); recalcSvodTotals();">Удалить</button></td>
@@ -5151,12 +5162,18 @@ async function exportGraphsToExcel() {
         renderCatalogChecklist();
     }
 
-    function addItemStoplist() { 
+    window.addItemStoplist = function() { 
         let id = "stop_" + Date.now(); 
-        currentCatalog[id] = { globalCat: "Основное меню", cat: "Новая", name: "", sez: "", main: "" }; 
-        catalogChanges[id] = currentCatalog[id]; // ⚡ ДОБАВЛЕНО
+        if (!currentCatalog) currentCatalog = {};
+        
+        // ⚡ Ставим "!!! НОВОЕ", чтобы новая позиция принудительно появлялась в самом верху и папка была открыта
+        currentCatalog[id] = { globalCat: "!!! НОВОЕ", cat: "!!! НОВОЕ", name: "", sez: "", main: "" }; 
+        
+        if (!window.catalogChanges) window.catalogChanges = {};
+        window.catalogChanges[id] = currentCatalog[id]; 
+        
         renderCatalogStoplist();
-    }
+    };
 
     // ==========================================
     // ГЛОБАЛЬНЫЕ ФУНКЦИИ УДАЛЕНИЯ ФОТО (ДЛЯ ВСЕХ ВКЛАДОК)
@@ -5862,8 +5879,11 @@ async function exportGraphsToExcel() {
     }
 
     // ⚡ ЕДИНАЯ КНОПКА СОХРАНЕНИЯ ВСЕГО (заменяет старую `saveEspresso`)
-    window.saveEspressoAll = async function(btn) {
-        if (document.activeElement) document.activeElement.blur();
+   window.saveEspressoAll = async function(btn) {
+        // ⚡ Снимаем фокус с инпутов, чтобы браузер зафиксировал последние введенные цифры
+        if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+        await new Promise(r => setTimeout(r, 50));
+
         let origText = btn.innerHTML;
         btn.disabled = true;
         btn.innerHTML = "⏳ СОХРАНЕНИЕ...";
@@ -5934,9 +5954,15 @@ async function exportGraphsToExcel() {
 
         showReportOverlay("Сохранение всех рецептов...");
         try {
-            await fetch(`${FB_URL}/espresso_recipes.json`, { method: 'PATCH', body: JSON.stringify(updates) });
+            // ⚡ Используем прямой и безотказный HTTP запрос
+            const rawFetch = typeof originalFetch !== 'undefined' ? originalFetch : fetch;
+            let res = await rawFetch(`${FB_URL}/espresso_recipes.json`, { 
+                method: 'PATCH', 
+                body: JSON.stringify(updates) 
+            });
+            if(!res.ok) throw new Error("Сетевая ошибка");
             
-            let fresh = await fetch(`${FB_URL}/espresso_recipes.json`).then(r=>r.json());
+            let fresh = await rawFetch(`${FB_URL}/espresso_recipes.json`).then(r=>r.json());
             cachedData.espresso = fresh;
             saveToCache('espresso_recipes', fresh);
             
@@ -6430,10 +6456,11 @@ window.onload = () => {
 
     
     
-   // ⚡ СВЕРХБЫСТРОЕ И НАДЕЖНОЕ СОХРАНЕНИЕ
-    async function saveCatalog(btn) {
+   // ⚡ СВЕРХБЫСТРОЕ И БЕЗОТКАЗНОЕ СОХРАНЕНИЕ СПРАВОЧНИКОВ
+    window.saveCatalog = async function(btn) {
         // Убираем фокус, чтобы последнее редактируемое поле точно успело сохраниться
-        if (document.activeElement) document.activeElement.blur(); 
+        if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); 
+        await new Promise(r => setTimeout(r, 50)); // Микро-пауза для фиксации ввода
         
         let origText = btn.innerHTML;
         if (Object.keys(catalogChanges).length === 0) {
@@ -6446,13 +6473,18 @@ window.onload = () => {
         
         try { 
             let updates = {};
-            // ⚡ Формируем ПАКЕТ изменений. null автоматически удалит товар из базы.
+            // Формируем ПАКЕТ изменений. null автоматически удалит товар из базы.
             for (let id in catalogChanges) {
                 updates[id] = catalogChanges[id] === null ? null : catalogChanges[id];
             }
             
-            // ⚡ ОДИН запрос к базе вместо 500
-            await db.ref(currentPath).update(updates);
+            // ⚡ Прямой и безотказный HTTP запрос вместо зависающего db.ref
+            const rawFetch = typeof originalFetch !== 'undefined' ? originalFetch : fetch;
+            let res = await rawFetch(`${FB_URL}/${currentPath}.json`, {
+                method: 'PATCH',
+                body: JSON.stringify(updates)
+            });
+            if(!res.ok) throw new Error("Сетевая ошибка");
             
             catalogChanges = {}; 
             btn.innerHTML = "✅ СОХРАНЕНО!";
@@ -6461,7 +6493,7 @@ window.onload = () => {
             if(btn) { btn.innerHTML = origText; btn.disabled = false; }
             alert("❌ Ошибка сохранения: " + e.message); 
         }
-    }
+    };
 
     async function saveKnowledgeBase(btn) {
         let origText = btn.innerHTML;

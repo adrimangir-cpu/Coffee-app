@@ -1004,13 +1004,12 @@ function toggleSvodDate(safeDate) {
     // ПРАВКА 3: АВТО-СИНХРОНИЗАЦИЯ СТОП-ЛИСТА С ТЕХ. КАРТАМИ
     // ==========================================
     window.syncStoplistWithMenu = async function() {
-        let seasonChoice = prompt("Введите название глобальной категории из меню (например: Сезонное меню), из которой нужно подтянуть продукты:", "Летнее меню 2026");
+        let seasonChoice = prompt("Введите название глобальной категории из меню (например: Летнее меню 2026 или Основное меню), из которой нужно подтянуть продукты:", "Летнее меню 2026");
         if (!seasonChoice) return;
         seasonChoice = seasonChoice.trim();
 
         showReportOverlay("Анализ техкарт...");
         try {
-            // ⚡ БЕЗОТКАЗНЫЙ МЕТОД: Читаем напрямую через Firebase SDK (никаких fetch, которые могут блокироваться Telegram)
             let [snapMenu, snapOrd, snapChk] = await Promise.all([
                 db.ref('catalogs/menu').once('value'),
                 db.ref('catalogs/order').once('value'),
@@ -1025,14 +1024,12 @@ function toggleSvodDate(safeDate) {
             let exactGlobalCat = seasonChoice; 
             let drinksCount = 0;
 
-            // 1. Ищем ингредиенты в меню
             Object.values(menuData).forEach(drink => {
                 if (!drink || !drink.name) return;
                 
                 let gc = drink.globalCat || "Основное меню";
-                // Ищем совпадение без учета больших/маленьких букв
                 if (gc.toLowerCase() === seasonChoice.toLowerCase()) {
-                    exactGlobalCat = gc; // Запоминаем правильный регистр папки (как она записана в базе)
+                    exactGlobalCat = gc; 
                     drinksCount++;
                     
                     let blocks = drink.blocks || [drink.recipe || []];
@@ -1048,14 +1045,12 @@ function toggleSvodDate(safeDate) {
                 }
             });
 
-            // Защита: Если напитков вообще не найдено
             if (drinksCount === 0) {
                 hideReportOverlay();
-                alert(`❌ Ошибка: В разделе "Меню и Техкарты" не найдено ни одного напитка в категории "${seasonChoice}".\nПроверьте, правильно ли написано название категории!`);
+                alert(`❌ Ошибка: В "Меню и Техкарты" не найдено напитков в категории "${seasonChoice}".\nПроверьте название!`);
                 return;
             }
 
-            // Уточняем регистр папки по существующему стоп-листу (чтобы точно попасть в уже открытую папку)
             Object.values(currentCatalog).forEach(c => {
                 if (c && c.globalCat && c.globalCat.toLowerCase() === seasonChoice.toLowerCase()) {
                     exactGlobalCat = c.globalCat;
@@ -1064,14 +1059,14 @@ function toggleSvodDate(safeDate) {
 
             let changes = 0;
             let added = 0;
-
             if (!window.catalogChanges) window.catalogChanges = {};
 
-            // 2. Добавляем или дополняем строки
+            // ⚡ Определяем в какую колонку писать (Основное меню -> main, остальное -> sez)
+            let isMainMenu = exactGlobalCat.toLowerCase() === "основное меню";
+
             for (let prodName in seasonIngredients) {
                 let seasonDrinksStr = Array.from(seasonIngredients[prodName]).sort().join(", ");
                 
-                // Ищем категорию в Закупках, затем в Чек-листах
                 let catName = "Прочее";
                 let foundInOrder = Object.values(ordData).find(c => c && cleanName(c.name) === cleanName(prodName));
                 let foundInChk = Object.values(chkData).find(c => c && cleanName(c.name) === cleanName(prodName));
@@ -1079,10 +1074,8 @@ function toggleSvodDate(safeDate) {
                 if (foundInOrder && foundInOrder.cat) catName = foundInOrder.cat;
                 else if (foundInChk && foundInChk.cat) catName = foundInChk.cat;
                 
-                // Жесткая проверка: если в названии есть сироп, принудительно ставим категорию Сиропы
                 if (prodName.toLowerCase().includes("сироп")) catName = "Сиропы";
 
-                // Ищем, есть ли уже этот продукт внутри этой глобальной категории стоп-листа
                 let existingKey = Object.keys(currentCatalog).find(k => 
                     currentCatalog[k] && 
                     cleanName(currentCatalog[k].name) === cleanName(prodName) &&
@@ -1090,22 +1083,33 @@ function toggleSvodDate(safeDate) {
                 );
 
                 if (existingKey) {
-                    // Если есть — обновляем список напитков (вдруг добавились) и подкатегорию (вдруг она нашлась в чек-листах)
-                    if (currentCatalog[existingKey].sez !== seasonDrinksStr || currentCatalog[existingKey].cat !== catName) {
+                    let needsUpdate = false;
+                    // Обновляем нужную колонку в зависимости от того, основное это меню или сезонное
+                    if (isMainMenu && currentCatalog[existingKey].main !== seasonDrinksStr) {
+                        currentCatalog[existingKey].main = seasonDrinksStr;
+                        needsUpdate = true;
+                    } else if (!isMainMenu && currentCatalog[existingKey].sez !== seasonDrinksStr) {
                         currentCatalog[existingKey].sez = seasonDrinksStr;
+                        needsUpdate = true;
+                    }
+                    
+                    if (currentCatalog[existingKey].cat !== catName) {
                         currentCatalog[existingKey].cat = catName;
+                        needsUpdate = true;
+                    }
+
+                    if (needsUpdate) {
                         window.catalogChanges[existingKey] = currentCatalog[existingKey];
                         changes++;
                     }
                 } else {
-                    // Если нет — создаем новую строчку
                     let newId = "stop_auto_s_" + Date.now() + "_" + Math.random().toString(36).substr(2, 6);
                     currentCatalog[newId] = {
                         globalCat: exactGlobalCat, 
                         cat: catName,
                         name: prodName,
-                        sez: seasonDrinksStr,
-                        main: "" 
+                        sez: isMainMenu ? "" : seasonDrinksStr,
+                        main: isMainMenu ? seasonDrinksStr : "" 
                     };
                     window.catalogChanges[newId] = currentCatalog[newId];
                     added++;
@@ -1116,10 +1120,10 @@ function toggleSvodDate(safeDate) {
             hideReportOverlay();
             
             if (changes > 0) {
-                alert(`✅ Синхронизация успешна!\n\nКатегория: "${exactGlobalCat}"\nНапитков обработано: ${drinksCount}\nНайдено ингредиентов: ${Object.keys(seasonIngredients).length}\nДобавлено новых строк в стоп-лист: ${added}\n\nНе забудьте нажать "💾 Сохранить в базу".`);
+                alert(`✅ Синхронизация успешна!\n\nКатегория: "${exactGlobalCat}"\nОбработано напитков: ${drinksCount}\nНайдено ингредиентов: ${Object.keys(seasonIngredients).length}\nДобавлено новых строк: ${added}\n\nНажмите "💾 Сохранить в базу", чтобы зафиксировать изменения.`);
                 renderCatalogStoplist();
             } else {
-                alert(`ℹ️ Нет новых данных.\nВ категории "${exactGlobalCat}" обработано напитков: ${drinksCount}, найдено ингредиентов: ${Object.keys(seasonIngredients).length}.\nВсе они уже присутствуют в стоп-листе.`);
+                alert(`ℹ️ Нет новых данных.\nВсе ингредиенты (${Object.keys(seasonIngredients).length} шт.) из категории "${exactGlobalCat}" уже присутствуют в стоп-листе.`);
             }
             
         } catch (e) {
@@ -1127,7 +1131,7 @@ function toggleSvodDate(safeDate) {
             alert("❌ Ошибка при синхронизации: " + e.message);
         }
     };
-
+    
     function crossFillDrinks() {
         let seasonChoice = prompt("С какой сезонной категорией взаимозаполнить Основное меню?\n(Введите название, например: Сезонное меню)", "Сезонное меню");
         if (!seasonChoice) return;
@@ -5291,13 +5295,17 @@ async function exportGraphsToExcel() {
         }
     };
     
-    function deleteItem(id) { 
-        currentCatalog[id] = null; 
-        catalogChanges[id] = null; // Помечаем элемент на удаление для saveCatalog
+    window.deleteItem = function(id) { 
+        if (!confirm("Удалить позицию?")) return;
+        if (!window.catalogChanges) window.catalogChanges = {};
+        
+        catalogChanges[id] = null; // Помечаем для сервера, что товар нужно удалить
+        delete currentCatalog[id]; // ⚡ УДАЛЯЕМ из локальной памяти, чтобы не ломалась таблица
+        
         if (currentPath.includes('order') || currentPath.includes('newshop')) renderCatalogOrder();
         else if (currentPath.includes('stoplist')) renderCatalogStoplist();
         else renderCatalogChecklist();
-    }
+    };
 
     async function deleteOrder(key) {
         if(confirm("Вы уверены, что хотите УДАЛИТЬ этот заказ навсегда?")) {
@@ -6533,9 +6541,8 @@ window.onload = () => {
     
    // ⚡ СВЕРХБЫСТРОЕ И БЕЗОТКАЗНОЕ СОХРАНЕНИЕ СПРАВОЧНИКОВ
     window.saveCatalog = async function(btn) {
-        // Убираем фокус, чтобы последнее редактируемое поле точно успело сохраниться
         if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); 
-        await new Promise(r => setTimeout(r, 50)); // Микро-пауза для фиксации ввода
+        await new Promise(r => setTimeout(r, 50)); 
         
         let origText = btn.innerHTML;
         if (Object.keys(catalogChanges).length === 0) {
@@ -6548,12 +6555,10 @@ window.onload = () => {
         
         try { 
             let updates = {};
-            // Формируем ПАКЕТ изменений. null автоматически удалит товар из базы.
             for (let id in catalogChanges) {
                 updates[id] = catalogChanges[id] === null ? null : catalogChanges[id];
             }
             
-            // ⚡ Прямой и безотказный HTTP запрос вместо зависающего db.ref
             const rawFetch = typeof originalFetch !== 'undefined' ? originalFetch : fetch;
             let res = await rawFetch(`${FB_URL}/${currentPath}.json`, {
                 method: 'PATCH',
@@ -6563,6 +6568,13 @@ window.onload = () => {
             
             catalogChanges = {}; 
             btn.innerHTML = "✅ СОХРАНЕНО!";
+            
+            // ⚡ ГЛАВНЫЙ ФИКС: Обязательно перерисовываем каталог, чтобы 
+            // новые категории встали на свои места, а папка "!!! НОВОЕ" исчезла.
+            if (currentPath.includes('order') || currentPath.includes('newshop')) renderCatalogOrder();
+            else if (currentPath.includes('stoplist')) renderCatalogStoplist();
+            else renderCatalogChecklist();
+
             setTimeout(() => { if(btn) { btn.innerHTML = origText; btn.disabled = false; } }, 1500);
         } catch(e) { 
             if(btn) { btn.innerHTML = origText; btn.disabled = false; }

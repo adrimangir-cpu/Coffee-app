@@ -1435,17 +1435,25 @@ function toggleSvodDate(safeDate) {
                 
             else if (type === 'catalog_stoplist') {
                 currentPath = "catalogs/stoplist";
-                let [res, setRes] = await Promise.all([
+                
+                let [res, setRes, ordCat, chkCat] = await Promise.all([
                     fetchOptimistic(currentPath), 
-                    fetchOptimistic('settings')
+                    fetchOptimistic('settings'),
+                    fetchOptimistic('catalogs/order'),
+                    fetchOptimistic('catalogs/checklist')
                 ]);
                 if (currentTabType !== fetchId) return;
-                currentCatalog = res;
-                appSettings = setRes;
+                
+                currentCatalog = res || {};
+                appSettings = setRes || {};
                 if (!appSettings.hidden_categories_stoplist) appSettings.hidden_categories_stoplist = {};
+                
+                // Сохраняем в кэш для генерации выпадающего списка
+                cachedData.catalogOrder = ordCat || {};
+                cachedData.catalogChecklist = chkCat || {};
+                
                 renderCatalogStoplist();
             }
-
                 else if (type === 'espresso') {
                 currentPath = "espresso_recipes";
                 let [resEsp, resKb] = await Promise.all([
@@ -4531,7 +4539,7 @@ function renderGraphsTab() {
         `, isActionsOpen, 'arrow_catstop_actions');
 
         let html = `<div style="overflow-x:auto;"><table style="min-width:1100px;">
-            <tr><th style="width:180px;">Глоб. Категория</th><th style="width:180px;">Категория</th><th style="width:250px;">Продукт (Из Закупки)</th><th style="width:200px;">Отключает (Сезон)</th><th style="width:200px;">Отключает (Осн)</th><th style="width:80px; text-align:center;">Удалить</th></tr>`;
+            <tr><th style="width:180px;">Глоб. Категория</th><th style="width:180px;">Категория</th><th style="width:250px;">Продукт (Закупка + Чек-лист)</th><th style="width:200px;">Отключает (Сезон)</th><th style="width:200px;">Отключает (Осн)</th><th style="width:80px; text-align:center;">Удалить</th></tr>`;
             
         let grouped = {};
         Object.keys(currentCatalog).forEach(k => {
@@ -4807,18 +4815,22 @@ function renderGraphsTab() {
         if (val === "НОВАЯ ГЛОБАЛЬНАЯ" || val === "НОВАЯ КАТЕГОРИЯ") {
             let newCat = prompt("Введите название новой категории:");
             if (newCat) {
-                currentMenu[id][field] = newCat;
-                menuChanges[id] = currentMenu[id]; // ⚡ Размечаем ДО рендера
-                renderMenuTab();
+                currentCatalog[id][field] = newCat;
+                catalogChanges[id] = currentCatalog[id];
+                if (currentPath.includes('order')) renderCatalogOrder();
+                else if (currentPath.includes('stoplist')) renderCatalogStoplist();
+                else renderCatalogChecklist();
             } else {
-                renderMenuTab();
+                if (currentPath.includes('order')) renderCatalogOrder();
+                else if (currentPath.includes('stoplist')) renderCatalogStoplist();
+                else renderCatalogChecklist();
             }
         } else {
-            currentMenu[id][field] = val;
-            menuChanges[id] = currentMenu[id]; // ⚡ Размечаем
+            currentCatalog[id][field] = val; 
+            catalogChanges[id] = currentCatalog[id];
+            
         }
-    }
-
+    };
     function addMenuRecipeBlock(id) {
         if(!currentMenu[id].blocks) currentMenu[id].blocks = [];
         currentMenu[id].blocks.push([]);

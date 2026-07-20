@@ -5701,7 +5701,6 @@ async function exportGraphsToExcel() {
     // ==========================================
     window.renderEspressoTab = function() {
         const box = document.getElementById('content');
-        setupUniversalActionBar('', false, ''); 
         let html = "";
         let shops = ["Бояринова", "Гагарина", "Вертолетчиков", "Липчанского", "Новокосино", "Новокосино 2", "Старое Павлино", "Красноказарменная", "Ухтомского ополчения"];
         let espressoData = cachedData.espresso || {};
@@ -5716,19 +5715,33 @@ async function exportGraphsToExcel() {
             kbOptions += `<option value="${k}">${kbData[k].title}</option>`;
         });
 
+        // Генерируем список кофеен для создания исключений
+        let overrideOpts = shops.filter(s => !overridesData[s]).map(s => `<option value="${s}">${s}</option>`).join('');
         
+        let isActionsOpen = expandedDivs.has('esp-actions');
+
+        // ⚡ ЗАКРЕПЛЯЕМ ПАНЕЛЬ ДЕЙСТВИЙ И КНОПКИ СОХРАНЕНИЯ НАВЕРХУ
+        let actionBarHtml = `
+            <div class="cat-group-header" style="padding: 10px 15px; border-radius: 12px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 8px rgba(0,0,0,0.05);" onclick="toggleCatElements('esp-actions', 'arrow_esp_actions')">
+                <span style="font-size:16px; color:#4A148C; font-weight:900;">⚡ Настройки Эспрессо</span>
+                <span id="arrow_esp_actions">${isActionsOpen ? '▲' : '▼'}</span>
+            </div>
+            <div class="esp-actions action-container sticky-action-panel action-panel-dropdown" style="display: ${isActionsOpen ? 'flex' : 'none'}; flex-wrap:wrap; margin-top:10px; gap:10px;">
+                <button class="btn-save" style="flex:1 1 auto; background: linear-gradient(135deg, #0288D1 0%, #01579B 100%);" onclick="saveEspressoAll(this)">💾 Сохранить ВСЕ рецепты</button>
+                ${overrideOpts ? `
+                <div style="flex:1 1 auto; display:flex; gap:10px; align-items:stretch;">
+                    <select id="new-override-shop" style="padding:10px; border-radius:8px; border:1px solid #D1C4E9; flex:1; font-weight:bold; font-size:14px; outline:none; background:white;">${overrideOpts}</select>
+                    <button onclick="addEspressoOverride()" class="btn-add" style="margin:0;">➕ Создать исключение</button>
+                </div>` : ''}
+            </div>
+        `;
         
+        setupUniversalActionBar(actionBarHtml, isActionsOpen, 'arrow_esp_actions');
+        
+        // Рендерим общий рецепт
         html += renderEspressoBlock('default', ' ОБЩИЙ РЕЦЕПТ', defaultData, true, kbOptions);
         
-        let overrideOpts = shops.filter(s => !overridesData[s]).map(s => `<option value="${s}">${s}</option>`).join('');
-        if (overrideOpts) {
-            html += `<div style="margin: 20px 0; padding:15px; background:#fff; border-radius:12px; display:flex; gap:10px; align-items:center; border:2px dashed #7E57C2;">
-                        <span style="font-weight:bold; color:#4A148C;">Добавить индивидуальный рецепт для адреса:</span>
-                        <select id="new-override-shop" style="padding:8px; border-radius:8px; flex:1; border:2px solid #D1C4E9; font-weight:bold; outline:none;">${overrideOpts}</select>
-                        <button onclick="addEspressoOverride()" class="btn-add" style="margin:0;">➕ Создать исключение</button>
-                     </div>`;
-        }
-
+        // Рендерим исключения
         Object.keys(overridesData).forEach(shop => {
              html += renderEspressoBlock(shop, ` ИСКЛЮЧЕНИЕ: ${shop === 'Красноказарменная' ? 'МЭИ' : shop}`, overridesData[shop], false, kbOptions);
         });
@@ -5739,7 +5752,7 @@ async function exportGraphsToExcel() {
    function renderEspressoBlock(shopKey, title, sData, isDefault, kbOptions) {
         let currD = sData.current_double || sData.current || { in: "", out: "", time: "", result: "", roast: "", brand: "" };
         let currS = sData.current_single || { in: "", out: "", time: "", result: "", roast: "", brand: "" };
-        let linkedKb = sData.linked_kb_id || ""; // Читаем привязанную инструкцию
+        let linkedKb = sData.linked_kb_id || ""; 
         
         let safeShop = getSafeId('esp_' + shopKey);
         let isOpen = expandedDivs.has(safeShop) || isDefault; 
@@ -5789,53 +5802,84 @@ async function exportGraphsToExcel() {
                 </select>
             </div>
 
-            <div style="display:flex; gap:15px; flex-wrap:wrap; margin-bottom:15px;">
+            <div style="display:flex; gap:15px; flex-wrap:wrap; margin-bottom:5px;">
                 ${createTable('espd', 'Двойной эспрессо', currD)}
                 ${createTable('esps', 'Одинарный эспрессо', currS)}
             </div>
-            <button class="btn-save" style="width:100%; background:linear-gradient(135deg, #0288D1 0%, #01579B 100%);" onclick="saveEspresso('${shopKey}')">💾 Сохранить рецепты и обновить у бариста</button>
         </div>`;
     }
 
-    window.saveEspresso = async function(shopKey) {
-        let safeId = getSafeId('esp_' + shopKey);
-        
-        let getVals = (prefix) => ({
-            in: document.getElementById(`${prefix}_in_${safeId}`).value,
-            out: document.getElementById(`${prefix}_out_${safeId}`).value,
-            time: document.getElementById(`${prefix}_time_${safeId}`).value,
-            result: document.getElementById(`${prefix}_res_${safeId}`).value,
-            brand: document.getElementById(`${prefix}_brand_${safeId}`).value,
-            roast: document.getElementById(`${prefix}_roast_${safeId}`).value,
-            timestamp: Date.now()
-        });
+    window.saveEspressoAll = async function(btn) {
+        let origText = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = "⏳ СОХРАНЕНИЕ...";
 
-        let dData = getVals('espd');
-        let sData = getVals('esps');
-        let kbId = document.getElementById(`esp_kb_${safeId}`).value; // ⚡ Считываем селект Базы Знаний
-
-       
-        let basePath = shopKey === 'default' ? 'default' : `overrides/${shopKey}`;
         let updates = {};
 
-        
-        updates[`${basePath}/current_double`] = dData;
-        updates[`${basePath}/current_single`] = sData;
-        updates[`${basePath}/linked_kb_id`] = kbId; // ⚡ Сохраняем в базу
+        // Вспомогательная функция для сбора данных с одной карточки
+        const parseBlock = (shopKey) => {
+            let safeId = getSafeId('esp_' + shopKey);
+            if (!document.getElementById(`espd_in_${safeId}`)) return null;
 
-        showReportOverlay("Сохранение рецепта...");
+            let getVals = (prefix) => ({
+                in: document.getElementById(`${prefix}_in_${safeId}`).value,
+                out: document.getElementById(`${prefix}_out_${safeId}`).value,
+                time: document.getElementById(`${prefix}_time_${safeId}`).value,
+                result: document.getElementById(`${prefix}_res_${safeId}`).value,
+                brand: document.getElementById(`${prefix}_brand_${safeId}`).value,
+                roast: document.getElementById(`${prefix}_roast_${safeId}`).value,
+                timestamp: Date.now()
+            });
+
+            let kbId = document.getElementById(`esp_kb_${safeId}`).value;
+
+            return {
+                current_double: getVals('espd'),
+                current_single: getVals('esps'),
+                linked_kb_id: kbId
+            };
+        };
+
+        // 1. Собираем Общий рецепт
+        let defaultData = parseBlock('default');
+        if (defaultData) {
+            updates['default/current_double'] = defaultData.current_double;
+            updates['default/current_single'] = defaultData.current_single;
+            updates['default/linked_kb_id'] = defaultData.linked_kb_id;
+        }
+
+        // 2. Собираем все Исключения (если они есть)
+        let overridesData = (cachedData.espresso && cachedData.espresso.overrides) ? cachedData.espresso.overrides : {};
+        Object.keys(overridesData).forEach(shop => {
+            let shopData = parseBlock(shop);
+            if (shopData) {
+                updates[`overrides/${shop}/current_double`] = shopData.current_double;
+                updates[`overrides/${shop}/current_single`] = shopData.current_single;
+                updates[`overrides/${shop}/linked_kb_id`] = shopData.linked_kb_id;
+            }
+        });
+
+        showReportOverlay("Сохранение всех рецептов...");
         try {
             await fetch(`${FB_URL}/espresso_recipes.json`, { method: 'PATCH', body: JSON.stringify(updates) });
-            // Тихо обновляем кэш
+            
             let fresh = await fetch(`${FB_URL}/espresso_recipes.json`).then(r=>r.json());
             cachedData.espresso = fresh;
             saveToCache('espresso_recipes', fresh);
             
             hideReportOverlay();
-            renderEspressoTab();
-            alert("✅ Рецепты успешно сохранены!");
+            btn.innerHTML = "✅ СОХРАНЕНО!";
+            
+            setTimeout(() => {
+                btn.innerHTML = origText;
+                btn.disabled = false;
+                renderEspressoTab(); 
+            }, 1500);
+
         } catch(e) {
             hideReportOverlay();
+            btn.innerHTML = origText;
+            btn.disabled = false;
             alert("❌ Ошибка: " + e.message);
         }
     }
@@ -5846,11 +5890,19 @@ async function exportGraphsToExcel() {
         
         showReportOverlay("Создание исключения...");
         try {
-            let def = (cachedData.espresso && cachedData.espresso.default) ? cachedData.espresso.default.current : { in: "", out: "", time: "", result: "", roast: "", brand: "" };
-            await fetch(`${FB_URL}/espresso_recipes/overrides/${shop}/current.json`, { method: 'PUT', body: JSON.stringify(def) });
+            let def = (cachedData.espresso && cachedData.espresso.default) ? cachedData.espresso.default : {};
+            let payload = {
+                current_double: def.current_double || def.current || { in: "", out: "", time: "", result: "", roast: "", brand: "" },
+                current_single: def.current_single || { in: "", out: "", time: "", result: "", roast: "", brand: "" },
+                linked_kb_id: def.linked_kb_id || ""
+            };
+            
+            await fetch(`${FB_URL}/espresso_recipes/overrides/${shop}.json`, { method: 'PUT', body: JSON.stringify(payload) });
+            
             let fresh = await fetch(`${FB_URL}/espresso_recipes.json`).then(r=>r.json());
             cachedData.espresso = fresh;
             saveToCache('espresso_recipes', fresh);
+            
             renderEspressoTab();
             hideReportOverlay();
         } catch(e) {

@@ -44,10 +44,9 @@
 * { box-sizing: border-box; }
 
 html, body { 
-  overflow-x: hidden !important; 
+  overflow-x: clip !important; /* ⚡ ИЗМЕНИЛИ НА CLIP */
   width: 100%; 
-  max-width: 100vw; 
-}
+  max-width: 100vw;
 
 body {
   font-family: var(--font-data); 
@@ -130,7 +129,7 @@ h1, h2, h3, h4 { font-family: var(--font-fashion); color: var(--brand-maroon); f
   transition: margin-left 0.4s ease;
   min-width: auto; width: calc(100vw - 344px);
   max-width: 100%; box-sizing: border-box;
-  overflow-x: hidden;
+  overflow-x: clip; /* ⚡ ИЗМЕНИЛИ НА CLIP */
 }
 .main-content.expanded { margin-left: 64px; width: calc(100vw - 64px); max-width: 100%; }
 
@@ -157,7 +156,25 @@ h1, h2, h3, h4 { font-family: var(--font-fashion); color: var(--brand-maroon); f
 /* =========================================
 ПАНЕЛЬ НАСТРОЕК И КНОПКИ
 ========================================= */
-#action-bar-wrapper { position: sticky !important; top: 20px !important; z-index: 2500 !important; display: flex; flex-direction: column; align-items: flex-end; margin-bottom: 20px; }
+#action-bar-wrapper { 
+    position: sticky !important; 
+    top: 0 !important; /* ⚡ Прижимаем к самому верху */
+    z-index: 2500 !important; 
+    display: flex; 
+    flex-direction: column; 
+    align-items: flex-end; 
+    margin-bottom: 20px; 
+    
+    /* ⚡ ДОБАВИЛИ КРАСИВЫЙ ФОН И ОТСТУП */
+    padding-top: 15px;
+    padding-bottom: 15px;
+    background: rgba(247, 245, 240, 0.85); /* Цвет вашего фона --bg-paper */
+    backdrop-filter: blur(10px); /* Эффект матового стекла */
+    margin-left: -60px; /* Растягиваем фон на края */
+    margin-right: -60px;
+    padding-left: 60px;
+    padding-right: 60px;
+}
 .action-bar-toggle-btn { background: #FFF; color: var(--brand-maroon); font-weight: 700; text-align: center; padding: 12px 24px; border-radius: var(--radius-pill); cursor: pointer; border: 1px solid var(--line-delicate); font-size: 13px; transition: 0.2s; text-transform: uppercase; letter-spacing: 1px; box-shadow: 0 4px 10px rgba(74, 16, 22, 0.05); }
 .action-bar-toggle-btn:hover { background: var(--brand-light-maroon); }
 
@@ -265,7 +282,7 @@ tr[class*="svodlvl3_"] > td:nth-child(2), tr[class*="lvl3_"] > td:nth-child(2) {
   #page-title-display { font-size: 22px !important; white-space: normal; line-height: 1.2; }
   #db-status { padding: 8px 14px !important; font-size: 11.5px !important; }
   
-  #action-bar-wrapper { position: relative !important; top: 0 !important; margin-bottom: 10px; width: 100%; align-items: center; }
+ #action-bar-wrapper { position: sticky !important; top: 0 !important; z-index: 2500 !important; margin-bottom: 10px; width: 100%; align-items: center; }
   .action-bar-toggle-btn { width: 100%; padding: 8px; font-size: 11px; }
   #dynamic-action-bar { width: 100%; max-width: 100%; padding: 10px; border-radius: 8px !important; box-sizing: border-box; }
   .action-container { flex-direction: column; gap: 8px; width: 100%; }
@@ -938,21 +955,20 @@ function toggleSvodDate(safeDate) {
             const pdfDataUri = await html2pdf().set(opt).from(element).outputPdf('datauristring');
             
             // ⚡ 1. УМНОЕ ОПРЕДЕЛЕНИЕ ПОЛУЧАТЕЛЯ
+            // ⚡ 1. УМНОЕ ОПРЕДЕЛЕНИЕ ПОЛУЧАТЕЛЯ
             let targetChatId = null;
             let targetName = "Пользователь";
 
-            // Попытка А: Берем ID прямо из Telegram (самый надежный способ, если открыто внутри ТГ)
             let tgUser = window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initDataUnsafe && window.Telegram.WebApp.initDataUnsafe.user;
             
             if (tgUser && tgUser.id) {
                 targetChatId = tgUser.id;
-                targetName = tgUser.first_name || "Пользователь Telegram";
+                targetName = tgUser.first_name || "Вам в ЛС";
             } else {
-                // Попытка Б: Если открыто в браузере, определяем по роли аккаунта
-                // (Проверяем стандартные переменные ролей)
-                let role = window.userRole || window.currentUserRole || localStorage.getItem('role') || 'admin'; 
+                // ⚡ Если ID не найден автоматически — даем ручной выбор!
+                let sendToBoss = confirm("Кому отправить отчет?\n\n[ ОК ] — Отправить Боссу\n[ ОТМЕНА ] — Отправить Администратору");
                 
-                if (role.includes('boss')) {
+                if (sendToBoss) {
                     targetChatId = typeof BOSS_CHAT_ID !== 'undefined' ? BOSS_CHAT_ID.trim() : null;
                     targetName = "Босс";
                 } else {
@@ -962,7 +978,7 @@ function toggleSvodDate(safeDate) {
             }
 
             if (!targetChatId) {
-                throw new Error("Не удалось определить ваш Telegram ID для отправки отчета.");
+                throw new Error("Не удалось определить Telegram ID для отправки.");
             }
 
             // ⚡ 2. ЕДИНСТВЕННАЯ ОТПРАВКА (только текущему пользователю)
@@ -1029,7 +1045,7 @@ function toggleSvodDate(safeDate) {
         if (!seasonChoice) return;
         seasonChoice = seasonChoice.trim();
 
-        showReportOverlay("Синхронизация и сбор напитков...");
+        showReportOverlay("Синхронизация баз данных...");
         try {
             let [snapMenu, snapOrd, snapChk] = await Promise.all([
                 db.ref('catalogs/menu').once('value'),
@@ -1045,11 +1061,9 @@ function toggleSvodDate(safeDate) {
             let exactGlobalCat = seasonChoice; 
             let drinksCount = 0;
 
-            // 1. Бронебойный сбор ингредиентов и НАЗВАНИЙ НАПИТКОВ
+            // 1. Собираем ингредиенты и привязанные к ним напитки
             Object.values(menuData).forEach(drink => {
                 if (!drink) return;
-                
-                // ⚡ Ищем имя напитка во всех возможных полях базы
                 let dName = drink.name || drink.title || drink.drink || drink.item; 
                 if (!dName) return; 
                 
@@ -1058,7 +1072,6 @@ function toggleSvodDate(safeDate) {
                     exactGlobalCat = gc; 
                     drinksCount++;
                     
-                    // ⚡ Защита от искривления массивов слоев в Firebase
                     let blocks = [];
                     if (Array.isArray(drink.blocks)) blocks = drink.blocks;
                     else if (drink.blocks && typeof drink.blocks === 'object') blocks = Object.values(drink.blocks);
@@ -1068,16 +1081,11 @@ function toggleSvodDate(safeDate) {
                     blocks.forEach(block => {
                         if (!block) return;
                         let items = Array.isArray(block) ? block : Object.values(block);
-                        
                         items.forEach(ingredient => {
-                            // Вытаскиваем имя ингредиента
                             let ingName = (typeof ingredient === 'string') ? ingredient : (ingredient && ingredient.name ? ingredient.name : null);
-                            
                             if (ingName && typeof ingName === 'string') {
                                 ingName = ingName.trim();
                                 if (!rawIngredients[ingName]) rawIngredients[ingName] = new Set();
-                                
-                                // ⚡ Привязываем ИМЯ НАПИТКА к этому ингредиенту
                                 rawIngredients[ingName].add(dName.trim());
                             }
                         });
@@ -1097,61 +1105,47 @@ function toggleSvodDate(safeDate) {
                 }
             });
 
-            // 2. Объединяем Закупки и Чек-листы
-            let allCatalogItems = [...Object.values(ordData), ...Object.values(chkData)].filter(c => c && c.name);
-            let aggregatedIngredients = {};
+            let changes = 0;
+            if (!window.catalogChanges) window.catalogChanges = {};
+            let isMainMenu = exactGlobalCat.toLowerCase() === "основное меню";
 
+            let ordItems = Object.values(ordData).filter(c => c && c.name);
+            let chkItems = Object.values(chkData).filter(c => c && c.name);
+
+            // 2. Строгая стыковка по Справочникам с расстановкой приоритетов
             for (let prodName in rawIngredients) {
                 let pNameLow = prodName.toLowerCase();
                 let finalProdName = prodName;
                 let catName = "Прочее";
 
-                let match = allCatalogItems.find(c => c.name.trim().toLowerCase() === pNameLow);
+                // ПРИОРИТЕТ 1: Справочник Закупки
+                let matchOrd = ordItems.find(c => c.name.trim().toLowerCase() === pNameLow);
+                // ПРИОРИТЕТ 2: Справочник Чек-листа
+                let matchChk = chkItems.find(c => c.name.trim().toLowerCase() === pNameLow);
 
-                if (match) {
-                    finalProdName = match.name.trim(); 
-                    catName = match.cat || "Прочее";   
-                } else {
-                    if (pNameLow.includes("сироп")) catName = "Сиропы";
-                    else if (pNameLow.includes("пюре")) catName = "Пюре";
-                    else if (pNameLow.includes("молок") || pNameLow.includes("сливк")) catName = "Молоко";
-                    else if (pNameLow.includes("стакан") || pNameLow.includes("крышк")) catName = "Расходники";
-                    else if (pNameLow.includes("кофе") || pNameLow.includes("зерн")) catName = "Зерно";
+                if (matchOrd) {
+                    finalProdName = matchOrd.name.trim();
+                    catName = matchOrd.cat || "Прочее";
+                } else if (matchChk) {
+                    finalProdName = matchChk.name.trim();
+                    catName = matchChk.cat || "Прочее";
                 }
 
-                if (!aggregatedIngredients[finalProdName]) {
-                    aggregatedIngredients[finalProdName] = { drinks: new Set(), cat: catName };
-                }
-                // Сливаем все напитки для этого продукта
-                rawIngredients[prodName].forEach(d => aggregatedIngredients[finalProdName].drinks.add(d));
-            }
+                let seasonDrinksStr = Array.from(rawIngredients[prodName]).sort().join(", ");
 
-            let changes = 0;
-            let added = 0;
-            if (!window.catalogChanges) window.catalogChanges = {};
-
-            let isMainMenu = exactGlobalCat.toLowerCase() === "основное меню";
-
-            // 3. Сохраняем в Стоп-лист и прописываем напитки
-            for (let finalName in aggregatedIngredients) {
-                // ⚡ Склеиваем массив напитков в красивую строку через запятую
-                let seasonDrinksStr = Array.from(aggregatedIngredients[finalName].drinks).sort().join(", ");
-                let catName = aggregatedIngredients[finalName].cat;
-
+                // 3. Запись в Стоп-лист
                 let existingKey = Object.keys(currentCatalog).find(k => 
                     currentCatalog[k] && 
-                    currentCatalog[k].name.trim().toLowerCase() === finalName.toLowerCase() &&
+                    currentCatalog[k].name.trim().toLowerCase() === finalProdName.toLowerCase() &&
                     (currentCatalog[k].globalCat || "Основное меню").toLowerCase() === exactGlobalCat.toLowerCase()
                 );
 
                 if (existingKey) {
                     let needsUpdate = false;
-                    
                     let currentDrinks = currentCatalog[existingKey][isMainMenu ? 'main' : 'sez'] || "";
-                    let combinedDrinksSet = new Set([...currentDrinks.split(',').map(s=>s.trim()).filter(Boolean), ...aggregatedIngredients[finalName].drinks]);
+                    let combinedDrinksSet = new Set([...currentDrinks.split(',').map(s=>s.trim()).filter(Boolean), ...rawIngredients[prodName]]);
                     let combinedDrinksStr = Array.from(combinedDrinksSet).sort().join(", ");
 
-                    // ⚡ Прописываем напитки в правильную колонку
                     if (isMainMenu && currentCatalog[existingKey].main !== combinedDrinksStr) {
                         currentCatalog[existingKey].main = combinedDrinksStr;
                         needsUpdate = true;
@@ -1174,13 +1168,11 @@ function toggleSvodDate(safeDate) {
                     currentCatalog[newId] = {
                         globalCat: exactGlobalCat, 
                         cat: catName,
-                        name: finalName,
-                        // ⚡ Автоматически заполняем напитки при создании новой строки
+                        name: finalProdName,
                         sez: isMainMenu ? "" : seasonDrinksStr,
                         main: isMainMenu ? seasonDrinksStr : "" 
                     };
                     window.catalogChanges[newId] = currentCatalog[newId];
-                    added++;
                     changes++;
                 }
             }
@@ -1188,10 +1180,10 @@ function toggleSvodDate(safeDate) {
             hideReportOverlay();
             
             if (changes > 0) {
-                alert(`✅ Синхронизация успешна!\n\nКатегория: "${exactGlobalCat}"\nОбработано напитков: ${drinksCount}\nНайдено продуктов: ${Object.keys(aggregatedIngredients).length}\nДобавлено/обновлено строк: ${changes}\n\nНажмите "💾 Сохранить в базу", чтобы зафиксировать изменения.`);
+                alert(`✅ Синхронизация успешна!\nДобавлено/обновлено продуктов: ${changes}\nОбработано напитков: ${drinksCount}\n\nНажмите "💾 Сохранить в базу".`);
                 renderCatalogStoplist();
             } else {
-                alert(`ℹ️ Нет новых данных.\nВсе продукты уже есть в стоп-листе с актуальными привязками напитков.`);
+                alert(`ℹ️ Нет новых данных.\nВсе продукты уже есть в стоп-листе с актуальными категориями и напитками.`);
             }
             
         } catch (e) {
@@ -2681,7 +2673,7 @@ async function renderOrdersSvod() {
                     
         if (isSvodEditMode) html += `<div style="margin-bottom:24px; padding:16px 20px; background:var(--bg-paper); color:var(--brand-olive); border-radius:12px; font-size:13px; border: 1px solid var(--border-light);">Режим редактирования активен. Изменения статусов сохраняются мгновенно.</div>`;
         
-       html += `<table style='margin-bottom:0;'><tr><th style="width:40px; text-align:center;">#</th><th>Номенклатура</th><th style="text-align:left; width:80px;">Кол-во</th><th style="text-align:center; width:150px;">Статус</th><th style="width:180px;">Поставщик</th><th style="text-align:center; width:120px;">${isSvodEditMode ? 'Опции' : 'Действие'}</th></tr>`;
+       html += `<table style='margin-bottom:0;'><tr><th style="width:40px; text-align:center;">#</th><th>Номенклатура</th><th style="text-align:left; width:50px;">Кол-во</th><th style="text-align:center; width:150px;">Статус</th><th style="width:180px;">Поставщик</th><th style="text-align:center; width:120px;">${isSvodEditMode ? 'Опции' : 'Действие'}</th></tr>`;
         
         if (sortedDates.length === 0) {
             html += `<tr><td colspan="6" style="text-align:center; padding:60px; color:var(--text-muted);">Нет заказов для отображения</td></tr>`;
@@ -2787,7 +2779,7 @@ async function renderOrdersSvod() {
                                             <div style="font-weight:500; margin-bottom:6px;">${name} ${repeatBadge}</div>
                                             <select class="edit-svod-shop-select" data-original-shop="${htmlShop}" data-item="${htmlName}" data-date="${dateStr}" style="font-size: 12px; padding: 6px; width: 100%;" onchange="markSvodShopChange('${dateStr}', '${jsShop}', '${jsName}', this.value)" ${isDeleted ? 'disabled' : ''}>${shopListAll.map(sName => `<option value="${sName}" ${sName === actualShop ? 'selected' : ''}>${sName}</option>`).join('')}</select>
                                         </td>
-                                        <td style="text-align:left;"><input type="number" class="edit-svod-input" data-date="${dateStr}" data-shop="${htmlShop}" data-item="${htmlName}" data-vendor="${actualVendor}" data-price="${finalPrice}" data-deleted="${isDeleted}" data-status="${itemStatus}" value="${actualQty}" ${isDeleted ? 'disabled' : ''} oninput="recalcSvodTotals()" style="width: 60px; text-align: center; padding: 6px; font-weight:bold; font-size:15px;"></td>
+                                        <td style="text-align:left;"><input type="number" class="edit-svod-input" data-date="${dateStr}" data-shop="${htmlShop}" data-item="${htmlName}" data-vendor="${actualVendor}" data-price="${finalPrice}" data-deleted="${isDeleted}" data-status="${itemStatus}" value="${actualQty}" ${isDeleted ? 'disabled' : ''} oninput="recalcSvodTotals()" style="width: 45px; text-align: center; padding: 4px; font-weight:bold; font-size:15px; margin-right: 10px;">
                                         <td style="text-align:center;">${statusBadge}</td>
                                         <td style="font-size:13px;">${displayVendorCell}</td>
                                         <td style="text-align:center;"><button class="btn-del" ${isDeleted ? 'disabled' : ''} onclick="markSvodDelete(this, '${dateStr}', '${jsShop}', '${jsName}')">Удалить</button></td>

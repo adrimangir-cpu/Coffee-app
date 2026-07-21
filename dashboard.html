@@ -198,10 +198,10 @@ h1, h2, h3, h4 { font-family: var(--font-fashion); color: var(--brand-maroon); f
 ⚡ ДВУХКОЛОНОЧНЫЙ LAYOUT: СВОД + АРХИВ
 ========================================= */
 .svod-dashboard-layout {
-  display: grid;
-  grid-template-columns: 1fr 380px;
-  gap: 24px;
-  align-items: start;
+    display: grid;
+    grid-template-columns: 1fr 420px; /* СЛЕГКА РАСШИРИЛИ */
+    gap: 24px;
+    align-items: start;
 }
 
 .svod-left-col {
@@ -453,7 +453,6 @@ tr[class*="svodlvl3_"] > td:nth-child(2), tr[class*="lvl3_"] > td:nth-child(2) {
         <button class="tab-btn" onclick="loadTab('checks_table', this)">Чек-листы</button>
         <button class="tab-btn" onclick="loadTab('stoplists', this)">Стоп-листы</button>
         <button class="tab-btn" onclick="loadTab('missing', this)">Недовозы</button>
-        <button class="tab-btn" onclick="loadTab('receivings_control', this)">Контроль приемок</button>
         <button class="tab-btn" onclick="loadTab('invoice_products', this)">Накладные</button>
         <button class="tab-btn" onclick="loadTab('knowledge_base', this)">База Знаний</button>
         <button class="tab-btn" onclick="loadTab('espresso', this)">Рецепты эспрессо</button>
@@ -1687,18 +1686,17 @@ function toggleSvodDate(safeDate) {
         }
     }
 
-    async function compareStoplistWithOrders() {
+   async function compareStoplistWithOrders() {
         if(!confirm("Сравнить стоп-листы кофеен с текущими заказами?\n\nНедостающие товары будут добавлены со статусом 'Из стоп-листа'.")) return;
         showReportOverlay("Анализ стоп-листов...");
         
         try {
-            let resOrders = await fetch(`${FB_URL}/orders.json`).then(r => r.json());
-            let resMiss = await fetch(`${FB_URL}/missing_items.json`).then(r => r.json());
-            let resCat = await fetch(`${FB_URL}/catalogs/order.json`).then(r => r.json());
+            let orders = cachedData.orders || {};
+            let missing = cachedData.missing || {};
             
-            let orders = resOrders || {};
-            let missing = resMiss || {};
-            let catalog = resCat || {};
+            // ⚡ ИСПРАВЛЕНИЕ: Превращаем базы в массивы, чтобы избежать перезаписи ключей
+            let ordItems = Object.values(cachedData.catalogOrder || {}).filter(c => c && c.name);
+            let chkItems = Object.values(cachedData.catalogChecklist || {}).filter(c => c && c.name);
 
             let missingStatusMap = {};
             Object.values(missing).forEach(m => {
@@ -1730,7 +1728,7 @@ function toggleSvodDate(safeDate) {
                                 let cName = cleanName(i.name);
                                 let stat = 'pending';
                                 if (o.svod) {
-                                    if (i.status === 'error' || i.bot_error) stat = 'error';
+                                    if (i.status === 'error' || i.bot_error || i.not_found) stat = 'error';
                                     else if (i.status === 'ordered') stat = 'ordered';
                                     else if (i.status === 'not_needed') stat = 'not_needed';
                                     else if (i.status === 'from_stoplist') stat = 'from_stoplist';
@@ -1756,7 +1754,11 @@ function toggleSvodDate(safeDate) {
                 itemsArr.forEach(i => {
                     if (i && i.name && i.qty === 'Закончилось') {
                         let cName = cleanName(i.name);
-                        let catItem = Object.values(catalog || {}).find(c => c && cleanName(c.name) === cName);
+                        
+                        // ⚡ ИЩЕМ СНАЧАЛА В ЗАКУПКЕ, ЗАТЕМ В ЧЕК-ЛИСТАХ
+                        let matchOrd = ordItems.find(c => cleanName(c.name) === cName);
+                        let matchChk = chkItems.find(c => cleanName(c.name) === cName);
+                        let catItem = matchOrd || matchChk;
                         
                         if (catItem) {
                             let isTransit = missingStatusMap[shop] && (missingStatusMap[shop][cName] === 'transit' || missingStatusMap[shop][cName] === 'pending');
@@ -2710,6 +2712,7 @@ async function renderOrdersSvod() {
                     
                     if (i.bot_error || i.not_found || i.error || i.status === 'error') { sd.items[i.name].bot_error = true; sd.items[i.name].status = 'error'; } 
                     else if (i.status === 'ordered') sd.items[i.name].status = 'ordered';
+                    else if (i.status === 'not_found') sd.items[i.name].status = 'not_found';
                     else if (i.status === 'not_needed') sd.items[i.name].status = 'not_needed';
                     else if (i.status === 'from_stoplist') sd.items[i.name].status = 'from_stoplist';
                     else if (i.status === 'already_received') sd.items[i.name].status = 'already_received';
@@ -2729,7 +2732,7 @@ async function renderOrdersSvod() {
                     if (!shopLentaSums[actualShop]) shopLentaSums[actualShop] = 0;
                     let itemStatus = (tempSvodStatus[dateStr] && tempSvodStatus[dateStr][shop] && tempSvodStatus[dateStr][shop][name]) ? tempSvodStatus[dateStr][shop][name] : itemsObj[name].status;
                     
-                    if (!svodDeletions.some(d => d.date === dateStr && d.shop === shop && d.name === name) && itemStatus !== 'error' && itemStatus !== 'not_needed' && itemStatus !== 'already_received' && (actualVendor.toLowerCase().includes('лента') || actualVendor.toLowerCase().includes('lenta'))) {
+                    if (!svodDeletions.some(d => d.date === dateStr && d.shop === shop && d.name === name) && itemStatus !== 'error' && itemStatus !== 'not_found' && itemStatus !== 'not_needed' && itemStatus !== 'already_received' && (actualVendor.toLowerCase().includes('лента') || actualVendor.toLowerCase().includes('lenta'))) {
                         shopLentaSums[actualShop] += (((tempSvodQty[dateStr] && tempSvodQty[dateStr][shop] && tempSvodQty[dateStr][shop][name] !== undefined) ? tempSvodQty[dateStr][shop][name] : itemsObj[name].qty) * (parseFloat((Object.values(cachedData.catalogOrder || {}).find(c => c && c.name === name) || {}).price) || 0));
                     }
                 });
@@ -2767,22 +2770,24 @@ async function renderOrdersSvod() {
                     
         if (isSvodEditMode) html += `<div style="margin-bottom:24px; padding:16px 20px; background:var(--bg-paper); color:var(--brand-olive); border-radius:12px; font-size:13px; border: 1px solid var(--border-light);">Режим редактирования активен. Изменения статусов сохраняются мгновенно.</div>`;
         
+        // ⚡ ОБНОВЛЕННЫЕ ЗАГОЛОВКИ ТАБЛИЦЫ (Добавили ИНФО)
         html += `<table style="width: 100%; border-collapse: separate; border-spacing: 0;">
             <tr>
                 <th style="width: 5%; text-align: center;">#</th>
-                <th style="width: 45%; text-align: left;">НОМЕНКЛАТУРА</th>
-                <th style="width: 12%; text-align: center;">КОЛ-ВО</th>
-                <th style="width: 13%; text-align: center;">СТАТУС</th>
+                <th style="width: 32%; text-align: left;">НОМЕНКЛАТУРА</th>
+                <th style="width: 13%; text-align: center;">ИНФО</th>
+                <th style="width: 10%; text-align: center;">КОЛ-ВО</th>
+                <th style="width: 15%; text-align: center;">СТАТУС</th>
                 <th style="width: 15%; text-align: left;">ПОСТАВЩИК</th>
                 <th style="width: 10%; text-align: center;">ДЕЙСТВИЕ</th>
             </tr>`;
         
         if (sortedDates.length === 0) {
-            html += `<tr><td colspan="6" style="text-align:center; padding:60px; color:var(--text-muted);">Нет заказов для отображения</td></tr>`;
+            html += `<tr><td colspan="7" style="text-align:center; padding:60px; color:var(--text-muted);">Нет заказов для отображения</td></tr>`;
         } else {
             sortedDates.forEach(dateStr => {
                 let safeDate = getSafeId(dateStr), isDateOpen = expandedDivs.has(`svodlvl2_${safeDate}`);
-                html += `<tr class="cat-group-header" onclick="toggleSvodDate('${safeDate}')"><td colspan="6">Дата закупки: ${dateStr} <span id="arrow_sdate_${safeDate}" style="float:right; opacity:0.3; font-size:14px; margin-left:15px; margin-top:6px;">${isDateOpen ? '▲' : '▼'}</span><button onclick="deleteOrdersFromSvod(event, '${dateStr}')" style="float:right; background:transparent; color:var(--brand-danger); border:1px solid rgba(192,108,116,0.3); border-radius:50px; padding:4px 12px; font-size:10px; text-transform:uppercase; letter-spacing:1px; cursor:pointer;">Удалить день</button></td></tr>`;
+                html += `<tr class="cat-group-header" onclick="toggleSvodDate('${safeDate}')"><td colspan="7">Дата закупки: ${dateStr} <span id="arrow_sdate_${safeDate}" style="float:right; opacity:0.3; font-size:14px; margin-left:15px; margin-top:6px;">${isDateOpen ? '▲' : '▼'}</span><button onclick="deleteOrdersFromSvod(event, '${dateStr}')" style="float:right; background:transparent; color:var(--brand-danger); border:1px solid rgba(192,108,116,0.3); border-radius:50px; padding:4px 12px; font-size:10px; text-transform:uppercase; letter-spacing:1px; cursor:pointer;">Удалить день</button></td></tr>`;
                 
                 let shopsObj = svodDataByDate[dateStr];
                 Object.keys(shopsObj).sort().forEach(shop => {
@@ -2790,19 +2795,18 @@ async function renderOrdersSvod() {
                     let escShop = shop.replace(/'/g, "\\'").replace(/"/g, '&quot;');
                     let displayName = shop === 'Красноказарменная' ? 'МЭИ' : shop;
 
-                    html += `<tr class="cat-group-header svodlvl2_${safeDate}" onclick="toggleCatElements('svoditem_${safeShopDate}', 'arrow_sshop_${safeShopDate}')" style="display:${isDateOpen ? 'table-row' : 'none'};"><td colspan="6">${displayName} <span id="arrow_sshop_${safeShopDate}" style="float:right; opacity:0.3; font-size:12px; margin-left:15px; margin-top:2px;">${isShopOpen ? '▲' : '▼'}</span><button onclick="deleteOrdersFromSvod(event, '${dateStr}', '${escShop}')" style="float:right; background:transparent; color:var(--brand-danger); border:none; padding:0; font-size:10px; text-transform:uppercase; letter-spacing:1px; cursor:pointer; opacity:0.6;">Удалить заказ</button></td></tr>`;
-                    
+                    html += `<tr class="cat-group-header svodlvl2_${safeDate}" onclick="toggleCatElements('svoditem_${safeShopDate}', 'arrow_sshop_${safeShopDate}')" style="display:${isDateOpen ? 'table-row' : 'none'};"><td colspan="7">${displayName} <span id="arrow_sshop_${safeShopDate}" style="float:right; opacity:0.3; font-size:12px; margin-left:15px; margin-top:2px;">${isShopOpen ? '▲' : '▼'}</span><button onclick="deleteOrdersFromSvod(event, '${dateStr}', '${escShop}')" style="float:right; background:transparent; color:var(--brand-danger); border:none; padding:0; font-size:10px; text-transform:uppercase; letter-spacing:1px; cursor:pointer; opacity:0.6;">Удалить заказ</button></td></tr>`;
+                             
                     let sortedItemNames = Object.keys(shopsObj[shop].items).sort((a,b) => { 
                         let vA = vendorMap[a] || 'лента', vB = vendorMap[b] || 'лента'; 
                         return vA < vB ? -1 : (vA > vB ? 1 : a.localeCompare(b)); 
                     });     
                     
                     if (sortedItemNames.length === 0 && shopsObj[shop].no_order) {
-                        html += `<tr class="svoditem_${safeShopDate} svodlvl3_of_${safeDate}" style="display:${displayShop};"><td colspan="6" style="padding-left:56px; color:var(--text-muted); font-size:13px;">Заказ не требуется</td></tr>`;
+                        html += `<tr class="svoditem_${safeShopDate} svodlvl3_of_${safeDate}" style="display:${displayShop};"><td colspan="7" style="padding-left:56px; color:var(--text-muted); font-size:13px;">Заказ не требуется</td></tr>`;
                     } else {
-                        let vendorCounters = {}; // ⚡ СОЗДАЕМ УМНЫЙ СЧЕТЧИК
-                        let itemIndex = 1;
-                       
+                        let vendorCounters = {}; // УМНЫЙ СЧЕТЧИК
+                        
                         sortedItemNames.forEach(name => {
                             let catItem = Object.values(cachedData.catalogOrder || {}).find(c => c && c.name === name) || {};
                             let actualVendor = (tempSvodVendor[dateStr] && tempSvodVendor[dateStr][shop] && tempSvodVendor[dateStr][shop][name]) ? tempSvodVendor[dateStr][shop][name] : (shopsObj[shop].items[name].vendor || catItem.vendor || 'Лента');
@@ -2816,41 +2820,41 @@ async function renderOrdersSvod() {
 
                             if (isLenta && shopLentaSums[actualShop] > 0 && shopLentaSums[actualShop] < 2000) { actualVendor = 'Купер (Авто)'; isAutoKuper = true; }
 
-                            // ⚡ ЗАПУСКАЕМ СЧЕТЧИК ИМЕННО ДЛЯ ЭТОГО ПОСТАВЩИКА
                             let vName = actualVendor || 'Неизвестно';
                             if (!vendorCounters[vName]) vendorCounters[vName] = 0;
                             vendorCounters[vName]++;
                             let displayNum = vendorCounters[vName];
 
                             let baseStatus = shopsObj[shop].items[name].status;
-                            if (!shopsObj[shop].all_svod && baseStatus !== 'from_stoplist' && baseStatus !== 'error' && baseStatus !== 'not_needed' && baseStatus !== 'already_received' && baseStatus !== 'ordered') baseStatus = 'pending';
+                            if (!shopsObj[shop].all_svod && baseStatus !== 'from_stoplist' && baseStatus !== 'error' && baseStatus !== 'not_found' && baseStatus !== 'not_needed' && baseStatus !== 'already_received' && baseStatus !== 'ordered') baseStatus = 'pending';
 
-                            let repeatBadge = "", itemArrDate = ""; 
-                            
-                            // ⚡ ЖЕЛЕЗНАЯ ПРОВЕРКА: ЕСЛИ ТОВАР В БАЗЕ НЕДОВОЗОВ, ОН НЕ МОЖЕТ БЫТЬ "ПРИНЯТ"!
+                            let infoHtml = "-"; 
                             let isStrictMissing = false;
                             let mObj = Object.values(cachedData.missing || {}).find(m => m && m.shop === actualShop && cleanName(m.name) === cleanName(name) && m.status !== 'arrived' && m.status !== 'canceled');
-                            if (mObj) {
-                                baseStatus = 'error'; // Форсируем статус ошибки
-                                isStrictMissing = true;
-                                if (mObj.status === 'transit') repeatBadge = `<span style='font-size:10px; color:var(--brand-danger); margin-left:8px; text-transform:uppercase;'>В пути (Недовоз)</span>`;
-                                else if (mObj.status === 'reorder') repeatBadge = `<span style='font-size:10px; color:var(--text-muted); margin-left:8px; text-transform:uppercase;'>Перезаказан</span>`;
-                                else repeatBadge = `<span style='font-size:10px; color:var(--brand-danger); margin-left:8px; text-transform:uppercase;'>Недовоз</span>`;
-                            }
+                            
+                            let rowBgStyle = "background-color: transparent;";
 
-                            let isRepeat = false;
-                            let customRowBg = "";
-                            if (isOzon && !isStrictMissing) {
+                            // ⚡ КОЛОНКА ИНФО И ФОН СТРОКИ
+                            if (mObj) {
+                                baseStatus = 'not_found'; // Авто-статус "Нет в наличии"
+                                isStrictMissing = true;
+                                rowBgStyle = "background-color: #FFEBEE;"; // Красный фон
+                                if (mObj.status === 'transit') infoHtml = `<span style='font-size:11px; font-weight:800; color:#C62828; text-transform:uppercase;'>В пути (Недовоз)</span>`;
+                                else if (mObj.status === 'reorder') infoHtml = `<span style='font-size:11px; font-weight:800; color:#C62828; text-transform:uppercase;'>Перезаказан</span>`;
+                                else infoHtml = `<span style='font-size:11px; font-weight:800; color:#C62828; text-transform:uppercase;'>Недовоз</span>`;
+                            } 
+                            else if (isOzon) {
                                 let ozonStat = window.getOzonRepeatStatus(shop, name, cachedData, actualVendor); 
                                 if (ozonStat.isRepeat) {
-                                    isRepeat = true;
-                                    customRowBg = ozonStat.rowBg; // ⚡ Подтягиваем цвет фона для строки
-                                    repeatBadge = `<span style='font-size:11px; color:#1565C0; background:rgba(255,255,255,0.7); padding:2px 6px; border-radius:4px; margin-left:8px; text-transform:uppercase; font-weight:900; border:1px solid #1565C0;'>${ozonStat.badgeText}</span>`;
-                                    // Авто-проставление статуса "Принят", если он реально принят
-                                    if (ozonStat.badgeText.includes("Принят")) {
-                                        baseStatus = 'already_received'; 
-                                    }
+                                    rowBgStyle = ozonStat.rowBg; // Голубой/Зеленый фон из функции
+                                    infoHtml = `<span style='font-size:11px; color:#1565C0; font-weight:900; text-transform:uppercase;'>${ozonStat.badgeText}</span>`;
+                                    if (ozonStat.badgeText.includes("Принят")) baseStatus = 'already_received'; 
                                 }
+                            } 
+                            
+                            if (baseStatus === 'from_stoplist' && infoHtml === "-") {
+                                infoHtml = `<span style='font-size:11px; font-weight:800; color:#E65100; text-transform:uppercase;'>Из стоп-листа</span>`;
+                                rowBgStyle = "background-color: #FFF3E0;"; // Оранжевый фон
                             }
 
                             let itemStatus = (tempSvodStatus[dateStr] && tempSvodStatus[dateStr][shop] && tempSvodStatus[dateStr][shop][name]) ? tempSvodStatus[dateStr][shop][name] : baseStatus;
@@ -2860,7 +2864,7 @@ async function renderOrdersSvod() {
                             let finalPrice = (!isAutoKuper && (actualVendor.toLowerCase().includes('купер')) && price2 > 0) ? price2 : price1;
 
                             let cost = finalPrice * (isDeleted ? 0 : actualQty);
-                            if (itemStatus === 'error' || itemStatus === 'not_needed' || isDeleted) cost = 0; 
+                            if (itemStatus === 'error' || itemStatus === 'not_found' || itemStatus === 'not_needed' || isDeleted) cost = 0; 
                             
                             let isRemaining = (itemStatus === 'pending' || itemStatus === 'from_stoplist' || itemStatus === 'partial');
                             if (actualVendor.toLowerCase().includes('лента')) { totalLentaAll += cost; if(isRemaining) totalLentaRem += cost; } 
@@ -2871,118 +2875,201 @@ async function renderOrdersSvod() {
                             let jsName = name.replace(/'/g, "\\'").replace(/"/g, '&quot;'), jsShop = shop.replace(/'/g, "\\'").replace(/"/g, '&quot;');
                             let htmlName = name.replace(/"/g, '&quot;'), htmlShop = shop.replace(/"/g, '&quot;');
 
-                            // ⚡ ЦВЕТНЫЕ БЕЙДЖИ СТАТУСОВ
+                            // ⚡ КОЛОНКА СТАТУСА 
                             let statusText = "Ожидает", badgeClass = "badge-pending";
                             if (itemStatus === 'ordered') { statusText = "Заказано"; badgeClass = "badge-ordered"; } 
                             else if (itemStatus === 'not_needed') { statusText = "Не надо"; badgeClass = "badge-pending"; }
-                            else if (itemStatus === 'error') { statusText = "Ошибка/Недовоз"; badgeClass = "badge-error"; } 
-                            else if (itemStatus === 'from_stoplist') { statusText = "Из стопа"; badgeClass = "badge-stop"; }
-                            else if (itemStatus === 'already_received') { statusText = `Принят${itemArrDate ? ' '+itemArrDate : ''}`; badgeClass = "badge-received"; }
+                            else if (itemStatus === 'not_found' || itemStatus === 'error') { statusText = "Нет в наличии"; badgeClass = "badge-error"; } 
+                            else if (itemStatus === 'from_stoplist') { statusText = "Ожидает"; badgeClass = "badge-pending"; }
+                            else if (itemStatus === 'already_received') { statusText = `Принят`; badgeClass = "badge-received"; }
                             
-                            let statusBadge = `<span class="badge-editorial ${badgeClass}">${statusText}</span>`;
+                            let statusBadge = `<span class="badge-editorial ${badgeClass}" style="cursor:pointer; display:block;" onclick="instantStatusToggle('${dateStr}', '${jsShop}', '${jsName}', '${itemStatus}')">${statusText}</span>`;
 
                             let displayVendorCell = isSvodEditMode ? `<select class="edit-svod-vendor-select" data-shop="${htmlShop}" data-item="${htmlName}" data-date="${dateStr}" onchange="markSvodVendorChange('${dateStr}', '${jsShop}', '${jsName}', this.value)" ${isDeleted ? 'disabled' : ''} style="padding:6px; font-size:13px;">${!["лента", "озон", "купер", "wildberries", "самокат", "metro", "купер (авто)"].includes(actualVendor.toLowerCase()) ? `<option value="${actualVendor}" selected>${actualVendor}</option>` : ''}${["Лента", "Озон", "Купер", "Wildberries", "Самокат", "METRO"].map(v => `<option value="${v}" ${v.toLowerCase() === actualVendor.toLowerCase() ? 'selected' : ''}>${v}</option>`).join('')}</select>` : actualVendor;
 
                             if (isSvodEditMode) {
-                                statusBadge = `<span class="badge-editorial ${badgeClass}" style="cursor:pointer;" onclick="instantStatusToggle('${dateStr}', '${jsShop}', '${jsName}', '${itemStatus}')">${statusText}</span>`;
                                 html += `
-                                <tr class="svod-row svoditem_${safeShopDate} svodlvl3_of_${safeDate}" style="display:${displayShop}; opacity: ${isDeleted ? '0.4' : '1'};">
+                                <tr class="svod-row svoditem_${safeShopDate} svodlvl3_of_${safeDate}" style="display:${displayShop}; opacity: ${isDeleted ? '0.4' : '1'}; ${rowBgStyle}">
                                     <td style="text-align:center; color:var(--text-muted); font-weight:600; font-size:12px;">${displayNum}</td>
                                     <td>
-                                        <div style="font-weight:500; margin-bottom:6px;">${name} ${repeatBadge}</div>
+                                        <div style="font-weight:500; margin-bottom:6px;">${name}</div>
                                         <select class="edit-svod-shop-select" data-original-shop="${htmlShop}" data-item="${htmlName}" data-date="${dateStr}" style="font-size: 12px; padding: 6px; width: 100%;" onchange="markSvodShopChange('${dateStr}', '${jsShop}', '${jsName}', this.value)" ${isDeleted ? 'disabled' : ''}>${shopListAll.map(sName => `<option value="${sName}" ${sName === actualShop ? 'selected' : ''}>${sName}</option>`).join('')}</select>
                                     </td>
+                                    <td style="text-align:center;">${infoHtml}</td>
                                     <td style="text-align:left;"><input type="number" class="edit-svod-input" data-date="${dateStr}" data-shop="${htmlShop}" data-item="${htmlName}" data-vendor="${actualVendor}" data-price="${finalPrice}" data-deleted="${isDeleted}" data-status="${itemStatus}" value="${actualQty}" ${isDeleted ? 'disabled' : ''} oninput="recalcSvodTotals()" style="width: 45px; text-align: center; padding: 4px; font-weight:bold; font-size:15px; margin-right: 10px;"></td>
-                                    <td style="text-align:center;">${statusBadge}</td>
+                                    <td style="text-align:center;">
+                                        <select class="edit-svod-status-select" onchange="instantStatusToggle('${dateStr}', '${jsShop}', '${jsName}', this.value)" style="font-size:12px; padding:4px; border-radius:4px; width:100%; border:1px solid #ccc;" ${isDeleted ? 'disabled' : ''}>
+                                            <option value="pending" ${itemStatus==='pending'||itemStatus==='from_stoplist'?'selected':''}>Ожидает</option>
+                                            <option value="ordered" ${itemStatus==='ordered'?'selected':''}>Заказано</option>
+                                            <option value="not_found" ${itemStatus==='not_found'||itemStatus==='error'?'selected':''}>Нет в наличии</option>
+                                            <option value="not_needed" ${itemStatus==='not_needed'?'selected':''}>Не надо</option>
+                                        </select>
+                                    </td>
                                     <td style="font-size:13px;">${displayVendorCell}</td>
                                     <td style="text-align:center;"><button class="btn-del" ${isDeleted ? 'disabled' : ''} onclick="markSvodDelete(this, '${dateStr}', '${jsShop}', '${jsName}')">Удалить</button></td>
                                 </tr>`;
                             } else {
                                 html += `
-                                <tr class="svod-row svoditem_${safeShopDate} svodlvl3_of_${safeDate}" style="display:${displayShop}; ${isRepeat ? customRowBg : ''}">
+                                <tr class="svod-row svoditem_${safeShopDate} svodlvl3_of_${safeDate}" style="display:${displayShop}; ${rowBgStyle}">
                                     <td style="text-align:center; color:var(--text-muted); font-weight:600; font-size:12px;">${displayNum}</td>
-                                    <td><span style="font-weight:500; font-size:15px;">${name}</span> ${repeatBadge}</td>
-                                    <td style="text-align:left; font-weight:700; font-size:15px; color:#311b92;">${actualQty} шт</td>
+                                    <td><span style="font-weight:500; font-size:15px;">${name}</span></td>
+                                    <td style="text-align:center;">${infoHtml}</td>
+                                    <td style="text-align:center; font-weight:700; font-size:15px; color:#311b92;">${actualQty} шт</td>
                                     <td style="text-align:center;">${statusBadge}</td>
                                     <td style="font-size:13px; color:var(--text-muted);">${displayVendorCell}</td>
                                     <td style="text-align:center;">${linksHtml}</td>
                                 </tr>`;
                             }
-                            itemIndex++; 
                         });
                     }
                     if (isSvodEditMode) {
                         tempSvodNewRows.filter(r => r.date === dateStr && r.shop === shop).forEach(r => {
                             html += `<tr class="svod-row svoditem_${safeShopDate} svodlvl3_of_${safeDate} new-svod-row" style="background:var(--bg-paper); display:${displayShop};">
                                 <td style="text-align:center; color:var(--brand-olive); font-weight:800;">+</td>
-                                <td><input type="text" list="svod_items_list" class="new-svod-name" data-date="${dateStr}" data-shop="${htmlShop}" value="${r.name}" placeholder="Поиск товара..." oninput="updateNewRowVendorAndPrice(this)" style="padding:6px; font-weight:500; font-size:15px;"></td>
-                                <td style="text-align:left;"><input type="number" class="new-svod-qty" value="${r.qty}" oninput="recalcSvodTotals()" style="width:60px; text-align:center; padding:6px; font-weight:bold; font-size:15px;"></td>
-                                <td style="text-align:center;"><select class="new-svod-status" onchange="recalcSvodTotals()" style="padding:6px; font-size:12px;"><option value="pending" ${r.status==='pending'?'selected':''}>Ожидает</option><option value="ordered" ${r.status==='ordered'?'selected':''}>Заказано</option><option value="already_received" ${r.status==='already_received'?'selected':''}>Принят</option><option value="error" ${r.status==='error'?'selected':''}>Ошибка</option></select></td>
-                                <td><select class="new-svod-vendor" onchange="recalcSvodTotals()" style="padding:6px; font-size:12px;">${["Лента", "Озон", "Купер", "Wildberries", "Самокат", "METRO"].map(v => `<option value="${v}" ${v.toLowerCase() === r.vendor.toLowerCase() ? 'selected' : ''}>${v}</option>`).join('')}</select></td>
+                                <td><input type="text" list="svod_items_list" class="new-svod-name" data-date="${dateStr}" data-shop="${htmlShop}" value="${r.name}" placeholder="Поиск товара..." oninput="updateNewRowVendorAndPrice(this)" style="padding:6px; font-weight:500; font-size:15px; width:100%;"></td>
+                                <td style="text-align:center;">-</td>
+                                <td style="text-align:center;"><input type="number" class="new-svod-qty" value="${r.qty}" oninput="recalcSvodTotals()" style="width:60px; text-align:center; padding:6px; font-weight:bold; font-size:15px;"></td>
+                                <td style="text-align:center;"><select class="new-svod-status" onchange="recalcSvodTotals()" style="padding:6px; font-size:12px; width:100%;"><option value="pending" ${r.status==='pending'?'selected':''}>Ожидает</option><option value="ordered" ${r.status==='ordered'?'selected':''}>Заказано</option><option value="already_received" ${r.status==='already_received'?'selected':''}>Принят</option><option value="not_found" ${r.status==='error'||r.status==='not_found'?'selected':''}>Нет в наличии</option></select></td>
+                                <td><select class="new-svod-vendor" onchange="recalcSvodTotals()" style="padding:6px; font-size:12px; width:100%;">${["Лента", "Озон", "Купер", "Wildberries", "Самокат", "METRO"].map(v => `<option value="${v}" ${v.toLowerCase() === r.vendor.toLowerCase() ? 'selected' : ''}>${v}</option>`).join('')}</select></td>
                                 <td style="text-align:center;"><button class="btn-del" onclick="this.closest('tr').remove(); recalcSvodTotals();">Удалить</button></td>
                             </tr>`;
                         });
-                        html += `<tr class="svoditem_${safeShopDate} svodlvl3_of_${safeDate}" style="display:${displayShop};"><td colspan="6" style="text-align:center; padding:20px;"><button class="btn-add" style="padding:8px 16px; font-size:11px;" onclick="addSvodRowUI(this, '${dateStr}', '${shop.replace(/'/g, "\\'").replace(/"/g, '&quot;')}', '${safeShopDate}', '${safeDate}')">Добавить товар</button></td></tr>`;
+                        html += `<tr class="svoditem_${safeShopDate} svodlvl3_of_${safeDate}" style="display:${displayShop};"><td colspan="7" style="text-align:center; padding:20px;"><button class="btn-add" style="padding:8px 16px; font-size:11px;" onclick="addSvodRowUI(this, '${dateStr}', '${shop.replace(/'/g, "\\'").replace(/"/g, '&quot;')}', '${safeShopDate}', '${safeDate}')">Добавить товар</button></td></tr>`;
                     }
-                    if(shopsObj[shop].comments.length > 0) html += `<tr class="svoditem_${safeShopDate} svodlvl3_of_${safeDate}" style="display:${displayShop};"><td colspan="6" style="padding:16px 24px; font-style:italic; font-size:13px; color:var(--text-muted); background:var(--bg-paper);">Комментарий: <b style="color:var(--text-main); font-weight:500;">${shopsObj[shop].comments.join(' | ')}</b></td></tr>`;
+                    if(shopsObj[shop].comments.length > 0) html += `<tr class="svoditem_${safeShopDate} svodlvl3_of_${safeDate}" style="display:${displayShop};"><td colspan="7" style="padding:16px 24px; font-style:italic; font-size:13px; color:var(--text-muted); background:var(--bg-paper);">Комментарий: <b style="color:var(--text-main); font-weight:500;">${shopsObj[shop].comments.join(' | ')}</b></td></tr>`;
                 });
             });
         }
         
-                        html += `</table></div>`;
+        html += `</table></div>`;
 
-let displaySum = (totalLentaAll > 0 || totalOzonAll > 0 || totalKuperAll > 0 || isSvodEditMode) ? 'flex' : 'none';
+        let displaySum = (totalLentaAll > 0 || totalOzonAll > 0 || totalKuperAll > 0 || isSvodEditMode) ? 'flex' : 'none';
 
-// ⚡ ЛЕВАЯ КОЛОНКА: Свод + Итоги
-let leftColHtml = `<div class="svod-left-col">`;
-leftColHtml += `<div class="summary-block" id="svod-summary-block" style="display:${displaySum};">
-    <div class="summary-item">Лента<br><b id="svod-total-lenta">${Math.round(totalLentaAll)}</b><br><span style="font-size:10px;">Остаток: <span id="svod-rem-lenta">${Math.round(totalLentaRem)}</span></span></div>
-    <div class="summary-item">Озон<br><b id="svod-total-ozon">${Math.round(totalOzonAll)}</b><br><span style="font-size:10px;">Остаток: <span id="svod-rem-ozon">${Math.round(totalOzonRem)}</span></span></div>
-    <div class="summary-item">Купер<br><b id="svod-total-kuper">${Math.round(totalKuperAll)}</b><br><span style="font-size:10px;">Остаток: <span id="svod-rem-kuper">${Math.round(totalKuperRem)}</span></span></div>
-    <div class="summary-total">ИТОГО<br><b id="svod-total-all">${Math.round(totalLentaAll+totalOzonAll+totalKuperAll)}</b><br><span style="font-size:10px; color:var(--text-muted);">Остаток: <span id="svod-rem-all">${Math.round(totalLentaRem+totalOzonRem+totalKuperRem)}</span></span></div>
-</div>`;
-leftColHtml += `</div>`;
+        // ⚡ ЛЕВАЯ КОЛОНКА: Свод + Итоги
+        let leftColHtml = `<div class="svod-left-col">`;
+        leftColHtml += `<div class="summary-block" id="svod-summary-block" style="display:${displaySum};">
+            <div class="summary-item">Лента<br><b id="svod-total-lenta">${Math.round(totalLentaAll)}</b><br><span style="font-size:10px;">Остаток: <span id="svod-rem-lenta">${Math.round(totalLentaRem)}</span></span></div>
+            <div class="summary-item">Озон<br><b id="svod-total-ozon">${Math.round(totalOzonAll)}</b><br><span style="font-size:10px;">Остаток: <span id="svod-rem-ozon">${Math.round(totalOzonRem)}</span></span></div>
+            <div class="summary-item">Купер<br><b id="svod-total-kuper">${Math.round(totalKuperAll)}</b><br><span style="font-size:10px;">Остаток: <span id="svod-rem-kuper">${Math.round(totalKuperRem)}</span></span></div>
+            <div class="summary-total">ИТОГО<br><b id="svod-total-all">${Math.round(totalLentaAll+totalOzonAll+totalKuperAll)}</b><br><span style="font-size:10px; color:var(--text-muted);">Остаток: <span id="svod-rem-all">${Math.round(totalLentaRem+totalOzonRem+totalKuperRem)}</span></span></div>
+        </div>`;
+        leftColHtml += `</div>`;
 
-// ⚡ ПРАВАЯ КОЛОНКА: Архив
-let isHistGlobalOpen = expandedDivs.has('history_orders_list');
-let rightColHtml = `<div class="svod-right-col">`;
-rightColHtml += `<div class="card" style="padding:0;">
-    <div class="cat-group-header" style="padding:20px 24px; border-bottom:1px solid var(--line-delicate); cursor:pointer; display:flex; justify-content:space-between; align-items:center;" onclick="toggleCatElements('history_orders_list', 'arrow_hist_ord')">
-        <div>
-            <span class="overline" style="font-size:11px; color:var(--text-muted);">Архив</span>
-            <h3 style="padding:0!important; margin:0!important; border:none; background:transparent; font-size:18px !important;">История (150 заказов)</h3>
-        </div>
-        <span id="arrow_hist_ord" style="color:var(--text-muted);">${isHistGlobalOpen ? '▲' : '▼'}</span>
-    </div>
-<div class="history_orders_list" style="display: ${isHistGlobalOpen ? 'block' : 'none'}; padding: 15px 24px;">`;
+        // ⚡ ПРАВАЯ КОЛОНКА: Контроль приемок + Архив
+        let rightColHtml = `<div class="svod-right-col">`;
+        
+        // --- ⚡ БЛОК КОНТРОЛЯ ПРИЕМОК (Перенесен из отдельной вкладки) ---
+        let fourteenDaysAgo = Date.now() - (14 * 24 * 60 * 60 * 1000);
+        let recvOrdersArr = allOrders.filter(o => o && (o.mode === 'order' || o.mode === 'new_shop') && o.timestamp >= fourteenDaysAgo);
+        let pendingReceivings = {};
+        
+        recvOrdersArr.forEach(o => {
+            let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
+            let lentaItems = [], ozonItems = [], kuperItems = [];
+            itemsArr.forEach(i => {
+                if (!i || !i.name || i.name === "НЕТ ЗАКАЗА") return;
+                let isItemOrdered = (i.status === 'ordered' || i.status === 'from_stoplist');
+                if (isItemOrdered && i.status !== 'already_received' && i.status !== 'not_needed' && i.status !== 'error' && i.status !== 'not_found' && i.bot_error !== true) {
+                    let catItem = Object.values(cachedData.catalogOrder || {}).find(c => c && c.name === i.name) || {};
+                    let vRaw = (i.vendor || catItem.vendor || 'Лента').toLowerCase();
+                    let vendor = 'lenta';
+                    if (vRaw.includes('озон') || vRaw.includes('ozon')) vendor = 'ozon';
+                    else if (vRaw.includes('купер') || vRaw.includes('kuper')) vendor = 'kuper';
 
-if (historyOrdersList.length > 0) rightColHtml += `<button class="btn-save" style="width:100%; margin-bottom:15px; font-size:13px;" onclick="restoreOrdersFromHistory()">↩️ Вернуть выбранные в работу</button>`;
-rightColHtml += `<table style="margin:0; font-size:13px;">
-    <tr><th style="width:30px;"></th><th>Кофейня</th><th style="width:100px;">Дата</th><th style="width:50px; text-align:center;">Удалить</th></tr>`;
+                    if (vendor === 'lenta' && !o.lenta_received) lentaItems.push(i);
+                    if (vendor === 'ozon' && !o.ozon_received) ozonItems.push(i);
+                    if (vendor === 'kuper' && !o.kuper_received) kuperItems.push(i);
+                }
+            });
 
-if (historyOrdersList.length === 0) rightColHtml += `<tr><td colspan="4" style="text-align:center; color:var(--text-muted); padding:20px;">История пуста</td></tr>`;
-else {
-    historyOrdersList.forEach(o => {
-        let itemsCount = (Array.isArray(o.items) ? o.items : Object.values(o.items || {})).filter(i => i && i.name !== "НЕТ ЗАКАЗА").length;
-        rightColHtml += `
-        <tr class="order-row" style="border-bottom:1px solid var(--line-delicate);">
-            <td style="text-align:center;"><input type="checkbox" class="hist-checkbox" value="${o.key}" style="cursor:pointer; width:14px;"></td>
-            <td><b style="font-size:13px;">${o.shop === 'Красноказарменная' ? 'МЭИ' : o.shop}</b> <span style="font-size:11px; color:var(--text-muted);">(${itemsCount} поз.)</span></td>
-            <td style="color:var(--text-muted); font-size:12px;">${o.timestamp ? new Date(o.timestamp).toLocaleDateString('ru-RU') : '---'}</td>
-            <td style="text-align:center;"><button class="btn-del" style="padding:4px 8px; font-size:11px;" onclick="deleteOrder('${o.key}')">🗑</button></td>
-        </tr>`;
-    });
-}
-rightColHtml += `</table></div></div>`;
-rightColHtml += `</div>`;
+            let missingVendors = [];
+            if (lentaItems.length > 0) missingVendors.push({ name: "🛒 Лента", items: lentaItems });
+            if (ozonItems.length > 0) missingVendors.push({ name: "📦 Озон", items: ozonItems });
+            if (kuperItems.length > 0) missingVendors.push({ name: "🛵 Купер", items: kuperItems });
+            
+            if (missingVendors.length > 0) {
+                if (!pendingReceivings[o.shop]) pendingReceivings[o.shop] = [];
+                pendingReceivings[o.shop].push({
+                    key: o.key,
+                    dateStr: new Date(o.timestamp).toLocaleDateString('ru-RU') + " " + new Date(o.timestamp).toLocaleTimeString('ru-RU', {hour:'2-digit', minute:'2-digit'}),
+                    timestamp: o.timestamp,
+                    missingVendors: missingVendors
+                });
+            }
+        });
 
-// ⚡ СОБИРАЕМ ДВУХКОЛОНОЧНУЮ СТРУКТУРУ
-html += `<div class="svod-dashboard-layout">
-    ${leftColHtml}
-    ${rightColHtml}
-</div>`;
+        rightColHtml += `<div class="card" style="padding:0; margin-bottom:24px;">
+            <div class="cat-group-header" style="padding:20px 24px; border-bottom:1px solid var(--line-delicate); cursor:pointer; display:flex; justify-content:space-between; align-items:center;" onclick="toggleCatElements('recv_wait_list', 'arrow_recv_wait')">
+                <div>
+                    <span class="overline" style="font-size:11px; color:#2E7D32;">Приемки бариста</span>
+                    <h3 style="padding:0!important; margin:0!important; border:none; background:transparent; font-size:18px !important; color:#2E7D32!important;">Ожидают подтверждения</h3>
+                </div>
+                <span id="arrow_recv_wait" style="color:var(--text-muted);">${expandedDivs.has('recv_wait_list') ? '▲' : '▼'}</span>
+            </div>
+            <div class="recv_wait_list" style="display: ${expandedDivs.has('recv_wait_list') ? 'block' : 'none'}; padding: 15px 24px;">`;
+            
+        if (Object.keys(pendingReceivings).length > 0) {
+            rightColHtml += `<table style="margin:0; font-size:13px; min-width:100%;">`;
+            Object.keys(pendingReceivings).sort().forEach(shop => {
+                rightColHtml += `<tr><td colspan="2" style="background:#E8F5E9; padding:8px 12px; font-weight:bold; color:#2E7D32; border-radius:6px; margin-top:10px;">${shop === 'Красноказарменная' ? 'МЭИ' : shop}</td></tr>`;
+                pendingReceivings[shop].forEach(task => {
+                    let daysPast = Math.floor((Date.now() - task.timestamp) / (1000 * 60 * 60 * 24));
+                    let badColor = daysPast >= 2 ? "color:#c62828; font-weight:bold;" : "color:#ef6c00;";
+                    let vendorsHtml = task.missingVendors.map(v => `<span style="background:#fff; border:1px solid #ccc; padding:2px 6px; border-radius:4px; margin-right:4px;">${v.name}</span>`).join("");
+                    rightColHtml += `<tr>
+                        <td style="padding:8px 0;">
+                            <div style="font-weight:bold;">${task.dateStr}</div>
+                            <div style="${badColor} font-size:11px; margin-top:4px;">${daysPast} дн. назад</div>
+                        </td>
+                        <td style="padding:8px 0; text-align:right;">${vendorsHtml}</td>
+                    </tr>`;
+                });
+            });
+            rightColHtml += `</table>`;
+        } else {
+            rightColHtml += `<div style="text-align:center; color:#2E7D32; font-weight:bold; padding:20px;">🎉 Все приемки подтверждены!</div>`;
+        }
+        rightColHtml += `</div></div>`;
+        // --- КОНЕЦ БЛОКА ПРИЕМОК ---
 
-box.innerHTML = html;
+        let isHistGlobalOpen = expandedDivs.has('history_orders_list');
+        rightColHtml += `<div class="card" style="padding:0;">
+            <div class="cat-group-header" style="padding:20px 24px; border-bottom:1px solid var(--line-delicate); cursor:pointer; display:flex; justify-content:space-between; align-items:center;" onclick="toggleCatElements('history_orders_list', 'arrow_hist_ord')">
+                <div>
+                    <span class="overline" style="font-size:11px; color:var(--text-muted);">Архив</span>
+                    <h3 style="padding:0!important; margin:0!important; border:none; background:transparent; font-size:18px !important;">История (150 заказов)</h3>
+                </div>
+                <span id="arrow_hist_ord" style="color:var(--text-muted);">${isHistGlobalOpen ? '▲' : '▼'}</span>
+            </div>
+        <div class="history_orders_list" style="display: ${isHistGlobalOpen ? 'block' : 'none'}; padding: 15px 24px;">`;
+
+        if (historyOrdersList.length > 0) rightColHtml += `<button class="btn-save" style="width:100%; margin-bottom:15px; font-size:13px;" onclick="restoreOrdersFromHistory()">↩️ Вернуть выбранные в работу</button>`;
+        rightColHtml += `<table style="margin:0; font-size:13px; min-width:100%;">
+            <tr><th style="width:30px;"></th><th>Кофейня</th><th style="width:100px;">Дата</th><th style="width:50px; text-align:center;">Удалить</th></tr>`;
+
+        if (historyOrdersList.length === 0) rightColHtml += `<tr><td colspan="4" style="text-align:center; color:var(--text-muted); padding:20px;">История пуста</td></tr>`;
+        else {
+            historyOrdersList.forEach(o => {
+                let itemsCount = (Array.isArray(o.items) ? o.items : Object.values(o.items || {})).filter(i => i && i.name !== "НЕТ ЗАКАЗА").length;
+                rightColHtml += `
+                <tr class="order-row" style="border-bottom:1px solid var(--line-delicate);">
+                    <td style="text-align:center;"><input type="checkbox" class="hist-checkbox" value="${o.key}" style="cursor:pointer; width:14px;"></td>
+                    <td><b style="font-size:13px;">${o.shop === 'Красноказарменная' ? 'МЭИ' : o.shop}</b> <span style="font-size:11px; color:var(--text-muted);">(${itemsCount} поз.)</span></td>
+                    <td style="color:var(--text-muted); font-size:12px;">${o.timestamp ? new Date(o.timestamp).toLocaleDateString('ru-RU') : '---'}</td>
+                    <td style="text-align:center;"><button class="btn-del" style="padding:4px 8px; font-size:11px;" onclick="deleteOrder('${o.key}')">🗑</button></td>
+                </tr>`;
+            });
+        }
+        rightColHtml += `</table></div></div>`;
+        rightColHtml += `</div>`;
+
+        // ⚡ СОБИРАЕМ ДВУХКОЛОНОЧНУЮ СТРУКТУРУ
+        html += `<div class="svod-dashboard-layout">
+            ${leftColHtml}
+            ${rightColHtml}
+        </div>`;
+
+        box.innerHTML = html;
     } catch (e) { 
         document.getElementById('content').innerHTML = `<div style="color:red; padding:20px;">Ошибка рендера Свода: ${e.message}</div>`; 
     }
@@ -5548,18 +5635,15 @@ async function exportGraphsToExcel() {
         }
     }
 
-    // Мгновенное авто-сохранение статуса в базу (без кнопки "Сохранить")
-   // Мгновенное переключение статуса по КЛИКУ
     async function instantStatusToggle(dateStr, shop, name, currentStatus) {
         preserveSvodInputs(); 
         
         let newStatus = 'ordered'; 
-        // ⚡ Добавлены новые статусы в цикл ручного переключения
+        // ⚡ ЛОГИКА ЦИКЛА: Ожидает -> Заказано -> Нет в наличии -> Не надо -> Ожидает
         if (currentStatus === 'pending' || currentStatus === 'from_stoplist' || currentStatus === 'already_received') newStatus = 'ordered';
         else if (currentStatus === 'ordered' || currentStatus === 'partial') newStatus = 'not_found';
-        else if (currentStatus === 'not_found') newStatus = 'not_needed';
-        else if (currentStatus === 'not_needed') newStatus = 'error';
-        else if (currentStatus === 'error') newStatus = 'pending';
+        else if (currentStatus === 'not_found' || currentStatus === 'error') newStatus = 'not_needed';
+        else if (currentStatus === 'not_needed') newStatus = 'pending';
 
         if (!tempSvodStatus[dateStr]) tempSvodStatus[dateStr] = {};
         if (!tempSvodStatus[dateStr][shop]) tempSvodStatus[dateStr][shop] = {};
@@ -5576,7 +5660,13 @@ async function exportGraphsToExcel() {
             let itemIdx = itemsArr.findIndex(i => i && i.name === name);
             
             if (itemIdx !== -1) {
-                let isError = (newStatus === 'error' || newStatus === 'not_found'); // Оба считаем за ошибку для БД
+                let isError = (newStatus === 'error' || newStatus === 'not_found'); 
+                
+                // ⚡ СОХРАНЯЕМ В ЛОКАЛЬНЫЙ КЭШ СРАЗУ (ЧТОБЫ НЕ БЫЛО ЗАДЕРЖЕК ПРИ ПЕРЕРИСОВКЕ)
+                itemsArr[itemIdx].status = newStatus;
+                itemsArr[itemIdx].bot_error = isError;
+                itemsArr[itemIdx].not_found = isError;
+                
                 fetch(`${FB_URL}/orders/${targetOrderKey}/items/${itemIdx}.json`, {
                     method: 'PATCH',
                     body: JSON.stringify({ status: newStatus, bot_error: isError, not_found: isError })

@@ -194,7 +194,22 @@ h1, h2, h3, h4 { font-family: var(--font-fashion); color: var(--brand-maroon); f
 /* =========================================
 ТАБЛИЦЫ И КАРТОЧКИ (ПК)
 ========================================= */
-.card { background: var(--bg-window) !important; padding: 40px !important; border-radius: var(--radius-window) !important; box-shadow: var(--shadow-elegant) !important; overflow: auto; width: 100%; border: 1px solid var(--line-delicate); margin-bottom: 40px; box-sizing: border-box;}
+.card { 
+    background: var(--bg-window) !important; 
+    padding: 40px !important; 
+    border-radius: var(--radius-window) !important; 
+    box-shadow: var(--shadow-elegant) !important; 
+    overflow: auto; 
+    
+    /* ⚡ ДОБАВЬТЕ ЭТИ ДВЕ СТРОЧКИ: */
+    width: 100%; 
+    max-width: 1300px; /* Таблица больше не будет растягиваться шире этого значения */
+    
+    border: 1px solid var(--line-delicate); 
+    margin-bottom: 40px; 
+    box-sizing: border-box;
+}
+    
 h3, h4 { font-size: 28px !important; margin-bottom: 24px !important; color: var(--brand-maroon) !important; font-family: var(--font-fashion) !important; }
 
 table { width: 100%; border-collapse: separate; border-spacing: 0; margin-top: 10px; min-width: 1000px; }
@@ -2673,7 +2688,15 @@ async function renderOrdersSvod() {
                     
         if (isSvodEditMode) html += `<div style="margin-bottom:24px; padding:16px 20px; background:var(--bg-paper); color:var(--brand-olive); border-radius:12px; font-size:13px; border: 1px solid var(--border-light);">Режим редактирования активен. Изменения статусов сохраняются мгновенно.</div>`;
         
-       html += `<table style='margin-bottom:0;'><tr><th style="width:40px; text-align:center;">#</th><th>Номенклатура</th><th style="text-align:left; width:50px;">Кол-во</th><th style="text-align:center; width:150px;">Статус</th><th style="width:180px;">Поставщик</th><th style="text-align:center; width:120px;">${isSvodEditMode ? 'Опции' : 'Действие'}</th></tr>`;
+      let html = `<table style="width: 100%; border-collapse: separate; border-spacing: 0;">
+            <tr>
+                <th style="width: 5%; text-align: center;">#</th>
+                <th style="width: 45%; text-align: left;">НОМЕНКЛАТУРА</th>
+                <th style="width: 12%; text-align: center;">КОЛ-ВО</th>
+                <th style="width: 13%; text-align: center;">СТАТУС</th>
+                <th style="width: 15%; text-align: left;">ПОСТАВЩИК</th>
+                <th style="width: 10%; text-align: center;">ДЕЙСТВИЕ</th>
+            </tr>`;
         
         if (sortedDates.length === 0) {
             html += `<tr><td colspan="6" style="text-align:center; padding:60px; color:var(--text-muted);">Нет заказов для отображения</td></tr>`;
@@ -2690,12 +2713,11 @@ async function renderOrdersSvod() {
 
                     html += `<tr class="cat-group-header svodlvl2_${safeDate}" onclick="toggleCatElements('svoditem_${safeShopDate}', 'arrow_sshop_${safeShopDate}')" style="display:${isDateOpen ? 'table-row' : 'none'};"><td colspan="6">${displayName} <span id="arrow_sshop_${safeShopDate}" style="float:right; opacity:0.3; font-size:12px; margin-left:15px; margin-top:2px;">${isShopOpen ? '▲' : '▼'}</span><button onclick="deleteOrdersFromSvod(event, '${dateStr}', '${escShop}')" style="float:right; background:transparent; color:var(--brand-danger); border:none; padding:0; font-size:10px; text-transform:uppercase; letter-spacing:1px; cursor:pointer; opacity:0.6;">Удалить заказ</button></td></tr>`;
                              
-                    let sortedItemNames = Object.keys(shopsObj[shop].items).sort((a,b) => { let vA = vendorMap[a] || 'лента', vB = vendorMap[b] || 'лента'; return vA < vB ? -1 : (vA > vB ? 1 : a.localeCompare(b)); });
-                    
-                    if (sortedItemNames.length === 0 && shopsObj[shop].no_order) {
+                   if (sortedItemNames.length === 0 && shopsObj[shop].no_order) {
                         html += `<tr class="svoditem_${safeShopDate} svodlvl3_of_${safeDate}" style="display:${displayShop};"><td colspan="6" style="padding-left:56px; color:var(--text-muted); font-size:13px;">Заказ не требуется</td></tr>`;
                     } else {
-                        let itemIndex = 1; 
+                        let vendorCounters = {}; // ⚡ СОЗДАЕМ УМНЫЙ СЧЕТЧИК
+                        
                         sortedItemNames.forEach(name => {
                             let catItem = Object.values(cachedData.catalogOrder || {}).find(c => c && c.name === name) || {};
                             let actualVendor = (tempSvodVendor[dateStr] && tempSvodVendor[dateStr][shop] && tempSvodVendor[dateStr][shop][name]) ? tempSvodVendor[dateStr][shop][name] : (shopsObj[shop].items[name].vendor || catItem.vendor || 'Лента');
@@ -2708,6 +2730,12 @@ async function renderOrdersSvod() {
                             let isOzon = actualVendor.toLowerCase().includes('озон') || actualVendor.toLowerCase().includes('ozon');
 
                             if (isLenta && shopLentaSums[actualShop] > 0 && shopLentaSums[actualShop] < 2000) { actualVendor = 'Купер (Авто)'; isAutoKuper = true; }
+
+                            // ⚡ ЗАПУСКАЕМ СЧЕТЧИК ИМЕННО ДЛЯ ЭТОГО ПОСТАВЩИКА
+                            let vName = actualVendor || 'Неизвестно';
+                            if (!vendorCounters[vName]) vendorCounters[vName] = 0;
+                            vendorCounters[vName]++;
+                            let displayNum = vendorCounters[vName];
 
                             let baseStatus = shopsObj[shop].items[name].status;
                             if (!shopsObj[shop].all_svod && baseStatus !== 'from_stoplist' && baseStatus !== 'error' && baseStatus !== 'not_needed' && baseStatus !== 'already_received' && baseStatus !== 'ordered') baseStatus = 'pending';
@@ -2774,7 +2802,7 @@ async function renderOrdersSvod() {
                                     statusBadge = `<span class="badge-editorial ${badgeClass}" style="cursor:pointer;" onclick="instantStatusToggle('${dateStr}', '${jsShop}', '${jsName}', '${itemStatus}')">${statusText}</span>`;
                                     html += `
                                     <tr class="svod-row svoditem_${safeShopDate} svodlvl3_of_${safeDate}" style="display:${displayShop}; opacity: ${isDeleted ? '0.4' : '1'};">
-                                        <td style="text-align:center; color:var(--text-muted); font-size:12px;">${itemIndex}</td>
+                                        <td style="text-align:center; color:var(--text-muted); font-weight:600; font-size:12px;">${displayNum}</td>
                                         <td>
                                             <div style="font-weight:500; margin-bottom:6px;">${name} ${repeatBadge}</div>
                                             <select class="edit-svod-shop-select" data-original-shop="${htmlShop}" data-item="${htmlName}" data-date="${dateStr}" style="font-size: 12px; padding: 6px; width: 100%;" onchange="markSvodShopChange('${dateStr}', '${jsShop}', '${jsName}', this.value)" ${isDeleted ? 'disabled' : ''}>${shopListAll.map(sName => `<option value="${sName}" ${sName === actualShop ? 'selected' : ''}>${sName}</option>`).join('')}</select>
@@ -2787,7 +2815,7 @@ async function renderOrdersSvod() {
                                 } else {
                                     html += `
                                     <tr class="svod-row svoditem_${safeShopDate} svodlvl3_of_${safeDate}" style="display:${displayShop}; ${isRepeat ? customRowBg : ''}">
-                                        <td style="text-align:center; color:var(--text-muted); font-size:12px;">${itemIndex}</td>
+                                        <td style="text-align:center; color:var(--text-muted); font-weight:600; font-size:12px;">${displayNum}</td>
                                         <td><span style="font-weight:500; font-size:15px;">${name}</span> ${repeatBadge}</td>
                                         <td style="text-align:left; font-weight:700; font-size:15px; color:#311b92;">${actualQty} шт</td>
                                         <td style="text-align:center;">${statusBadge}</td>

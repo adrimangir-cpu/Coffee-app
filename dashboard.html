@@ -335,8 +335,9 @@ td {
     color: var(--text-main); 
     vertical-align: middle; 
     font-size: 15px !important; 
-    background: var(--bg-window) !important; 
 }
+    
+table:not(#graph-table) td { background: var(--bg-window) !important; }
 
 input, select, textarea { width: 100%; padding: 12px 16px; border: 1px solid var(--line-delicate) !important; border-radius: var(--radius-pill) !important; font-family: var(--font-data); font-size: 15px !important; font-weight: 500; background: var(--bg-window) !important; color: var(--text-main) !important; transition: 0.2s; }
 input:focus, select:focus, textarea:focus { border-color: var(--brand-olive) !important; outline: none; box-shadow: 0 0 0 3px rgba(91, 107, 63, 0.15) !important; }
@@ -346,16 +347,30 @@ tbody tr:not(.cat-group-header):hover > td { background-color: rgba(0, 0, 0, 0.0
 
 .cat-group-header { cursor: pointer; transition: 0.2s; }
 .cat-group-header:hover td { filter: brightness(0.95) !important; transition: 0.2s ease; }
+/* ⚡ УРОВЕНЬ 1: ГЛОБАЛЬНАЯ КАТЕГОРИЯ (Крупная, Выделяющаяся) */
 .cat-group-header td { 
     background: var(--bg-window) !important; 
     color: var(--brand-maroon) !important; 
     font-family: var(--font-fashion) !important; 
-    font-size: 22px !important; 
+    font-size: 24px !important; 
     padding: 16px 24px !important; 
     border: 1px solid var(--line-delicate) !important; 
-    font-weight: 700 !important; 
+    font-weight: 800 !important; 
     border-radius: 12px; 
     box-shadow: 0 4px 15px rgba(74, 16, 22, 0.05) !important;
+}
+
+/* ⚡ УРОВЕНЬ 2: ОБЫЧНАЯ КАТЕГОРИЯ (Меньше размером, другой фон) */
+tr[class*="lvl2_"] > td { 
+    background: var(--bg-paper) !important; 
+    font-family: var(--font-data) !important; 
+    font-size: 15px !important; 
+    font-weight: 700 !important; 
+    padding: 10px 24px 10px 40px !important; /* Отступ слева (лесенка) */
+    color: var(--text-main) !important; 
+    border: 1px solid var(--line-delicate) !important; 
+    border-radius: 8px !important; 
+    box-shadow: none !important;
 }
 .cat-group-header:hover td {
     transform: translateY(-2px);
@@ -396,9 +411,7 @@ tr[class*="svodlvl3_"] > td:nth-child(2), tr[class*="lvl3_"] > td:nth-child(2) {
 [style*="color:#311b92" i], [style*="color:#4a148c" i], [style*="color:#1a237e" i], [style*="color:#7e57c2" i], [style*="color:#e65100" i] { color: var(--brand-maroon) !important; }
 [style*="background:#f5f5f5" i], [style*="background:#fafafa" i] { background: transparent !important; }
 
-/* =========================================
-⚡ ТОНКАЯ НАСТРОЙКА ДЛЯ МОБИЛЬНЫХ ТЕЛЕФОНОВ
-========================================= */
+
 /* ⚡ НОВАЯ СЕТКА ДЛЯ ЭКРАНА "СВОД И ЗАКАЗЫ" (Десктоп) */
 .svod-dashboard-layout {
     display: grid;
@@ -1131,7 +1144,16 @@ function toggleSvodDate(safeDate) {
     // ==========================================
     // ПРАВКА 1: ЧЕК-ЛИСТЫ АВТО-ОТПРАВКА АДМИНУ И БОССУ
     // ==========================================
-   async function sendChecklistPdf() {
+  async function sendChecklistPdf() {
+        // ⚡ Убрали скрытую логику отправки "пользователю из Telegram WebApp".
+        // Теперь всегда спрашивает кому отправить: Боссу или Админу.
+        let sendToBoss = confirm("Кому отправить PDF-отчет по чек-листам?\n\n[ ОК ] — Отправить Боссу\n[ ОТМЕНА ] — Отправить Администратору");
+        
+        let targetChatId = sendToBoss ? BOSS_CHAT_ID : ADMIN_CHAT_ID;
+        let targetName = sendToBoss ? "Босс" : "Администратор";
+
+        if (!targetChatId) return alert("❌ Ошибка: Не настроен ID получателя в коде.");
+
         showReportOverlay("Формирование PDF... Подождите");
         document.querySelectorAll('.chk-row').forEach(row => { row.style.display = 'table-row'; });
 
@@ -1147,34 +1169,6 @@ function toggleSvodDate(safeDate) {
         try {
             const pdfDataUri = await html2pdf().set(opt).from(element).outputPdf('datauristring');
             
-            // ⚡ 1. УМНОЕ ОПРЕДЕЛЕНИЕ ПОЛУЧАТЕЛЯ
-            // ⚡ 1. УМНОЕ ОПРЕДЕЛЕНИЕ ПОЛУЧАТЕЛЯ
-            let targetChatId = null;
-            let targetName = "Пользователь";
-
-            let tgUser = window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initDataUnsafe && window.Telegram.WebApp.initDataUnsafe.user;
-            
-            if (tgUser && tgUser.id) {
-                targetChatId = tgUser.id;
-                targetName = tgUser.first_name || "Вам в ЛС";
-            } else {
-                // ⚡ Если ID не найден автоматически — даем ручной выбор!
-                let sendToBoss = confirm("Кому отправить отчет?\n\n[ ОК ] — Отправить Боссу\n[ ОТМЕНА ] — Отправить Администратору");
-                
-                if (sendToBoss) {
-                    targetChatId = typeof BOSS_CHAT_ID !== 'undefined' ? BOSS_CHAT_ID.trim() : null;
-                    targetName = "Босс";
-                } else {
-                    targetChatId = typeof ADMIN_CHAT_ID !== 'undefined' ? ADMIN_CHAT_ID.trim() : null;
-                    targetName = "Администратор";
-                }
-            }
-
-            if (!targetChatId) {
-                throw new Error("Не удалось определить Telegram ID для отправки.");
-            }
-
-            // ⚡ 2. ЕДИНСТВЕННАЯ ОТПРАВКА (только текущему пользователю)
             await fetch(`${FB_URL}/bot_control/notifications.json`, {
                 method: 'POST',
                 body: JSON.stringify({ 
@@ -1182,7 +1176,7 @@ function toggleSvodDate(safeDate) {
                     chat_id: String(targetChatId), 
                     file_data: pdfDataUri, 
                     filename: `Отчет_Чеклисты_${new Date().toLocaleDateString('ru-RU')}.pdf`,
-                    text: `✅ Автоматический отчет по чек-листам (Запросил: ${targetName})`, 
+                    text: `✅ Автоматический отчет по чек-листам (Запросил: Dashboard)`, 
                     timestamp: Date.now() 
                 })
             });
@@ -3686,7 +3680,7 @@ function renderGraphsTab() {
         }
     }
 
-   function renderMarketplaceTab() {
+  function renderMarketplaceTab() {
         const box = document.getElementById('content');
         let records = cachedData.marketplace || {};
         let shops = ["Бояринова", "Гагарина", "Вертолетчиков", "Липчанского", "Новокосино", "Новокосино 2", "Старое Павлино", "Красноказарменная", "Ухтомского ополчения"];
@@ -3737,19 +3731,19 @@ function renderGraphsTab() {
         let btnStyleCurr = mpViewMonth === 'current' ? 'background:var(--brand-maroon); color:white; border:none;' : 'background:transparent; color:var(--text-muted); border:1px solid var(--line-delicate);';
         let btnStylePrev = mpViewMonth === 'prev' ? 'background:var(--brand-maroon); color:white; border:none;' : 'background:transparent; color:var(--text-muted); border:1px solid var(--line-delicate);';
 
-        // ⚡ ЛЕВАЯ КОЛОНКА
+        // ⚡ ВЫНЕСЛИ ЗАГОЛОВОК И КНОПКИ ВЫШЕ СЕТКИ ДЛЯ ИДЕАЛЬНОГО ВЫРАВНИВАНИЯ
         let html = `
+        <h3 style="margin-top:0; margin-bottom:15px;">Маркетплейсы (${headerLabel})</h3>
+        <div style="display:flex; gap:10px; margin-bottom: 20px;">
+            <button style="padding:10px 20px; border-radius:10px; font-weight:bold; cursor:pointer; transition:0.2s; ${btnStyleCurr}" onclick="mpViewMonth='current'; renderMarketplaceTab()">Текущий месяц</button>
+            <button style="padding:10px 20px; border-radius:10px; font-weight:bold; cursor:pointer; transition:0.2s; ${btnStylePrev}" onclick="mpViewMonth='prev'; renderMarketplaceTab()">Прошлый месяц</button>
+        </div>
         <div class="svod-dashboard-layout">
-            <div class="svod-left-col">
-                <h3 style="margin-top:0; margin-bottom:15px;">Маркетплейсы (${headerLabel})</h3>
-                <div style="display:flex; gap:10px; margin-bottom: 20px;">
-                    <button style="padding:10px 20px; border-radius:10px; font-weight:bold; cursor:pointer; transition:0.2s; ${btnStyleCurr}" onclick="mpViewMonth='current'; renderMarketplaceTab()">Текущий месяц</button>
-                    <button style="padding:10px 20px; border-radius:10px; font-weight:bold; cursor:pointer; transition:0.2s; ${btnStylePrev}" onclick="mpViewMonth='prev'; renderMarketplaceTab()">Прошлый месяц</button>
-                </div>`;
+            <div class="svod-left-col">`;
 
         if (mpViewMonth === 'current') {
             html += `<div class="card" style="padding:15px 20px; margin-bottom:20px; font-size:16px;">
-                        <b>Расход за сегодня: <span style="color:${dailyTotal < 0 ? 'var(--brand-danger)' : 'var(--brand-olive)'}; font-size:22px;">${dailyTotal.toFixed(2)} ₽</span></b>
+                        <b>Расход за сегодня: <span style="color:${dailyTotal < 0 ? 'var(--brand-danger)' : 'var(--brand-olive)'}; font-size:22px; font-family: var(--font-data) !important;">${dailyTotal.toFixed(2)} ₽</span></b>
                      </div>`;
         }
 
@@ -3765,7 +3759,7 @@ function renderGraphsTab() {
             html += `<tr class="cat-group-header" onclick="toggleCatElements('mp_${safeId}', 'arrow_mp_${safeId}')">
                         <td colspan="4">
                             <b>${displayShop}</b>
-                            <span style="float:right; font-size:16px; margin-top:4px;">Сумма: <b style="color:${sumColor}; font-size:18px!important;">${currentTotals[s].toFixed(2)} ₽</b> <span id="arrow_mp_${safeId}" style="margin-left:15px; opacity:0.5;">${isOpen ? '▲' : '▼'}</span></span>
+                            <span style="float:right; font-size:16px; margin-top:4px;">Сумма: <b style="color:${sumColor}; font-size:18px!important; font-family: var(--font-data) !important;">${currentTotals[s].toFixed(2)} ₽</b> <span id="arrow_mp_${safeId}" style="margin-left:15px; opacity:0.5;">${isOpen ? '▲' : '▼'}</span></span>
                         </td>
                      </tr>`;
             
@@ -3776,7 +3770,7 @@ function renderGraphsTab() {
                     let d = new Date(r.timestamp).toLocaleDateString('ru-RU') + " " + new Date(r.timestamp).toLocaleTimeString('ru-RU', {hour: '2-digit', minute:'2-digit'});
                     let badge = r.vendor.toLowerCase() === 'ozon' ? `<span class="vendor-badge vendor-ozon" style="border:1px solid #1565C0!important; color:#1565C0!important; background:#E3F2FD!important;">OZON</span>` : `<span class="vendor-badge vendor-wb" style="border:1px solid #6A1B9A!important; color:#6A1B9A!important; background:#F3E5F5!important;">WB</span>`;
                     let isDeleted = mpDeletions.has(r.key); 
-                    let rowOp = isDeleted ? "opacity:0.4; background:#eee;" : "";
+                    let rowOp = isDeleted ? "opacity:0.4; background:#eee!important;" : "";
                     
                     let inputVal = document.getElementById(`mp_inp_${r.key}`) ? document.getElementById(`mp_inp_${r.key}`).value : r.amount;
                     let displayAmt = isMpEditMode ? inputVal : r.amount;
@@ -3789,10 +3783,10 @@ function renderGraphsTab() {
                         <td>`;
                         
                     if (isMpEditMode) {
-                        html += `<input type="text" inputmode="decimal" id="mp_inp_${r.key}" value="${displayAmt}" ${isDeleted ? 'disabled' : ''} style="width:120px; text-align:right; font-weight:bold; color:${amtColor}; border:2px solid var(--brand-maroon);" oninput="this.style.color = parseFloat(this.value) < 0 ? 'var(--brand-danger)' : 'var(--text-main)';">`;
+                        html += `<input type="text" inputmode="decimal" id="mp_inp_${r.key}" value="${displayAmt}" ${isDeleted ? 'disabled' : ''} style="width:120px; text-align:right; font-weight:bold; color:${amtColor}; border:2px solid var(--brand-maroon); font-family: var(--font-data) !important;" oninput="this.style.color = parseFloat(this.value) < 0 ? 'var(--brand-danger)' : 'var(--text-main)';">`;
                         html += editedBadge; 
                     } else {
-                        html += `<b style="color:${amtColor}; font-size:18px;">${displayAmt}</b>${editedBadge}`;
+                        html += `<b style="color:${amtColor}; font-size:18px; font-family: var(--font-data) !important;">${displayAmt}</b>${editedBadge}`;
                     }
                     
                     html += `</td><td style="text-align:center;">`;
@@ -3802,9 +3796,8 @@ function renderGraphsTab() {
                 });
             }
         });
-        html += `</table></div></div>`; // Конец левой колонки
+        html += `</table></div></div>`; 
 
-        // ⚡ ПРАВАЯ КОЛОНКА (ИТОГИ)
         let grandTotal = Object.values(currentTotals).reduce((a,b)=>a+b, 0);
         let grandColor = grandTotal < 0 ? "var(--brand-danger)" : "var(--brand-maroon)";
         let isSvodOpen = expandedDivs.has('mp_svod_table');
@@ -3821,11 +3814,11 @@ function renderGraphsTab() {
                         ${shops.map(s => `
                             <tr>
                                 <td style="padding:15px; border-bottom:1px solid var(--line-delicate);"><b>${s === 'Красноказарменная' ? 'МЭИ' : s}</b></td>
-                                <td style="text-align:right; font-weight:900; color:${currentTotals[s] < 0 ? 'var(--brand-danger)' : 'var(--brand-olive)'}; border-bottom:1px solid var(--line-delicate);">${currentTotals[s].toFixed(2)} ₽</td>
+                                <td style="text-align:right; font-weight:900; color:${currentTotals[s] < 0 ? 'var(--brand-danger)' : 'var(--brand-olive)'}; border-bottom:1px solid var(--line-delicate); font-family: var(--font-data) !important;">${currentTotals[s].toFixed(2)} ₽</td>
                             </tr>`).join('')}
                         <tr style="background:var(--bg-paper); font-size:18px;">
                             <td style="padding:20px;"><b>ИТОГО</b></td>
-                            <td style="text-align:right; color:${grandColor}; padding:20px;"><b>${grandTotal.toFixed(2)} ₽</b></td>
+                            <td style="text-align:right; color:${grandColor}; padding:20px;"><b style="font-family: var(--font-data) !important;">${grandTotal.toFixed(2)} ₽</b></td>
                         </tr>
                     </table>
                     <div style="padding:20px;"><button class="btn-save" style="width:100%; font-size:16px;" onclick="sendMpSummaryToBot()">Отправить сводку в Телеграм</button></div>
@@ -3936,7 +3929,8 @@ function renderGraphsTab() {
         try {
             await fetch(`${FB_URL}/bot_control/notifications.json`, { 
                 method: 'POST', 
-                body: JSON.stringify({ type: "marketplace_summary", text: text, timestamp: Date.now() }) 
+                // ⚡ ВАЖНО: Добавлен chat_id: ADMIN_CHAT_ID, чтобы уходило только админу
+                body: JSON.stringify({ type: "marketplace_summary", chat_id: String(ADMIN_CHAT_ID), text: text, timestamp: Date.now() }) 
             });
             alert("✅ Сводка отправлена боту!");
         } catch(e) { 
@@ -6397,7 +6391,7 @@ async function exportGraphsToExcel() {
         let checkboxesHtml = pOpts.map(o => {
             let isChecked = periods.includes(o.val);
             return `
-            <label style="display:inline-flex; align-items:center; margin:3px; cursor:pointer; background:${isChecked ? o.c : 'var(--bg-paper)'}; color:${isChecked ? '#fff' : 'var(--text-muted)'}; padding:6px 12px; border-radius:8px; font-size:13px; font-weight:bold; border:1px solid ${isChecked ? o.c : 'var(--line-delicate)'}; transition:0.2s;">
+            <label style="display:inline-flex; align-items:center; margin:2px; cursor:pointer; background:${isChecked ? o.c : 'var(--bg-paper)'}; color:${isChecked ? '#fff' : 'var(--text-muted)'}; padding:4px 8px; border-radius:6px; font-size:12px; font-weight:bold; border:1px solid ${isChecked ? o.c : 'var(--line-delicate)'}; transition:0.2s;">
                 <input type="checkbox" value="${o.val}" class="task-period-cb" ${isChecked?'checked':''} onchange="this.parentElement.style.background=this.checked?'${o.c}':'var(--bg-paper)'; this.parentElement.style.color=this.checked?'#fff':'var(--text-muted)'; this.parentElement.style.borderColor=this.checked?'${o.c}':'var(--line-delicate)'; renderAdminCalendar();" style="display:none;">
                 ${o.label}
             </label>`;
@@ -6407,41 +6401,41 @@ async function exportGraphsToExcel() {
         let startD = t.startDate ? t.startDate : new Date().toISOString().split('T')[0];
         
         let safeId = getSafeId(k);
-        // ⚡ ВАЖНО: Если задача не новая, она изначально СВЕРНУТА. 
         let isOpen = isNew || expandedDivs.has(`task_body_${safeId}`);
 
+        // ⚡ ЗНАЧИТЕЛЬНО УМЕНЬШЕНЫ ПАДДИНГИ И РАЗМЕРЫ ШРИФТОВ ДЛЯ КОМПАКТНОСТИ
         return `
-        <div class="card task-row" data-id="${k}" style="padding:0; margin-bottom:15px; border-radius:12px; overflow:hidden;">
-            <div class="cat-group-header" style="padding:20px 24px; cursor:pointer; display:flex; justify-content:space-between; align-items:center; border-bottom: ${isOpen ? '1px solid var(--line-delicate)' : 'none'}; background:var(--bg-window);" onclick="toggleCatElements('task_body_${safeId}', 'arr_task_${safeId}')">
-                <b style="font-size:18px; color:var(--brand-maroon);">${t.name || 'Новая задача'}</b>
-                <span id="arr_task_${safeId}" style="color:var(--text-muted); opacity:0.6;">${isOpen ? '▲' : '▼'}</span>
+        <div class="card task-row" data-id="${k}" style="padding:0; margin-bottom:10px; border-radius:8px; overflow:hidden;">
+            <div class="cat-group-header" style="padding:10px 16px; cursor:pointer; display:flex; justify-content:space-between; align-items:center; border-bottom: ${isOpen ? '1px solid var(--line-delicate)' : 'none'}; background:var(--bg-window);" onclick="toggleCatElements('task_body_${safeId}', 'arr_task_${safeId}')">
+                <b style="font-size:15px; color:var(--brand-maroon);">${t.name || 'Новая задача'}</b>
+                <span id="arr_task_${safeId}" style="color:var(--text-muted); opacity:0.6; font-size:12px;">${isOpen ? '▲' : '▼'}</span>
             </div>
             
-            <div class="task_body_${safeId}" style="display:${isOpen ? 'block' : 'none'}; padding:24px; background:var(--bg-window);">
-                <div style="display:flex; gap:20px; margin-bottom:20px; align-items:flex-start; flex-wrap:wrap;">
-                    <div style="flex:2; min-width:250px;">
-                        <label style="font-size:13px; color:var(--text-muted); font-weight:bold; display:block; margin-bottom:8px;">Название задачи</label>
-                        <input type="text" class="task-name" value="${t.name || ''}" placeholder="Название задачи" style="width:100%; border:1px solid var(--line-delicate); font-weight:bold; color:var(--text-main); font-size:15px;" onchange="this.closest('.card').querySelector('.cat-group-header b').innerText = this.value || 'Новая задача'; renderAdminCalendar()">
+            <div class="task_body_${safeId}" style="display:${isOpen ? 'block' : 'none'}; padding:12px 16px; background:var(--bg-window);">
+                <div style="display:flex; gap:15px; margin-bottom:10px; align-items:flex-end;">
+                    <div style="flex:2; min-width:200px;">
+                        <label style="font-size:11px; color:var(--text-muted); font-weight:bold; display:block; margin-bottom:4px;">Название задачи</label>
+                        <input type="text" class="task-name" value="${t.name || ''}" placeholder="Название задачи" style="width:100%; border:1px solid var(--line-delicate); font-weight:bold; color:var(--text-main); font-size:14px; padding:6px;" onchange="this.closest('.card').querySelector('.cat-group-header b').innerText = this.value || 'Новая задача'; renderAdminCalendar()">
                     </div>
-                    <div style="flex:1; min-width:200px;">
-                        <label style="font-size:13px; color:var(--text-muted); font-weight:bold; display:block; margin-bottom:8px;">Точка отсчета</label>
-                        <input type="date" class="task-start" value="${startD}" style="width:100%; font-size:15px; border:1px solid var(--line-delicate); font-weight:bold; color:var(--text-main);" onchange="renderAdminCalendar()">
+                    <div style="flex:1; min-width:150px;">
+                        <label style="font-size:11px; color:var(--text-muted); font-weight:bold; display:block; margin-bottom:4px;">Точка отсчета</label>
+                        <input type="date" class="task-start" value="${startD}" style="width:100%; font-size:13px; border:1px solid var(--line-delicate); font-weight:bold; color:var(--text-main); padding:6px;" onchange="renderAdminCalendar()">
                     </div>
                 </div>
                 
-                <div style="margin-bottom:20px;">
-                    <label style="font-size:13px; color:var(--text-muted); font-weight:bold; display:block; margin-bottom:8px;">Периодичность</label>
-                    <div class="task-period-container" style="display:flex; flex-wrap:wrap; border: 1px dashed var(--line-delicate); padding: 12px; border-radius: 8px; background: var(--bg-paper);">
+                <div style="margin-bottom:10px;">
+                    <label style="font-size:11px; color:var(--text-muted); font-weight:bold; display:block; margin-bottom:4px;">Периодичность</label>
+                    <div class="task-period-container" style="display:flex; flex-wrap:wrap; border: 1px dashed var(--line-delicate); padding: 8px; border-radius: 6px; background: var(--bg-paper);">
                         ${checkboxesHtml}
                     </div>
                 </div>
                 
                 <div style="display:flex; gap:15px; align-items:flex-end; justify-content:space-between; flex-wrap:wrap;">
-                    <div style="flex:1; min-width:250px;">
-                        <label style="font-size:13px; color:var(--text-muted); font-weight:bold; display:block; margin-bottom:8px;">Инструкция (База Знаний)</label>
-                        <select class="task-kb" style="width:100%; font-size:15px; border:1px solid var(--line-delicate);">${modifiedKbOptions}</select>
+                    <div style="flex:1; min-width:200px;">
+                        <label style="font-size:11px; color:var(--text-muted); font-weight:bold; display:block; margin-bottom:4px;">Инструкция (База Знаний)</label>
+                        <select class="task-kb" style="width:100%; font-size:13px; border:1px solid var(--line-delicate); padding:6px;">${modifiedKbOptions}</select>
                     </div>
-                    <button class="btn-del" style="background:var(--brand-danger); color:#fff; border-radius:8px; padding:12px 20px; font-size:14px; opacity:1;" onclick="this.closest('.card').remove(); renderAdminCalendar();">🗑 Удалить задачу</button>
+                    <button class="btn-del" style="background:var(--brand-danger); color:#fff; border-radius:6px; padding:6px 12px; font-size:12px; opacity:1;" onclick="this.closest('.card').remove(); renderAdminCalendar();">🗑 Удалить</button>
                 </div>
             </div>
         </div>`;

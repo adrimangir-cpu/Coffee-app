@@ -195,11 +195,12 @@ h1, h2, h3, h4 { font-family: var(--font-fashion); color: var(--brand-maroon); f
 
 
 /* =========================================
-⚡ ДВУХКОЛОНОЧНЫЙ LAYOUT: СВОД + ПРИЕМКА (50/50)
+⚡ ДВУХКОЛОНОЧНЫЙ LAYOUT (РОВНО 50/50): СВОД + ПРИЕМКИ
 ========================================= */
 .svod-dashboard-layout {
     display: grid;
-    grid-template-columns: 1fr 1fr; /* ⚡ РОВНО ПОПОЛАМ */
+    /* ⚡ Жестко задаем ровно по 50% ширины каждой колонке */
+    grid-template-columns: calc(50% - 12px) calc(50% - 12px); 
     gap: 24px;
     align-items: start;
     width: 100%;
@@ -208,17 +209,26 @@ h1, h2, h3, h4 { font-family: var(--font-fashion); color: var(--brand-maroon); f
 .svod-left-col {
     display: flex;
     flex-direction: column;
-    min-width: 0; /* Обязательно, чтобы таблица не разрывала грид */
+    min-width: 0; /* ⚡ Запрещаем таблице разрывать сетку */
+    width: 100%;
 }
 
-/* Приемка и Архив растягиваются на все свои 50% ширины */
 .svod-right-col {
     display: flex;
     flex-direction: column;
-    gap: 24px; /* Ровный отступ между карточками приемки и архива */
+    gap: 24px;
     position: sticky;
-    top: 80px; 
+    top: 20px;
     min-width: 0;
+    width: 100%;
+}
+
+/* ⚡ Растягиваем карточки Приемки и Архива на все 100% правой половины */
+.svod-right-col .card {
+    width: 100% !important;
+    max-width: none !important; /* Убираем любые ограничения ширины */
+    margin: 0 !important; 
+    box-sizing: border-box;
 }
 
 /* Склеиваем таблицу заказов с итогами */
@@ -226,7 +236,7 @@ h1, h2, h3, h4 { font-family: var(--font-fashion); color: var(--brand-maroon); f
     border-radius: var(--radius-window) var(--radius-window) 0 0 !important;
     margin-bottom: 0 !important;
     border-bottom: none !important;
-    max-width: 100% !important; /* Убираем жесткое ограничение ширины */
+    max-width: 100% !important;
 }
 
 .svod-left-col .summary-block {
@@ -238,13 +248,14 @@ h1, h2, h3, h4 { font-family: var(--font-fashion); color: var(--brand-maroon); f
     border-radius: 0 0 var(--radius-window) var(--radius-window) !important;
 }
 
-/* На мобильных экранах возвращаем в одну колонку */
+/* На мобильных — одна колонка друг под другом */
 @media (max-width: 1100px) {
     .svod-dashboard-layout {
         grid-template-columns: 1fr;
     }
     .svod-right-col {
         position: static;
+        margin-top: 20px;
     }
     .svod-left-col .card {
         border-radius: 12px 12px 0 0 !important;
@@ -253,7 +264,6 @@ h1, h2, h3, h4 { font-family: var(--font-fashion); color: var(--brand-maroon); f
         border-radius: 0 0 12px 12px !important;
     }
 }
-
     
 /* =========================================
 ТАБЛИЦЫ И КАРТОЧКИ (ПК)
@@ -1183,7 +1193,7 @@ function toggleSvodDate(safeDate) {
             let exactGlobalCat = seasonChoice; 
             let drinksCount = 0;
 
-            // 1. Собираем ингредиенты и привязанные к ним напитки
+            // 1. Собираем все ингредиенты из выбранного меню
             Object.values(menuData).forEach(drink => {
                 if (!drink) return;
                 let dName = drink.name || drink.title || drink.drink || drink.item; 
@@ -1234,16 +1244,27 @@ function toggleSvodDate(safeDate) {
             let ordItems = Object.values(ordData).filter(c => c && c.name);
             let chkItems = Object.values(chkData).filter(c => c && c.name);
 
-            // 2. Строгая стыковка по Справочникам с расстановкой приоритетов
+            // ⚡ УМНАЯ ОЧИСТКА ДЛЯ ПОИСКА СИРОПОВ И ПЮРЕ
+            const getCleanKey = (str) => {
+                if (!str) return "";
+                return str.toLowerCase()
+                    .replace(/сироп|пюре|топпинг/g, '') // убираем слова-маркеры
+                    .replace(/[0-9.,]+\s*(кг|г|мл|л|шт)/g, '') // убираем граммовки
+                    .replace(/[^a-zа-я0-9]/g, '') // оставляем только буквы и цифры
+                    .trim();
+            };
+
             for (let prodName in rawIngredients) {
-                let pNameLow = prodName.toLowerCase();
+                let pClean = getCleanKey(prodName);
+                if (!pClean) continue;
+                
                 let finalProdName = prodName;
                 let catName = "Прочее";
 
-                // ПРИОРИТЕТ 1: Справочник Закупки
-                let matchOrd = ordItems.find(c => c.name.trim().toLowerCase() === pNameLow);
-                // ПРИОРИТЕТ 2: Справочник Чек-листа
-                let matchChk = chkItems.find(c => c.name.trim().toLowerCase() === pNameLow);
+                // ПРИОРИТЕТ 1: Закупка
+                let matchOrd = ordItems.find(c => getCleanKey(c.name) === pClean);
+                // ПРИОРИТЕТ 2: Чек-листы
+                let matchChk = chkItems.find(c => getCleanKey(c.name) === pClean);
 
                 if (matchOrd) {
                     finalProdName = matchOrd.name.trim();
@@ -1251,16 +1272,18 @@ function toggleSvodDate(safeDate) {
                 } else if (matchChk) {
                     finalProdName = matchChk.name.trim();
                     catName = matchChk.cat || "Прочее";
+                } else {
+                    if (prodName.toLowerCase().includes("сироп")) catName = "Сиропы";
+                    else if (prodName.toLowerCase().includes("пюре")) catName = "Пюре";
                 }
 
                 let seasonDrinksStr = Array.from(rawIngredients[prodName]).sort().join(", ");
 
-                // 3. Запись в Стоп-лист
-                let existingKey = Object.keys(currentCatalog).find(k => 
-                    currentCatalog[k] && 
-                    currentCatalog[k].name.trim().toLowerCase() === finalProdName.toLowerCase() &&
-                    (currentCatalog[k].globalCat || "Основное меню").toLowerCase() === exactGlobalCat.toLowerCase()
-                );
+                // ИЩЕМ В СТОП-ЛИСТЕ ПО ОЧИЩЕННОМУ ИМЕНИ (ЧТОБЫ НЕ ПЛОДИТЬ ДУБЛИ)
+                let existingKey = Object.keys(currentCatalog).find(k => {
+                    let c = currentCatalog[k];
+                    return c && getCleanKey(c.name) === pClean && (c.globalCat || "Основное меню").toLowerCase() === exactGlobalCat.toLowerCase();
+                });
 
                 if (existingKey) {
                     let needsUpdate = false;
@@ -1276,7 +1299,7 @@ function toggleSvodDate(safeDate) {
                         needsUpdate = true;
                     }
                     
-                    if (currentCatalog[existingKey].cat !== catName) {
+                    if (currentCatalog[existingKey].cat !== catName && catName !== "Прочее") {
                         currentCatalog[existingKey].cat = catName;
                         needsUpdate = true;
                     }
@@ -1302,10 +1325,10 @@ function toggleSvodDate(safeDate) {
             hideReportOverlay();
             
             if (changes > 0) {
-                alert(`✅ Синхронизация успешна!\nДобавлено/обновлено продуктов: ${changes}\nОбработано напитков: ${drinksCount}\n\nНажмите "💾 Сохранить в базу".`);
+                alert(`✅ Синхронизация успешна!\n\nКатегория: "${exactGlobalCat}"\nНайдено напитков: ${drinksCount}\nДобавлено/Обновлено продуктов: ${changes}\n\nНажмите "💾 Сохранить в базу", чтобы зафиксировать.`);
                 renderCatalogStoplist();
             } else {
-                alert(`ℹ️ Нет новых данных.\nВсе продукты уже есть в стоп-листе с актуальными категориями и напитками.`);
+                alert(`ℹ️ Нет новых данных.\nВсе ингредиенты (${Object.keys(rawIngredients).length} шт.) из категории "${exactGlobalCat}" уже есть в стоп-листе.`);
             }
             
         } catch (e) {

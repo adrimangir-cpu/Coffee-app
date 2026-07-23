@@ -1189,7 +1189,7 @@ function toggleSvodDate(safeDate) {
     // ==========================================
     // ПРАВКА 3: АВТО-СИНХРОНИЗАЦИЯ СТОП-ЛИСТА С ТЕХ. КАРТАМИ
     // ==========================================
-    window.syncStoplistWithMenu = async function() {
+   window.syncStoplistWithMenu = async function() {
         let seasonChoice = prompt("Введите название глобальной категории из меню (например: Летнее меню 2026 или Основное меню):", "Летнее меню 2026");
         if (!seasonChoice) return;
         seasonChoice = seasonChoice.trim();
@@ -1248,12 +1248,6 @@ function toggleSvodDate(safeDate) {
                 return;
             }
 
-            Object.values(currentCatalog).forEach(c => {
-                if (c && c.globalCat && c.globalCat.toLowerCase() === seasonChoice.toLowerCase()) {
-                    exactGlobalCat = c.globalCat;
-                }
-            });
-
             let changes = 0;
             if (!window.catalogChanges) window.catalogChanges = {};
             let isMainMenu = exactGlobalCat.toLowerCase() === "основное меню";
@@ -1261,27 +1255,19 @@ function toggleSvodDate(safeDate) {
             let ordItems = Object.values(ordData).filter(c => c && c.name);
             let chkItems = Object.values(chkData).filter(c => c && c.name);
 
-            // ⚡ УМНАЯ ОЧИСТКА ДЛЯ ПОИСКА СИРОПОВ И ПЮРЕ
-            const getCleanKey = (str) => {
-                if (!str) return "";
-                return str.toLowerCase()
-                    .replace(/сироп|пюре|топпинг/g, '') // убираем слова-маркеры
-                    .replace(/[0-9.,]+\s*(кг|г|мл|л|шт)/g, '') // убираем граммовки
-                    .replace(/[^a-zа-я0-9]/g, '') // оставляем только буквы и цифры
-                    .trim();
-            };
+            // ⚡ Точная нормализация имени без удаления слов
+            const normalizeName = (str) => (str || "").trim().toLowerCase();
 
             for (let prodName in rawIngredients) {
-                let pClean = getCleanKey(prodName);
-                if (!pClean) continue;
+                let pNorm = normalizeName(prodName);
+                if (!pNorm) continue;
                 
                 let finalProdName = prodName;
                 let catName = "Прочее";
 
-                // ПРИОРИТЕТ 1: Закупка
-                let matchOrd = ordItems.find(c => getCleanKey(c.name) === pClean);
-                // ПРИОРИТЕТ 2: Чек-листы
-                let matchChk = chkItems.find(c => getCleanKey(c.name) === pClean);
+                // ПРИОРИТЕТ 1: Закупка, ПРИОРИТЕТ 2: Чек-листы
+                let matchOrd = ordItems.find(c => normalizeName(c.name) === pNorm);
+                let matchChk = chkItems.find(c => normalizeName(c.name) === pNorm);
 
                 if (matchOrd) {
                     finalProdName = matchOrd.name.trim();
@@ -1289,34 +1275,32 @@ function toggleSvodDate(safeDate) {
                 } else if (matchChk) {
                     finalProdName = matchChk.name.trim();
                     catName = matchChk.cat || "Прочее";
-                } else {
-                    if (prodName.toLowerCase().includes("сироп")) catName = "Сиропы";
-                    else if (prodName.toLowerCase().includes("пюре")) catName = "Пюре";
                 }
 
-                let seasonDrinksStr = Array.from(rawIngredients[prodName]).sort().join(", ");
+                let drinksListStr = Array.from(rawIngredients[prodName]).sort().join(", ");
 
-                // ИЩЕМ В СТОП-ЛИСТЕ ПО ОЧИЩЕННОМУ ИМЕНИ (ЧТОБЫ НЕ ПЛОДИТЬ ДУБЛИ)
+                // ИЩЕМ В СТОП-ЛИСТЕ ПО ТОЧНОМУ ИМЕНИ И КАТЕГОРИИ
                 let existingKey = Object.keys(currentCatalog).find(k => {
                     let c = currentCatalog[k];
-                    return c && getCleanKey(c.name) === pClean && (c.globalCat || "Основное меню").toLowerCase() === exactGlobalCat.toLowerCase();
+                    return c && normalizeName(c.name) === normalizeName(finalProdName) && (c.globalCat || "Основное меню").toLowerCase() === exactGlobalCat.toLowerCase();
                 });
 
                 if (existingKey) {
                     let needsUpdate = false;
-                    let currentDrinks = currentCatalog[existingKey][isMainMenu ? 'main' : 'sez'] || "";
-                    let combinedDrinksSet = new Set([...currentDrinks.split(',').map(s=>s.trim()).filter(Boolean), ...rawIngredients[prodName]]);
-                    let combinedDrinksStr = Array.from(combinedDrinksSet).sort().join(", ");
-
-                    if (isMainMenu && currentCatalog[existingKey].main !== combinedDrinksStr) {
-                        currentCatalog[existingKey].main = combinedDrinksStr;
-                        needsUpdate = true;
-                    } else if (!isMainMenu && currentCatalog[existingKey].sez !== combinedDrinksStr) {
-                        currentCatalog[existingKey].sez = combinedDrinksStr;
-                        needsUpdate = true;
+                    
+                    if (isMainMenu) {
+                        if (currentCatalog[existingKey].main !== drinksListStr) {
+                            currentCatalog[existingKey].main = drinksListStr;
+                            needsUpdate = true;
+                        }
+                    } else {
+                        if (currentCatalog[existingKey].sez !== drinksListStr) {
+                            currentCatalog[existingKey].sez = drinksListStr;
+                            needsUpdate = true;
+                        }
                     }
                     
-                    if (currentCatalog[existingKey].cat !== catName && catName !== "Прочее") {
+                    if (currentCatalog[existingKey].cat !== catName) {
                         currentCatalog[existingKey].cat = catName;
                         needsUpdate = true;
                     }
@@ -1331,8 +1315,8 @@ function toggleSvodDate(safeDate) {
                         globalCat: exactGlobalCat, 
                         cat: catName,
                         name: finalProdName,
-                        sez: isMainMenu ? "" : seasonDrinksStr,
-                        main: isMainMenu ? seasonDrinksStr : "" 
+                        sez: isMainMenu ? "" : drinksListStr,
+                        main: isMainMenu ? drinksListStr : "" 
                     };
                     window.catalogChanges[newId] = currentCatalog[newId];
                     changes++;
@@ -1341,12 +1325,9 @@ function toggleSvodDate(safeDate) {
 
             hideReportOverlay();
             
-            if (changes > 0) {
-                alert(`✅ Синхронизация успешна!\n\nКатегория: "${exactGlobalCat}"\nНайдено напитков: ${drinksCount}\nДобавлено/Обновлено продуктов: ${changes}\n\nНажмите "💾 Сохранить в базу", чтобы зафиксировать.`);
-                renderCatalogStoplist();
-            } else {
-                alert(`ℹ️ Нет новых данных.\nВсе ингредиенты (${Object.keys(rawIngredients).length} шт.) из категории "${exactGlobalCat}" уже есть в стоп-листе.`);
-            }
+            // ⚡ ЧЕТКОЕ УВЕДОМЛЕНИЕ О ПРОДЕЛАННОЙ РАБОТЕ
+            alert(`✅ Синхронизация выполнена!\n\nКатегория: "${exactGlobalCat}"\nОбработано напитков: ${drinksCount}\nДобавлено/обновлено позиций в стоп-листе: ${changes}\n\nНажмите "💾 Сохранить в базу", чтобы всё применилось.`);
+            renderCatalogStoplist();
             
         } catch (e) {
             hideReportOverlay();

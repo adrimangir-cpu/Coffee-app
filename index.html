@@ -2881,7 +2881,6 @@
                 </div>
             </div>`;
 
-        // Гарантированная загрузка данных
         if (!state.ordersLoaded || !state.globalOrders || state.globalOrders.length === 0) {
             try {
                 let snap = await database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(50).once("value");
@@ -2892,35 +2891,18 @@
             } catch(e) {}
         }
 
-        // Подтягиваем свежую базу недовозов для синхронизации
         let missingData = [];
         try {
             let mSnap = await database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value");
             mSnap.forEach(c => { let v = c.val(); if(v) missingData.push(v); });
         } catch(e) {}
         
-        // ⚡ Генерируем карту актуальных недовозов
         let activeMissingMap = {};
         missingData.forEach(m => { 
             if (m && m.name) {
-                activeMissingMap[cleanName(m.name)] = m.status; // Сохраняем статус недовоза (pending, transit, arrived, canceled)
-            }
-        });
-
-        // ⚡ Генерируем карту всех свежих заказов (для проверки, не перезаказал ли админ товар)
-        let latestOrderStatuses = {};
-        state.globalOrders.forEach(o => {
-            if (o && (o.mode === 'order' || o.mode === 'new_shop')) {
-                let items = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
-                items.forEach(i => {
-                    if (i && i.name && i.name !== "НЕТ ЗАКАЗА") {
-                        let cName = cleanName(i.name);
-                        // Записываем только самый свежий статус товара
-                        if (!latestOrderStatuses[cName]) {
-                            latestOrderStatuses[cName] = i.status || 'pending';
-                        }
-                    }
-                });
+                if (m.status !== 'arrived' && m.status !== 'canceled') {
+                    activeMissingMap[cleanName(m.name)] = m.status;
+                }
             }
         });
         
@@ -2941,6 +2923,7 @@
             const aggregateSingleOrder = (o) => {
                 let aggregated = {}; if (!o) return aggregated;
                 let items = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
+                
                 items.forEach(i => {
                     if (i && i.name && i.name !== "НЕТ ЗАКАЗА") {
                         if (!aggregated[i.name]) aggregated[i.name] = { qty: 0, status: 'pending', is_error: false };
@@ -2948,28 +2931,35 @@
                         
                         let cName = cleanName(i.name);
                         
-                        // ⚡ УМНАЯ СИНХРОНИЗАЦИЯ СТАТУСОВ ⚡
-                        let currentRealStatus = latestOrderStatuses[cName] || i.status || 'pending';
+                        let catItem = Object.values(state.productCatalog || {}).find(c => c && cleanName(c.name) === cName);
+                        let vRaw = (i.vendor || (catItem ? catItem.vendor : 'Лента') || 'Лента').toLowerCase();
+                        let vendor = 'lenta';
+                        if (vRaw.includes('озон') || vRaw.includes('ozon')) vendor = 'ozon';
+                        else if (vRaw.includes('купер') || vRaw.includes('kuper')) vendor = 'kuper';
+
+                        let isReceived = !!o[`${vendor}_received`];
+                        
                         let missingStat = activeMissingMap[cName];
+                        let currentRealStatus = i.status || 'pending'; 
                         
                         if (missingStat === 'pending' || missingStat === 'transit') {
-                            // Если товар сейчас висит в недовозах
                             aggregated[i.name].status = 'error'; 
                             aggregated[i.name].is_error = true;
-                            aggregated[i.name].missingLabel = missingStat === 'transit' ? 'В пути 🚚' : 'Недовоз ❌';
+                            aggregated[i.name].missingLabel = missingStat === 'transit' ? 'В пути (Недовоз) 🚚' : 'Недовоз ❌';
                         } else if (missingStat === 'canceled') {
-                            // Админ отменил недовоз
                             aggregated[i.name].status = 'not_needed'; 
                             aggregated[i.name].missingLabel = 'ОТМЕНЕН ❌';
                         } else if (missingStat === 'arrived') {
-                            // Недовоз доехал
                             aggregated[i.name].status = 'already_received'; 
                         } else if (currentRealStatus === 'error' || currentRealStatus === 'not_found' || i.bot_error === true) {
-                            // Просто нет в наличии (из Свода)
                             aggregated[i.name].status = 'error'; 
                             aggregated[i.name].is_error = true;
                         } else if (currentRealStatus === 'ordered' || currentRealStatus === 'from_stoplist') {
-                            aggregated[i.name].status = 'ordered';
+                            if (isReceived) {
+                                aggregated[i.name].status = 'already_received';
+                            } else {
+                                aggregated[i.name].status = 'transit';
+                            }
                         } else if (currentRealStatus === 'already_received') {
                             aggregated[i.name].status = 'already_received';
                         } else {
@@ -3000,21 +2990,21 @@
                     let stHtml = "";
                     
                     if (item.missingLabel) {
-                        stHtml = `<span style="color:#c62828; background:#ffebee; padding:3px 8px; border-radius:6px; font-size:12px; font-weight:900;">${item.missingLabel}</span>`;
+                        stHtml = `<span style="color:#c62828; background:#ffebee; padding:4px 10px; border-radius:8px; font-size:12px; font-weight:900;">${item.missingLabel}</span>`;
                     } else if (item.is_error) {
-                        stHtml = `<span style="color:#c62828; background:#ffebee; padding:3px 8px; border-radius:6px; font-size:12px; font-weight:900;">Нет в наличии ❌</span>`;
-                    } else if (item.status === 'ordered') {
-                        stHtml = `<span style="color:#2e7d32; background:#e8f5e9; padding:3px 8px; border-radius:6px; font-size:12px; font-weight:900;">Заказано ✅</span>`;
+                        stHtml = `<span style="color:#c62828; background:#ffebee; padding:4px 10px; border-radius:8px; font-size:12px; font-weight:900;">Нет в наличии ❌</span>`;
                     } else if (item.status === 'already_received') {
-                        stHtml = `<span style="color:#0277bd; background:#e1f5fe; padding:3px 8px; border-radius:6px; font-size:12px; font-weight:900;">Принят 📥</span>`;
+                        stHtml = `<span style="color:#0277bd; background:#e1f5fe; padding:4px 10px; border-radius:8px; font-size:12px; font-weight:900;">Принят 📥</span>`;
+                    } else if (item.status === 'transit') {
+                        stHtml = `<span style="color:#1565c0; background:#e3f2fd; padding:4px 10px; border-radius:8px; font-size:12px; font-weight:900;">В пути 🚚</span>`;
                     } else if (item.status === 'not_needed') {
-                        stHtml = `<span style="color:#757575; background:#eeeeee; padding:3px 8px; border-radius:6px; font-size:12px; font-weight:900;">Не заказан ➖</span>`;
+                        stHtml = `<span style="color:#757575; background:#eeeeee; padding:4px 10px; border-radius:8px; font-size:12px; font-weight:900;">Не заказан ➖</span>`;
                     } else {
-                        stHtml = `<span style="color:#f57c00; background:#fff3e0; padding:3px 8px; border-radius:6px; font-size:12px; font-weight:900;">Ожидает ⏳</span>`;
+                        stHtml = `<span style="color:#f57c00; background:#fff3e0; padding:4px 10px; border-radius:8px; font-size:12px; font-weight:900;">Ожидает оформления ⏳</span>`;
                     }
 
                     blockHtml += `<div style="display:flex; justify-content:space-between; align-items:center; padding:12px 0; border-bottom:1px solid #eee;">
-                                    <div><b style="font-size:15px;">${name}</b><br><div style="margin-top:5px;">${stHtml}</div></div>
+                                    <div style="flex:1; padding-right:15px;"><b style="font-size:15px; color:#333;">${name}</b><br><div style="margin-top:6px;">${stHtml}</div></div>
                                     <span style="font-weight:900; font-size:17px; color:#311B92;">${item.qty} шт</span>
                                  </div>`;
                 });

@@ -1178,7 +1178,7 @@ window.sendChecklistPdf = async function() {
         let existingModal = document.getElementById('pdf-modal-overlay');
         if (existingModal) existingModal.remove();
 
-        // 1. Создаем красивое модальное окно для выбора получателя
+        // 1. Создаем модальное окно для выбора получателя
         let modalHtml = `
         <div id="pdf-modal-overlay" style="position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:9999; display:flex; align-items:center; justify-content:center; backdrop-filter:blur(4px);">
             <div style="background:var(--bg-window); padding:30px; border-radius:16px; width:90%; max-width:400px; box-shadow:0 10px 30px rgba(0,0,0,0.5); border:1px solid var(--line-delicate); text-align:center;">
@@ -1206,14 +1206,11 @@ window.sendChecklistPdf = async function() {
             if (!targetChatId) return alert("❌ Ошибка: Не настроен ID получателя в коде.");
 
             showReportOverlay("Подготовка таблицы...");
-            
-            // Даем браузеру долю секунды, чтобы отрисовать загрузочный экран
-            await new Promise(r => setTimeout(r, 100));
+            await new Promise(r => setTimeout(r, 100)); // Даем UI обновиться
 
-            // Раскрываем все скрытые категории Чек-листа
             document.querySelectorAll('.chk-row').forEach(row => { row.style.display = 'table-row'; });
             
-            // ⚡ ВАЖНО: Прячем картинки перед генерацией, чтобы HTML2PDF не зависал намертво!
+            // ⚡ Прячем тяжелые картинки на момент генерации PDF, чтобы он не зависал!
             let images = document.querySelectorAll('#checks-table-container img');
             images.forEach(img => img.style.display = 'none');
 
@@ -1221,27 +1218,27 @@ window.sendChecklistPdf = async function() {
             const opt = {
                 margin:       0.2,
                 filename:     'Checklist_Report.pdf',
-                image:        { type: 'jpeg', quality: 0.8 }, // Снизили качество картинки самого PDF для скорости
-                html2canvas:  { scale: 1.5, useCORS: true, logging: false }, // Уменьшили зум, чтобы не перегружать память
+                image:        { type: 'jpeg', quality: 0.8 },
+                html2canvas:  { scale: 1.5, useCORS: true, logging: false },
                 jsPDF:        { unit: 'in', format: 'a3', orientation: 'landscape' } 
             };
 
             try {
-                showReportOverlay("Формирование PDF (это может занять до минуты)...");
+                showReportOverlay("Создание PDF (около 10-15 секунд)...");
                 await new Promise(r => setTimeout(r, 100));
 
-                // Генерируем легкий PDF-файл (без картинок товаров он сформируется махом)
                 const pdfDataUri = await html2pdf().set(opt).from(element).outputPdf('datauristring');
                 
-                showReportOverlay("Отправка файла в Telegram...");
-                await new Promise(r => setTimeout(r, 100));
-
-                // Отправляем в базу
-                await fetch(`${FB_URL}/bot_control/notifications.json`, {
+                showReportOverlay("🚀 Мгновенная отправка в Telegram...");
+                
+                // ⚡ ИСПОЛЬЗУЕМ ПРЯМОЙ REST API БЕЗ ЗАВИСАНИЙ
+                let rawFetch = typeof originalFetch !== 'undefined' ? originalFetch : fetch;
+                
+                await rawFetch(`${FB_URL}/bot_control/notifications.json`, {
                     method: 'POST',
                     body: JSON.stringify({ 
                         type: "checklist_pdf", 
-                        chat_id: Number(targetChatId), // Передаем как число (требование Телеграм)
+                        chat_id: String(targetChatId), // ⚡ СТРОКА ДЛЯ БОТА
                         file_data: pdfDataUri, 
                         filename: `Отчет_Чеклисты_${new Date().toLocaleDateString('ru-RU')}.pdf`,
                         text: `✅ Автоматический отчет по чек-листам (Запросил: Dashboard)`, 
@@ -1249,15 +1246,13 @@ window.sendChecklistPdf = async function() {
                     })
                 });
 
-                // ⚡ Возвращаем картинки товаров на экран Дашборда
-                images.forEach(img => img.style.display = 'block');
-
-                hideReportOverlay();
-                alert(`✅ PDF-отчет успешно сформирован и передан боту для отправки в ЛС (${targetName})!`);
-            } catch (e) {
-                // Если произошла ошибка, всё равно возвращаем картинки
+                // Возвращаем картинки на место
                 images.forEach(img => img.style.display = 'block');
                 
+                hideReportOverlay();
+                alert(`✅ PDF-отчет успешно передан боту для отправки в ЛС (${targetName})!`);
+            } catch (e) {
+                images.forEach(img => img.style.display = 'block');
                 hideReportOverlay();
                 alert("❌ Ошибка при создании/отправке PDF: " + e.message);
             }
@@ -4074,16 +4069,23 @@ function renderGraphsTab() {
         text += `➖➖➖➖➖➖➖➖\n💵 ИТОГО: *${grandTotal.toFixed(2)} ₽*`;
 
         try {
-            showReportOverlay("Отправка сводки в Telegram...");
+            showReportOverlay("🚀 Мгновенная отправка в Telegram...");
             
-            await fetch(`${FB_URL}/bot_control/notifications.json`, { 
+            // ⚡ ИСПОЛЬЗУЕМ ПРЯМОЙ REST API БЕЗ ЗАВИСАНИЙ
+            let rawFetch = typeof originalFetch !== 'undefined' ? originalFetch : fetch;
+            
+            await rawFetch(`${FB_URL}/bot_control/notifications.json`, { 
                 method: 'POST', 
-                // ⚡ СТРОГАЯ ПРИВЯЗКА К АДМИНУ
-                body: JSON.stringify({ type: "marketplace_summary", chat_id: String(ADMIN_CHAT_ID), text: text, timestamp: Date.now() }) 
+                body: JSON.stringify({ 
+                    type: "marketplace_summary", 
+                    chat_id: String(ADMIN_CHAT_ID), // ⚡ ВОЗВРАЩАЕМ СТРОКУ, ЧТОБЫ БОТ НЕ ПАДАЛ
+                    text: text, 
+                    timestamp: Date.now() 
+                }) 
             });
             
             hideReportOverlay();
-            alert("✅ Сводка успешно отправлена Администратору!");
+            alert("✅ Сводка мгновенно передана боту! Проверьте Telegram.");
         } catch(e) { 
             hideReportOverlay();
             alert("❌ Ошибка отправки: " + e.message); 

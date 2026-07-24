@@ -1232,173 +1232,205 @@ function toggleSvodDate(safeDate) {
     // ПРАВКА 3: АВТО-СИНХРОНИЗАЦИЯ СТОП-ЛИСТА С ТЕХ. КАРТАМИ
     // ==========================================
    window.syncStoplistWithMenu = async function() {
-        // 1. Спрашиваем источник (Откуда берем напитки)
-        let sourceCategory = prompt("Из какого меню (глобальной категории Техкарт) взять напитки?\nНапример: Летнее меню 2026", "Летнее меню 2026");
-        if (!sourceCategory) return;
-        sourceCategory = sourceCategory.trim();
-
-        // 2. Спрашиваем цель (Куда сохранить НОВЫЕ продукты)
-        let targetCategory = prompt(`В какую категорию Стоп-листа сохранить НОВЫЕ ингредиенты, которых еще нет в базе?\n(Уже существующие сиропы и продукты просто обновятся там, где они лежат сейчас)`, sourceCategory);
-        if (!targetCategory) return;
-        targetCategory = targetCategory.trim();
-
-        showReportOverlay("Синхронизация баз данных...");
+        showReportOverlay("Сбор данных для меню...");
+        
         try {
-            // ⚡ ИСПОЛЬЗУЕМ fetchOptimistic (Специфика Дашборда)
-            let [menuData, ordData, newShopData, chkData] = await Promise.all([
+            // ⚡ 1. Загружаем все базы для формирования списков
+            let [menuData, ordData, newShopData, chkData, stopData] = await Promise.all([
                 fetchOptimistic('catalogs/menu'),
                 fetchOptimistic('catalogs/order'),
                 fetchOptimistic('catalogs/newshop'),
-                fetchOptimistic('catalogs/checklist')
+                fetchOptimistic('catalogs/checklist'),
+                fetchOptimistic('catalogs/stoplist')
             ]);
             
             menuData = menuData || {};
             let fullOrdData = { ...(ordData || {}), ...(newShopData || {}) };
             chkData = chkData || {};
+            stopData = stopData || {};
 
-            let rawIngredients = {}; 
-            let drinksCount = 0;
+            hideReportOverlay();
 
-            // ШАГ 1: Проходим по Меню и собираем ингредиенты из ИСТОЧНИКА
-            Object.values(menuData).forEach(drink => {
-                if (!drink) return;
-                let dName = drink.name || drink.title || drink.drink || drink.item; 
-                if (!dName) return; 
-                
-                let gc = drink.globalCat || "Основное меню";
-                
-                if (gc.trim().toLowerCase() === sourceCategory.toLowerCase()) {
-                    drinksCount++;
+            // ⚡ 2. Автоматически собираем все уникальные Глобальные категории
+            let menuCats = [...new Set(Object.values(menuData).map(i => i && i.globalCat).filter(c => c && !c.includes("!!!")))];
+            let stopCats = [...new Set(Object.values(stopData).map(i => i && i.globalCat).filter(c => c && !c.includes("!!!")))];
+            let allTargetCats = [...new Set([...stopCats, ...menuCats, "Основное меню"])]; // Объединяем, чтобы был выбор
+
+            // ⚡ 3. Создаем красивое модальное окно с выпадающими списками
+            let modalHtml = `
+            <div id="sync-modal-overlay" style="position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:9999; display:flex; align-items:center; justify-content:center; backdrop-filter:blur(4px);">
+                <div style="background:var(--bg-window); padding:30px; border-radius:16px; width:90%; max-width:450px; box-shadow:0 10px 30px rgba(0,0,0,0.5); border:1px solid var(--line-delicate);">
+                    <h3 style="margin-top:0; color:var(--brand-maroon); font-size:22px; margin-bottom:20px;">Синхронизация Техкарт</h3>
                     
-                    let blocks = [];
-                    if (Array.isArray(drink.blocks)) blocks = drink.blocks;
-                    else if (drink.blocks && typeof drink.blocks === 'object') blocks = Object.values(drink.blocks);
-                    else if (Array.isArray(drink.recipe)) blocks = [drink.recipe];
-                    else if (drink.recipe && typeof drink.recipe === 'object') blocks = [Object.values(drink.recipe)];
+                    <label style="font-size:14px; font-weight:bold; color:var(--text-muted); margin-bottom:8px; display:block;">1. Источник напитков (Меню):</label>
+                    <select id="sync-source-cat" style="width:100%; padding:12px; border-radius:8px; border:1px solid var(--line-delicate); margin-bottom:20px; font-size:15px; font-weight:bold; color:var(--text-main); outline:none;">
+                        ${menuCats.map(c => `<option value="${c}">${c}</option>`).join('')}
+                    </select>
 
-                    blocks.forEach(block => {
-                        if (!block) return;
-                        let items = Array.isArray(block) ? block : Object.values(block);
-                        items.forEach(ingredient => {
-                            let ingName = (typeof ingredient === 'string') ? ingredient : (ingredient && ingredient.name ? ingredient.name : null);
-                            if (ingName && typeof ingName === 'string') {
-                                ingName = ingName.trim();
-                                if (!rawIngredients[ingName]) rawIngredients[ingName] = new Set();
-                                rawIngredients[ingName].add(dName.trim());
-                            }
-                        });
-                    });
-                }
-            });
-
-            if (drinksCount === 0) {
-                hideReportOverlay();
-                alert(`❌ Ошибка: В "Меню и Техкарты" не найдено напитков в категории "${sourceCategory}".\n\nПроверьте правильность написания.`);
-                return;
-            }
-
-            let updates = {}; 
-            let changes = 0;
-            let isSourceMain = sourceCategory.toLowerCase() === "основное меню";
-
-            let ordItems = Object.values(fullOrdData).filter(c => c && c.name);
-            let chkItems = Object.values(chkData).filter(c => c && c.name);
-            const cleanStr = (s) => (s || "").trim().toLowerCase();
-
-            // В Дашборде актуальный стоп-лист хранится в currentCatalog
-            let currentStoplistItems = Object.keys(currentCatalog).map(k => ({ key: k, ...currentCatalog[k] }));
-
-            // ШАГ 2: Обрабатываем собранные ингредиенты
-            for (let prodName in rawIngredients) {
-                let pClean = cleanStr(prodName);
-                if (!pClean) continue;
-                
-                let finalProdName = prodName;
-                let catName = "Прочее"; 
-
-                // ⚡ ИЩЕМ ВЕЗДЕ В ЗАКУПКЕ И ЧЕК-ЛИСТЕ
-                let matchOrd = ordItems.find(c => cleanStr(c.name) === pClean) || ordItems.find(c => cleanStr(c.name).includes(pClean) || pClean.includes(cleanStr(c.name)));
-                let matchChk = chkItems.find(c => cleanStr(c.name) === pClean) || chkItems.find(c => cleanStr(c.name).includes(pClean) || pClean.includes(cleanStr(c.name)));
-
-                if (matchOrd) {
-                    finalProdName = matchOrd.name.trim(); 
-                    catName = matchOrd.cat || "Прочее"; 
-                } else if (matchChk) {
-                    finalProdName = matchChk.name.trim();
-                    catName = matchChk.cat || "Прочее";
-                } else {
-                    if (pClean.includes("сироп")) catName = "Сиропы";
-                    else if (pClean.includes("пюре")) catName = "Пюре";
-                    else if (pClean.includes("сок")) catName = "Жидкости";
-                    else if (pClean.includes("молоко")) catName = "Молочка";
-                }
-
-                let drinksListStr = Array.from(rawIngredients[prodName]).sort().join(", ");
-
-                // ⚡ ИЩЕМ ВЕЗДЕ В СТОП-ЛИСТЕ (Игнорируя глобальную категорию!)
-                let existingItem = currentStoplistItems.find(c => cleanStr(c.name) === cleanStr(finalProdName) || cleanStr(c.name) === pClean);
-
-                if (existingItem) {
-                    // Продукт уже есть (например, Сироп в Основном меню). Обновляем его!
-                    let needsUpdate = false;
-                    let existingKey = existingItem.key;
+                    <label style="font-size:14px; font-weight:bold; color:var(--text-muted); margin-bottom:8px; display:block;">2. Куда сохранить продукты (Стоп-лист):</label>
+                    <select id="sync-target-cat" style="width:100%; padding:12px; border-radius:8px; border:1px solid var(--line-delicate); margin-bottom:25px; font-size:15px; font-weight:bold; color:var(--brand-olive); outline:none;">
+                        ${allTargetCats.map(c => `<option value="${c}">${c}</option>`).join('')}
+                    </select>
                     
-                    let currentDrinks = existingItem[isSourceMain ? 'main' : 'sez'] || "";
-                    let combinedDrinksSet = new Set([...currentDrinks.split(',').map(s=>s.trim()).filter(Boolean), ...rawIngredients[prodName]]);
-                    let combinedDrinksStr = Array.from(combinedDrinksSet).sort().join(", ");
-
-                    if (isSourceMain && existingItem.main !== combinedDrinksStr) {
-                        existingItem.main = combinedDrinksStr; needsUpdate = true;
-                    } else if (!isSourceMain && existingItem.sez !== combinedDrinksStr) {
-                        existingItem.sez = combinedDrinksStr; needsUpdate = true;
-                    }
-                    
-                    if (existingItem.cat !== catName && catName !== "Прочее") {
-                        existingItem.cat = catName; needsUpdate = true;
-                    }
-
-                    if (needsUpdate) {
-                        updates[existingKey] = {
-                            globalCat: existingItem.globalCat, // ⚡ ОСТАВЛЯЕМ ПРОДУКТ ТАМ, ГДЕ ОН ЛЕЖИТ!
-                            cat: existingItem.cat,
-                            name: existingItem.name,
-                            sez: existingItem.sez || "",
-                            main: existingItem.main || ""
-                        };
-                        changes++;
-                    }
-                } else {
-                    // ПРОДУКТА НЕТ НИГДЕ. Создаем новый в ЦЕЛЕВОЙ КАТЕГОРИИ.
-                    let newId = "stop_auto_" + Date.now() + "_" + Math.random().toString(36).substr(2, 5);
-                    updates[newId] = {
-                        globalCat: targetCategory, // ⚡ Только НОВЫЕ продукты идут в выбранную цель (Летнее меню)
-                        cat: catName,
-                        name: finalProdName,
-                        sez: isSourceMain ? "" : drinksListStr, 
-                        main: isSourceMain ? drinksListStr : "" 
-                    };
-                    changes++;
-                }
-            }
-
-            if (changes > 0) {
-                // ⚡ ОТПРАВЛЯЕМ В БАЗУ ДАШБОРДА
-                await db.ref('catalogs/stoplist').update(updates);
-                hideReportOverlay();
-                alert(`✅ Синхронизация успешна!\n\nИсточник: "${sourceCategory}"\nЦель для новых продуктов: "${targetCategory}"\nНапитков обработано: ${drinksCount}\nДобавлено/обновлено ингредиентов: ${changes}`);
-                
-                // Перезагружаем интерфейс
-                let freshData = await fetchOptimistic('catalogs/stoplist');
-                currentCatalog = freshData || {};
-                renderCatalogStoplist();
-            } else {
-                hideReportOverlay();
-                alert(`ℹ️ Нет новых данных.\nВсе ингредиенты из "${sourceCategory}" уже присутствуют в Стоп-листе.`);
-            }
+                    <div style="display:flex; gap:10px;">
+                        <button onclick="document.getElementById('sync-modal-overlay').remove()" style="flex:1; padding:14px; border-radius:8px; border:none; background:#eee; color:#333; font-weight:bold; font-size:15px; cursor:pointer; transition:0.2s;">Отмена</button>
+                        <button id="sync-confirm-btn" style="flex:1; padding:14px; border-radius:8px; border:none; background:var(--brand-olive); color:#fff; font-weight:bold; font-size:15px; cursor:pointer; transition:0.2s; box-shadow:0 4px 10px rgba(91, 107, 63, 0.3);">Запустить</button>
+                    </div>
+                </div>
+            </div>`;
             
+            document.body.insertAdjacentHTML('beforeend', modalHtml);
+
+            // ⚡ 4. Логика при нажатии "Запустить"
+            document.getElementById('sync-confirm-btn').onclick = async () => {
+                let sourceCategory = document.getElementById('sync-source-cat').value;
+                let targetCategory = document.getElementById('sync-target-cat').value;
+                document.getElementById('sync-modal-overlay').remove();
+                
+                if (!sourceCategory || !targetCategory) return;
+                
+                showReportOverlay("Анализ и синхронизация...");
+                
+                try {
+                    let rawIngredients = {}; 
+                    let drinksCount = 0;
+
+                    // ШАГ 1: Проходим по Меню и собираем ингредиенты из ИСТОЧНИКА
+                    Object.values(menuData).forEach(drink => {
+                        if (!drink) return;
+                        let dName = drink.name || drink.title || drink.drink || drink.item; 
+                        if (!dName) return; 
+                        
+                        let gc = drink.globalCat || "Основное меню";
+                        if (gc === sourceCategory) {
+                            drinksCount++;
+                            let blocks = [];
+                            if (Array.isArray(drink.blocks)) blocks = drink.blocks;
+                            else if (drink.blocks && typeof drink.blocks === 'object') blocks = Object.values(drink.blocks);
+                            else if (Array.isArray(drink.recipe)) blocks = [drink.recipe];
+                            else if (drink.recipe && typeof drink.recipe === 'object') blocks = [Object.values(drink.recipe)];
+
+                            blocks.forEach(block => {
+                                if (!block) return;
+                                let items = Array.isArray(block) ? block : Object.values(block);
+                                items.forEach(ingredient => {
+                                    let ingName = (typeof ingredient === 'string') ? ingredient : (ingredient && ingredient.name ? ingredient.name : null);
+                                    if (ingName && typeof ingName === 'string') {
+                                        ingName = ingName.trim();
+                                        if (!rawIngredients[ingName]) rawIngredients[ingName] = new Set();
+                                        rawIngredients[ingName].add(dName.trim());
+                                    }
+                                });
+                            });
+                        }
+                    });
+
+                    if (drinksCount === 0) {
+                        hideReportOverlay();
+                        alert(`❌ Ошибка: В "Меню и Техкарты" не найдено напитков в категории "${sourceCategory}".`);
+                        return;
+                    }
+
+                    let updates = {}; 
+                    let changes = 0;
+                    let isSourceMain = sourceCategory.toLowerCase() === "основное меню";
+
+                    let ordItems = Object.values(fullOrdData).filter(c => c && c.name);
+                    let chkItems = Object.values(chkData).filter(c => c && c.name);
+                    const cleanStr = (s) => (s || "").trim().toLowerCase();
+
+                    let currentStoplistItems = Object.keys(stopData).map(k => ({ key: k, ...stopData[k] }));
+
+                    // ШАГ 2: Ищем продукты ВЕЗДЕ и заполняем Стоп-лист
+                    for (let prodName in rawIngredients) {
+                        let pClean = cleanStr(prodName);
+                        if (!pClean) continue;
+                        
+                        let finalProdName = prodName;
+                        let catName = "Прочее"; 
+
+                        // ⚡ ИЩЕМ ВЕЗДЕ В ЗАКУПКЕ И ЧЕК-ЛИСТЕ
+                        let matchOrd = ordItems.find(c => cleanStr(c.name) === pClean) || ordItems.find(c => cleanStr(c.name).includes(pClean) || pClean.includes(cleanStr(c.name)));
+                        let matchChk = chkItems.find(c => cleanStr(c.name) === pClean) || chkItems.find(c => cleanStr(c.name).includes(pClean) || pClean.includes(cleanStr(c.name)));
+
+                        if (matchOrd) {
+                            finalProdName = matchOrd.name.trim(); 
+                            catName = matchOrd.cat || "Прочее"; // ⚡ Берем родную категорию (например, Сиропы)
+                        } else if (matchChk) {
+                            finalProdName = matchChk.name.trim();
+                            catName = matchChk.cat || "Прочее";
+                        } else {
+                            if (pClean.includes("сироп")) catName = "Сиропы";
+                            else if (pClean.includes("пюре")) catName = "Пюре";
+                            else if (pClean.includes("сок")) catName = "Жидкости";
+                            else if (pClean.includes("молоко")) catName = "Молочка";
+                        }
+
+                        let drinksListStr = Array.from(rawIngredients[prodName]).sort().join(", ");
+
+                        // Ищем продукт в Стоп-листе
+                        let existingItem = currentStoplistItems.find(c => cleanStr(c.name) === cleanStr(finalProdName) || cleanStr(c.name) === pClean);
+
+                        if (existingItem) {
+                            // ⚡ ПРОПУСК / ОБНОВЛЕНИЕ: Продукт уже есть. Только дописываем напитки, если их там нет.
+                            let needsUpdate = false;
+                            let existingKey = existingItem.key;
+                            
+                            let currentDrinks = existingItem[isSourceMain ? 'main' : 'sez'] || "";
+                            let combinedDrinksSet = new Set([...currentDrinks.split(',').map(s=>s.trim()).filter(Boolean), ...rawIngredients[prodName]]);
+                            let combinedDrinksStr = Array.from(combinedDrinksSet).sort().join(", ");
+
+                            if (isSourceMain && existingItem.main !== combinedDrinksStr) {
+                                existingItem.main = combinedDrinksStr; needsUpdate = true;
+                            } else if (!isSourceMain && existingItem.sez !== combinedDrinksStr) {
+                                existingItem.sez = combinedDrinksStr; needsUpdate = true;
+                            }
+
+                            if (needsUpdate) {
+                                updates[existingKey] = {
+                                    globalCat: existingItem.globalCat, // Оставляем там, где он лежал!
+                                    cat: existingItem.cat,
+                                    name: existingItem.name,
+                                    sez: existingItem.sez || "",
+                                    main: existingItem.main || ""
+                                };
+                                changes++;
+                            }
+                        } else {
+                            // ⚡ ДУБЛИРУЕМ: Создаем новый продукт в ЦЕЛЕВОЙ КАТЕГОРИИ
+                            let newId = "stop_auto_" + Date.now() + "_" + Math.random().toString(36).substr(2, 5);
+                            updates[newId] = {
+                                globalCat: targetCategory, // ⚡ Дублируем в ту категорию, что выбрали в окне
+                                cat: catName,              // ⚡ Категория, найденная в Закупке
+                                name: finalProdName,
+                                sez: isSourceMain ? "" : drinksListStr, 
+                                main: isSourceMain ? drinksListStr : "" 
+                            };
+                            changes++;
+                        }
+                    }
+
+                    if (changes > 0) {
+                        await db.ref('catalogs/stoplist').update(updates);
+                        hideReportOverlay();
+                        alert(`✅ Синхронизация успешна!\n\nИсточник напитков: "${sourceCategory}"\nЦель для продуктов: "${targetCategory}"\nНапитков обработано: ${drinksCount}\nСинхронизировано продуктов: ${changes}`);
+                        
+                        let freshData = await fetchOptimistic('catalogs/stoplist');
+                        currentCatalog = freshData || {};
+                        renderCatalogStoplist();
+                    } else {
+                        hideReportOverlay();
+                        alert(`ℹ️ Синхронизация завершена.\nВсе продукты из меню "${sourceCategory}" уже добавлены в Стоп-лист (дубликаты пропущены).`);
+                    }
+                } catch (err) {
+                    hideReportOverlay();
+                    alert("❌ Ошибка при выполнении: " + err.message);
+                }
+            };
+
         } catch (e) {
             hideReportOverlay();
-            alert("❌ Ошибка при синхронизации: " + e.message);
+            alert("❌ Ошибка подготовки синхронизации: " + e.message);
         }
     };
     

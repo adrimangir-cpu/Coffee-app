@@ -1175,11 +1175,9 @@ function toggleSvodDate(safeDate) {
     // ПРАВКА 1: ЧЕК-ЛИСТЫ АВТО-ОТПРАВКА АДМИНУ И БОССУ
     // ==========================================
 window.sendChecklistPdf = async function() {
-        // Удаляем старое окно, если оно зависло
         let existingModal = document.getElementById('pdf-modal-overlay');
         if (existingModal) existingModal.remove();
 
-        // 1. Создаем модальное окно для выбора получателя
         let modalHtml = `
         <div id="pdf-modal-overlay" style="position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:9999; display:flex; align-items:center; justify-content:center; backdrop-filter:blur(4px);">
             <div style="background:var(--bg-window); padding:30px; border-radius:16px; width:90%; max-width:400px; box-shadow:0 10px 30px rgba(0,0,0,0.5); border:1px solid var(--line-delicate); text-align:center;">
@@ -1196,22 +1194,19 @@ window.sendChecklistPdf = async function() {
         
         document.body.insertAdjacentHTML('beforeend', modalHtml);
 
-        // 2. Навешиваем обработчики на кнопки
         document.getElementById('btn-send-boss').onclick = () => processPdfSending(BOSS_CHAT_ID, "Босс");
         document.getElementById('btn-send-admin').onclick = () => processPdfSending(ADMIN_CHAT_ID, "Администратор");
 
-        // 3. Основная функция формирования и отправки
         async function processPdfSending(targetChatId, targetName) {
             document.getElementById('pdf-modal-overlay').remove();
             
             if (!targetChatId) return alert("❌ Ошибка: Не настроен ID получателя в коде.");
 
             showReportOverlay("Подготовка таблицы...");
-            await new Promise(r => setTimeout(r, 100)); // Даем UI обновиться
+            await new Promise(r => setTimeout(r, 100));
 
             document.querySelectorAll('.chk-row').forEach(row => { row.style.display = 'table-row'; });
             
-            // ⚡ Прячем тяжелые картинки на момент генерации PDF, чтобы он не зависал!
             let images = document.querySelectorAll('#checks-table-container img');
             images.forEach(img => img.style.display = 'none');
 
@@ -1225,33 +1220,26 @@ window.sendChecklistPdf = async function() {
             };
 
             try {
-                showReportOverlay("Создание PDF (около 10-15 секунд)...");
+                showReportOverlay("Создание PDF (около 5 секунд)...");
                 await new Promise(r => setTimeout(r, 100));
 
                 const pdfDataUri = await html2pdf().set(opt).from(element).outputPdf('datauristring');
                 
-                showReportOverlay("🚀 Мгновенная отправка в Telegram...");
+                showReportOverlay("🚀 Передача файла боту...");
                 
-                // ⚡ ИСПОЛЬЗУЕМ ПРЯМОЙ REST API БЕЗ ЗАВИСАНИЙ
-                let rawFetch = typeof originalFetch !== 'undefined' ? originalFetch : fetch;
-                
-                await rawFetch(`${FB_URL}/bot_control/notifications.json`, {
-                    method: 'POST',
-                    body: JSON.stringify({ 
-                        type: "checklist_pdf", 
-                        chat_id: String(targetChatId), // ⚡ СТРОКА ДЛЯ БОТА
-                        file_data: pdfDataUri, 
-                        filename: `Отчет_Чеклисты_${new Date().toLocaleDateString('ru-RU')}.pdf`,
-                        text: `✅ Автоматический отчет по чек-листам (Запросил: Dashboard)`, 
-                        timestamp: Date.now() 
-                    })
+                // ⚡ Записываем в базу через надежный метод базы данных
+                await db.ref('bot_control/notifications').push({ 
+                    type: "checklist_pdf", 
+                    chat_id: Number(targetChatId), 
+                    file_data: pdfDataUri, 
+                    filename: `Отчет_Чеклисты_${new Date().toLocaleDateString('ru-RU')}.pdf`,
+                    text: `✅ Автоматический отчет по чек-листам (Запросил: Dashboard)`, 
+                    timestamp: Date.now() 
                 });
 
-                // Возвращаем картинки на место
                 images.forEach(img => img.style.display = 'block');
-                
                 hideReportOverlay();
-                alert(`✅ PDF-отчет успешно передан боту для отправки в ЛС (${targetName})!`);
+                alert(`✅ PDF-отчет успешно отправлен боту в ЛС (${targetName})!`);
             } catch (e) {
                 images.forEach(img => img.style.display = 'block');
                 hideReportOverlay();
@@ -1259,7 +1247,7 @@ window.sendChecklistPdf = async function() {
             }
         }
     };
-
+    
     // ==========================================
     // ПРАВКА 2: ЛОГИКА ТЕКУЩЕГО И СЛЕДУЮЩЕГО МЕСЯЦА ДЛЯ ГРАФИКОВ
     // ==========================================
@@ -4027,6 +4015,7 @@ function renderGraphsTab() {
         }
     }
 
+    // 1. Сводка по маркетплейсам (с гарантированной записью в базу)
     window.sendMpSummaryToBot = async function() {
         let confirmText = mpViewMonth === 'current' ? "Отправить итоговую сводку за ТЕКУЩИЙ месяц Администратору?" : "Отправить итоговую сводку за ПРОШЛЫЙ месяц Администратору?";
         if(!confirm(confirmText)) return;
@@ -4070,23 +4059,18 @@ function renderGraphsTab() {
         text += `➖➖➖➖➖➖➖➖\n💵 ИТОГО: *${grandTotal.toFixed(2)} ₽*`;
 
         try {
-            showReportOverlay("🚀 Мгновенная отправка в Telegram...");
+            showReportOverlay("🚀 Отправка сводки в Telegram...");
             
-            // ⚡ ИСПОЛЬЗУЕМ ПРЯМОЙ REST API БЕЗ ЗАВИСАНИЙ
-            let rawFetch = typeof originalFetch !== 'undefined' ? originalFetch : fetch;
-            
-            await rawFetch(`${FB_URL}/bot_control/notifications.json`, { 
-                method: 'POST', 
-                body: JSON.stringify({ 
-                    type: "marketplace_summary", 
-                    chat_id: String(ADMIN_CHAT_ID), // ⚡ ВОЗВРАЩАЕМ СТРОКУ, ЧТОБЫ БОТ НЕ ПАДАЛ
-                    text: text, 
-                    timestamp: Date.now() 
-                }) 
+            // ⚡ Используем db.ref().push() для 100% доставки в базу бота
+            await db.ref('bot_control/notifications').push({ 
+                type: "marketplace_summary", 
+                chat_id: Number(ADMIN_CHAT_ID), // Передаем как число, бот подхватит
+                text: text, 
+                timestamp: Date.now() 
             });
             
             hideReportOverlay();
-            alert("✅ Сводка мгновенно передана боту! Проверьте Telegram.");
+            alert("✅ Сводка успешно отправлена боту!");
         } catch(e) { 
             hideReportOverlay();
             alert("❌ Ошибка отправки: " + e.message); 

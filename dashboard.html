@@ -1232,31 +1232,49 @@ function toggleSvodDate(safeDate) {
     // ПРАВКА 3: АВТО-СИНХРОНИЗАЦИЯ СТОП-ЛИСТА С ТЕХ. КАРТАМИ
     // ==========================================
    window.syncStoplistWithMenu = async function() {
+        // Удаляем старое окно, если оно случайно осталось в памяти
+        let existingModal = document.getElementById('sync-modal-overlay');
+        if (existingModal) existingModal.remove();
+
         showReportOverlay("Сбор данных для меню...");
         
         try {
-            // ⚡ 1. Загружаем все базы для формирования списков
-            let [menuData, ordData, newShopData, chkData, stopData] = await Promise.all([
-                fetchOptimistic('catalogs/menu'),
-                fetchOptimistic('catalogs/order'),
-                fetchOptimistic('catalogs/newshop'),
-                fetchOptimistic('catalogs/checklist'),
-                fetchOptimistic('catalogs/stoplist')
+            // ⚡ 1. Надежная и быстрая загрузка напрямую из Firebase
+            let [snapMenu, snapOrd, snapNew, snapChk, snapStop] = await Promise.all([
+                db.ref('catalogs/menu').once('value'),
+                db.ref('catalogs/order').once('value'),
+                db.ref('catalogs/newshop').once('value'),
+                db.ref('catalogs/checklist').once('value'),
+                db.ref('catalogs/stoplist').once('value')
             ]);
             
-            menuData = menuData || {};
-            let fullOrdData = { ...(ordData || {}), ...(newShopData || {}) };
-            chkData = chkData || {};
-            stopData = stopData || {};
+            let menuData = snapMenu.val() || {};
+            let fullOrdData = { ...(snapOrd.val() || {}), ...(snapNew.val() || {}) };
+            let chkData = snapChk.val() || {};
+            let stopData = snapStop.val() || {};
 
             hideReportOverlay();
 
             // ⚡ 2. Автоматически собираем все уникальные Глобальные категории
-            let menuCats = [...new Set(Object.values(menuData).map(i => i && i.globalCat).filter(c => c && !c.includes("!!!")))];
-            let stopCats = [...new Set(Object.values(stopData).map(i => i && i.globalCat).filter(c => c && !c.includes("!!!")))];
-            let allTargetCats = [...new Set([...stopCats, ...menuCats, "Основное меню"])]; // Объединяем, чтобы был выбор
+            let menuCats = [];
+            Object.values(menuData).forEach(i => {
+                if (i && typeof i.globalCat === 'string' && !i.globalCat.includes("!!!")) menuCats.push(i.globalCat);
+            });
+            
+            let stopCats = [];
+            Object.values(stopData).forEach(i => {
+                if (i && typeof i.globalCat === 'string' && !i.globalCat.includes("!!!")) stopCats.push(i.globalCat);
+            });
 
-            // ⚡ 3. Создаем красивое модальное окно с выпадающими списками
+            let allTargetCats = [...new Set([...stopCats, ...menuCats, "Основное меню"])].sort();
+            let uniqueMenuCats = [...new Set(menuCats)].sort();
+
+            if (uniqueMenuCats.length === 0) {
+                alert("В Меню не найдено ни одной категории для синхронизации.");
+                return;
+            }
+
+            // ⚡ 3. Создаем красивое модальное окно с ВЫПАДАЮЩИМИ СПИСКАМИ
             let modalHtml = `
             <div id="sync-modal-overlay" style="position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:9999; display:flex; align-items:center; justify-content:center; backdrop-filter:blur(4px);">
                 <div style="background:var(--bg-window); padding:30px; border-radius:16px; width:90%; max-width:450px; box-shadow:0 10px 30px rgba(0,0,0,0.5); border:1px solid var(--line-delicate);">
@@ -1264,7 +1282,7 @@ function toggleSvodDate(safeDate) {
                     
                     <label style="font-size:14px; font-weight:bold; color:var(--text-muted); margin-bottom:8px; display:block;">1. Источник напитков (Меню):</label>
                     <select id="sync-source-cat" style="width:100%; padding:12px; border-radius:8px; border:1px solid var(--line-delicate); margin-bottom:20px; font-size:15px; font-weight:bold; color:var(--text-main); outline:none;">
-                        ${menuCats.map(c => `<option value="${c}">${c}</option>`).join('')}
+                        ${uniqueMenuCats.map(c => `<option value="${c}">${c}</option>`).join('')}
                     </select>
 
                     <label style="font-size:14px; font-weight:bold; color:var(--text-muted); margin-bottom:8px; display:block;">2. Куда сохранить продукты (Стоп-лист):</label>
@@ -1295,7 +1313,7 @@ function toggleSvodDate(safeDate) {
                     let rawIngredients = {}; 
                     let drinksCount = 0;
 
-                    // ШАГ 1: Проходим по Меню и собираем ингредиенты из ИСТОЧНИКА
+                    // ШАГ 1: Проходим по Меню и собираем ингредиенты
                     Object.values(menuData).forEach(drink => {
                         if (!drink) return;
                         let dName = drink.name || drink.title || drink.drink || drink.item; 
@@ -1349,13 +1367,19 @@ function toggleSvodDate(safeDate) {
                         let finalProdName = prodName;
                         let catName = "Прочее"; 
 
-                        // ⚡ ИЩЕМ ВЕЗДЕ В ЗАКУПКЕ И ЧЕК-ЛИСТЕ
-                        let matchOrd = ordItems.find(c => cleanStr(c.name) === pClean) || ordItems.find(c => cleanStr(c.name).includes(pClean) || pClean.includes(cleanStr(c.name)));
-                        let matchChk = chkItems.find(c => cleanStr(c.name) === pClean) || chkItems.find(c => cleanStr(c.name).includes(pClean) || pClean.includes(cleanStr(c.name)));
+                        // ⚡ УМНЫЙ ПОИСК ВЕЗДЕ В ЗАКУПКЕ И ЧЕК-ЛИСТЕ
+                        let matchOrd = ordItems.find(c => {
+                            let cN = cleanStr(c.name);
+                            return cN && (cN === pClean || cN.includes(pClean) || pClean.includes(cN));
+                        });
+                        let matchChk = chkItems.find(c => {
+                            let cN = cleanStr(c.name);
+                            return cN && (cN === pClean || cN.includes(pClean) || pClean.includes(cN));
+                        });
 
                         if (matchOrd) {
                             finalProdName = matchOrd.name.trim(); 
-                            catName = matchOrd.cat || "Прочее"; // ⚡ Берем родную категорию (например, Сиропы)
+                            catName = matchOrd.cat || "Прочее"; // Берем родную категорию (например, Сиропы)
                         } else if (matchChk) {
                             finalProdName = matchChk.name.trim();
                             catName = matchChk.cat || "Прочее";
@@ -1369,10 +1393,13 @@ function toggleSvodDate(safeDate) {
                         let drinksListStr = Array.from(rawIngredients[prodName]).sort().join(", ");
 
                         // Ищем продукт в Стоп-листе
-                        let existingItem = currentStoplistItems.find(c => cleanStr(c.name) === cleanStr(finalProdName) || cleanStr(c.name) === pClean);
+                        let existingItem = currentStoplistItems.find(c => {
+                            let cN = cleanStr(c.name);
+                            return cN && (cN === cleanStr(finalProdName) || cN === pClean);
+                        });
 
                         if (existingItem) {
-                            // ⚡ ПРОПУСК / ОБНОВЛЕНИЕ: Продукт уже есть. Только дописываем напитки, если их там нет.
+                            // ⚡ ПРОПУСК / ОБНОВЛЕНИЕ: Продукт уже есть. Только дописываем напитки, оставляя продукт на своем месте
                             let needsUpdate = false;
                             let existingKey = existingItem.key;
                             
@@ -1388,7 +1415,7 @@ function toggleSvodDate(safeDate) {
 
                             if (needsUpdate) {
                                 updates[existingKey] = {
-                                    globalCat: existingItem.globalCat, // Оставляем там, где он лежал!
+                                    globalCat: existingItem.globalCat, // Оставляем в той глобальной категории, где он уже лежит
                                     cat: existingItem.cat,
                                     name: existingItem.name,
                                     sez: existingItem.sez || "",
@@ -1397,10 +1424,10 @@ function toggleSvodDate(safeDate) {
                                 changes++;
                             }
                         } else {
-                            // ⚡ ДУБЛИРУЕМ: Создаем новый продукт в ЦЕЛЕВОЙ КАТЕГОРИИ
+                            // ⚡ СОЗДАНИЕ: Продукта нет нигде в стоп листе. Создаем его в ЦЕЛЕВОЙ КАТЕГОРИИ
                             let newId = "stop_auto_" + Date.now() + "_" + Math.random().toString(36).substr(2, 5);
                             updates[newId] = {
-                                globalCat: targetCategory, // ⚡ Дублируем в ту категорию, что выбрали в окне
+                                globalCat: targetCategory, // ⚡ Помещаем в категорию, выбранную в модальном окне
                                 cat: catName,              // ⚡ Категория, найденная в Закупке
                                 name: finalProdName,
                                 sez: isSourceMain ? "" : drinksListStr, 
@@ -1415,8 +1442,9 @@ function toggleSvodDate(safeDate) {
                         hideReportOverlay();
                         alert(`✅ Синхронизация успешна!\n\nИсточник напитков: "${sourceCategory}"\nЦель для продуктов: "${targetCategory}"\nНапитков обработано: ${drinksCount}\nСинхронизировано продуктов: ${changes}`);
                         
-                        let freshData = await fetchOptimistic('catalogs/stoplist');
-                        currentCatalog = freshData || {};
+                        // ⚡ Мгновенно перезагружаем каталог и перерисовываем интерфейс
+                        let freshSnap = await db.ref('catalogs/stoplist').once('value');
+                        currentCatalog = freshSnap.val() || {};
                         renderCatalogStoplist();
                     } else {
                         hideReportOverlay();
@@ -1427,7 +1455,6 @@ function toggleSvodDate(safeDate) {
                     alert("❌ Ошибка при выполнении: " + err.message);
                 }
             };
-
         } catch (e) {
             hideReportOverlay();
             alert("❌ Ошибка подготовки синхронизации: " + e.message);

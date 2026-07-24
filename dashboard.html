@@ -1173,12 +1173,12 @@ function toggleSvodDate(safeDate) {
     // ==========================================
     // ПРАВКА 1: ЧЕК-ЛИСТЫ АВТО-ОТПРАВКА АДМИНУ И БОССУ
     // ==========================================
- window.sendChecklistPdf = async function() {
+window.sendChecklistPdf = async function() {
         // Удаляем старое окно, если оно зависло
         let existingModal = document.getElementById('pdf-modal-overlay');
         if (existingModal) existingModal.remove();
 
-        // ⚡ 1. Создаем красивое модальное окно для выбора получателя
+        // 1. Создаем красивое модальное окно для выбора получателя
         let modalHtml = `
         <div id="pdf-modal-overlay" style="position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:9999; display:flex; align-items:center; justify-content:center; backdrop-filter:blur(4px);">
             <div style="background:var(--bg-window); padding:30px; border-radius:16px; width:90%; max-width:400px; box-shadow:0 10px 30px rgba(0,0,0,0.5); border:1px solid var(--line-delicate); text-align:center;">
@@ -1195,36 +1195,53 @@ function toggleSvodDate(safeDate) {
         
         document.body.insertAdjacentHTML('beforeend', modalHtml);
 
-        // ⚡ 2. Навешиваем обработчики на кнопки
+        // 2. Навешиваем обработчики на кнопки
         document.getElementById('btn-send-boss').onclick = () => processPdfSending(BOSS_CHAT_ID, "Босс");
         document.getElementById('btn-send-admin').onclick = () => processPdfSending(ADMIN_CHAT_ID, "Администратор");
 
-        // ⚡ 3. Основная функция формирования и отправки
+        // 3. Основная функция формирования и отправки
         async function processPdfSending(targetChatId, targetName) {
             document.getElementById('pdf-modal-overlay').remove();
             
             if (!targetChatId) return alert("❌ Ошибка: Не настроен ID получателя в коде.");
 
-            showReportOverlay("Формирование PDF... Подождите");
+            showReportOverlay("Подготовка таблицы...");
+            
+            // Даем браузеру долю секунды, чтобы отрисовать загрузочный экран
+            await new Promise(r => setTimeout(r, 100));
+
+            // Раскрываем все скрытые категории Чек-листа
             document.querySelectorAll('.chk-row').forEach(row => { row.style.display = 'table-row'; });
+            
+            // ⚡ ВАЖНО: Прячем картинки перед генерацией, чтобы HTML2PDF не зависал намертво!
+            let images = document.querySelectorAll('#checks-table-container img');
+            images.forEach(img => img.style.display = 'none');
 
             const element = document.getElementById('checks-table-container');
             const opt = {
                 margin:       0.2,
                 filename:     'Checklist_Report.pdf',
-                image:        { type: 'jpeg', quality: 0.98 },
-                html2canvas:  { scale: 2, useCORS: true, logging: false },
+                image:        { type: 'jpeg', quality: 0.8 }, // Снизили качество картинки самого PDF для скорости
+                html2canvas:  { scale: 1.5, useCORS: true, logging: false }, // Уменьшили зум, чтобы не перегружать память
                 jsPDF:        { unit: 'in', format: 'a3', orientation: 'landscape' } 
             };
 
             try {
+                showReportOverlay("Формирование PDF (это может занять до минуты)...");
+                await new Promise(r => setTimeout(r, 100));
+
+                // Генерируем легкий PDF-файл (без картинок товаров он сформируется махом)
                 const pdfDataUri = await html2pdf().set(opt).from(element).outputPdf('datauristring');
                 
+                showReportOverlay("Отправка файла в Telegram...");
+                await new Promise(r => setTimeout(r, 100));
+
+                // Отправляем в базу
                 await fetch(`${FB_URL}/bot_control/notifications.json`, {
                     method: 'POST',
                     body: JSON.stringify({ 
                         type: "checklist_pdf", 
-                        chat_id: String(targetChatId), 
+                        chat_id: Number(targetChatId), // Передаем как число (требование Телеграм)
                         file_data: pdfDataUri, 
                         filename: `Отчет_Чеклисты_${new Date().toLocaleDateString('ru-RU')}.pdf`,
                         text: `✅ Автоматический отчет по чек-листам (Запросил: Dashboard)`, 
@@ -1232,9 +1249,15 @@ function toggleSvodDate(safeDate) {
                     })
                 });
 
+                // ⚡ Возвращаем картинки товаров на экран Дашборда
+                images.forEach(img => img.style.display = 'block');
+
                 hideReportOverlay();
-                alert(`✅ PDF-отчет успешно сформирован и отправлен в ЛС (${targetName})!`);
+                alert(`✅ PDF-отчет успешно сформирован и передан боту для отправки в ЛС (${targetName})!`);
             } catch (e) {
+                // Если произошла ошибка, всё равно возвращаем картинки
+                images.forEach(img => img.style.display = 'block');
+                
                 hideReportOverlay();
                 alert("❌ Ошибка при создании/отправке PDF: " + e.message);
             }

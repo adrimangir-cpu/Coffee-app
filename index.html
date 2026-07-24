@@ -1231,27 +1231,24 @@
         renderScheduleCalendar(target.month, target.year);
     }
 
-    async function submitSchedule() {
+    function submitSchedule() {
         triggerHaptic();
         let target = getTargetDateLogic();
         let payload = { ...state.schedule.days };
         let comment = document.getElementById('schedule-comment').value.trim();
         if (comment) payload.comment = comment; 
 
-        showGlobalLoader("Сохранение графика..."); 
-        try {
-            await database.ref(`schedules/${target.year}_${target.month}/${state.schedule.name}`).set(payload);
-            hideGlobalLoader(); 
-            
-            document.getElementById('success-screen').style.display = 'flex';
-            setTimeout(() => {
-                document.getElementById('success-screen').style.display = 'none';
-                showScreen('step-sub-profile', false);
-            }, 2000);
-        } catch(e) {
-            hideGlobalLoader(); 
-            showPopupError("Ошибка", "Не удалось сохранить график: " + e.message);
-        }
+        // ⚡ ОТПРАВЛЯЕМ В БАЗУ БЕЗ ОЖИДАНИЯ ОТВЕТА (Background Sync)
+        database.ref(`schedules/${target.year}_${target.month}/${state.schedule.name}`).set(payload).catch(e => {
+            console.error("Ошибка сохранения графика в фоне:", e);
+        });
+        
+        // ⚡ СРАЗУ ПОКАЗЫВАЕМ УСПЕХ И ЗАКРЫВАЕМ
+        document.getElementById('success-screen').style.display = 'flex';
+        setTimeout(() => {
+            document.getElementById('success-screen').style.display = 'none';
+            showScreen('step-sub-profile', false);
+        }, 1200); // Сократили время показа экрана успеха для скорости
     }
 
     // ==========================================
@@ -2871,6 +2868,7 @@
    window.showMyLastOrder = async function() {
         if(!checkShopSelected()) return;
         triggerHaptic();
+        hideGlobalLoader(); 
         state.currentMode = 'my_last_order'; 
         document.getElementById('report-overlay').style.display = 'flex';
         document.getElementById('report-header').innerText = "Последний заказ";
@@ -2883,7 +2881,7 @@
                 </div>
             </div>`;
 
-        // ⚡ Гарантированная загрузка данных, если фон не успел
+        // Гарантированная загрузка данных
         if (!state.ordersLoaded || !state.globalOrders || state.globalOrders.length === 0) {
             try {
                 let snap = await database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(50).once("value");
@@ -2893,6 +2891,38 @@
                 state.ordersLoaded = true;
             } catch(e) {}
         }
+
+        // Подтягиваем свежую базу недовозов для синхронизации
+        let missingData = [];
+        try {
+            let mSnap = await database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value");
+            mSnap.forEach(c => { let v = c.val(); if(v) missingData.push(v); });
+        } catch(e) {}
+        
+        // ⚡ Генерируем карту актуальных недовозов
+        let activeMissingMap = {};
+        missingData.forEach(m => { 
+            if (m && m.name) {
+                activeMissingMap[cleanName(m.name)] = m.status; // Сохраняем статус недовоза (pending, transit, arrived, canceled)
+            }
+        });
+
+        // ⚡ Генерируем карту всех свежих заказов (для проверки, не перезаказал ли админ товар)
+        let latestOrderStatuses = {};
+        state.globalOrders.forEach(o => {
+            if (o && (o.mode === 'order' || o.mode === 'new_shop')) {
+                let items = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
+                items.forEach(i => {
+                    if (i && i.name && i.name !== "НЕТ ЗАКАЗА") {
+                        let cName = cleanName(i.name);
+                        // Записываем только самый свежий статус товара
+                        if (!latestOrderStatuses[cName]) {
+                            latestOrderStatuses[cName] = i.status || 'pending';
+                        }
+                    }
+                });
+            }
+        });
         
         try {
             let allOrders = [];
@@ -2915,8 +2945,36 @@
                     if (i && i.name && i.name !== "НЕТ ЗАКАЗА") {
                         if (!aggregated[i.name]) aggregated[i.name] = { qty: 0, status: 'pending', is_error: false };
                         aggregated[i.name].qty += parseFloat(i.qty) || 0;
-                        if (i.status === 'ordered' || i.status === 'from_stoplist') aggregated[i.name].status = 'ordered';
-                        if (i.status === 'error' || i.bot_error === true) aggregated[i.name].is_error = true;
+                        
+                        let cName = cleanName(i.name);
+                        
+                        // ⚡ УМНАЯ СИНХРОНИЗАЦИЯ СТАТУСОВ ⚡
+                        let currentRealStatus = latestOrderStatuses[cName] || i.status || 'pending';
+                        let missingStat = activeMissingMap[cName];
+                        
+                        if (missingStat === 'pending' || missingStat === 'transit') {
+                            // Если товар сейчас висит в недовозах
+                            aggregated[i.name].status = 'error'; 
+                            aggregated[i.name].is_error = true;
+                            aggregated[i.name].missingLabel = missingStat === 'transit' ? 'В пути 🚚' : 'Недовоз ❌';
+                        } else if (missingStat === 'canceled') {
+                            // Админ отменил недовоз
+                            aggregated[i.name].status = 'not_needed'; 
+                            aggregated[i.name].missingLabel = 'ОТМЕНЕН ❌';
+                        } else if (missingStat === 'arrived') {
+                            // Недовоз доехал
+                            aggregated[i.name].status = 'already_received'; 
+                        } else if (currentRealStatus === 'error' || currentRealStatus === 'not_found' || i.bot_error === true) {
+                            // Просто нет в наличии (из Свода)
+                            aggregated[i.name].status = 'error'; 
+                            aggregated[i.name].is_error = true;
+                        } else if (currentRealStatus === 'ordered' || currentRealStatus === 'from_stoplist') {
+                            aggregated[i.name].status = 'ordered';
+                        } else if (currentRealStatus === 'already_received') {
+                            aggregated[i.name].status = 'already_received';
+                        } else {
+                            aggregated[i.name].status = 'pending';
+                        }
                     }
                 });
                 return aggregated;
@@ -2924,11 +2982,6 @@
 
             let currentAgg = aggregateSingleOrder(currentOrderObj);
             let prevAgg = aggregateSingleOrder(prevOrderObj);
-
-            let activeMissing = {};
-            (state.globalMissing || []).forEach(m => { 
-                if (m && m.status !== 'arrived' && m.status !== 'canceled') activeMissing[m.name] = true; 
-            });
 
             if (!state.currentMyOrderTab) state.currentMyOrderTab = 'current';
             
@@ -2944,11 +2997,21 @@
                                     <div style="text-align:center; color:#888; font-size:14px; margin-bottom:15px;">(от ${dateStr})</div>`;
                 Object.keys(aggData).sort().forEach(name => {
                     let item = aggData[name];
-                    let isError = item.is_error || activeMissing[name];
-                    let stHtml = isError ? `<span style="color:#c62828; background:#ffebee; padding:3px 8px; border-radius:6px; font-size:12px; font-weight:900;">Нет в наличии ❌</span>` : 
-                                 (item.status === 'ordered' ? `<span style="color:#2e7d32; background:#e8f5e9; padding:3px 8px; border-radius:6px; font-size:12px; font-weight:900;">Заказано ✅</span>` : 
-                                 (item.status === 'from_stoplist' ? `<span style="color:#c62828; background:#ffcdd2; padding:3px 8px; border-radius:6px; font-size:12px; font-weight:900;">Из стоп-листа 🛑</span>` : 
-                                 `<span style="color:#f57c00; background:#fff3e0; padding:3px 8px; border-radius:6px; font-size:12px; font-weight:900;">Ожидает ⏳</span>`));
+                    let stHtml = "";
+                    
+                    if (item.missingLabel) {
+                        stHtml = `<span style="color:#c62828; background:#ffebee; padding:3px 8px; border-radius:6px; font-size:12px; font-weight:900;">${item.missingLabel}</span>`;
+                    } else if (item.is_error) {
+                        stHtml = `<span style="color:#c62828; background:#ffebee; padding:3px 8px; border-radius:6px; font-size:12px; font-weight:900;">Нет в наличии ❌</span>`;
+                    } else if (item.status === 'ordered') {
+                        stHtml = `<span style="color:#2e7d32; background:#e8f5e9; padding:3px 8px; border-radius:6px; font-size:12px; font-weight:900;">Заказано ✅</span>`;
+                    } else if (item.status === 'already_received') {
+                        stHtml = `<span style="color:#0277bd; background:#e1f5fe; padding:3px 8px; border-radius:6px; font-size:12px; font-weight:900;">Принят 📥</span>`;
+                    } else if (item.status === 'not_needed') {
+                        stHtml = `<span style="color:#757575; background:#eeeeee; padding:3px 8px; border-radius:6px; font-size:12px; font-weight:900;">Не заказан ➖</span>`;
+                    } else {
+                        stHtml = `<span style="color:#f57c00; background:#fff3e0; padding:3px 8px; border-radius:6px; font-size:12px; font-weight:900;">Ожидает ⏳</span>`;
+                    }
 
                     blockHtml += `<div style="display:flex; justify-content:space-between; align-items:center; padding:12px 0; border-bottom:1px solid #eee;">
                                     <div><b style="font-size:15px;">${name}</b><br><div style="margin-top:5px;">${stHtml}</div></div>

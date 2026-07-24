@@ -1232,33 +1232,41 @@ function toggleSvodDate(safeDate) {
     // ПРАВКА 3: АВТО-СИНХРОНИЗАЦИЯ СТОП-ЛИСТА С ТЕХ. КАРТАМИ
     // ==========================================
    window.syncStoplistWithMenu = async function() {
-        let seasonChoice = prompt("Введите название глобальной категории из меню (например: Летнее меню 2026 или Основное меню):", "Летнее меню 2026");
-        if (!seasonChoice) return;
-        seasonChoice = seasonChoice.trim();
+        // 1. Спрашиваем источник (Откуда берем напитки)
+        let sourceCategory = prompt("Из какого меню (глобальной категории Техкарт) взять напитки?\nНапример: Летнее меню 2026", "Летнее меню 2026");
+        if (!sourceCategory) return;
+        sourceCategory = sourceCategory.trim();
+
+        // 2. Спрашиваем цель (Куда сохраняем в Стоп-лист)
+        let targetCategory = prompt(`В какую глобальную категорию Справочника Стоп-листа сохранить ингредиенты?\n(Введите существующую или новую)`, sourceCategory);
+        if (!targetCategory) return;
+        targetCategory = targetCategory.trim();
 
         showReportOverlay("Синхронизация баз данных...");
         try {
-            // Запрашиваем данные напрямую из базы, чтобы не было зависаний кэша
-            let snapMenu = await db.ref('catalogs/menu').once('value');
-            let snapOrd = await db.ref('catalogs/order').once('value');
-            let snapChk = await db.ref('catalogs/checklist').once('value');
+            let [menuData, ordData, chkData] = await Promise.all([
+                fetchOptimistic('catalogs/menu'),
+                fetchOptimistic('catalogs/order'),
+                fetchOptimistic('catalogs/checklist')
+            ]);
             
-            let menuData = snapMenu.val() || {};
-            let ordData = snapOrd.val() || {};
-            let chkData = snapChk.val() || {};
+            menuData = menuData || {};
+            ordData = ordData || {};
+            chkData = chkData || {};
 
-            let rawIngredients = {}; 
-            let exactGlobalCat = seasonChoice; 
+            let rawIngredients = {}; // Формат: { "Название Ингредиента": Set("Напиток 1", "Напиток 2") }
             let drinksCount = 0;
 
+            // ШАГ 1: Проходим по Меню и собираем ингредиенты из ИСТОЧНИКА
             Object.values(menuData).forEach(drink => {
                 if (!drink) return;
                 let dName = drink.name || drink.title || drink.drink || drink.item; 
                 if (!dName) return; 
                 
                 let gc = drink.globalCat || "Основное меню";
-                if (gc.trim().toLowerCase() === seasonChoice.toLowerCase()) {
-                    exactGlobalCat = gc.trim(); 
+                
+                // Ищем напитки только в указанной исходной категории
+                if (gc.trim().toLowerCase() === sourceCategory.toLowerCase()) {
                     drinksCount++;
                     
                     let blocks = [];
@@ -1275,6 +1283,7 @@ function toggleSvodDate(safeDate) {
                             if (ingName && typeof ingName === 'string') {
                                 ingName = ingName.trim();
                                 if (!rawIngredients[ingName]) rawIngredients[ingName] = new Set();
+                                // Добавляем напиток к этому ингредиенту
                                 rawIngredients[ingName].add(dName.trim());
                             }
                         });
@@ -1284,13 +1293,14 @@ function toggleSvodDate(safeDate) {
 
             if (drinksCount === 0) {
                 hideReportOverlay();
-                alert(`❌ Ошибка: В "Меню и Техкарты" не найдено напитков в категории "${seasonChoice}".`);
+                alert(`❌ Ошибка: В "Меню и Техкарты" не найдено напитков в категории "${sourceCategory}".\n\nПроверьте правильность написания.`);
                 return;
             }
 
-            let updates = {}; // Собираем пакет для отправки в базу
+            let updates = {}; 
             let changes = 0;
-            let isMainMenu = exactGlobalCat.toLowerCase() === "основное меню";
+            // Определяем, пишем в сезон или в основу
+            let isTargetMain = targetCategory.toLowerCase() === "основное меню";
 
             let ordItems = Object.values(ordData).filter(c => c && c.name);
             let chkItems = Object.values(chkData).filter(c => c && c.name);
@@ -1298,6 +1308,7 @@ function toggleSvodDate(safeDate) {
 
             let currentStoplistItems = Object.keys(currentCatalog).map(k => ({ key: k, ...currentCatalog[k] }));
 
+            // ШАГ 2: Обрабатываем собранные ингредиенты и пишем в ЦЕЛЬ
             for (let prodName in rawIngredients) {
                 let pClean = cleanStr(prodName);
                 if (!pClean) continue;
@@ -1305,6 +1316,7 @@ function toggleSvodDate(safeDate) {
                 let finalProdName = prodName;
                 let catName = "Прочее"; 
 
+                // Пытаемся найти правильную категорию в Закупке или Чек-листе
                 let matchOrd = ordItems.find(c => cleanStr(c.name) === pClean);
                 let matchChk = chkItems.find(c => cleanStr(c.name) === pClean);
 
@@ -1315,29 +1327,33 @@ function toggleSvodDate(safeDate) {
                     finalProdName = matchChk.name.trim();
                     catName = matchChk.cat || "Прочее";
                 } else {
+                    // Резервное угадывание, если товара нет в справочниках
                     if (pClean.includes("сироп")) catName = "Сиропы";
                     else if (pClean.includes("пюре")) catName = "Пюре";
                     else if (pClean.includes("сок")) catName = "Жидкости";
                     else if (pClean.includes("молоко")) catName = "Молочка";
                 }
 
+                // Склеиваем список напитков через запятую
                 let drinksListStr = Array.from(rawIngredients[prodName]).sort().join(", ");
 
+                // Ищем, есть ли уже этот продукт В ЦЕЛЕВОЙ КАТЕГОРИИ Стоп-листа
                 let existingItem = currentStoplistItems.find(c => 
-                    cleanStr(c.name) === cleanStr(finalProdName) && cleanStr(c.globalCat || "Основное меню") === cleanStr(exactGlobalCat)
+                    cleanStr(c.name) === cleanStr(finalProdName) && cleanStr(c.globalCat || "Основное меню") === cleanStr(targetCategory)
                 );
 
                 if (existingItem) {
+                    // Обновляем существующий (дополняем напитки без дублей)
                     let needsUpdate = false;
                     let existingKey = existingItem.key;
                     
-                    let currentDrinks = existingItem[isMainMenu ? 'main' : 'sez'] || "";
+                    let currentDrinks = existingItem[isTargetMain ? 'main' : 'sez'] || "";
                     let combinedDrinksSet = new Set([...currentDrinks.split(',').map(s=>s.trim()).filter(Boolean), ...rawIngredients[prodName]]);
                     let combinedDrinksStr = Array.from(combinedDrinksSet).sort().join(", ");
 
-                    if (isMainMenu && existingItem.main !== combinedDrinksStr) {
+                    if (isTargetMain && existingItem.main !== combinedDrinksStr) {
                         existingItem.main = combinedDrinksStr; needsUpdate = true;
-                    } else if (!isMainMenu && existingItem.sez !== combinedDrinksStr) {
+                    } else if (!isTargetMain && existingItem.sez !== combinedDrinksStr) {
                         existingItem.sez = combinedDrinksStr; needsUpdate = true;
                     }
                     
@@ -1347,7 +1363,7 @@ function toggleSvodDate(safeDate) {
 
                     if (needsUpdate) {
                         updates[existingKey] = {
-                            globalCat: exactGlobalCat,
+                            globalCat: targetCategory,
                             cat: existingItem.cat,
                             name: existingItem.name,
                             sez: existingItem.sez || "",
@@ -1356,31 +1372,32 @@ function toggleSvodDate(safeDate) {
                         changes++;
                     }
                 } else {
+                    // Создаем новый
                     let newId = "stop_auto_" + Date.now() + "_" + Math.random().toString(36).substr(2, 5);
                     updates[newId] = {
-                        globalCat: exactGlobalCat, 
+                        globalCat: targetCategory, 
                         cat: catName,
                         name: finalProdName,
-                        sez: isMainMenu ? "" : drinksListStr, 
-                        main: isMainMenu ? drinksListStr : "" 
+                        sez: isTargetMain ? "" : drinksListStr, // Если сезон - пишем в "sez"
+                        main: isTargetMain ? drinksListStr : "" // Если основа - пишем в "main"
                     };
                     changes++;
                 }
             }
 
             if (changes > 0) {
-                // ⚡ СРАЗУ СОХРАНЯЕМ В БАЗУ ОДНИМ ЗАПРОСОМ
+                // Пакетно отправляем изменения
                 await db.ref('catalogs/stoplist').update(updates);
                 hideReportOverlay();
-                alert(`✅ Синхронизация успешна!\n\nКатегория: "${exactGlobalCat}"\nНапитков обработано: ${drinksCount}\nДобавлено/обновлено продуктов: ${changes}`);
+                alert(`✅ Синхронизация успешна!\n\nИсточник напитков: "${sourceCategory}"\nЦелевая база: "${targetCategory}"\nНапитков обработано: ${drinksCount}\nДобавлено/обновлено ингредиентов: ${changes}`);
                 
-                // Перезагружаем вкладку для обновления UI
+                // Перезагружаем интерфейс стоп-листа
                 let freshData = await fetchOptimistic('catalogs/stoplist');
                 currentCatalog = freshData || {};
                 renderCatalogStoplist();
             } else {
                 hideReportOverlay();
-                alert(`ℹ️ Нет новых данных.\nВсе ингредиенты из категории "${exactGlobalCat}" уже есть в стоп-листе.`);
+                alert(`ℹ️ Нет новых данных.\nВсе ингредиенты из "${sourceCategory}" уже есть в Справочнике Стоп-листа ("${targetCategory}").`);
             }
             
         } catch (e) {

@@ -2865,7 +2865,7 @@
         state.currentMode = ""; 
     }
     
-   window.showMyLastOrder = async function() {
+  window.showMyLastOrder = async function() {
         if(!checkShopSelected()) return;
         triggerHaptic();
         hideGlobalLoader(); 
@@ -2877,7 +2877,7 @@
             <div class="report-card">
                 <div class="loading-pulse" style="text-align:center; font-weight:900; color:#7E57C2; padding: 20px;">
                     ⏳ Синхронизация с базой...<br>
-                    <span style="font-size:13px; color:#888; margin-top:10px; display:block;">Загружаю статусы, секундочку...</span>
+                    <span style="font-size:13px; color:#888; margin-top:10px; display:block;">Загружаю ваши заказы, секундочку...</span>
                 </div>
             </div>`;
 
@@ -2892,7 +2892,7 @@
             } catch(e) {}
         }
 
-        // Подгружаем Недовозы, чтобы знать, что отменили или что в пути
+        // Подгружаем Недовозы, чтобы знать, что отменили или что доехало
         let missingData = [];
         try {
             let mSnap = await database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value");
@@ -2901,8 +2901,10 @@
         
         let activeMissingMap = {};
         missingData.forEach(m => { 
-            if (m && m.name && m.status !== 'arrived' && m.status !== 'canceled') {
-                activeMissingMap[cleanName(m.name)] = m.status; // Сохраняем статус недовоза
+            if (m && m.name) {
+                if (m.status !== 'arrived' && m.status !== 'canceled') {
+                    activeMissingMap[cleanName(m.name)] = m.status;
+                }
             }
         });
         
@@ -2945,19 +2947,21 @@
                         
                         let cName = cleanName(i.name);
                         let catItem = Object.values(state.productCatalog || {}).find(c => c && cleanName(c.name) === cName);
+                        
+                        // Определяем поставщика товара
                         let vRaw = (i.vendor || (catItem ? catItem.vendor : 'Лента') || 'Лента').toLowerCase();
                         let vendor = 'lenta';
                         if (vRaw.includes('озон') || vRaw.includes('ozon')) vendor = 'ozon';
                         else if (vRaw.includes('купер') || vRaw.includes('kuper')) vendor = 'kuper';
 
-                        // ⚡ ПРОВЕРКА 1: Нажал ли бариста кнопку приема?
+                        // ⚡ ЖЕСТКАЯ ПРОВЕРКА: Нажал ли бариста "Принято" по конкретному поставщику в этом заказе?
                         let isReceived = !!o[`${vendor}_received`];
-                        let receivedTs = o[`${vendor}_received_ts`] || o.timestamp;
+                        let receivedTs = o[`${vendor}_received_ts`];
                         
                         let missingStat = activeMissingMap[cName];
                         let currentRealStatus = latestOrderStatuses[cName] || i.status || 'pending'; 
                         
-                        // ⚡ ПРОВЕРКА 2: Иерархия статусов
+                        // ⚡ ИЕРАРХИЯ СТАТУСОВ ⚡
                         if (missingStat === 'pending' || missingStat === 'transit') {
                             aggregated[i.name].status = 'error'; 
                             aggregated[i.name].is_error = true;
@@ -2965,23 +2969,30 @@
                         } else if (missingStat === 'canceled') {
                             aggregated[i.name].status = 'not_needed'; 
                             aggregated[i.name].missingLabel = 'ОТМЕНЕН ❌';
-                        } else if (missingStat === 'arrived' || currentRealStatus === 'already_received') {
+                        } else if (missingStat === 'arrived') {
+                            // Если недовоз в итоге доехал
                             aggregated[i.name].status = 'already_received'; 
-                            aggregated[i.name].receivedDateStr = new Date(receivedTs).toLocaleDateString('ru-RU', {day:'2-digit', month:'2-digit'});
+                            let mObj = missingData.find(m => cleanName(m.name) === cName && m.status === 'arrived');
+                            let mTs = (mObj && mObj.timestamp) ? mObj.timestamp : o.timestamp;
+                            aggregated[i.name].receivedDateStr = new Date(mTs).toLocaleString('ru-RU', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'});
                         } else if (currentRealStatus === 'error' || currentRealStatus === 'not_found' || i.bot_error === true) {
                             aggregated[i.name].status = 'error'; 
                             aggregated[i.name].is_error = true;
-                        } else if (currentRealStatus === 'ordered' || currentRealStatus === 'from_stoplist') {
-                            if (isReceived) {
-                                aggregated[i.name].status = 'already_received';
-                                aggregated[i.name].receivedDateStr = new Date(receivedTs).toLocaleDateString('ru-RU', {day:'2-digit', month:'2-digit'});
-                            } else {
-                                aggregated[i.name].status = 'transit'; // Если не принял — значит "В пути"!
-                            }
                         } else if (currentRealStatus === 'not_needed') {
                             aggregated[i.name].status = 'not_needed';
+                        } else if (currentRealStatus === 'ordered' || currentRealStatus === 'from_stoplist' || currentRealStatus === 'already_received') {
+                            // ⚡ ТОВАР ОФОРМЛЕН. ПРОВЕРЯЕМ ПРИЕМКУ БАРИСТОЙ
+                            if (isReceived) {
+                                aggregated[i.name].status = 'already_received';
+                                let ts = receivedTs || o.timestamp;
+                                aggregated[i.name].receivedDateStr = new Date(ts).toLocaleString('ru-RU', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'});
+                            } else {
+                                // Если не принял — значит поставщик еще "В пути"!
+                                aggregated[i.name].status = 'transit'; 
+                            }
                         } else {
-                            aggregated[i.name].status = 'pending';
+                            // Если админ еще не оформлял (висит в Своде)
+                            aggregated[i.name].status = 'pending'; 
                         }
                     }
                 });
@@ -3012,7 +3023,9 @@
                     } else if (item.is_error) {
                         stHtml = `<span style="color:#c62828; background:#ffebee; padding:4px 10px; border-radius:8px; font-size:12px; font-weight:900;">Нет в наличии ❌</span>`;
                     } else if (item.status === 'already_received') {
-                        stHtml = `<span style="color:#0277bd; background:#e1f5fe; padding:4px 10px; border-radius:8px; font-size:12px; font-weight:900;">Принят ${item.receivedDateStr || ''} 📥</span>`;
+                        // ⚡ Выводим реальную дату принятия
+                        let dStr = item.receivedDateStr ? ` ${item.receivedDateStr}` : '';
+                        stHtml = `<span style="color:#0277bd; background:#e1f5fe; padding:4px 10px; border-radius:8px; font-size:12px; font-weight:900;">Принят${dStr} 📥</span>`;
                     } else if (item.status === 'transit') {
                         stHtml = `<span style="color:#1565c0; background:#e3f2fd; padding:4px 10px; border-radius:8px; font-size:12px; font-weight:900;">В пути 🚚</span>`;
                     } else if (item.status === 'not_needed') {

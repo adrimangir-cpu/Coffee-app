@@ -2865,7 +2865,7 @@
         state.currentMode = ""; 
     }
     
-  window.showMyLastOrder = async function() {
+ window.showMyLastOrder = async function() {
         if(!checkShopSelected()) return;
         triggerHaptic();
         hideGlobalLoader(); 
@@ -2881,6 +2881,23 @@
                 </div>
             </div>`;
 
+        // ⚡ ГАРАНТИРУЕМ ЗАГРУЗКУ КАТАЛОГА ДЛЯ ПРАВИЛЬНОГО ОПРЕДЕЛЕНИЯ ПОСТАВЩИКА
+        if (!state.cachedCatalogs) state.cachedCatalogs = {};
+        if (!state.cachedCatalogs['order'] || Object.keys(state.cachedCatalogs['order']).length === 0) {
+            try {
+                let snap = await database.ref('catalogs/order').once('value');
+                state.cachedCatalogs['order'] = snap.val() || {};
+            } catch(e) {}
+        }
+        
+        let orderCatMapFast = {};
+        Object.values(state.cachedCatalogs['order'] || {}).forEach(c => { 
+            if (c && c.name) orderCatMapFast[cleanName(c.name)] = c; 
+        });
+        Object.values(state.cachedCatalogs['newshop'] || {}).forEach(c => { 
+            if (c && c.name) orderCatMapFast[cleanName(c.name)] = c; 
+        });
+
         // Гарантированная загрузка последних заказов
         if (!state.ordersLoaded || !state.globalOrders || state.globalOrders.length === 0) {
             try {
@@ -2892,7 +2909,7 @@
             } catch(e) {}
         }
 
-        // Подгружаем Недовозы, чтобы знать, что отменили или что доехало
+        // Подгружаем Недовозы
         let missingData = [];
         try {
             let mSnap = await database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value");
@@ -2908,7 +2925,7 @@
             }
         });
         
-        // Получаем самые актуальные статусы из всех заказов
+        // Получаем самые актуальные статусы из всех заказов (для проверки, не отменил ли админ товар)
         let latestOrderStatuses = {};
         state.globalOrders.forEach(o => {
             if (o && (o.mode === 'order' || o.mode === 'new_shop')) {
@@ -2946,12 +2963,12 @@
                         aggregated[i.name].qty += parseFloat(i.qty) || 0;
                         
                         let cName = cleanName(i.name);
-                        let catItem = Object.values(state.productCatalog || {}).find(c => c && cleanName(c.name) === cName);
                         
-                        // Определяем поставщика товара
-                        let vRaw = (i.vendor || (catItem ? catItem.vendor : 'Лента') || 'Лента').toLowerCase();
+                        // ⚡ ТОЧНОЕ ОПРЕДЕЛЕНИЕ ПОСТАВЩИКА (Лента/Озон/Купер/WB) ⚡
+                        let catItem = orderCatMapFast[cName] || {};
+                        let vRaw = (i.vendor || catItem.vendor || 'Лента').toLowerCase();
                         let vendor = 'lenta';
-                        if (vRaw.includes('озон') || vRaw.includes('ozon')) vendor = 'ozon';
+                        if (vRaw.includes('озон') || vRaw.includes('ozon') || vRaw.includes('wb') || vRaw.includes('wildberries')) vendor = 'ozon';
                         else if (vRaw.includes('купер') || vRaw.includes('kuper')) vendor = 'kuper';
 
                         // ⚡ ЖЕСТКАЯ ПРОВЕРКА: Нажал ли бариста "Принято" по конкретному поставщику в этом заказе?
@@ -2970,7 +2987,6 @@
                             aggregated[i.name].status = 'not_needed'; 
                             aggregated[i.name].missingLabel = 'ОТМЕНЕН ❌';
                         } else if (missingStat === 'arrived') {
-                            // Если недовоз в итоге доехал
                             aggregated[i.name].status = 'already_received'; 
                             let mObj = missingData.find(m => cleanName(m.name) === cName && m.status === 'arrived');
                             let mTs = (mObj && mObj.timestamp) ? mObj.timestamp : o.timestamp;
@@ -2981,17 +2997,15 @@
                         } else if (currentRealStatus === 'not_needed') {
                             aggregated[i.name].status = 'not_needed';
                         } else if (currentRealStatus === 'ordered' || currentRealStatus === 'from_stoplist' || currentRealStatus === 'already_received') {
-                            // ⚡ ТОВАР ОФОРМЛЕН. ПРОВЕРЯЕМ ПРИЕМКУ БАРИСТОЙ
+                            // Если заказ оформлен админом — проверяем, доехал ли он!
                             if (isReceived) {
                                 aggregated[i.name].status = 'already_received';
                                 let ts = receivedTs || o.timestamp;
                                 aggregated[i.name].receivedDateStr = new Date(ts).toLocaleString('ru-RU', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'});
                             } else {
-                                // Если не принял — значит поставщик еще "В пути"!
-                                aggregated[i.name].status = 'transit'; 
+                                aggregated[i.name].status = 'transit'; // Если не принял — значит "В пути"!
                             }
                         } else {
-                            // Если админ еще не оформлял (висит в Своде)
                             aggregated[i.name].status = 'pending'; 
                         }
                     }
@@ -3023,7 +3037,6 @@
                     } else if (item.is_error) {
                         stHtml = `<span style="color:#c62828; background:#ffebee; padding:4px 10px; border-radius:8px; font-size:12px; font-weight:900;">Нет в наличии ❌</span>`;
                     } else if (item.status === 'already_received') {
-                        // ⚡ Выводим реальную дату принятия
                         let dStr = item.receivedDateStr ? ` ${item.receivedDateStr}` : '';
                         stHtml = `<span style="color:#0277bd; background:#e1f5fe; padding:4px 10px; border-radius:8px; font-size:12px; font-weight:900;">Принят${dStr} 📥</span>`;
                     } else if (item.status === 'transit') {

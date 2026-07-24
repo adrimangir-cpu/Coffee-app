@@ -1148,50 +1148,73 @@ function toggleSvodDate(safeDate) {
     // ==========================================
     // ПРАВКА 1: ЧЕК-ЛИСТЫ АВТО-ОТПРАВКА АДМИНУ И БОССУ
     // ==========================================
-  async function sendChecklistPdf() {
-        // ⚡ Убрали скрытую логику отправки "пользователю из Telegram WebApp".
-        // Теперь всегда спрашивает кому отправить: Боссу или Админу.
-        let sendToBoss = confirm("Кому отправить PDF-отчет по чек-листам?\n\n[ ОК ] — Отправить Боссу\n[ ОТМЕНА ] — Отправить Администратору");
+ window.sendChecklistPdf = async function() {
+        // Удаляем старое окно, если оно зависло
+        let existingModal = document.getElementById('pdf-modal-overlay');
+        if (existingModal) existingModal.remove();
+
+        // ⚡ 1. Создаем красивое модальное окно для выбора получателя
+        let modalHtml = `
+        <div id="pdf-modal-overlay" style="position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:9999; display:flex; align-items:center; justify-content:center; backdrop-filter:blur(4px);">
+            <div style="background:var(--bg-window); padding:30px; border-radius:16px; width:90%; max-width:400px; box-shadow:0 10px 30px rgba(0,0,0,0.5); border:1px solid var(--line-delicate); text-align:center;">
+                <h3 style="margin-top:0; color:var(--brand-maroon); font-size:22px; margin-bottom:15px;">Отправка PDF-отчета</h3>
+                <p style="font-size:15px; color:var(--text-main); margin-bottom:25px;">Кому вы хотите отправить отчет по заполненным чек-листам?</p>
+                
+                <div style="display:flex; flex-direction:column; gap:12px;">
+                    <button id="btn-send-boss" style="padding:14px; border-radius:8px; border:none; background:var(--brand-olive); color:#fff; font-weight:bold; font-size:15px; cursor:pointer; box-shadow:0 4px 10px rgba(91, 107, 63, 0.3); transition:0.2s;">👔 Отправить БОССУ</button>
+                    <button id="btn-send-admin" style="padding:14px; border-radius:8px; border:none; background:#0288D1; color:#fff; font-weight:bold; font-size:15px; cursor:pointer; box-shadow:0 4px 10px rgba(2, 136, 209, 0.3); transition:0.2s;">👨‍💻 Отправить АДМИНУ</button>
+                    <button onclick="document.getElementById('pdf-modal-overlay').remove()" style="padding:14px; border-radius:8px; border:none; background:#eee; color:#333; font-weight:bold; font-size:15px; cursor:pointer; margin-top:10px; transition:0.2s;">Отмена</button>
+                </div>
+            </div>
+        </div>`;
         
-        let targetChatId = sendToBoss ? BOSS_CHAT_ID : ADMIN_CHAT_ID;
-        let targetName = sendToBoss ? "Босс" : "Администратор";
+        document.body.insertAdjacentHTML('beforeend', modalHtml);
 
-        if (!targetChatId) return alert("❌ Ошибка: Не настроен ID получателя в коде.");
+        // ⚡ 2. Навешиваем обработчики на кнопки
+        document.getElementById('btn-send-boss').onclick = () => processPdfSending(BOSS_CHAT_ID, "Босс");
+        document.getElementById('btn-send-admin').onclick = () => processPdfSending(ADMIN_CHAT_ID, "Администратор");
 
-        showReportOverlay("Формирование PDF... Подождите");
-        document.querySelectorAll('.chk-row').forEach(row => { row.style.display = 'table-row'; });
-
-        const element = document.getElementById('checks-table-container');
-        const opt = {
-            margin:       0.2,
-            filename:     'Checklist_Report.pdf',
-            image:        { type: 'jpeg', quality: 0.98 },
-            html2canvas:  { scale: 2, useCORS: true, logging: false },
-            jsPDF:        { unit: 'in', format: 'a3', orientation: 'landscape' } 
-        };
-
-        try {
-            const pdfDataUri = await html2pdf().set(opt).from(element).outputPdf('datauristring');
+        // ⚡ 3. Основная функция формирования и отправки
+        async function processPdfSending(targetChatId, targetName) {
+            document.getElementById('pdf-modal-overlay').remove();
             
-            await fetch(`${FB_URL}/bot_control/notifications.json`, {
-                method: 'POST',
-                body: JSON.stringify({ 
-                    type: "checklist_pdf", 
-                    chat_id: String(targetChatId), 
-                    file_data: pdfDataUri, 
-                    filename: `Отчет_Чеклисты_${new Date().toLocaleDateString('ru-RU')}.pdf`,
-                    text: `✅ Автоматический отчет по чек-листам (Запросил: Dashboard)`, 
-                    timestamp: Date.now() 
-                })
-            });
+            if (!targetChatId) return alert("❌ Ошибка: Не настроен ID получателя в коде.");
 
-            hideReportOverlay();
-            alert(`✅ PDF-отчет успешно сформирован и отправлен в ЛС (${targetName})!`);
-        } catch (e) {
-            hideReportOverlay();
-            alert("❌ Ошибка при создании/отправке PDF: " + e.message);
+            showReportOverlay("Формирование PDF... Подождите");
+            document.querySelectorAll('.chk-row').forEach(row => { row.style.display = 'table-row'; });
+
+            const element = document.getElementById('checks-table-container');
+            const opt = {
+                margin:       0.2,
+                filename:     'Checklist_Report.pdf',
+                image:        { type: 'jpeg', quality: 0.98 },
+                html2canvas:  { scale: 2, useCORS: true, logging: false },
+                jsPDF:        { unit: 'in', format: 'a3', orientation: 'landscape' } 
+            };
+
+            try {
+                const pdfDataUri = await html2pdf().set(opt).from(element).outputPdf('datauristring');
+                
+                await fetch(`${FB_URL}/bot_control/notifications.json`, {
+                    method: 'POST',
+                    body: JSON.stringify({ 
+                        type: "checklist_pdf", 
+                        chat_id: String(targetChatId), 
+                        file_data: pdfDataUri, 
+                        filename: `Отчет_Чеклисты_${new Date().toLocaleDateString('ru-RU')}.pdf`,
+                        text: `✅ Автоматический отчет по чек-листам (Запросил: Dashboard)`, 
+                        timestamp: Date.now() 
+                    })
+                });
+
+                hideReportOverlay();
+                alert(`✅ PDF-отчет успешно сформирован и отправлен в ЛС (${targetName})!`);
+            } catch (e) {
+                hideReportOverlay();
+                alert("❌ Ошибка при создании/отправке PDF: " + e.message);
+            }
         }
-    }
+    };
 
     // ==========================================
     // ПРАВКА 2: ЛОГИКА ТЕКУЩЕГО И СЛЕДУЮЩЕГО МЕСЯЦА ДЛЯ ГРАФИКОВ
@@ -1231,7 +1254,7 @@ function toggleSvodDate(safeDate) {
     // ==========================================
     // ПРАВКА 3: АВТО-СИНХРОНИЗАЦИЯ СТОП-ЛИСТА С ТЕХ. КАРТАМИ
     // ==========================================
- window.syncStoplistWithMenu = async function() {
+window.syncStoplistWithMenu = async function() {
         // Удаляем старое окно, если оно случайно осталось в памяти
         let existingModal = document.getElementById('sync-modal-overlay');
         if (existingModal) existingModal.remove();
@@ -1242,26 +1265,21 @@ function toggleSvodDate(safeDate) {
             <div id="sync-modal-content" style="background:var(--bg-window); padding:30px; border-radius:16px; width:90%; max-width:450px; box-shadow:0 10px 30px rgba(0,0,0,0.5); border:1px solid var(--line-delicate); text-align:center;">
                 <h3 style="margin-top:0; color:var(--brand-maroon); font-size:22px; margin-bottom:20px;">Синхронизация Техкарт</h3>
                 <div style="font-size:16px; color:var(--brand-olive); font-weight:bold; padding:20px;">
-                    ⏳ Загружаем категории из базы...
+                    ⏳ Загружаем категории из кэша...
                 </div>
             </div>
         </div>`;
         document.body.insertAdjacentHTML('beforeend', modalHtml);
 
         try {
-            // ⚡ 2. Надежная и быстрая загрузка напрямую из Firebase
-            let [snapMenu, snapOrd, snapNew, snapChk, snapStop] = await Promise.all([
-                db.ref('catalogs/menu').once('value'),
-                db.ref('catalogs/order').once('value'),
-                db.ref('catalogs/newshop').once('value'),
-                db.ref('catalogs/checklist').once('value'),
-                db.ref('catalogs/stoplist').once('value')
-            ]);
-            
-            let menuData = snapMenu.val() || {};
-            let fullOrdData = { ...(snapOrd.val() || {}), ...(snapNew.val() || {}) };
-            let chkData = snapChk.val() || {};
-            let stopData = snapStop.val() || {};
+            // ⚡ 2. ИСПОЛЬЗУЕМ МГНОВЕННЫЙ КЭШ ДАШБОРДА (БЕЗ ЗАВИСАНИЙ СЕТИ)
+            let menuData = await fetchOptimistic('catalogs/menu') || {};
+            let ordData = await fetchOptimistic('catalogs/order') || {};
+            let newShopData = await fetchOptimistic('catalogs/newshop') || {};
+            let chkData = await fetchOptimistic('catalogs/checklist') || {};
+            let stopData = currentCatalog || await fetchOptimistic('catalogs/stoplist') || {}; 
+
+            let fullOrdData = { ...ordData, ...newShopData };
 
             // ⚡ 3. Автоматически собираем все уникальные Глобальные категории
             let menuCats = [];
@@ -3965,8 +3983,8 @@ function renderGraphsTab() {
         }
     }
 
-    async function sendMpSummaryToBot() {
-        let confirmText = mpViewMonth === 'current' ? "Отправить итоговую сводку за ТЕКУЩИЙ месяц в Telegram?" : "Отправить итоговую сводку за ПРОШЛЫЙ месяц в Telegram?";
+    window.sendMpSummaryToBot = async function() {
+        let confirmText = mpViewMonth === 'current' ? "Отправить итоговую сводку за ТЕКУЩИЙ месяц Администратору?" : "Отправить итоговую сводку за ПРОШЛЫЙ месяц Администратору?";
         if(!confirm(confirmText)) return;
         
         let shops = ["Бояринова", "Гагарина", "Вертолетчиков", "Липчанского", "Новокосино", "Новокосино 2", "Старое Павлино", "Красноказарменная", "Ухтомского ополчения"];
@@ -4008,16 +4026,21 @@ function renderGraphsTab() {
         text += `➖➖➖➖➖➖➖➖\n💵 ИТОГО: *${grandTotal.toFixed(2)} ₽*`;
 
         try {
+            showReportOverlay("Отправка сводки в Telegram...");
+            
             await fetch(`${FB_URL}/bot_control/notifications.json`, { 
                 method: 'POST', 
-                // ⚡ ВАЖНО: Добавлен chat_id: ADMIN_CHAT_ID, чтобы уходило только админу
+                // ⚡ СТРОГАЯ ПРИВЯЗКА К АДМИНУ
                 body: JSON.stringify({ type: "marketplace_summary", chat_id: String(ADMIN_CHAT_ID), text: text, timestamp: Date.now() }) 
             });
-            alert("✅ Сводка отправлена боту!");
+            
+            hideReportOverlay();
+            alert("✅ Сводка успешно отправлена Администратору!");
         } catch(e) { 
+            hideReportOverlay();
             alert("❌ Ошибка отправки: " + e.message); 
         }
-    }
+    };
 
     function toggleMissingEdit() { 
         isMissingEditMode = true; 
@@ -6858,6 +6881,7 @@ window.onload = () => {
     
     
    // ⚡ СВЕРХБЫСТРОЕ И БЕЗОТКАЗНОЕ СОХРАНЕНИЕ СПРАВОЧНИКОВ
+   // ⚡ СВЕРХБЫСТРОЕ И БЕЗОТКАЗНОЕ СОХРАНЕНИЕ СПРАВОЧНИКОВ
     window.saveCatalog = async function(btn) {
         if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); 
         await new Promise(r => setTimeout(r, 50)); 
@@ -6882,11 +6906,14 @@ window.onload = () => {
             catalogChanges = {}; 
             btn.innerHTML = "✅ СОХРАНЕНО!";
             
-            if (currentPath.includes('order') || currentPath.includes('newshop')) renderCatalogOrder();
-            else if (currentPath.includes('stoplist')) renderCatalogStoplist();
-            else renderCatalogChecklist();
+            // ⚡ ИСПРАВЛЕНИЕ: Ждем 1.2 секунды, чтобы юзер увидел надпись, а ПОТОМ перерисовываем
+            setTimeout(() => { 
+                if(btn) { btn.innerHTML = origText; btn.disabled = false; } 
+                if (currentPath.includes('order') || currentPath.includes('newshop')) renderCatalogOrder();
+                else if (currentPath.includes('stoplist')) renderCatalogStoplist();
+                else renderCatalogChecklist();
+            }, 1200);
 
-            setTimeout(() => { if(btn) { btn.innerHTML = origText; btn.disabled = false; } }, 1500);
         } catch(e) { 
             if(btn) { btn.innerHTML = origText; btn.disabled = false; }
             alert("❌ Ошибка сохранения: " + e.message); 

@@ -1231,7 +1231,7 @@ function toggleSvodDate(safeDate) {
     // ==========================================
     // ПРАВКА 3: АВТО-СИНХРОНИЗАЦИЯ СТОП-ЛИСТА С ТЕХ. КАРТАМИ
     // ==========================================
-   window.syncStoplistWithMenu = async function() {
+ window.syncStoplistWithMenu = async function() {
         // Удаляем старое окно, если оно случайно осталось в памяти
         let existingModal = document.getElementById('sync-modal-overlay');
         if (existingModal) existingModal.remove();
@@ -1283,7 +1283,7 @@ function toggleSvodDate(safeDate) {
                 return;
             }
 
-            // ⚡ 4. Обновляем модальное окно: показываем готовые списки
+            // ⚡ 4. Обновляем модальное окно: показываем списки
             document.getElementById('sync-modal-content').innerHTML = `
                 <h3 style="margin-top:0; color:var(--brand-maroon); font-size:22px; margin-bottom:20px; text-align:left;">Синхронизация Техкарт</h3>
                 
@@ -1292,7 +1292,7 @@ function toggleSvodDate(safeDate) {
                     ${uniqueMenuCats.map(c => `<option value="${c}">${c}</option>`).join('')}
                 </select>
 
-                <label style="font-size:14px; font-weight:bold; color:var(--text-muted); margin-bottom:8px; display:block; text-align:left;">2. Куда дублировать продукты (Стоп-лист):</label>
+                <label style="font-size:14px; font-weight:bold; color:var(--text-muted); margin-bottom:8px; display:block; text-align:left;">2. Куда сохранить (Справ. Стоп-листа):</label>
                 <select id="sync-target-cat" style="width:100%; padding:12px; border-radius:8px; border:1px solid var(--line-delicate); margin-bottom:25px; font-size:15px; font-weight:bold; color:var(--brand-olive); outline:none;">
                     ${allTargetCats.map(c => `<option value="${c}">${c}</option>`).join('')}
                 </select>
@@ -1305,16 +1305,15 @@ function toggleSvodDate(safeDate) {
 
             // ⚡ 5. Логика синхронизации после подтверждения
             document.getElementById('sync-confirm-btn').onclick = async function() {
-                let btn = document.getElementById('sync-confirm-btn');
                 let sourceCategory = document.getElementById('sync-source-cat').value;
                 let targetCategory = document.getElementById('sync-target-cat').value;
                 
                 if (!sourceCategory || !targetCategory) return;
                 
                 // ⚡ ВИЗУАЛЬНАЯ БЛОКИРОВКА ПРЯМО В ОКНЕ 
-                btn.innerHTML = "⏳ ИЩЕМ ПРОДУКТЫ...";
-                btn.disabled = true;
-                btn.style.background = "#555";
+                this.innerHTML = "⏳ ИЩЕМ ПРОДУКТЫ...";
+                this.disabled = true;
+                this.style.background = "#555";
                 document.getElementById('sync-cancel-btn').style.display = "none";
                 document.getElementById('sync-source-cat').disabled = true;
                 document.getElementById('sync-target-cat').disabled = true;
@@ -1323,7 +1322,7 @@ function toggleSvodDate(safeDate) {
                     let rawIngredients = {}; 
                     let drinksCount = 0;
 
-                    // ШАГ 1: Проходим по Меню и собираем ингредиенты из ИСТОЧНИКА
+                    // ШАГ 1: Проходим по Меню и собираем ингредиенты
                     Object.values(menuData).forEach(drink => {
                         if (!drink) return;
                         let dName = drink.name || drink.title || drink.drink || drink.item; 
@@ -1361,7 +1360,7 @@ function toggleSvodDate(safeDate) {
 
                     let updates = {}; 
                     let changes = 0;
-                    let isTargetMain = targetCategory.toLowerCase() === "основное меню";
+                    let isSourceMain = sourceCategory.toLowerCase() === "основное меню";
 
                     let ordItems = Object.values(fullOrdData).filter(c => c && c.name);
                     let chkItems = Object.values(chkData).filter(c => c && c.name);
@@ -1369,7 +1368,7 @@ function toggleSvodDate(safeDate) {
 
                     let currentStoplistItems = Object.keys(stopData).map(k => ({ key: k, ...stopData[k] }));
 
-                    // ШАГ 2: Ищем продукты ВЕЗДЕ и ДУБЛИРУЕМ в Стоп-лист
+                    // ШАГ 2: Ищем продукты ВЕЗДЕ и заполняем Стоп-лист
                     for (let prodName in rawIngredients) {
                         let pClean = cleanStr(prodName);
                         if (!pClean) continue;
@@ -1377,17 +1376,10 @@ function toggleSvodDate(safeDate) {
                         let finalProdName = prodName;
                         let catName = "Прочее"; 
 
-                        // ⚡ ИЩЕМ ВЕЗДЕ В ЗАКУПКЕ И ЧЕК-ЛИСТЕ
-                        let matchOrd = ordItems.find(c => {
-                            let cN = cleanStr(c.name);
-                            return cN && (cN === pClean || cN.includes(pClean) || pClean.includes(cN));
-                        });
-                        let matchChk = chkItems.find(c => {
-                            let cN = cleanStr(c.name);
-                            return cN && (cN === pClean || cN.includes(pClean) || pClean.includes(cN));
-                        });
+                        // ⚡ СТРОГОЕ СОВПАДЕНИЕ СЛОВ (Ищет только 1 в 1)
+                        let matchOrd = ordItems.find(c => cleanStr(c.name) === pClean);
+                        let matchChk = chkItems.find(c => cleanStr(c.name) === pClean);
 
-                        // ⚡ ПЕРЕНОСИМ КАТЕГОРИЮ, ГДЕ БЫЛ НАЙДЕН ПРОДУКТ
                         if (matchOrd) {
                             finalProdName = matchOrd.name.trim(); 
                             catName = matchOrd.cat || "Прочее"; 
@@ -1403,32 +1395,32 @@ function toggleSvodDate(safeDate) {
 
                         let drinksListStr = Array.from(rawIngredients[prodName]).sort().join(", ");
 
-                        // ⚡ ИЩЕМ ТОЛЬКО В ВЫБРАННОЙ ЦЕЛЕВОЙ КАТЕГОРИИ
+                        // ⚡ ИЩЕМ СТРОГО В ВЫБРАННОЙ ЦЕЛЕВОЙ КАТЕГОРИИ
                         let existingItem = currentStoplistItems.find(c => {
                             let cN = cleanStr(c.name);
                             let cCat = cleanStr(c.globalCat || "Основное меню");
-                            return cN && (cN === cleanStr(finalProdName) || cN === pClean) && cCat === cleanStr(targetCategory);
+                            return cN === pClean && cCat === cleanStr(targetCategory);
                         });
 
                         if (existingItem) {
-                            // ПРОПУСК: Продукт уже есть В ЭТОЙ категории. Просто дополняем напитки.
+                            // ⚡ ОБНОВЛЕНИЕ: Продукт уже есть в этой категории. Дописываем напитки.
                             let needsUpdate = false;
                             let existingKey = existingItem.key;
                             
-                            let currentDrinks = existingItem[isTargetMain ? 'main' : 'sez'] || "";
+                            let currentDrinks = existingItem[isSourceMain ? 'main' : 'sez'] || "";
                             let combinedDrinksSet = new Set([...currentDrinks.split(',').map(s=>s.trim()).filter(Boolean), ...rawIngredients[prodName]]);
                             let combinedDrinksStr = Array.from(combinedDrinksSet).sort().join(", ");
 
-                            if (isTargetMain && existingItem.main !== combinedDrinksStr) {
+                            if (isSourceMain && existingItem.main !== combinedDrinksStr) {
                                 existingItem.main = combinedDrinksStr; needsUpdate = true;
-                            } else if (!isTargetMain && existingItem.sez !== combinedDrinksStr) {
+                            } else if (!isSourceMain && existingItem.sez !== combinedDrinksStr) {
                                 existingItem.sez = combinedDrinksStr; needsUpdate = true;
                             }
 
                             if (needsUpdate) {
                                 updates[existingKey] = {
                                     globalCat: targetCategory,
-                                    cat: existingItem.cat, 
+                                    cat: existingItem.cat,
                                     name: existingItem.name,
                                     sez: existingItem.sez || "",
                                     main: existingItem.main || ""
@@ -1436,31 +1428,31 @@ function toggleSvodDate(safeDate) {
                                 changes++;
                             }
                         } else {
-                            // ⚡ ДУБЛИРУЕМ: Продукта нет в этой категории. Создаем его с найденной категорией (например, "Сиропы")
+                            // ⚡ СОЗДАНИЕ: Продукта нет в целевой категории. Создаем его.
                             let newId = "stop_auto_" + Date.now() + "_" + Math.random().toString(36).substr(2, 5);
                             updates[newId] = {
-                                globalCat: targetCategory, 
-                                cat: catName, // Подкатегория из Закупки/Чек-листа
+                                globalCat: targetCategory,
+                                cat: catName,
                                 name: finalProdName,
-                                sez: isTargetMain ? "" : drinksListStr, 
-                                main: isTargetMain ? drinksListStr : "" 
+                                sez: isSourceMain ? "" : drinksListStr, 
+                                main: isSourceMain ? drinksListStr : "" 
                             };
                             changes++;
                         }
                     }
 
                     if (changes > 0) {
-                        btn.innerHTML = "💾 СОХРАНЯЕМ В БАЗУ...";
+                        this.innerHTML = "💾 СОХРАНЕНИЕ В БАЗУ...";
                         await db.ref('catalogs/stoplist').update(updates);
                         document.getElementById('sync-modal-overlay').remove();
-                        alert(`✅ Синхронизация успешна!\n\nИсточник напитков: "${sourceCategory}"\nЦель для продуктов: "${targetCategory}"\nНапитков обработано: ${drinksCount}\nСинхронизировано (добавлено/обновлено) продуктов: ${changes}`);
+                        alert(`✅ Синхронизация успешна!\n\nИсточник напитков: "${sourceCategory}"\nЦель для продуктов: "${targetCategory}"\nНапитков обработано: ${drinksCount}\nОбновлено/добавлено продуктов: ${changes}`);
                         
                         let freshSnap = await db.ref('catalogs/stoplist').once('value');
                         currentCatalog = freshSnap.val() || {};
                         renderCatalogStoplist();
                     } else {
                         document.getElementById('sync-modal-overlay').remove();
-                        alert(`ℹ️ Синхронизация завершена.\nВсе продукты из меню "${sourceCategory}" уже заполнены в категории "${targetCategory}".`);
+                        alert(`ℹ️ Синхронизация завершена.\nВсе продукты из меню "${sourceCategory}" уже заполнены в Стоп-листе в категории "${targetCategory}".`);
                     }
                 } catch (err) {
                     document.getElementById('sync-modal-overlay').remove();

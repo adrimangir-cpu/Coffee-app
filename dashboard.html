@@ -3493,7 +3493,7 @@ async function renderOrdersSvod() {
                         <th class="meta-cell stick-left-2" style="border:1px solid #ccc; padding:8px; text-align:center; min-width:45px; max-width:45px;">День</th>
         `;
         
-        // ⚡ ПОДСЧЕТ СМЕН ДЛЯ КАЖДОГО СОТРУДНИКА
+        // ПОДСЧЕТ СМЕН (Жесткий фильтр мусора)
         allUsers.forEach(user => {
             let shiftCount = 0;
             for (let d = 1; d <= daysInMonth; d++) {
@@ -3503,7 +3503,10 @@ async function renderOrdersSvod() {
                     .replace(/K/g, 'К').replace(/M/g, 'М').replace(/H/g, 'Н').replace(/O/g, 'О')
                     .replace(/P/g, 'Р').replace(/A/g, 'А').replace(/T/g, 'Т').replace(/X/g, 'Х');
                     
-                if (val === "" || val === "ВЫХ" || val === "OFF" || val === "ОТП" || val === "ЛЮБ" || val === "ANY_SHOP") {
+                let sType = cellData.shift || "CLEAR";
+                
+                // ИГНОРИРУЕМ ПУСТЫЕ, ВЫХОДНЫЕ (и опечатку ВЫШ), ЛЮБЫЕ, ОТПУСКА, БОЛЬНИЧНЫЕ
+                if (val === "" || sType === "OFF" || sType === "ANY_SHOP" || val.includes("ВЫХ") || val.includes("ВЫШ") || val.includes("ОТП") || val.includes("ЛЮБ") || val.includes("БЛН")) {
                     continue;
                 }
                 
@@ -3511,17 +3514,15 @@ async function renderOrdersSvod() {
                 else if (val.endsWith("ВЕЧЕР")) val = val.replace(/\s*ВЕЧЕР$/, "_В");
                 
                 let isHalf = val.match(/_У$|\sУ$/) || (val.endsWith("У") && val !== "У") || 
-                             val.match(/_В$|\sВ$/) || (val.endsWith("В") && val !== "В");
+                             val.match(/_В$|\sВ$/) || (val.endsWith("В") && val !== "В") ||
+                             sType === "MORNING" || sType === "EVENING";
                              
-                if (isHalf) {
-                    shiftCount += 0.5; // Половинка смены
-                } else {
-                    shiftCount += 1;   // Полная смена
-                }
+                if (isHalf) shiftCount += 0.5; 
+                else shiftCount += 1;   
             }
 
             html += `<th class="user-header-cell" style="border:1px solid #ccc; padding:8px; text-align:center;">
-                        <div style="font-size:12px; color:#2E7D32; font-weight:900; margin-bottom:6px; background:#E8F5E9; border:1px solid #C8E6C9; border-radius:6px; padding:2px;">Смен: ${shiftCount}</div>
+                        <div id="shift_count_${getSafeId(user)}" style="font-size:12px; color:#2E7D32; font-weight:900; margin-bottom:6px; background:#E8F5E9; border:1px solid #C8E6C9; border-radius:6px; padding:2px; transition:0.2s;">Смен: ${shiftCount}</div>
                         <textarea rows="2" data-old-name="${user}" onchange="updateGraphUserName('${user}', this.value)" style="width:100%; text-align:center; font-weight:bold; font-size:14px; background:transparent; border:none; border-bottom:1px solid #7E57C2; resize:none;">${user}</textarea>
                         <br><button onclick="removeUserFromGraph('${user}')" style="font-size:11px; margin-top:5px; background:#ffebee; border:none; border-radius:4px; color:#c62828; padding:3px 8px; cursor:pointer;">Удалить</button>
                      </th>`;
@@ -3600,9 +3601,10 @@ async function renderOrdersSvod() {
                     dayShifts.push(normVal);
                 }
                 
+                // ⚡ ЗДЕСЬ ДОБАВЛЕН oninput ВМЕСТО onchange ДЛЯ МГНОВЕННОГО ПЕРЕСЧЕТА
                 rowHtml += `<td class="user-data-cell" style="position:relative; border:1px solid #ccc; padding:2px; background-color:${cellBg};">
                     ${compareMark}
-                    <textarea class="graph-input" rows="2" style="width: 100%; height: 100%; border: none; text-align: center; font-size: 14px; text-transform: uppercase; background: transparent; font-weight: 900; color: ${cellColor}; outline: none; resize: none; overflow: hidden;" onchange="updateGraphCell(this, '${user}', ${d}, this.value)">${val}</textarea>
+                    <textarea class="graph-input" rows="2" style="width: 100%; height: 100%; border: none; text-align: center; font-size: 14px; text-transform: uppercase; background: transparent; font-weight: 900; color: ${cellColor}; outline: none; resize: none; overflow: hidden;" oninput="updateGraphCell(this, '${user}', ${d}, this.value)">${val}</textarea>
                 </td>`;
             });
             
@@ -3633,7 +3635,7 @@ async function renderOrdersSvod() {
                 
                 if (counts.full > 1) duplicates.push(s);
                 if (counts.morn > 1) duplicates.push(s + "_У");
-                if (counts.eve > 1) duplicates.push(s + "_В");
+                if (counts.eve > 1)  duplicates.push(s + "_В");
                 if (counts.full >= 1 && (counts.morn >= 1 || counts.eve >= 1)) duplicates.push(s + " (накладка)");
             });
             
@@ -3656,7 +3658,7 @@ async function renderOrdersSvod() {
         allUsers.forEach(user => {
             let commentText = monthData[user] && monthData[user].comment ? monthData[user].comment : "";
             commentsRowHtml += `<td class="user-data-cell" style="border:1px solid #ccc; padding:4px; background:#fafafa;">
-                <textarea class="graph-input" rows="2" style="width: 100%; height: 100%; border: none; font-size: 13px; text-transform: none; font-weight:normal; background: transparent; color: #333; outline: none; resize: none;" onchange="updateGraphComment('${user}', this.value)" placeholder="Комментарий...">${commentText}</textarea>
+                <textarea class="graph-input" rows="2" style="width: 100%; height: 100%; border: none; font-size: 13px; text-transform: none; font-weight:normal; background: transparent; color: #333; outline: none; resize: none;" oninput="updateGraphComment('${user}', this.value)" placeholder="Комментарий...">${commentText}</textarea>
             </td>`;
         });
         commentsRowHtml += `<td colspan="3" class="stick-right-1" style="border:1px solid #ccc; background:#f5f5f5; z-index:10; box-shadow: -3px 0 5px -2px rgba(0,0,0,0.2);"></td></tr>`;
@@ -3666,7 +3668,7 @@ async function renderOrdersSvod() {
         box.innerHTML = html;
     }
     
-    function updateGraphCell(el, user, day, val) {
+    window.updateGraphCell = function(el, user, day, val) {
         if (!window.graphDraft[user]) window.graphDraft[user] = { _pinned: true };
         if (!window.graphDraft[user][day]) window.graphDraft[user][day] = {};
         
@@ -3681,7 +3683,8 @@ async function renderOrdersSvod() {
         let shift = "CLEAR";
         let formattedVal = vUpper;
         
-        if (vUpper === "ВЫХ" || vUpper === "OFF" || vUpper === "ВЫХОДНОЙ" || vUpper === "ОТП") {
+        // ⚡ ИГНОРИРУЕМ МУСОР И ОПЕЧАТКИ ПРИ ОПРЕДЕЛЕНИИ ЦВЕТА ФОНА
+        if (vUpper === "ВЫХ" || vUpper === "OFF" || vUpper === "ВЫХОДНОЙ" || vUpper === "ОТП" || vUpper === "ВЫШ" || vUpper === "БЛН") {
             shift = "OFF";
             formattedVal = "ВЫХ"; 
         } else if (vUpper === "ЛЮБ" || vUpper === "ЛЮБАЯ" || vUpper === "ANY_SHOP") {
@@ -3704,8 +3707,18 @@ async function renderOrdersSvod() {
         window.graphDraft[user][day].text = formattedVal;
         window.graphDraft[user][day].shift = shift;
         
-        // --- ТОЧЕЧНОЕ ОБНОВЛЕНИЕ ЯЧЕЙКИ ---
+        // --- ТОЧЕЧНОЕ ОБНОВЛЕНИЕ ЯЧЕЙКИ В ИНТЕРФЕЙСЕ (БЕЗ ПОТЕРИ КУРСОРА) ---
+        let start = el.selectionStart;
+        let end = el.selectionEnd;
+        let oldValLength = el.value.length;
+        
         el.value = formattedVal;
+        
+        // Аккуратно восстанавливаем курсор, чтобы он не прыгал в конец при редактировании
+        if (el.value.length === oldValLength) {
+            el.setSelectionRange(start, end);
+        }
+        
         let tdEl = el.parentElement;
         
         let cellBg = "transparent";
@@ -3757,7 +3770,8 @@ async function renderOrdersSvod() {
             if (v.endsWith("УТРО")) v = v.replace(/\s*УТРО$/, "_У");
             else if (v.endsWith("ВЕЧЕР")) v = v.replace(/\s*ВЕЧЕР$/, "_В");
 
-            if (v !== "" && v !== "ВЫХ" && v !== "ЛЮБ") {
+            // Игнорируем весь мусор для строки смен
+            if (v !== "" && v !== "ВЫХ" && v !== "ЛЮБ" && v !== "ВЫШ" && v !== "ОТП" && v !== "БЛН") {
                 if (v.match(/_У$|\sУ$/) || (v.endsWith("У") && v !== "У")) {
                     let shopStr = v.replace(/_У$|\sУ$|У$/, "").trim();
                     if (shopStr) v = shopStr + "_У";
@@ -3812,7 +3826,36 @@ async function renderOrdersSvod() {
             }
             checkCell.innerHTML = statusHtml;
         }
-    }
+
+        // ⚡ МГНОВЕННЫЙ ПЕРЕСЧЕТ СМЕН ДЛЯ СОТРУДНИКА (ПРЯМО ВО ВРЕМЯ ВВОДА ТЕКСТА)
+        let shiftCount = 0;
+        for (let d_idx = 1; d_idx <= 31; d_idx++) {
+            let cellDataObj = window.graphDraft[user][d_idx] || {};
+            let valCheck = (cellDataObj.text || "").trim().toUpperCase();
+            let shiftTypeCheck = cellDataObj.shift || "CLEAR";
+            
+            if (valCheck === "" || shiftTypeCheck === "OFF" || shiftTypeCheck === "ANY_SHOP" || 
+                valCheck.includes("ВЫХ") || valCheck.includes("ВЫШ") || valCheck === "OFF" || 
+                valCheck.includes("ОТП") || valCheck.includes("ЛЮБ") || valCheck.includes("БЛН")) {
+                continue;
+            }
+            
+            let isHalf = valCheck.match(/_У$|\sУ$/) || (valCheck.endsWith("У") && valCheck !== "У") || 
+                         valCheck.match(/_В$|\sВ$/) || (valCheck.endsWith("В") && valCheck !== "В") ||
+                         shiftTypeCheck === "MORNING" || shiftTypeCheck === "EVENING";
+                         
+            if (isHalf) shiftCount += 0.5;
+            else shiftCount += 1;
+        }
+        
+        let counterEl = document.getElementById('shift_count_' + getSafeId(user));
+        if (counterEl) {
+            counterEl.innerHTML = 'Смен: ' + shiftCount;
+            // Делаем легкую "вспышку" цвета, чтобы показать, что пересчет сработал
+            counterEl.style.backgroundColor = '#C8E6C9';
+            setTimeout(() => { counterEl.style.backgroundColor = '#E8F5E9'; }, 200);
+        }
+    };
 
     function updateGraphUserName(oldName, newName) {
         let cleanNew = newName.trim();

@@ -1949,7 +1949,7 @@ window.syncStoplistWithMenu = async function() {
         }
     }
 
-   async function compareStoplistWithOrders() {
+  async function compareStoplistWithOrders() {
         if(!confirm("Сравнить стоп-листы кофеен с текущими заказами?\n\nНедостающие товары будут добавлены со статусом 'Из стоп-листа'.")) return;
         showReportOverlay("Анализ стоп-листов...");
         
@@ -1957,9 +1957,8 @@ window.syncStoplistWithMenu = async function() {
             let orders = cachedData.orders || {};
             let missing = cachedData.missing || {};
             
-            // ⚡ ИСПРАВЛЕНИЕ: Превращаем базы в массивы, чтобы избежать перезаписи ключей
+            // ⚡ Берем ТОЛЬКО Справочник Закупки
             let ordItems = Object.values(cachedData.catalogOrder || {}).filter(c => c && c.name);
-            let chkItems = Object.values(cachedData.catalogChecklist || {}).filter(c => c && c.name);
 
             let missingStatusMap = {};
             Object.values(missing).forEach(m => {
@@ -2018,10 +2017,8 @@ window.syncStoplistWithMenu = async function() {
                     if (i && i.name && i.qty === 'Закончилось') {
                         let cName = cleanName(i.name);
                         
-                        // ⚡ ИЩЕМ СНАЧАЛА В ЗАКУПКЕ, ЗАТЕМ В ЧЕК-ЛИСТАХ
-                        let matchOrd = ordItems.find(c => cleanName(c.name) === cName);
-                        let matchChk = chkItems.find(c => cleanName(c.name) === cName);
-                        let catItem = matchOrd || matchChk;
+                        // ⚡ ИЩЕМ СТРОГО В ЗАКУПКЕ! (Игнорируем чек-листы)
+                        let catItem = ordItems.find(c => cleanName(c.name) === cName);
                         
                         if (catItem) {
                             let isTransit = missingStatusMap[shop] && (missingStatusMap[shop][cName] === 'transit' || missingStatusMap[shop][cName] === 'pending');
@@ -2434,16 +2431,88 @@ window.syncStoplistWithMenu = async function() {
     async function saveSvodEdits() {
         if (document.activeElement) document.activeElement.blur();
         let btn = document.getElementById('svod-btn-edit'); 
-        let origText = btn.innerHTML;
-        btn.innerHTML = "⌛ СОХРАНЕНИЕ...";
+        let origText = btn ? btn.innerHTML : "";
+        if (btn) btn.innerHTML = "⌛ СОХРАНЕНИЕ...";
         preserveSvodInputs(); 
         
         try {
             let promises = []; 
-            let moves = [];
-            let newItemsByOrder = {};
-            let newOrdersToCreate = {};
+            let updates = {};
+            
+            // 1. ⚡ Создаем глубокую копию всех активных заказов, чтобы не ломать кэш во время вычислений
+            let workingOrders = {};
+            for (let k in cachedData.orders) {
+                let o = cachedData.orders[k];
+                if (o && !o.ordered && (o.mode === 'order' || o.mode === 'new_shop')) {
+                    workingOrders[k] = JSON.parse(JSON.stringify(o));
+                    // Нормализуем массив items
+                    if (!Array.isArray(workingOrders[k].items)) {
+                        workingOrders[k].items = Object.values(workingOrders[k].items || {});
+                    }
+                }
+            }
 
+            // Вспомогательная функция поиска заказа по кофейне и дате
+            const findOrderKey = (shop, dateStr) => {
+                return Object.keys(workingOrders).find(k => workingOrders[k].shop === shop && new Date(workingOrders[k].timestamp).toLocaleDateString('ru-RU') === dateStr);
+            };
+
+            // 2. ⚡ Проходимся по существующим заказам и обрабатываем изменения
+            for (let k in workingOrders) {
+                let o = workingOrders[k];
+                let dKey = new Date(o.timestamp).toLocaleDateString('ru-RU');
+                let newItemsArr = [];
+                
+                for (let i = 0; i < o.items.length; i++) {
+                    let itm = o.items[i];
+                    if (!itm || !itm.name || itm.name === "НЕТ ЗАКАЗА") continue;
+                    
+                    // Проверка на удаление
+                    let isDeleted = svodDeletions.some(d => d.date === dKey && d.shop === o.shop && d.name === itm.name);
+                    if (isDeleted) continue;
+                    
+                    let updatedQty = (tempSvodQty[dKey] && tempSvodQty[dKey][o.shop] && tempSvodQty[dKey][o.shop][itm.name] !== undefined) ? tempSvodQty[dKey][o.shop][itm.name] : itm.qty;
+                    let updatedStatus = (tempSvodStatus[dKey] && tempSvodStatus[dKey][o.shop] && tempSvodStatus[dKey][o.shop][itm.name] !== undefined) ? tempSvodStatus[dKey][o.shop][itm.name] : itm.status;
+                    let updatedVendor = (tempSvodVendor[dKey] && tempSvodVendor[dKey][o.shop] && tempSvodVendor[dKey][o.shop][itm.name]) ? tempSvodVendor[dKey][o.shop][itm.name] : itm.vendor;
+                    let newTargetShop = (tempSvodShop[dKey] && tempSvodShop[dKey][o.shop] && tempSvodShop[dKey][o.shop][itm.name]) ? tempSvodShop[dKey][o.shop][itm.name] : o.shop;
+
+                    itm.qty = parseFloat(updatedQty) || 0;
+                    if (updatedVendor) itm.vendor = updatedVendor;
+                    
+                    if (updatedStatus !== itm.status) {
+                        if (updatedStatus === 'error' && itm.status !== 'error') {
+                            let newMissing = { shop: o.shop, name: itm.name, qty: itm.qty, status: 'canceled', timestamp: Date.now() };
+                            promises.push(fetch(`${FB_URL}/missing_items.json`, { method: 'POST', body: JSON.stringify(newMissing) }));
+                        }
+                        itm.status = updatedStatus; 
+                        itm.bot_error = (updatedStatus === 'error'); 
+                        itm.not_found = (updatedStatus === 'error'); 
+                        itm.error = (updatedStatus === 'error');
+                    }
+                    
+                    if (itm.qty > 0) {
+                        if (newTargetShop !== o.shop) {
+                            // Перенос в другой заказ
+                            let targetK = findOrderKey(newTargetShop, dKey);
+                            if (targetK) {
+                                workingOrders[targetK].items.push(itm);
+                            } else {
+                                let pseudoKey = "new_" + dKey + "_" + newTargetShop;
+                                if (!workingOrders[pseudoKey]) {
+                                    let [d, m, y] = dKey.split('.');
+                                    workingOrders[pseudoKey] = { shop: newTargetShop, mode: 'order', items: [], timestamp: new Date(y, m-1, d).getTime(), svod: false, ordered: false, userId: 'admin_dashboard' };
+                                }
+                                workingOrders[pseudoKey].items.push(itm);
+                            }
+                        } else {
+                            newItemsArr.push(itm);
+                        }
+                    }
+                }
+                o.items = newItemsArr;
+            }
+
+            // 3. ⚡ Обрабатываем НОВЫЕ добавленные строки
             document.querySelectorAll('.new-svod-row').forEach(row => {
                 let nameInp = row.querySelector('.new-svod-name');
                 let qtyInp = row.querySelector('.new-svod-qty');
@@ -2462,145 +2531,53 @@ window.syncStoplistWithMenu = async function() {
                 let catItem = Object.values(cachedData.catalogOrder).find(c => c && c.name === name) || {};
                 let cat = catItem.cat || "Прочее";
 
-                let targetOrderKey = Object.keys(cachedData.orders).find(k => {
-                    let o = cachedData.orders[k];
-                    return o && o.shop === shop && !o.ordered && new Date(o.timestamp).toLocaleDateString('ru-RU') === dateStr;
-                });
+                let itemObj = { name: name, qty: qty, vendor: vendor, status: status, bot_error: (status==='error'||status==='not_found'), not_found: (status==='error'||status==='not_found'), cat: cat };
 
-                let itemObj = { name: name, qty: qty, vendor: vendor, status: status, bot_error: false, cat: cat };
-
-                if (targetOrderKey) {
-                    if(!newItemsByOrder[targetOrderKey]) newItemsByOrder[targetOrderKey] = [];
-                    newItemsByOrder[targetOrderKey].push(itemObj);
+                let targetK = findOrderKey(shop, dateStr);
+                if (targetK) {
+                    workingOrders[targetK].items.push(itemObj);
                 } else {
                     let pseudoKey = "new_" + dateStr + "_" + shop;
-                    if(!newOrdersToCreate[pseudoKey]) {
+                    if(!workingOrders[pseudoKey]) {
                         let [d, m, y] = dateStr.split('.');
-                        let ts = new Date(y, m-1, d).getTime();
-                        newOrdersToCreate[pseudoKey] = { shop: shop, mode: 'order', items: [], timestamp: ts, svod: false, ordered: false, userId: 'admin_dashboard' };
+                        workingOrders[pseudoKey] = { shop: shop, mode: 'order', items: [], timestamp: new Date(y, m-1, d).getTime(), svod: false, ordered: false, userId: 'admin_dashboard' };
                     }
-                    newOrdersToCreate[pseudoKey].items.push(itemObj);
+                    workingOrders[pseudoKey].items.push(itemObj);
                 }
             });
-            
-            for (let k in cachedData.orders) {
-                let o = cachedData.orders[k];
-                if (o && (o.mode === 'order' || o.mode === 'new_shop') && !o.ordered) {
-                    let dKey = new Date(o.timestamp).toLocaleDateString('ru-RU');
-                    let needsUpdate = false;
-                    let itemsArr = Array.isArray(o.items) ? o.items : (typeof o.items === 'object' && o.items !== null ? Object.values(o.items) : []);
-                    let newItemsArr = [];
-                    
-                    for (let i = 0; i < itemsArr.length; i++) {
-                        let itm = itemsArr[i]; 
-                        if (!itm || !itm.name) continue;
-                        
-                        let isDeleted = svodDeletions.some(d => d.date === dKey && d.shop === o.shop && d.name === itm.name);
-                        if (isDeleted) { 
-                            needsUpdate = true; 
-                            continue; 
-                        }
-                        
-                        let updatedQty = (tempSvodQty[dKey] && tempSvodQty[dKey][o.shop] && tempSvodQty[dKey][o.shop][itm.name] !== undefined) ? tempSvodQty[dKey][o.shop][itm.name] : undefined;
-                        let updatedStatus = (tempSvodStatus[dKey] && tempSvodStatus[dKey][o.shop] && tempSvodStatus[dKey][o.shop][itm.name] !== undefined) ? tempSvodStatus[dKey][o.shop][itm.name] : undefined;
-                        let updatedVendor = (tempSvodVendor[dKey] && tempSvodVendor[dKey][o.shop] && tempSvodVendor[dKey][o.shop][itm.name]) ? tempSvodVendor[dKey][o.shop][itm.name] : undefined;
-                        let newTargetShop = (tempSvodShop[dKey] && tempSvodShop[dKey][o.shop] && tempSvodShop[dKey][o.shop][itm.name]) ? tempSvodShop[dKey][o.shop][itm.name] : o.shop;
-                        
-                        let catItem = Object.values(cachedData.catalogOrder).find(c => c && c.name === itm.name) || {};
 
-                        if (updatedVendor !== undefined && (itm.vendor || catItem.vendor || 'Лента').toLowerCase() !== updatedVendor.toLowerCase()) {
-                            needsUpdate = true;
-                            itm.vendor = updatedVendor;
-                        }
-                        
-                        let finalQty = updatedQty !== undefined ? updatedQty : itm.qty;
-                        let finalStatus = updatedStatus !== undefined ? updatedStatus : itm.status;
-                        let finalBotError = (finalStatus === 'error') ? true : itm.bot_error;
-
-                        if (newTargetShop !== o.shop) {
-                            needsUpdate = true;
-                            moves.push({
-                                date: dKey,
-                                fromShop: o.shop,
-                                toShop: newTargetShop,
-                                item: { ...itm, qty: finalQty, status: finalStatus, bot_error: finalBotError }
-                            });
-                            continue; 
-                        }
-
-                        if (updatedStatus !== undefined && itm.status !== updatedStatus) {
-                            needsUpdate = true;
-                            if (updatedStatus === 'error' && itm.status !== 'error') {
-                                let newMissing = { shop: o.shop, name: itm.name, qty: finalQty, status: 'canceled', timestamp: Date.now() };
-                                promises.push(fetch(`${FB_URL}/missing_items.json`, { method: 'POST', body: JSON.stringify(newMissing) }));
-                            }
-                            itm.status = updatedStatus; 
-                            itm.bot_error = (updatedStatus === 'error'); 
-                            itm.not_found = (updatedStatus === 'error'); 
-                            itm.error = (updatedStatus === 'error');
-                        }
-                        
-                        if (updatedQty !== undefined && String(updatedQty) !== String(itm.qty)) { 
-                            needsUpdate = true;
-                            itm.qty = updatedQty; 
-                        }
-
-                        if (parseFloat(itm.qty) > 0 || itm.name === "НЕТ ЗАКАЗА") {
-                            newItemsArr.push(itm);
-                        } else if (parseFloat(itm.qty) === 0) {
-                            needsUpdate = true;
-                        }
-                    }
-                    
-                    if (newItemsByOrder[k]) {
-                        needsUpdate = true;
-                        newItemsArr = newItemsArr.filter(i => i.name !== "НЕТ ЗАКАЗА");
-                        newItemsByOrder[k].forEach(newItem => {
-                            let existing = newItemsArr.find(i => i.name === newItem.name);
-                            if (existing) {
-                                existing.qty = parseFloat(existing.qty) + parseFloat(newItem.qty);
-                            } else {
-                                newItemsArr.push(newItem);
-                            }
-                        });
-                    }
-
-                    if (needsUpdate) {
-                        if (newItemsArr.length === 0) newItemsArr = [{name: "НЕТ ЗАКАЗА", qty: 0}];
-                        promises.push(fetch(`${FB_URL}/orders/${k}/items.json`, {method:'PUT', body: JSON.stringify(newItemsArr)}));
-                    }
-                }
-            }
-            
-            for (let pseudoKey in newOrdersToCreate) {
-                promises.push(fetch(`${FB_URL}/orders.json`, {method:'POST', body: JSON.stringify(newOrdersToCreate[pseudoKey])}));
-            }
-
-            for (let move of moves) {
-                let targetOrderKey = Object.keys(cachedData.orders).find(k => {
-                    let to = cachedData.orders[k];
-                    return to && to.shop === move.toShop && !to.ordered && new Date(to.timestamp).toLocaleDateString('ru-RU') === move.date;
-                });
-                if (targetOrderKey) {
-                    let targetOrder = cachedData.orders[targetOrderKey];
-                    let tItems = Array.isArray(targetOrder.items) ? targetOrder.items : (typeof targetOrder.items === 'object' && targetOrder.items !== null ? Object.values(targetOrder.items) : []);
-                    let existingItem = tItems.find(i => i.name === move.item.name);
-                    if (existingItem) {
-                        existingItem.qty = parseFloat(existingItem.qty) + parseFloat(move.item.qty);
+            // 4. ⚡ Схлопываем дубликаты ВНУТРИ КАЖДОГО заказа и готовим общий PATCH-запрос
+            for (let k in workingOrders) {
+                let o = workingOrders[k];
+                let mergedItems = {};
+                
+                o.items.forEach(itm => {
+                    let cName = cleanName(itm.name);
+                    if (!mergedItems[cName]) {
+                        mergedItems[cName] = { ...itm };
                     } else {
-                        tItems = tItems.filter(i => i.name !== "НЕТ ЗАКАЗА");
-                        tItems.push(move.item);
+                        mergedItems[cName].qty += itm.qty;
                     }
-                    promises.push(fetch(`${FB_URL}/orders/${targetOrderKey}/items.json`, {method:'PUT', body: JSON.stringify(tItems)}));
+                });
+                
+                o.items = Object.values(mergedItems);
+                if (o.items.length === 0) o.items = [{ name: "НЕТ ЗАКАЗА", qty: 0 }];
+                
+                if (k.startsWith("new_")) {
+                    let newKey = "auto_" + Date.now() + Math.random().toString(36).substr(2, 5);
+                    updates[newKey] = o;
                 } else {
-                    let [d, m, y] = move.date.split('.');
-                    let ts = new Date(y, m-1, d).getTime();
-                    let newOrder = { shop: move.toShop, mode: 'order', items: [move.item], timestamp: ts, svod: false, ordered: false, userId: 'admin_move' };
-                    promises.push(fetch(`${FB_URL}/orders.json`, {method:'POST', body: JSON.stringify(newOrder)}));
+                    updates[k + "/items"] = o.items;
                 }
             }
 
+            // ⚡ ЕДИНСТВЕННЫЙ ЗАПРОС К БАЗЕ. БОЛЬШЕ НИКАКИХ "ПЕРЕЗАПИСЕЙ" И ПРОПАДАЮЩИХ ТОВАРОВ!
+            if (Object.keys(updates).length > 0) {
+                await fetch(`${FB_URL}/orders.json`, { method: 'PATCH', body: JSON.stringify(updates) });
+            }
+            
             await Promise.all(promises);
+
             isSvodEditMode = false; 
             svodDeletions = []; 
             tempSvodQty = {}; 
@@ -2610,6 +2587,14 @@ window.syncStoplistWithMenu = async function() {
             tempSvodNewRows = [];
             
             if(btn) btn.innerHTML = "✅ СОХРАНЕНО!";
+            
+            // ⚡ Запрашиваем свежие данные с сервера, чтобы сразу увидеть результат
+            let freshData = await fetch(`${FB_URL}/orders.json`).then(r => r.json());
+            if (freshData) {
+                Object.keys(freshData).forEach(k => { if (freshData[k]) freshData[k].key = k; });
+                cachedData.orders = freshData;
+            }
+            
             renderOrdersSvod(); 
             setTimeout(() => {
                 if(btn) btn.innerHTML = origText;

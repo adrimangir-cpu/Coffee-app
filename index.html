@@ -3559,7 +3559,7 @@ window.showLastOrder = async function() {
                 html += `<button onclick="finishMissingReceiving()" class="btn-mode" style="background: var(--warning-gradient) !important; margin-top:15px; padding:12px !important;">🏁 ПОДТВЕРДИТЬ НЕДОВОЗЫ</button></div></div>`;
             }
 
-            // ⚡ ГРУППИРОВКА АКТИВНЫХ ПРИЕМОК СТРОГО ПО СТАТУСУ 'ordered'
+            // ⚡ ГРУППИРОВКА АКТИВНЫХ ПРИЕМОК СТРОГО ПО СТАТУСУ 'ordered' И ПРОВЕРКА СТАРЫХ ЗАКАЗОВ
             let activeByDate = {};
             ordersArr.forEach(o => {
                 let orderDate = new Date(o.timestamp).toLocaleDateString('ru-RU');
@@ -3568,7 +3568,6 @@ window.showLastOrder = async function() {
                 itemsArr.forEach((i, idx) => {
                     if (!i || !i.name || i.name === "НЕТ ЗАКАЗА") return;
                     
-                    // ТОЛЬКО ОФОРМЛЕННЫЕ ТОВАРЫ
                     if (i.status === 'ordered') {
                         let cName = cleanName(i.name);
                         let catItem = orderCatMapFast[cName] || {};
@@ -3577,11 +3576,16 @@ window.showLastOrder = async function() {
                         if (vRaw.includes('озон') || vRaw.includes('ozon') || vRaw.includes('wb')) vendor = 'ozon';
                         else if (vRaw.includes('купер') || vRaw.includes('kuper')) vendor = 'kuper';
 
-                        if (!activeByDate[orderDate]) activeByDate[orderDate] = { lenta: { items: {}, keys: new Set() }, ozon: { items: {}, keys: new Set() }, kuper: { items: {}, keys: new Set() }, timestamp: o.timestamp };
-                        let targetGroup = activeByDate[orderDate][vendor];
-                        if(!targetGroup.items[i.name]) targetGroup.items[i.name] = {qty: 0};
-                        targetGroup.items[i.name].qty += parseFloat(i.qty) || 0;
-                        targetGroup.keys.add(o.key);
+                        // ⚡ ЗАЩИТА: Если накладная целиком была принята в старой версии, игнорируем товары
+                        let isOldReceived = vendor === 'ozon' ? o.ozon_received : (vendor === 'kuper' ? o.kuper_received : o.lenta_received);
+
+                        if (!isOldReceived) {
+                            if (!activeByDate[orderDate]) activeByDate[orderDate] = { lenta: { items: {}, keys: new Set() }, ozon: { items: {}, keys: new Set() }, kuper: { items: {}, keys: new Set() }, timestamp: o.timestamp };
+                            let targetGroup = activeByDate[orderDate][vendor];
+                            if(!targetGroup.items[i.name]) targetGroup.items[i.name] = {qty: 0};
+                            targetGroup.items[i.name].qty += parseFloat(i.qty) || 0;
+                            targetGroup.keys.add(o.key);
+                        }
                     }
                 });
             });
@@ -3630,14 +3634,14 @@ window.showLastOrder = async function() {
             // ⚡ ИСТОРИЯ АРХИВА: ЧЕТКАЯ ГРУППИРОВКА ПО ДАТАМ СО СТАТУСАМИ
             let historyByDate = {};
             ordersArr.forEach(o => {
-                if (!o.ordered) return; // Пропускаем черновики в истории
+                if (!o.ordered) return; // Пропускаем черновики
                 let dateStr = new Date(o.timestamp).toLocaleDateString('ru-RU');
                 
                 let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
                 
                 itemsArr.forEach(i => {
                     if (!i || !i.name || i.name === "НЕТ ЗАКАЗА") return;
-                    if (i.status === 'pending' || i.status === 'from_stoplist' || i.status === 'not_needed') return; // Игнорируем не заказанные
+                    if (i.status === 'pending' || i.status === 'from_stoplist' || i.status === 'not_needed') return; 
                     
                     if(!historyByDate[dateStr]) historyByDate[dateStr] = { items: [], ts: o.timestamp };
                     
@@ -3645,20 +3649,24 @@ window.showLastOrder = async function() {
                     let catItem = orderCatMapFast[cName] || {};
                     let vRaw = (i.vendor || catItem.vendor || 'Лента').toLowerCase();
                     let vendorLabel = 'ЛЕНТА';
-                    if (vRaw.includes('озон') || vRaw.includes('ozon') || vRaw.includes('wb')) vendorLabel = 'ОЗОН / WB';
-                    else if (vRaw.includes('купер') || vRaw.includes('kuper')) vendorLabel = 'КУПЕР';
+                    let vendorKey = 'lenta';
+                    
+                    if (vRaw.includes('озон') || vRaw.includes('ozon') || vRaw.includes('wb')) { vendorLabel = 'ОЗОН / WB'; vendorKey = 'ozon'; }
+                    else if (vRaw.includes('купер') || vRaw.includes('kuper')) { vendorLabel = 'КУПЕР'; vendorKey = 'kuper'; }
 
-                    // Точное определение статуса
                     let isMissingActive = activeMissing.some(m => m.name === i.name && m.timestamp >= o.timestamp - 86400000); 
                     let isMissingResolved = historyMissing.some(m => m.name === i.name && m.timestamp >= o.timestamp - 86400000);
                     
                     let stText = "Ожидает", stColor = "#777";
                     
+                    // ⚡ ЗАЩИТА АРХИВА: Учитываем старые подтвержденные накладные
+                    let isOldReceived = o[vendorKey + '_received'];
+                    
                     if (i.status === 'error' || i.not_found || i.bot_error) {
                         stText = "❌ Нет в наличии"; stColor = "#d32f2f";
                     } else if (isMissingActive) {
                         stText = "❌ Не доехал (Недовоз)"; stColor = "#d32f2f";
-                    } else if (isMissingResolved || i.status === 'already_received') {
+                    } else if (isMissingResolved || i.status === 'already_received' || isOldReceived) {
                         stText = "✅ Доехал"; stColor = "#4caf50";
                     } else if (i.status === 'ordered') {
                         stText = "🚚 В пути"; stColor = "#1565c0";
@@ -3689,7 +3697,8 @@ window.showLastOrder = async function() {
         
         document.getElementById('report-content-area').innerHTML = html;
     }
-    
+
+  
    function setReceiveChoice(name, qty, vendor, status, btnArrId, btnMissId, dateStr) {
         triggerHaptic();
         if (!state.receivingChoices) state.receivingChoices = {};

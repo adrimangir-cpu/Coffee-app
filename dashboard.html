@@ -2419,7 +2419,14 @@ window.syncStoplistWithMenu = async function() {
         if (document.activeElement) document.activeElement.blur();
         let btn = document.getElementById('svod-btn-edit'); 
         let origText = btn ? btn.innerHTML : "";
-        if (btn) btn.innerHTML = "⌛ СОХРАНЕНИЕ...";
+        if (btn) {
+            btn.disabled = true;
+            btn.innerHTML = "⌛ СОХРАНЕНИЕ...";
+        }
+        
+        // ⚡ ДАЕМ БРАУЗЕРУ ВРЕМЯ ОТРИСОВАТЬ КНОПКУ, ЧТОБЫ НЕ БЫЛО "ЗАВИСАНИЯ"
+        await new Promise(r => setTimeout(r, 50));
+        
         preserveSvodInputs(); 
         
         try {
@@ -2427,15 +2434,16 @@ window.syncStoplistWithMenu = async function() {
             let updates = {};
             
             let workingOrders = {};
+            // ⚡ СОБИРАЕМ ТОЛЬКО ТЕ ЗАКАЗЫ, КОТОРЫЕ НА ЭКРАНЕ
             for (let k in cachedData.orders) {
                 let o = cachedData.orders[k];
-                // Берем в работу заказы, которые ЛИБО не оформлены, ЛИБО имеют ожидающие товары
                 let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
                 let hasPending = itemsArr.some(i => i && (i.status === 'pending' || i.status === 'from_stoplist'));
                 
                 if (o && (o.mode === 'order' || o.mode === 'new_shop') && (!o.ordered || hasPending)) {
                     workingOrders[k] = JSON.parse(JSON.stringify(o));
                     workingOrders[k].items = itemsArr;
+                    workingOrders[k]._isChanged = false; // Флаг изменений
                 }
             }
 
@@ -2453,17 +2461,21 @@ window.syncStoplistWithMenu = async function() {
                     if (!itm || !itm.name || itm.name === "НЕТ ЗАКАЗА") continue;
                     
                     let isDeleted = svodDeletions.some(d => d.date === dKey && d.shop === o.shop && d.name === itm.name);
-                    if (isDeleted) continue;
+                    if (isDeleted) {
+                        o._isChanged = true;
+                        continue;
+                    }
                     
                     let updatedQty = (tempSvodQty[dKey] && tempSvodQty[dKey][o.shop] && tempSvodQty[dKey][o.shop][itm.name] !== undefined) ? tempSvodQty[dKey][o.shop][itm.name] : itm.qty;
                     let updatedStatus = (tempSvodStatus[dKey] && tempSvodStatus[dKey][o.shop] && tempSvodStatus[dKey][o.shop][itm.name] !== undefined) ? tempSvodStatus[dKey][o.shop][itm.name] : itm.status;
                     let updatedVendor = (tempSvodVendor[dKey] && tempSvodVendor[dKey][o.shop] && tempSvodVendor[dKey][o.shop][itm.name]) ? tempSvodVendor[dKey][o.shop][itm.name] : itm.vendor;
                     let newTargetShop = (tempSvodShop[dKey] && tempSvodShop[dKey][o.shop] && tempSvodShop[dKey][o.shop][itm.name]) ? tempSvodShop[dKey][o.shop][itm.name] : o.shop;
 
-                    itm.qty = parseFloat(updatedQty) || 0;
-                    if (updatedVendor) itm.vendor = updatedVendor;
+                    if (parseFloat(updatedQty) !== parseFloat(itm.qty)) { itm.qty = parseFloat(updatedQty) || 0; o._isChanged = true; }
+                    if (updatedVendor && updatedVendor !== itm.vendor) { itm.vendor = updatedVendor; o._isChanged = true; }
                     
                     if (updatedStatus !== itm.status) {
+                        o._isChanged = true;
                         if (updatedStatus === 'error' && itm.status !== 'error') {
                             let newMissing = { shop: o.shop, name: itm.name, qty: itm.qty, status: 'canceled', timestamp: Date.now() };
                             promises.push(fetch(`${FB_URL}/missing_items.json`, { method: 'POST', body: JSON.stringify(newMissing) }));
@@ -2476,20 +2488,24 @@ window.syncStoplistWithMenu = async function() {
                     
                     if (itm.qty > 0) {
                         if (newTargetShop !== o.shop) {
+                            o._isChanged = true;
                             let targetK = findOrderKey(newTargetShop, dKey);
                             if (targetK) {
                                 workingOrders[targetK].items.push(itm);
+                                workingOrders[targetK]._isChanged = true;
                             } else {
                                 let pseudoKey = "new_" + dKey + "_" + newTargetShop;
                                 if (!workingOrders[pseudoKey]) {
                                     let [d, m, y] = dKey.split('.');
-                                    workingOrders[pseudoKey] = { shop: newTargetShop, mode: 'order', items: [], timestamp: new Date(y, m-1, d).getTime(), svod: false, ordered: false, userId: 'admin_dashboard' };
+                                    workingOrders[pseudoKey] = { shop: newTargetShop, mode: 'order', items: [], timestamp: new Date(y, m-1, d).getTime(), svod: false, ordered: false, userId: 'admin_dashboard', _isChanged: true };
                                 }
                                 workingOrders[pseudoKey].items.push(itm);
                             }
                         } else {
                             newItemsArr.push(itm);
                         }
+                    } else {
+                        o._isChanged = true; // Если количество стало 0
                     }
                 }
                 o.items = newItemsArr;
@@ -2518,19 +2534,22 @@ window.syncStoplistWithMenu = async function() {
                 let targetK = findOrderKey(shop, dateStr);
                 if (targetK) {
                     workingOrders[targetK].items.push(itemObj);
+                    workingOrders[targetK]._isChanged = true;
                 } else {
                     let pseudoKey = "new_" + dateStr + "_" + shop;
                     if(!workingOrders[pseudoKey]) {
                         let [d, m, y] = dateStr.split('.');
-                        workingOrders[pseudoKey] = { shop: shop, mode: 'order', items: [], timestamp: new Date(y, m-1, d).getTime(), svod: false, ordered: false, userId: 'admin_dashboard' };
+                        workingOrders[pseudoKey] = { shop: shop, mode: 'order', items: [], timestamp: new Date(y, m-1, d).getTime(), svod: false, ordered: false, userId: 'admin_dashboard', _isChanged: true };
                     }
                     workingOrders[pseudoKey].items.push(itemObj);
                 }
             });
 
-            // ⚡ ЕДИНОЕ СЛИЯНИЕ.
+            // ⚡ ЕДИНОЕ СЛИЯНИЕ. СОХРАНЯЕМ ТОЛЬКО ИЗМЕНЕННЫЕ ЗАКАЗЫ
             for (let k in workingOrders) {
                 let o = workingOrders[k];
+                if (!o._isChanged) continue; // ⚡ ПРОПУСКАЕМ ЗАКАЗЫ БЕЗ ИЗМЕНЕНИЙ (УСКОРЯЕТ В ДЕСЯТКИ РАЗ!)
+                
                 let mergedItems = {};
                 let hasOrdered = false;
                 let activeVendors = new Set();
@@ -2563,6 +2582,8 @@ window.syncStoplistWithMenu = async function() {
                     if (activeVendors.has('kuper')) o.kuper_received = false;
                 }
 
+                delete o._isChanged; // удаляем технический флаг перед отправкой
+
                 if (k.startsWith("new_")) {
                     let newKey = "auto_" + Date.now() + Math.random().toString(36).substr(2, 5);
                     updates[newKey] = o;
@@ -2572,6 +2593,10 @@ window.syncStoplistWithMenu = async function() {
             }
 
             if (Object.keys(updates).length > 0) {
+                // ⚡ МГНОВЕННО обновляем локальный кэш, чтобы не ждать ответа базы
+                for (let uk in updates) {
+                    cachedData.orders[uk] = updates[uk];
+                }
                 // ⚡ Быстрая отправка только патчей, без зависаний
                 await fetch(`${FB_URL}/orders.json`, { method: 'PATCH', body: JSON.stringify(updates) });
             }
@@ -2582,12 +2607,11 @@ window.syncStoplistWithMenu = async function() {
             
             if(btn) btn.innerHTML = "✅ СОХРАНЕНО!";
             
-            // ⚡ УБРАНА РУЧНАЯ ЗАГРУЗКА ВСЕЙ БАЗЫ! cachedData.orders ОБНОВИТСЯ САМ.
             renderOrdersSvod(); 
-            setTimeout(() => { if(btn) btn.innerHTML = origText; }, 1000);
+            setTimeout(() => { if(btn) { btn.innerHTML = origText; btn.disabled = false; } }, 1000);
             
         } catch (e) { 
-            if(btn) btn.innerHTML = origText; 
+            if(btn) { btn.innerHTML = origText; btn.disabled = false; }
             alert("❌ Ошибка при сохранении: " + e.message); 
         }
     }

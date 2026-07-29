@@ -2429,6 +2429,7 @@ window.syncStoplistWithMenu = async function() {
             let workingOrders = {};
             for (let k in cachedData.orders) {
                 let o = cachedData.orders[k];
+                // Берем в работу заказы, которые ЛИБО не оформлены, ЛИБО имеют ожидающие товары
                 let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
                 let hasPending = itemsArr.some(i => i && (i.status === 'pending' || i.status === 'from_stoplist'));
                 
@@ -2527,24 +2528,20 @@ window.syncStoplistWithMenu = async function() {
                 }
             });
 
+            // ⚡ ЕДИНОЕ СЛИЯНИЕ.
             for (let k in workingOrders) {
                 let o = workingOrders[k];
                 let mergedItems = {};
-                let hasPending = false;
+                let hasOrdered = false;
                 let activeVendors = new Set();
                 
                 o.items.forEach(itm => {
                     let cName = cleanName(itm.name);
                     if (!mergedItems[cName]) mergedItems[cName] = { ...itm };
                     else mergedItems[cName].qty += itm.qty;
-                });
-                
-                o.items = Object.values(mergedItems);
-                if (o.items.length === 0) o.items = [{ name: "НЕТ ЗАКАЗА", qty: 0 }];
-                
-                o.items.forEach(itm => {
-                    if (itm.status === 'pending' || itm.status === 'from_stoplist') hasPending = true;
+                    
                     if (itm.status === 'ordered') {
+                        hasOrdered = true;
                         let vRaw = (itm.vendor || 'Лента').toLowerCase();
                         if (vRaw.includes('озон') || vRaw.includes('ozon') || vRaw.includes('wb')) activeVendors.add('ozon');
                         else if (vRaw.includes('купер') || vRaw.includes('kuper')) activeVendors.add('kuper');
@@ -2552,15 +2549,18 @@ window.syncStoplistWithMenu = async function() {
                     }
                 });
                 
-                // ⚡ ЕСЛИ ДОБАВИЛИ НОВЫЙ ЗАКАЗАННЫЙ ТОВАР, "РАСПЕЧАТЫВАЕМ" ПРИЕМКУ У БАРИСТА СНОВА!
-                if (activeVendors.has('lenta')) o.lenta_received = false;
-                if (activeVendors.has('ozon')) o.ozon_received = false;
-                if (activeVendors.has('kuper')) o.kuper_received = false;
-
-                if (!hasPending) {
-                    o.ordered = true; o.svod = true;
-                } else {
-                    o.ordered = false; o.svod = false;
+                o.items = Object.values(mergedItems);
+                if (o.items.length === 0) o.items = [{ name: "НЕТ ЗАКАЗА", qty: 0 }];
+                
+                // ⚡ РАСПЕЧАТЫВАНИЕ НАКЛАДНОЙ: Если мы добавили новый заказанный товар, обновляем заказ для бариста!
+                if (hasOrdered) {
+                    o.ordered = true;
+                    o.svod = true;
+                    o.timestamp = Date.now(); // ⚡ Обновляем время, чтобы заказ всплыл наверх в приложении
+                    
+                    if (activeVendors.has('lenta')) o.lenta_received = false;
+                    if (activeVendors.has('ozon')) o.ozon_received = false;
+                    if (activeVendors.has('kuper')) o.kuper_received = false;
                 }
 
                 if (k.startsWith("new_")) {
@@ -2572,22 +2572,20 @@ window.syncStoplistWithMenu = async function() {
             }
 
             if (Object.keys(updates).length > 0) {
+                // ⚡ Быстрая отправка только патчей, без зависаний
                 await fetch(`${FB_URL}/orders.json`, { method: 'PATCH', body: JSON.stringify(updates) });
             }
             
             await Promise.all(promises);
 
             isSvodEditMode = false; svodDeletions = []; tempSvodQty = {}; tempSvodStatus = {}; tempSvodVendor = {}; tempSvodShop = {}; tempSvodNewRows = [];
+            
             if(btn) btn.innerHTML = "✅ СОХРАНЕНО!";
             
-            let freshData = await fetch(`${FB_URL}/orders.json`).then(r => r.json());
-            if (freshData) {
-                Object.keys(freshData).forEach(k => { if (freshData[k]) freshData[k].key = k; });
-                cachedData.orders = freshData;
-            }
-            
+            // ⚡ УБРАНА РУЧНАЯ ЗАГРУЗКА ВСЕЙ БАЗЫ! cachedData.orders ОБНОВИТСЯ САМ.
             renderOrdersSvod(); 
             setTimeout(() => { if(btn) btn.innerHTML = origText; }, 1000);
+            
         } catch (e) { 
             if(btn) btn.innerHTML = origText; 
             alert("❌ Ошибка при сохранении: " + e.message); 
@@ -5845,26 +5843,27 @@ async function exportGraphsToExcel() {
                 localUpdates[`${targetOrderKey}/items/${itemIdx}/bot_error`] = isError;
                 localUpdates[`${targetOrderKey}/items/${itemIdx}/not_found`] = isError;
                 
+                // ⚡ Если мы нажали "Заказано", распечатываем накладную для мини-аппа и обновляем время
                 if (isOrdered) {
                     let vRaw = (itemsArr[itemIdx].vendor || 'Лента').toLowerCase();
                     let vKey = 'lenta';
                     if (vRaw.includes('озон') || vRaw.includes('ozon') || vRaw.includes('wb')) vKey = 'ozon';
                     else if (vRaw.includes('купер') || vRaw.includes('kuper')) vKey = 'kuper';
                     
-                    // ⚡ "Распечатываем" накладную для мини-аппа и обновляем время
                     localUpdates[`${targetOrderKey}/${vKey}_received`] = false;
                     order[`${vKey}_received`] = false;
                     
-                    let allProcessed = itemsArr.every(i => i.status !== 'pending' && i.status !== 'from_stoplist');
-                    if (allProcessed && !order.ordered) {
-                        localUpdates[`${targetOrderKey}/ordered`] = true;
-                        localUpdates[`${targetOrderKey}/svod`] = true;
-                        order.ordered = true; 
-                        order.svod = true;
-                    }
+                    localUpdates[`${targetOrderKey}/ordered`] = true;
+                    localUpdates[`${targetOrderKey}/svod`] = true;
+                    order.ordered = true; 
+                    order.svod = true;
+
+                    // ⚡ Обновляем время, чтобы вытолкнуть заказ наверх в приложении у бариста
                     localUpdates[`${targetOrderKey}/timestamp`] = Date.now();
+                    order.timestamp = localUpdates[`${targetOrderKey}/timestamp`];
                 }
                 
+                // ⚡ Отправляем легкий патч в базу, без зависаний
                 fetch(`${FB_URL}/orders.json`, { method: 'PATCH', body: JSON.stringify(localUpdates) });
             }
         }

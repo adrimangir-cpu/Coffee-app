@@ -200,8 +200,8 @@ h1, h2, h3, h4 { font-family: var(--font-fashion); color: var(--brand-maroon); f
 ========================================= */
 .svod-dashboard-layout {
     display: grid !important;
-    /* ⚡ Увеличили ширину правой панели до 450px, чтобы текст помещался комфортно */
-    grid-template-columns: 1fr 450px !important; 
+    /* ⚡ Возвращаем деление ровно пополам (1/2 экрана для каждой колонки) */
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) !important; 
     gap: 24px !important;
     width: 100% !important;
     max-width: 100% !important;
@@ -233,9 +233,9 @@ h1, h2, h3, h4 { font-family: var(--font-fashion); color: var(--brand-maroon); f
     overflow-x: auto !important; 
 }
 
-/* ⚡ Расширяем саму таблицу, чтобы колонки не слипались */
+/* Расширяем саму таблицу, чтобы колонки не слипались */
 .svod-dashboard-layout table {
-    min-width: 950px !important; 
+    min-width: 100% !important; 
     width: 100% !important;
 }
 
@@ -257,13 +257,13 @@ h1, h2, h3, h4 { font-family: var(--font-fashion); color: var(--brand-maroon); f
     box-sizing: border-box !important;
 }
 
-/* ⚡ ПЛАНШЕТЫ (до 1300px): Окна встают друг под друга на 100% ширины экрана */
+/* ПЛАНШЕТЫ (до 1300px): Окна встают друг под друга на 100% ширины экрана */
 @media (max-width: 1300px) {
     .svod-dashboard-layout {
         grid-template-columns: 1fr !important; /* Перенос в 1 колонку */
     }
     .svod-right-col {
-        position: static !important; /* Отключаем прилипание при скролле */
+        position: static !important; 
         margin-top: 20px !important;
     }
     .svod-left-col .card {
@@ -3315,7 +3315,6 @@ async function renderOrdersSvod() {
             </div>
         <div class="history_orders_list" style="display: ${isHistGlobalOpen ? 'block' : 'none'}; padding: 15px 24px;">`;
 
-        // ⚡ КНОПКА СТАЛА КРУПНЕЕ И ЗАМЕТНЕЕ
         if (historyOrdersList.length > 0) html += `<button class="btn-save" style="width:100%; margin-bottom:20px; font-size:16px; font-weight:800; padding:15px; text-transform:uppercase; box-shadow:0 4px 15px rgba(91, 107, 63, 0.4); border-radius:10px;" onclick="restoreOrdersFromHistory()">↩️ Вернуть выбранные в работу</button>`;
         
         html += `<table style="margin:0; font-size:13px; min-width:100%;">
@@ -3327,12 +3326,26 @@ async function renderOrdersSvod() {
             historyOrdersList.forEach(o => {
                 let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
                 let validItems = itemsArr.filter(i => i && i.name !== "НЕТ ЗАКАЗА");
-                let itemsListStr = validItems.map(i => `▪️ ${i.name} — <b>${i.qty} шт</b>`).join("<br>");
+                
+                // ⚡ ДОБАВЛЯЕМ СТАТУСЫ ДЛЯ КАЖДОГО ТОВАРА
+                let itemsListStr = validItems.map(i => {
+                    let statusTag = "";
+                    if (i.status === 'ordered' || i.status === 'already_received') {
+                        statusTag = `<span style="color:#2E7D32; font-size:10px; font-weight:800; background:#E8F5E9; padding:2px 6px; border-radius:4px; margin-left:8px; text-transform:uppercase; border:1px solid #C8E6C9;">✅ Заказан</span>`;
+                    } else if (i.status === 'error' || i.status === 'not_found' || i.bot_error) {
+                        statusTag = `<span style="color:#C62828; font-size:10px; font-weight:800; background:#FFEBEE; padding:2px 6px; border-radius:4px; margin-left:8px; text-transform:uppercase; border:1px solid #FFCDD2;">❌ Нет в наличии</span>`;
+                    } else if (i.status === 'not_needed') {
+                        statusTag = `<span style="color:#555; font-size:10px; font-weight:800; background:#eee; padding:2px 6px; border-radius:4px; margin-left:8px; text-transform:uppercase; border:1px solid #ccc;">➖ Не надо</span>`;
+                    } else {
+                        statusTag = `<span style="color:#E65100; font-size:10px; font-weight:800; background:#FFF3E0; padding:2px 6px; border-radius:4px; margin-left:8px; text-transform:uppercase; border:1px solid #FFE0B2;">⏳ Не заказан</span>`;
+                    }
+                    return `▪️ ${i.name} — <b>${i.qty} шт</b> ${statusTag}`;
+                }).join("<br><div style='height:6px;'></div>"); // Небольшой отступ между товарами для красоты
+
                 let safeHistId = getSafeId("hist_row_" + o.key);
                 let isRowOpen = expandedDivs.has(safeHistId);
                 let dateStr = o.timestamp ? new Date(o.timestamp).toLocaleDateString('ru-RU') : '---';
 
-                // ⚡ БЕЙДЖИК СТАТУСА ОФОРМЛЕНИЯ
                 let statusBadge = o.ordered 
                     ? `<span style="background:#E8F5E9; color:#2E7D32; padding:3px 8px; border-radius:6px; font-size:11px; font-weight:800; text-transform:uppercase; border:1px solid #C8E6C9; white-space:nowrap;">✅ Оформлен</span>` 
                     : `<span style="background:#FFF3E0; color:#E65100; padding:3px 8px; border-radius:6px; font-size:11px; font-weight:800; text-transform:uppercase; border:1px solid #FFE0B2; white-space:nowrap;">⏳ В работе</span>`;
@@ -3342,7 +3355,6 @@ async function renderOrdersSvod() {
                     <td style="text-align:center; padding: 12px 8px !important; vertical-align:middle;" onclick="event.stopPropagation()"><input type="checkbox" class="hist-checkbox" value="${o.key}" style="cursor:pointer; width:18px; height:18px;"></td>
                     <td style="padding: 12px 0 !important; vertical-align:middle;">
                         <div style="display:flex; align-items:center; flex-wrap:wrap; gap:10px;">
-                            <!-- ⚡ АДРЕСА ТЕПЕРЬ КРУПНЫЕ И ЯРКИЕ -->
                             <b style="font-size:18px !important; color:var(--brand-maroon);">${o.shop === 'Красноказарменная' ? 'МЭИ' : o.shop}</b> 
                             ${statusBadge}
                         </div>
@@ -3352,7 +3364,7 @@ async function renderOrdersSvod() {
                     <td style="text-align:center; padding: 12px 8px !important; vertical-align:middle;" onclick="event.stopPropagation()"><button class="btn-del" style="padding:8px 12px; font-size:14px; border-radius:8px;" onclick="deleteOrder('${o.key}')">🗑</button></td>
                 </tr>
                 <tr class="${safeHistId}" style="display:${isRowOpen ? 'table-row' : 'none'}; background:#fff;">
-                    <td colspan="4" style="padding:15px 20px; line-height:1.8; font-size:14px; border-bottom:1px solid var(--line-delicate);">
+                    <td colspan="4" style="padding:15px 20px; line-height:1.4; font-size:14px; border-bottom:1px solid var(--line-delicate);">
                         ${itemsListStr || 'Нет товаров'}
                     </td>
                 </tr>`;

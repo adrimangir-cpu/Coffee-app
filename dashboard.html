@@ -2429,7 +2429,6 @@ window.syncStoplistWithMenu = async function() {
             let workingOrders = {};
             for (let k in cachedData.orders) {
                 let o = cachedData.orders[k];
-                // ⚡ Берем в работу заказы, которые ЛИБО не оформлены, ЛИБО имеют ожидающие товары
                 let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
                 let hasPending = itemsArr.some(i => i && (i.status === 'pending' || i.status === 'from_stoplist'));
                 
@@ -2528,27 +2527,40 @@ window.syncStoplistWithMenu = async function() {
                 }
             });
 
-            // ⚡ ЕДИНОЕ СЛИЯНИЕ. БОЛЬШЕ НЕТ РАЗДЕЛЕНИЯ НА 5 ЗАКАЗОВ В ДЕНЬ.
             for (let k in workingOrders) {
                 let o = workingOrders[k];
                 let mergedItems = {};
-                let hasOrdered = false;
+                let hasPending = false;
+                let activeVendors = new Set();
                 
                 o.items.forEach(itm => {
                     let cName = cleanName(itm.name);
                     if (!mergedItems[cName]) mergedItems[cName] = { ...itm };
                     else mergedItems[cName].qty += itm.qty;
-                    
-                    if (itm.status === 'ordered' || itm.status === 'already_received') hasOrdered = true;
                 });
                 
                 o.items = Object.values(mergedItems);
                 if (o.items.length === 0) o.items = [{ name: "НЕТ ЗАКАЗА", qty: 0 }];
                 
-                // ⚡ Если хотя бы 1 товар Заказан — весь заказ улетает бариста в мини-апп!
-                if (hasOrdered) {
-                    o.ordered = true;
-                    o.svod = true;
+                o.items.forEach(itm => {
+                    if (itm.status === 'pending' || itm.status === 'from_stoplist') hasPending = true;
+                    if (itm.status === 'ordered') {
+                        let vRaw = (itm.vendor || 'Лента').toLowerCase();
+                        if (vRaw.includes('озон') || vRaw.includes('ozon') || vRaw.includes('wb')) activeVendors.add('ozon');
+                        else if (vRaw.includes('купер') || vRaw.includes('kuper')) activeVendors.add('kuper');
+                        else activeVendors.add('lenta');
+                    }
+                });
+                
+                // ⚡ ЕСЛИ ДОБАВИЛИ НОВЫЙ ЗАКАЗАННЫЙ ТОВАР, "РАСПЕЧАТЫВАЕМ" ПРИЕМКУ У БАРИСТА СНОВА!
+                if (activeVendors.has('lenta')) o.lenta_received = false;
+                if (activeVendors.has('ozon')) o.ozon_received = false;
+                if (activeVendors.has('kuper')) o.kuper_received = false;
+
+                if (!hasPending) {
+                    o.ordered = true; o.svod = true;
+                } else {
+                    o.ordered = false; o.svod = false;
                 }
 
                 if (k.startsWith("new_")) {
@@ -2869,7 +2881,10 @@ async function renderOrdersSvod() {
 
         allOrders.forEach(o => {
             if (o && (o.mode === 'order' || o.mode === 'new_shop')) {
-                if (!o.ordered) todaysOrders.push(o);
+                let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
+                let hasPending = itemsArr.some(i => i && (i.status === 'pending' || i.status === 'from_stoplist'));
+                
+                if (!o.ordered || hasPending) todaysOrders.push(o);
                 else if ((o.timestamp || 0) >= cutoffMonth) historyOrdersList.push(o);
             }
         });
@@ -2904,6 +2919,17 @@ async function renderOrdersSvod() {
             itemsArr.forEach(i => {
                 if (i && i.name) {
                     if (i.name === "НЕТ ЗАКАЗА") { sd.no_order = true; return; }
+                    
+                    // ⚡ ЧИТАЕМ СТАТУС НАКЛАДНОЙ: Если она была принята, насильно ставим товарам статус "Принят"
+                    let catItem = vendorMap[i.name] || 'лента';
+                    let vKey = 'lenta';
+                    if (catItem.includes('озон') || catItem.includes('wb')) vKey = 'ozon';
+                    else if (catItem.includes('купер')) vKey = 'kuper';
+                    
+                    if (o[vKey + '_received'] && (i.status === 'ordered' || i.status === 'pending')) {
+                        i.status = 'already_received';
+                    }
+
                     if (!sd.items[i.name]) sd.items[i.name] = { qty: 0, bot_error: false, status: 'pending', vendor: i.vendor };
                     sd.items[i.name].qty += parseFloat(i.qty) || 0;
                     
@@ -2959,9 +2985,6 @@ async function renderOrdersSvod() {
         let uniqueNames = [...new Set(allPurchaseItems.filter(Boolean))].sort((a,b) => a.localeCompare(b));
         let optionsHtml = uniqueNames.map(name => `<option value="${name.replace(/"/g, '&quot;')}">${name}</option>`).join("");
 
-        // ==========================================
-        // ⚡ ЛЕВАЯ КОЛОНКА (СВОД И ИТОГИ)
-        // ==========================================
         let html = `<div class="svod-dashboard-layout">
                         <div class="svod-left-col">`;
 
@@ -2973,7 +2996,6 @@ async function renderOrdersSvod() {
                     
         if (isSvodEditMode) html += `<div style="margin-bottom:24px; padding:16px 20px; background:var(--bg-paper); color:var(--brand-olive); border-radius:12px; font-size:13px; border: 1px solid var(--border-light);">Режим редактирования активен. Изменения статусов сохраняются мгновенно кликом.</div>`;
         
-        // ⚡ ИЗМЕНИЛИ ШИРИНУ КОЛОНОК (Ссылки прижаты влево)
         html += `<table style="width: 100%; border-collapse: separate; border-spacing: 0;">
             <tr>
                 <th style="width: 4%; text-align: center;">#</th>
@@ -3138,17 +3160,14 @@ async function renderOrdersSvod() {
 
         let displaySum = (totalLentaAll > 0 || totalOzonAll > 0 || totalKuperAll > 0 || isSvodEditMode) ? 'flex' : 'none';
 
-        // ⚡ ИТОГИ
         html += `<div class="summary-block" id="svod-summary-block" style="display:${displaySum};">
             <div class="summary-item">Лента<br><b id="svod-total-lenta">${Math.round(totalLentaAll)}</b><br><span style="font-size:10px;">Остаток: <span id="svod-rem-lenta">${Math.round(totalLentaRem)}</span></span></div>
             <div class="summary-item">Озон<br><b id="svod-total-ozon">${Math.round(totalOzonAll)}</b><br><span style="font-size:10px;">Остаток: <span id="svod-rem-ozon">${Math.round(totalOzonRem)}</span></span></div>
             <div class="summary-item">Купер<br><b id="svod-total-kuper">${Math.round(totalKuperAll)}</b><br><span style="font-size:10px;">Остаток: <span id="svod-rem-kuper">${Math.round(totalKuperRem)}</span></span></div>
             <div class="summary-total">ИТОГО<br><b id="svod-total-all">${Math.round(totalLentaAll+totalOzonAll+totalKuperAll)}</b><br><span style="font-size:10px; color:var(--text-muted);">Остаток: <span id="svod-rem-all">${Math.round(totalLentaRem+totalOzonRem+totalKuperRem)}</span></span></div>
-        </div></div>`; // ⚡ ЗАКРЫВАЕМ ЛЕВУЮ КОЛОНКУ
+        </div></div>`;
 
-        // ==========================================
-        // ⚡ ПРАВАЯ КОЛОНКА (Приемки со списком товаров + Архив со списком продуктов)
-        // ==========================================
+        // ПРАВАЯ КОЛОНКА
         html += `<div class="svod-right-col">`;
         
         let orderCatalogFast = cachedData.catalogOrder || {};
@@ -3196,7 +3215,6 @@ async function renderOrdersSvod() {
             }
         });
 
-        // 1. БЛОК ПРИЕМОК (Со списками товаров)
         html += `<div class="card" style="padding:0; width:100%; border-radius:12px; margin-bottom:24px;">
             <div class="cat-group-header" style="padding:20px 24px; border-bottom:1px solid var(--line-delicate); cursor:pointer; display:flex; justify-content:space-between; align-items:center;" onclick="toggleCatElements('recv_wait_list', 'arrow_recv_wait')">
                 <div>
@@ -3211,7 +3229,6 @@ async function renderOrdersSvod() {
             html += `<table style="margin:0; font-size:13px; min-width:100%;">`;
             Object.keys(pendingReceivings).sort().forEach(shop => {
                 let safeShop = getSafeId(shop);
-                // ⚡ ИЗМЕНИЛИ padding: 8px 16px !important; для компактности адресов
                 html += `<tr class="cat-group-header" onclick="toggleCatElements('recv_shop_${safeShop}', 'arrow_recv_${safeShop}')">
                             <td colspan="3" style="background:#E8F5E9 !important; padding:8px 16px !important; font-size:15px !important; color:#2E7D32 !important; border-bottom:1px solid #c8e6c9 !important;">
                                 <b>${shop === 'Красноказарменная' ? 'МЭИ' : shop}</b> <span style="background:#2E7D32; color:white; padding:2px 6px; border-radius:8px; font-size:11px; margin-left:8px; vertical-align:middle;">${pendingReceivings[shop].length} накладных</span>
@@ -3241,7 +3258,6 @@ async function renderOrdersSvod() {
         }
         html += `</div></div>`;
 
-        // --- 2. АРХИВ (Со списком продуктов внутри каждого заказа) ---
         let isHistGlobalOpen = expandedDivs.has('history_orders_list');
         html += `<div class="card" style="padding:0; width:100%; border-radius:12px;">
             <div class="cat-group-header" style="padding:20px 24px; border-bottom:1px solid var(--line-delicate); cursor:pointer; display:flex; justify-content:space-between; align-items:center;" onclick="toggleCatElements('history_orders_list', 'arrow_hist_ord')">
@@ -3265,7 +3281,6 @@ async function renderOrdersSvod() {
                 let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
                 let validItems = itemsArr.filter(i => i && i.name !== "НЕТ ЗАКАЗА");
                 
-                // ⚡ ДОБАВЛЯЕМ СТАТУСЫ ДЛЯ КАЖДОГО ТОВАРА
                 let itemsListStr = validItems.map(i => {
                     let statusTag = "";
                     if (i.status === 'ordered' || i.status === 'already_received') {
@@ -3278,15 +3293,15 @@ async function renderOrdersSvod() {
                         statusTag = `<span style="color:#E65100; font-size:10px; font-weight:800; background:#FFF3E0; padding:2px 6px; border-radius:4px; margin-left:8px; text-transform:uppercase; border:1px solid #FFE0B2;">⏳ Не заказан</span>`;
                     }
                     return `▪️ ${i.name} — <b>${i.qty} шт</b> ${statusTag}`;
-                }).join("<br><div style='height:6px;'></div>"); // Небольшой отступ между товарами для красоты
+                }).join("<br><div style='height:6px;'></div>");
 
                 let safeHistId = getSafeId("hist_row_" + o.key);
                 let isRowOpen = expandedDivs.has(safeHistId);
                 let dateStr = o.timestamp ? new Date(o.timestamp).toLocaleDateString('ru-RU') : '---';
 
-                let statusBadge = o.ordered 
-                    ? `<span style="background:#E8F5E9; color:#2E7D32; padding:3px 8px; border-radius:6px; font-size:11px; font-weight:800; text-transform:uppercase; border:1px solid #C8E6C9; white-space:nowrap;">✅ Оформлен</span>` 
-                    : `<span style="background:#FFF3E0; color:#E65100; padding:3px 8px; border-radius:6px; font-size:11px; font-weight:800; text-transform:uppercase; border:1px solid #FFE0B2; white-space:nowrap;">⏳ В работе</span>`;
+                let statusBadge = (!o.ordered && itemsArr.some(i => i.status === 'pending')) 
+                    ? `<span style="background:#FFF3E0; color:#E65100; padding:3px 8px; border-radius:6px; font-size:11px; font-weight:800; text-transform:uppercase; border:1px solid #FFE0B2; white-space:nowrap;">⏳ В работе</span>`
+                    : `<span style="background:#E8F5E9; color:#2E7D32; padding:3px 8px; border-radius:6px; font-size:11px; font-weight:800; text-transform:uppercase; border:1px solid #C8E6C9; white-space:nowrap;">✅ Оформлен</span>`;
 
                 html += `
                 <tr class="order-row cat-group-header" onclick="toggleCatElements('${safeHistId}', 'arrow_hist_${safeHistId}')" style="border-bottom:1px solid var(--line-delicate); cursor:pointer; background:var(--bg-paper) !important;">
@@ -3309,8 +3324,8 @@ async function renderOrdersSvod() {
             });
         }
         html += `</table></div></div>`;
-        html += `</div>`; // ЗАКРЫВАЕМ ПРАВУЮ КОЛОНКУ
-        html += `</div>`; // ЗАКРЫВАЕМ ГЛОБАЛЬНУЮ СЕТКУ
+        html += `</div>`; 
+        html += `</div>`;
 
         box.innerHTML = html;
     } catch (e) { 
@@ -5809,7 +5824,6 @@ async function exportGraphsToExcel() {
         
         let targetOrderKey = Object.keys(cachedData.orders).find(k => {
             let o = cachedData.orders[k];
-            // ⚡ Ищем оригинальный заказ СТРОГО по дате и магазину
             return o && o.shop === shop && new Date(o.timestamp).toLocaleDateString('ru-RU') === dateStr;
         });
 
@@ -5831,12 +5845,24 @@ async function exportGraphsToExcel() {
                 localUpdates[`${targetOrderKey}/items/${itemIdx}/bot_error`] = isError;
                 localUpdates[`${targetOrderKey}/items/${itemIdx}/not_found`] = isError;
                 
-                // ⚡ Если мы нажали "Заказано", моментально отправляем ВЕСЬ заказ бариста
-                if (isOrdered && !order.ordered) {
-                    localUpdates[`${targetOrderKey}/ordered`] = true;
-                    localUpdates[`${targetOrderKey}/svod`] = true;
-                    order.ordered = true; 
-                    order.svod = true;
+                if (isOrdered) {
+                    let vRaw = (itemsArr[itemIdx].vendor || 'Лента').toLowerCase();
+                    let vKey = 'lenta';
+                    if (vRaw.includes('озон') || vRaw.includes('ozon') || vRaw.includes('wb')) vKey = 'ozon';
+                    else if (vRaw.includes('купер') || vRaw.includes('kuper')) vKey = 'kuper';
+                    
+                    // ⚡ "Распечатываем" накладную для мини-аппа и обновляем время
+                    localUpdates[`${targetOrderKey}/${vKey}_received`] = false;
+                    order[`${vKey}_received`] = false;
+                    
+                    let allProcessed = itemsArr.every(i => i.status !== 'pending' && i.status !== 'from_stoplist');
+                    if (allProcessed && !order.ordered) {
+                        localUpdates[`${targetOrderKey}/ordered`] = true;
+                        localUpdates[`${targetOrderKey}/svod`] = true;
+                        order.ordered = true; 
+                        order.svod = true;
+                    }
+                    localUpdates[`${targetOrderKey}/timestamp`] = Date.now();
                 }
                 
                 fetch(`${FB_URL}/orders.json`, { method: 'PATCH', body: JSON.stringify(localUpdates) });

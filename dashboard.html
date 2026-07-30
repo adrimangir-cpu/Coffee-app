@@ -2418,32 +2418,36 @@ window.syncStoplistWithMenu = async function() {
     async function saveSvodEdits() {
         if (document.activeElement) document.activeElement.blur();
         let btn = document.getElementById('svod-btn-edit'); 
-        let origText = btn ? btn.innerHTML : "";
+        let origText = btn ? btn.innerHTML : "Редактировать";
         if (btn) {
             btn.disabled = true;
             btn.innerHTML = "⌛ СОХРАНЕНИЕ...";
         }
         
-        // ⚡ ДАЕМ БРАУЗЕРУ ВРЕМЯ ОТРИСОВАТЬ КНОПКУ, ЧТОБЫ НЕ БЫЛО "ЗАВИСАНИЯ"
+        // ⚡ Даем браузеру микро-паузу отрисовать кнопку перед тяжелыми вычислениями
         await new Promise(r => setTimeout(r, 50));
         
         preserveSvodInputs(); 
         
         try {
-            let promises = []; 
             let updates = {};
-            
+            let promises = [];
             let workingOrders = {};
-            // ⚡ СОБИРАЕМ ТОЛЬКО ТЕ ЗАКАЗЫ, КОТОРЫЕ НА ЭКРАНЕ
+
+            // 1. Собираем все заказы, которые могут быть изменены
             for (let k in cachedData.orders) {
                 let o = cachedData.orders[k];
+                if (!o) continue;
+                
                 let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
                 let hasPending = itemsArr.some(i => i && (i.status === 'pending' || i.status === 'from_stoplist'));
                 
-                if (o && (o.mode === 'order' || o.mode === 'new_shop') && (!o.ordered || hasPending)) {
+                // Берем даже возвращенные из архива (ordered: false)
+                if ((o.mode === 'order' || o.mode === 'new_shop') && (!o.ordered || hasPending)) {
                     workingOrders[k] = JSON.parse(JSON.stringify(o));
-                    workingOrders[k].items = itemsArr;
-                    workingOrders[k]._isChanged = false; // Флаг изменений
+                    workingOrders[k].items = itemsArr.filter(i => i && i.name);
+                    workingOrders[k]._isChanged = false;
+                    workingOrders[k].key = k; // Запоминаем родной ключ
                 }
             }
 
@@ -2451,6 +2455,7 @@ window.syncStoplistWithMenu = async function() {
                 return Object.keys(workingOrders).find(k => workingOrders[k].shop === shop && new Date(workingOrders[k].timestamp).toLocaleDateString('ru-RU') === dateStr);
             };
 
+            // 2. Обработка существующих элементов (смена количества/статусов)
             for (let k in workingOrders) {
                 let o = workingOrders[k];
                 let dKey = new Date(o.timestamp).toLocaleDateString('ru-RU');
@@ -2471,9 +2476,14 @@ window.syncStoplistWithMenu = async function() {
                     let updatedVendor = (tempSvodVendor[dKey] && tempSvodVendor[dKey][o.shop] && tempSvodVendor[dKey][o.shop][itm.name]) ? tempSvodVendor[dKey][o.shop][itm.name] : itm.vendor;
                     let newTargetShop = (tempSvodShop[dKey] && tempSvodShop[dKey][o.shop] && tempSvodShop[dKey][o.shop][itm.name]) ? tempSvodShop[dKey][o.shop][itm.name] : o.shop;
 
-                    if (parseFloat(updatedQty) !== parseFloat(itm.qty)) { itm.qty = parseFloat(updatedQty) || 0; o._isChanged = true; }
-                    if (updatedVendor && updatedVendor !== itm.vendor) { itm.vendor = updatedVendor; o._isChanged = true; }
-                    
+                    if (parseFloat(updatedQty) !== parseFloat(itm.qty)) { 
+                        itm.qty = parseFloat(updatedQty) || 0; 
+                        o._isChanged = true; 
+                    }
+                    if (updatedVendor && updatedVendor !== itm.vendor) { 
+                        itm.vendor = updatedVendor; 
+                        o._isChanged = true; 
+                    }
                     if (updatedStatus !== itm.status) {
                         o._isChanged = true;
                         if (updatedStatus === 'error' && itm.status !== 'error') {
@@ -2505,39 +2515,43 @@ window.syncStoplistWithMenu = async function() {
                             newItemsArr.push(itm);
                         }
                     } else {
-                        o._isChanged = true; // Если количество стало 0
+                        o._isChanged = true;
                     }
                 }
                 o.items = newItemsArr;
             }
 
+            // 3. Обработка НОВЫХ добавленных вручную строк
             document.querySelectorAll('.new-svod-row').forEach(row => {
                 let nameInp = row.querySelector('.new-svod-name');
                 let qtyInp = row.querySelector('.new-svod-qty');
                 let vendorSel = row.querySelector('.new-svod-vendor');
                 let statusSel = row.querySelector('.new-svod-status');
 
+                if (!nameInp || !qtyInp) return;
+
                 let dateStr = nameInp.getAttribute('data-date');
                 let shop = nameInp.getAttribute('data-shop').replace(/&quot;/g, '"');
-                let name = nameInp.value.replace(/&quot;/g, '"');
+                let name = nameInp.value.replace(/&quot;/g, '"').trim();
                 let qty = parseFloat(qtyInp.value) || 0;
-                let vendor = vendorSel.value;
-                let status = statusSel.value;
+                let vendor = vendorSel ? vendorSel.value : 'Лента';
+                let status = statusSel ? statusSel.value : 'pending';
 
-                if(!name || qty <= 0) return;
+                if (!name || qty <= 0) return;
 
-                let catItem = Object.values(cachedData.catalogOrder).find(c => c && c.name === name) || {};
+                let catItem = Object.values(cachedData.catalogOrder || {}).find(c => c && c.name === name) || {};
                 let cat = catItem.cat || "Прочее";
 
                 let itemObj = { name: name, qty: qty, vendor: vendor, status: status, bot_error: (status==='error'||status==='not_found'), not_found: (status==='error'||status==='not_found'), cat: cat };
 
                 let targetK = findOrderKey(shop, dateStr);
+                // ⚡ ЖЕЛЕЗНОЕ ДОБАВЛЕНИЕ ДАЖЕ К АРХИВНЫМ ЗАКАЗАМ
                 if (targetK) {
                     workingOrders[targetK].items.push(itemObj);
                     workingOrders[targetK]._isChanged = true;
                 } else {
                     let pseudoKey = "new_" + dateStr + "_" + shop;
-                    if(!workingOrders[pseudoKey]) {
+                    if (!workingOrders[pseudoKey]) {
                         let [d, m, y] = dateStr.split('.');
                         workingOrders[pseudoKey] = { shop: shop, mode: 'order', items: [], timestamp: new Date(y, m-1, d).getTime(), svod: false, ordered: false, userId: 'admin_dashboard', _isChanged: true };
                     }
@@ -2545,19 +2559,23 @@ window.syncStoplistWithMenu = async function() {
                 }
             });
 
-            // ⚡ ЕДИНОЕ СЛИЯНИЕ. СОХРАНЯЕМ ТОЛЬКО ИЗМЕНЕННЫЕ ЗАКАЗЫ
+            // 4. Слияние дубликатов и отправка в базу
             for (let k in workingOrders) {
                 let o = workingOrders[k];
-                if (!o._isChanged) continue; // ⚡ ПРОПУСКАЕМ ЗАКАЗЫ БЕЗ ИЗМЕНЕНИЙ (УСКОРЯЕТ В ДЕСЯТКИ РАЗ!)
+                if (!o._isChanged) continue;
                 
                 let mergedItems = {};
                 let hasOrdered = false;
                 let activeVendors = new Set();
                 
                 o.items.forEach(itm => {
+                    if (!itm || !itm.name) return;
                     let cName = cleanName(itm.name);
-                    if (!mergedItems[cName]) mergedItems[cName] = { ...itm };
-                    else mergedItems[cName].qty += itm.qty;
+                    if (!mergedItems[cName]) {
+                        mergedItems[cName] = { ...itm };
+                    } else {
+                        mergedItems[cName].qty += parseFloat(itm.qty) || 0;
+                    }
                     
                     if (itm.status === 'ordered') {
                         hasOrdered = true;
@@ -2571,44 +2589,50 @@ window.syncStoplistWithMenu = async function() {
                 o.items = Object.values(mergedItems);
                 if (o.items.length === 0) o.items = [{ name: "НЕТ ЗАКАЗА", qty: 0 }];
                 
-                // ⚡ РАСПЕЧАТЫВАНИЕ НАКЛАДНОЙ: Если мы добавили новый заказанный товар, обновляем заказ для бариста!
                 if (hasOrdered) {
                     o.ordered = true;
                     o.svod = true;
-                    o.timestamp = Date.now(); // ⚡ Обновляем время, чтобы заказ всплыл наверх в приложении
+                    o.timestamp = Date.now(); 
                     
                     if (activeVendors.has('lenta')) o.lenta_received = false;
                     if (activeVendors.has('ozon')) o.ozon_received = false;
                     if (activeVendors.has('kuper')) o.kuper_received = false;
                 }
 
-                delete o._isChanged; // удаляем технический флаг перед отправкой
+                delete o._isChanged;
+                delete o.key; // Чистим системный ключ перед заливкой
 
                 if (k.startsWith("new_")) {
                     let newKey = "auto_" + Date.now() + Math.random().toString(36).substr(2, 5);
+                    o.key = newKey; 
                     updates[newKey] = o;
                 } else {
+                    o.key = k; 
                     updates[k] = o;
                 }
             }
 
             if (Object.keys(updates).length > 0) {
-                // ⚡ МГНОВЕННО обновляем локальный кэш, чтобы не ждать ответа базы
                 for (let uk in updates) {
                     cachedData.orders[uk] = updates[uk];
                 }
-                // ⚡ Быстрая отправка только патчей, без зависаний
-                await fetch(`${FB_URL}/orders.json`, { method: 'PATCH', body: JSON.stringify(updates) });
+                promises.push(fetch(`${FB_URL}/orders.json`, { method: 'PATCH', body: JSON.stringify(updates) }));
             }
             
             await Promise.all(promises);
 
-            isSvodEditMode = false; svodDeletions = []; tempSvodQty = {}; tempSvodStatus = {}; tempSvodVendor = {}; tempSvodShop = {}; tempSvodNewRows = [];
+            isSvodEditMode = false; 
+            svodDeletions = []; 
+            tempSvodQty = {}; 
+            tempSvodStatus = {}; 
+            tempSvodVendor = {}; 
+            tempSvodShop = {}; 
+            tempSvodNewRows = [];
             
             if(btn) btn.innerHTML = "✅ СОХРАНЕНО!";
             
             renderOrdersSvod(); 
-            setTimeout(() => { if(btn) { btn.innerHTML = origText; btn.disabled = false; } }, 1000);
+            setTimeout(() => { if(btn) { btn.innerHTML = origText; btn.disabled = false; } }, 1200);
             
         } catch (e) { 
             if(btn) { btn.innerHTML = origText; btn.disabled = false; }
@@ -4057,12 +4081,12 @@ async function renderOrdersSvod() {
                     <table style="width:100%; margin:0;">
                         ${shops.map(s => `
                             <tr>
-                                <td style="padding:15px; border-bottom:1px solid var(--line-delicate);"><b>${s === 'Красноказарменная' ? 'МЭИ' : s}</b></td>
-                                <td style="text-align:right; font-weight:900; color:${currentTotals[s] < 0 ? 'var(--brand-danger)' : 'var(--brand-olive)'}; border-bottom:1px solid var(--line-delicate); font-family: var(--font-data) !important;">${currentTotals[s].toFixed(2)} ₽</td>
+                                <td style="padding:15px; border-bottom:1px solid var(--line-delicate); font-size:18px;"><b>${s === 'Красноказарменная' ? 'МЭИ' : s}</b></td>
+                                <td style="text-align:right; font-weight:900; color:${currentTotals[s] < 0 ? 'var(--brand-danger)' : 'var(--brand-olive)'}; border-bottom:1px solid var(--line-delicate); font-family: var(--font-data) !important; font-size:20px;">${currentTotals[s].toFixed(2)} ₽</td>
                             </tr>`).join('')}
-                        <tr style="background:var(--bg-paper); font-size:18px;">
-                            <td style="padding:20px;"><b>ИТОГО</b></td>
-                            <td style="text-align:right; color:${grandColor}; padding:20px;"><b style="font-family: var(--font-data) !important;">${grandTotal.toFixed(2)} ₽</b></td>
+                        <tr style="background:var(--bg-paper);">
+                            <td style="padding:20px; font-size:20px;"><b>ИТОГО</b></td>
+                            <td style="text-align:right; color:${grandColor}; padding:20px;"><b style="font-family: var(--font-data) !important; font-size:24px;">${grandTotal.toFixed(2)} ₽</b></td>
                         </tr>
                     </table>
                     <div style="padding:20px;"><button class="btn-save" style="width:100%; font-size:16px;" onclick="sendMpSummaryToBot()">Отправить сводку в Телеграм</button></div>
@@ -4289,11 +4313,13 @@ async function renderOrdersSvod() {
    function renderMissing() {
         const box = document.getElementById('content');
         let btnEditColor = isMissingEditMode ? "#f44336" : "#0288d1";
-        let btnEditText = isMissingEditMode ? "💾 Сохранить изменения" : "✏️ Редактировать";
+        let btnEditText = isMissingEditMode ? "💾 Сохранить изменения" : "Редактировать";
 
         setupUniversalActionBar(`
             <div class="miss-action-buttons action-container sticky-action-panel action-panel-dropdown" style="display: flex; flex-direction: column; margin-top: 10px;">
-                <button id="miss-btn-edit" onclick="isMissingEditMode ? saveMissingEdits() : toggleMissingEdit()" class="btn-add" style="width:100%; background:${btnEditColor}; color:white!important; border:none!important;">${btnEditText}</button>
+                <div style="display:flex; gap:10px; width:100%;">
+                    <button id="miss-btn-edit" onclick="isMissingEditMode ? saveMissingEdits() : toggleMissingEdit()" class="btn-save" style="flex:1;">${btnEditText}</button>
+                </div>
             </div>
         `, expandedDivs.has('main_action_bar_state'), 'arrow_miss_actions');
 
@@ -5035,15 +5061,15 @@ async function renderOrdersSvod() {
         
         let isActionsOpen = expandedDivs.has('cat-stop-actions');
 
-        // ⚡ ЗАКРЕПЛЯЕМ ПАНЕЛЬ ДЕЙСТВИЙ НАВЕРХУ
+        // ⚡ ЗАКРЕПЛЯЕМ ПАНЕЛЬ ДЕЙСТВИЙ НАВЕРХУ В ОБЩЕМ СТИЛЕ
         setupUniversalActionBar(`
             <div class="cat-stop-actions action-container sticky-action-panel action-panel-dropdown" style="display: flex; flex-direction: column; margin-top: 10px;">
                 <div style="display:flex; gap:10px; flex-wrap:wrap; width:100%;">
-                    <button class="btn-save" style="flex:1 1 auto; background: linear-gradient(135deg, #FF5252 0%, #D32F2F 100%) !important; border:none!important;" onclick="addItemStoplist()">➕ Добавить</button>
-                    <button class="btn-save" style="flex:1 1 auto; background: linear-gradient(135deg, #00BCD4 0%, #0097A7 100%) !important; border:none!important;" onclick="syncStoplistWithMenu()">🔄 Синхр. с Тех Картами</button>
-                    <button class="btn-save" style="flex:1 1 auto; background: linear-gradient(135deg, #8E24AA 0%, #512DA8 100%) !important; border:none!important;" onclick="crossFillDrinks()">🥤 Взаимозаполнить напитки</button>
+                    <button class="btn-add" style="flex:1 1 auto;" onclick="addItemStoplist()">➕ Добавить</button>
+                    <button class="btn-add" style="flex:1 1 auto;" onclick="syncStoplistWithMenu()">🔄 Синхр. с Тех Картами</button>
+                    <button class="btn-add" style="flex:1 1 auto;" onclick="crossFillDrinks()">🥤 Взаимозаполнить напитки</button>
                     <button class="btn-save" style="flex:1 1 auto; margin:0;" onclick="saveCatalog(this)">💾 Сохранить</button>
-                    <button class="btn-add" style="flex:0 1 auto; padding:10px 15px;" onclick="toggleCatElements('stop-settings-content', 'arr_stop_set')">⚙️ <span id="arr_stop_set">▼</span></button>
+                    <button class="btn-add" style="flex:0 1 auto; padding:10px 15px;" onclick="toggleCatElements('stop-settings-content', 'arr_stop_set')">⚙️ Настройки <span id="arr_stop_set">▼</span></button>
                 </div>
                 
                 <div class="stop-settings-content action-container" style="display:none; flex-wrap:wrap; gap:15px; width:100%; margin-top:15px; padding-top:15px; border-top:1px solid #eee;">

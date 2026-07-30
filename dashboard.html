@@ -7001,45 +7001,52 @@ window.onload = () => {
 
     
     
+   
    // ⚡ СВЕРХБЫСТРОЕ И БЕЗОТКАЗНОЕ СОХРАНЕНИЕ СПРАВОЧНИКОВ
-   // ⚡ СВЕРХБЫСТРОЕ И БЕЗОТКАЗНОЕ СОХРАНЕНИЕ СПРАВОЧНИКОВ
-    window.saveCatalog = async function(btn) {
-        if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); 
-        await new Promise(r => setTimeout(r, 50)); 
-        
-        let origText = btn.innerHTML;
-        if (Object.keys(catalogChanges || {}).length === 0) {
-            btn.innerHTML = "✅ ИЗМЕНЕНИЙ НЕТ";
-            setTimeout(() => { if(btn) btn.innerHTML = origText; }, 1500);
-            return;
+   window.saveCatalog = async function(btn) {
+    if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+    await new Promise(r => setTimeout(r, 50));
+    let origText = btn.innerHTML;
+    if (Object.keys(catalogChanges || {}).length === 0) {
+        btn.innerHTML = "✅ ИЗМЕНЕНИЙ НЕТ";
+        setTimeout(() => { if(btn) btn.innerHTML = origText; }, 1500);
+        return;
+    }
+    btn.disabled = true; btn.innerHTML = " СОХРАНЕНИЕ...";
+    try {
+        let updates = {};
+        for (let id in catalogChanges) {
+            updates[id] = catalogChanges[id] === null ? null : catalogChanges[id];
         }
         
-        btn.disabled = true; btn.innerHTML = "⏳ СОХРАНЕНИЕ...";
+        // ⚡ СОХРАНЯЕМ В БАЗУ
+        await db.ref(currentPath).update(updates);
         
-        try { 
-            let updates = {};
-            for (let id in catalogChanges) {
-                updates[id] = catalogChanges[id] === null ? null : catalogChanges[id];
+        // ⚡ НЕМЕДЛЕННО ОБНОВЛЯЕМ currentCatalog, чтобы новые товары появились
+        for (let id in catalogChanges) {
+            if (catalogChanges[id] !== null) {
+                currentCatalog[id] = catalogChanges[id];
+            } else {
+                delete currentCatalog[id];
             }
-            
-            await db.ref(currentPath).update(updates);
-            
-            catalogChanges = {}; 
-            btn.innerHTML = "✅ СОХРАНЕНО!";
-            
-            // ⚡ ИСПРАВЛЕНИЕ: Ждем 1.2 секунды, чтобы юзер увидел надпись, а ПОТОМ перерисовываем
-            setTimeout(() => { 
-                if(btn) { btn.innerHTML = origText; btn.disabled = false; } 
-                if (currentPath.includes('order') || currentPath.includes('newshop')) renderCatalogOrder();
-                else if (currentPath.includes('stoplist')) renderCatalogStoplist();
-                else renderCatalogChecklist();
-            }, 1200);
-
-        } catch(e) { 
-            if(btn) { btn.innerHTML = origText; btn.disabled = false; }
-            alert("❌ Ошибка сохранения: " + e.message); 
         }
-    };
+        
+        catalogChanges = {};
+        btn.innerHTML = "✅ СОХРАНЕНО!";
+        
+        // ⚡ СРАЗУ ПЕРЕРИСОВЫВАЕМ, чтобы пользователь увидел результат
+        setTimeout(() => {
+            if(btn) { btn.innerHTML = origText; btn.disabled = false; }
+            if (currentPath.includes('order') || currentPath.includes('newshop')) renderCatalogOrder();
+            else if (currentPath.includes('stoplist')) renderCatalogStoplist();
+            else renderCatalogChecklist();
+        }, 800);
+        
+    } catch(e) {
+        if(btn) { btn.innerHTML = origText; btn.disabled = false; }
+        alert("❌ Ошибка сохранения: " + e.message);
+    }
+};
     
     async function saveKnowledgeBase(btn) {
         let origText = btn.innerHTML;

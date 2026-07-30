@@ -2398,42 +2398,55 @@ window.syncStoplistWithMenu = async function() {
         tempSvodNewRows = [];
         document.querySelectorAll('.new-svod-row').forEach(row => {
             let nameInp = row.querySelector('.new-svod-name');
-            let shop = nameInp.getAttribute('data-shop').replace(/&quot;/g, '"');
-            let dateStr = nameInp.getAttribute('data-date');
-            let qty = row.querySelector('.new-svod-qty').value;
-            let vendor = row.querySelector('.new-svod-vendor').value;
-            let status = row.querySelector('.new-svod-status').value;
+            let qtyInp = row.querySelector('.new-svod-qty');
+            let vendorSel = row.querySelector('.new-svod-vendor');
+            let statusSel = row.querySelector('.new-svod-status');
 
-            tempSvodNewRows.push({
-                date: dateStr,
-                shop: shop,
-                name: nameInp.value,
-                qty: qty, 
-                vendor: vendor,
-                status: status
-            });
+            if (!nameInp) return;
+
+            let shop = (nameInp.getAttribute('data-shop') || "").replace(/&quot;/g, '"');
+            let dateStr = nameInp.getAttribute('data-date') || "";
+            let nameVal = nameInp.value || "";
+            let qtyVal = qtyInp ? qtyInp.value : 1;
+            let vendorVal = vendorSel ? vendorSel.value : 'Лента';
+            let statusVal = statusSel ? statusSel.value : 'pending';
+
+            if (nameVal.trim() !== "") {
+                tempSvodNewRows.push({
+                    date: dateStr,
+                    shop: shop,
+                    name: nameVal,
+                    qty: qtyVal, 
+                    vendor: vendorVal,
+                    status: statusVal
+                });
+            }
         });
     }
 
   async function saveSvodEdits() {
         if (document.activeElement) document.activeElement.blur();
         let btn = document.getElementById('svod-btn-edit'); 
+        
+        // ⚡ Защита от двойного нажатия и захвата неправильного текста
+        if (btn && btn.disabled) return; 
+        
         let origText = btn ? btn.innerHTML : "Редактировать";
         if (btn) {
             btn.disabled = true;
             btn.innerHTML = "⌛ СОХРАНЕНИЕ...";
         }
         
-        // ⚡ Микро-пауза для отрисовки кнопки перед тяжелыми вычислениями (убирает визуальное "зависание" браузера)
+        // ⚡ Даем браузеру микро-паузу отрисовать кнопку перед тяжелыми вычислениями
         await new Promise(r => setTimeout(r, 50));
-        preserveSvodInputs(); 
         
         try {
+            preserveSvodInputs(); 
             let updates = {};
             let promises = [];
             let workingOrders = {};
 
-            // 1. КОПИРУЕМ ВСЕ АКТИВНЫЕ ЗАКАЗЫ (в т.ч. возвращенные из архива)
+            // 1. КОПИРУЕМ АКТИВНЫЕ ЗАКАЗЫ (в т.ч. из архива)
             for (let k in cachedData.orders) {
                 let o = cachedData.orders[k];
                 if (!o || (o.mode !== 'order' && o.mode !== 'new_shop')) continue;
@@ -2441,7 +2454,6 @@ window.syncStoplistWithMenu = async function() {
                 let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
                 let hasPending = itemsArr.some(i => i && (i.status === 'pending' || i.status === 'from_stoplist'));
                 
-                // ⚡ Берем все неоформленные заказы + те, где есть ждущие товары
                 if (!o.ordered || hasPending) {
                     workingOrders[k] = JSON.parse(JSON.stringify(o));
                     workingOrders[k].items = itemsArr.filter(i => i && i.name).map(i => ({...i}));
@@ -2475,22 +2487,10 @@ window.syncStoplistWithMenu = async function() {
                     let vendVal = tempSvodVendor[dKey]?.[o.shop]?.[itm.name];
                     let shopVal = tempSvodShop[dKey]?.[o.shop]?.[itm.name];
 
-                    if (qtyVal !== undefined && parseFloat(qtyVal) !== parseFloat(itm.qty)) { 
-                        itm.qty = parseFloat(qtyVal) || 0; 
-                        o._isChanged = true; 
-                    }
-                    if (vendVal && vendVal !== itm.vendor) { 
-                        itm.vendor = vendVal; 
-                        o._isChanged = true; 
-                    }
+                    if (qtyVal !== undefined && parseFloat(qtyVal) !== parseFloat(itm.qty)) { itm.qty = parseFloat(qtyVal) || 0; o._isChanged = true; }
+                    if (vendVal && vendVal !== itm.vendor) { itm.vendor = vendVal; o._isChanged = true; }
                     if (statVal && statVal !== itm.status) {
                         o._isChanged = true;
-                        if (statVal === 'error' && itm.status !== 'error') {
-                            promises.push(fetch(`${FB_URL}/missing_items.json`, { 
-                                method: 'POST', 
-                                body: JSON.stringify({ shop: o.shop, name: itm.name, qty: itm.qty, status: 'canceled', timestamp: Date.now() }) 
-                            }));
-                        }
                         itm.status = statVal; 
                         itm.bot_error = (statVal === 'error'); 
                         itm.not_found = (statVal === 'error'); 
@@ -2522,30 +2522,21 @@ window.syncStoplistWithMenu = async function() {
                 o.items = newItemsArr;
             }
 
-            // 3. ДОБАВЛЕНИЕ НОВЫХ СТРОК (ИЗ ГЛОБАЛЬНОГО МАССИВА `tempSvodNewRows`)
-            // ⚡ ИСПРАВЛЕНО: Раньше мы брали данные напрямую из DOM, а теперь из заранее подготовленного массива
+            // 3. ДОБАВЛЕНИЕ НОВЫХ СТРОК
             tempSvodNewRows.forEach(r => {
                 let dateStr = r.date;
                 let shop = r.shop;
                 let name = (r.name || "").trim();
-                let qty = parseFloat(r.qty) || 1; // ⚡ ЖЕСТКИЙ ФОЛБЕК НА 1
-                let vendor = r.vendor || 'Лента'; // ⚡ ЖЕСТКИЙ ФОЛБЕК НА ЛЕНТУ
-                let status = r.status || 'pending'; // ⚡ ЖЕСТКИЙ ФОЛБЕК НА ОЖИДАЕТ
+                let qty = parseFloat(r.qty) || 1; 
+                let vendor = r.vendor || 'Лента'; 
+                let status = r.status || 'pending'; 
 
                 if (!name || qty <= 0) return;
 
                 let catItem = Object.values(cachedData.catalogOrder || {}).find(c => c && c.name === name) || {};
                 let cat = catItem.cat || "Прочее";
 
-                let itemObj = { 
-                    name: name, 
-                    qty: qty, 
-                    vendor: vendor, 
-                    status: status, 
-                    bot_error: (status==='error'), 
-                    not_found: (status==='error'), 
-                    cat: cat 
-                };
+                let itemObj = { name: name, qty: qty, vendor: vendor, status: status, bot_error: (status==='error'), not_found: (status==='error'), cat: cat };
 
                 let targetK = findOrderKey(shop, dateStr);
                 if (targetK) {
@@ -2555,22 +2546,13 @@ window.syncStoplistWithMenu = async function() {
                     let pseudoKey = "new_" + dateStr + "_" + shop;
                     if (!workingOrders[pseudoKey]) {
                         let [d, m, y] = dateStr.split('.');
-                        workingOrders[pseudoKey] = { 
-                            shop: shop, 
-                            mode: 'order', 
-                            items: [], 
-                            timestamp: new Date(y, m-1, d).getTime(), 
-                            svod: false, 
-                            ordered: false, 
-                            userId: 'admin_dashboard', 
-                            _isChanged: true 
-                        };
+                        workingOrders[pseudoKey] = { shop: shop, mode: 'order', items: [], timestamp: new Date(y, m-1, d).getTime(), svod: false, ordered: false, userId: 'admin_dashboard', _isChanged: true };
                     }
                     workingOrders[pseudoKey].items.push(itemObj);
                 }
             });
 
-            // 4. СЛИЯНИЕ И ПОДГОТОВКА ПАТЧЕЙ ДЛЯ БАЗЫ
+            // 4. СЛИЯНИЕ И ПОДГОТОВКА ПАТЧЕЙ
             for (let k in workingOrders) {
                 let o = workingOrders[k];
                 if (!o._isChanged) continue;
@@ -2580,14 +2562,10 @@ window.syncStoplistWithMenu = async function() {
                 let activeVendors = new Set();
                 
                 o.items.forEach(itm => {
-                    if (!itm || !itm.name) return; // ⚡ Защита от undefined
-                    
+                    if (!itm || !itm.name) return; 
                     let cName = cleanName(itm.name);
-                    if (!mergedItems[cName]) {
-                        mergedItems[cName] = { ...itm };
-                    } else {
-                        mergedItems[cName].qty += (parseFloat(itm.qty) || 0);
-                    }
+                    if (!mergedItems[cName]) mergedItems[cName] = { ...itm };
+                    else mergedItems[cName].qty += (parseFloat(itm.qty) || 0);
                     
                     if (itm.status === 'ordered') {
                         hasOrderedItems = true;
@@ -2601,7 +2579,6 @@ window.syncStoplistWithMenu = async function() {
                 o.items = Object.values(mergedItems);
                 if (o.items.length === 0) o.items = [{ name: "НЕТ ЗАКАЗА", qty: 0 }];
                 
-                // ЕСЛИ В ЗАКАЗЕ ЕСТЬ ХОТЯ БЫ 1 "ЗАКАЗАННЫЙ" ТОВАР -> ДЕЛАЕМ НАКЛАДНУЮ АКТИВНОЙ ДЛЯ БАРИСТА
                 if (hasOrderedItems) {
                     o.ordered = true;
                     o.svod = true;
@@ -2622,16 +2599,15 @@ window.syncStoplistWithMenu = async function() {
             }
 
             if (Object.keys(updates).length > 0) {
-                // ⚡ ЖЕЛЕЗНАЯ ОЧИСТКА ОТ UNDEFINED (Убирает зависания Firebase на 100%)
+                // ⚡ ЖЕЛЕЗНАЯ ОЧИСТКА ОТ ВОЗМОЖНЫХ ОШИБОК ДЛЯ FIREBASE
                 let cleanUpdates = JSON.parse(JSON.stringify(updates));
+                for (let uk in cleanUpdates) cachedData.orders[uk] = cleanUpdates[uk];
                 
-                // Мгновенно обновляем локальный кэш
-                for (let uk in cleanUpdates) {
-                    cachedData.orders[uk] = cleanUpdates[uk];
-                }
-                
-                // Отправляем пакет одним запросом напрямую
-                promises.push(db.ref('orders').update(cleanUpdates));
+                // ⚡ ИСПОЛЬЗУЕМ ТОЛЬКО FETCH (ДЛЯ ДАШБОРДА)
+                promises.push(fetch(`${FB_URL}/orders.json`, { 
+                    method: 'PATCH', 
+                    body: JSON.stringify(cleanUpdates) 
+                }));
             }
             
             await Promise.all(promises);
@@ -2643,6 +2619,7 @@ window.syncStoplistWithMenu = async function() {
             setTimeout(() => { if(btn) { btn.innerHTML = origText; btn.disabled = false; } }, 1200);
             
         } catch (e) { 
+            console.error("Save error:", e);
             if(btn) { btn.innerHTML = origText; btn.disabled = false; }
             alert("❌ Ошибка при сохранении: " + e.message); 
         }
@@ -5916,13 +5893,14 @@ async function exportGraphsToExcel() {
                     order.svod = true;
                 }
                 
-                // ⚡ Защита от undefined и зависаний Firebase
                 let cleanUpdates = JSON.parse(JSON.stringify(localUpdates));
-                db.ref('orders').update(cleanUpdates);
+                // ⚡ ИСПОЛЬЗУЕМ ТОЛЬКО FETCH (ДЛЯ ДАШБОРДА)
+                fetch(`${FB_URL}/orders.json`, { method: 'PATCH', body: JSON.stringify(cleanUpdates) });
             }
         }
         renderOrdersSvod(); 
     }
+    
        function renderInvoiceProducts() {
         const box = document.getElementById('content');
         

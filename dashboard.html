@@ -2424,7 +2424,7 @@ window.syncStoplistWithMenu = async function() {
             btn.innerHTML = "⌛ СОХРАНЕНИЕ...";
         }
         
-        // ⚡ Даем браузеру микро-паузу отрисовать кнопку перед тяжелыми вычислениями (убирает зависание)
+        // ⚡ Даем браузеру микро-паузу отрисовать кнопку перед вычислениями (убирает зависание)
         await new Promise(r => setTimeout(r, 50));
         preserveSvodInputs(); 
         
@@ -2443,7 +2443,7 @@ window.syncStoplistWithMenu = async function() {
                 
                 if (!o.ordered || hasPending) {
                     workingOrders[k] = JSON.parse(JSON.stringify(o));
-                    // ⚡ ЧИСТОЕ КОПИРОВАНИЕ МАССИВА (Устраняет баг со сбросом)
+                    // ⚡ ЧИСТОЕ КОПИРОВАНИЕ МАССИВА
                     workingOrders[k].items = itemsArr.filter(i => i && i.name).map(i => ({...i}));
                     workingOrders[k]._isChanged = false;
                 }
@@ -2523,20 +2523,13 @@ window.syncStoplistWithMenu = async function() {
             }
 
             // 3. ДОБАВЛЕНИЕ НОВЫХ СТРОК (В том числе и в возвращенные заказы)
-            document.querySelectorAll('.new-svod-row').forEach(row => {
-                let nameInp = row.querySelector('.new-svod-name');
-                let qtyInp = row.querySelector('.new-svod-qty');
-                let vendorSel = row.querySelector('.new-svod-vendor');
-                let statusSel = row.querySelector('.new-svod-status');
-
-                if (!nameInp || !qtyInp) return;
-
-                let dateStr = nameInp.getAttribute('data-date');
-                let shop = nameInp.getAttribute('data-shop').replace(/&quot;/g, '"');
-                let name = nameInp.value.replace(/&quot;/g, '"').trim();
-                let qty = parseFloat(qtyInp.value) || 0;
-                let vendor = vendorSel ? vendorSel.value : 'Лента';
-                let status = statusSel ? statusSel.value : 'pending';
+            tempSvodNewRows.forEach(r => {
+                let dateStr = r.date;
+                let shop = r.shop;
+                let name = r.name.trim();
+                let qty = parseFloat(r.qty) || 0;
+                let vendor = r.vendor || 'Лента';
+                let status = r.status || 'pending';
 
                 if (!name || qty <= 0) return;
 
@@ -2592,7 +2585,7 @@ window.syncStoplistWithMenu = async function() {
                 if (hasOrderedItems) {
                     o.ordered = true;
                     o.svod = true;
-                    o.timestamp = Date.now(); // ⚡ ОБНОВЛЯЕМ ВРЕМЯ, ЧТОБЫ УВЕДОМИТЬ БАРИСТА
+                    // ⚡ БОЛЬШЕ НЕ МЕНЯЕМ ДАТУ! Заказ останется на своем месте в истории.
                     if (activeVendors.has('lenta')) o.lenta_received = false;
                     if (activeVendors.has('ozon')) o.ozon_received = false;
                     if (activeVendors.has('kuper')) o.kuper_received = false;
@@ -2609,11 +2602,15 @@ window.syncStoplistWithMenu = async function() {
             }
 
             if (Object.keys(updates).length > 0) {
-                // МГНОВЕННО обновляем локальный кэш
-                for (let uk in updates) {
-                    cachedData.orders[uk] = updates[uk];
+                // ⚡ ЖЕЛЕЗНАЯ ОЧИСТКА ОТ UNDEFINED (Убирает зависания Firebase)
+                let cleanUpdates = JSON.parse(JSON.stringify(updates));
+                
+                // Мгновенно обновляем локальный кэш
+                for (let uk in cleanUpdates) {
+                    cachedData.orders[uk] = cleanUpdates[uk];
                 }
-                promises.push(fetch(`${FB_URL}/orders.json`, { method: 'PATCH', body: JSON.stringify(updates) }));
+                // Отправляем пакет одним запросом напрямую
+                promises.push(db.ref('orders').update(cleanUpdates));
             }
             
             await Promise.all(promises);
@@ -5883,7 +5880,6 @@ async function exportGraphsToExcel() {
                 localUpdates[`${targetOrderKey}/items/${itemIdx}/bot_error`] = isError;
                 localUpdates[`${targetOrderKey}/items/${itemIdx}/not_found`] = isError;
                 
-                // ⚡ Если мы нажали "Заказано", распечатываем накладную для мини-аппа и обновляем время
                 if (isOrdered) {
                     let vRaw = (itemsArr[itemIdx].vendor || 'Лента').toLowerCase();
                     let vKey = 'lenta';
@@ -5897,19 +5893,15 @@ async function exportGraphsToExcel() {
                     localUpdates[`${targetOrderKey}/svod`] = true;
                     order.ordered = true; 
                     order.svod = true;
-
-                    // ⚡ Обновляем время, чтобы вытолкнуть заказ наверх в приложении у бариста
-                    localUpdates[`${targetOrderKey}/timestamp`] = Date.now();
-                    order.timestamp = localUpdates[`${targetOrderKey}/timestamp`];
                 }
                 
-                // ⚡ Отправляем легкий патч в базу, без зависаний
-                fetch(`${FB_URL}/orders.json`, { method: 'PATCH', body: JSON.stringify(localUpdates) });
+                // ⚡ Защита от undefined и зависаний Firebase
+                let cleanUpdates = JSON.parse(JSON.stringify(localUpdates));
+                db.ref('orders').update(cleanUpdates);
             }
         }
         renderOrdersSvod(); 
     }
-
        function renderInvoiceProducts() {
         const box = document.getElementById('content');
         

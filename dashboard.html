@@ -2426,7 +2426,7 @@ async function saveSvodEdits() {
             let updates = {};
             let workingOrders = {};
 
-            // 1. КОПИРУЕМ АКТИВНЫЕ ЗАКАЗЫ (в т.ч. возвращенные из Архива)
+            // 1. КОПИРУЕМ АКТИВНЫЕ ЗАКАЗЫ (в т.ч. восстановленные)
             for (let k in cachedData.orders) {
                 let o = cachedData.orders[k];
                 if (!o || (o.mode !== 'order' && o.mode !== 'new_shop')) continue;
@@ -2532,23 +2532,30 @@ async function saveSvodEdits() {
                 }
             });
 
-            // 4. СЛИЯНИЕ И ПОДГОТОВКА ПАТЧЕЙ
+            // 4. СЛИЯНИЕ И ЗАЩИТА ОТ ПРОПАЖИ
             for (let k in workingOrders) {
                 let o = workingOrders[k];
                 if (!o._isChanged) continue;
                 
                 let mergedItems = {};
                 let hasOrderedItems = false;
+                let hasPendingItems = false; // ⚡ ДОБАВЛЕНО
                 let activeVendors = new Set();
                 
                 o.items.forEach(itm => {
                     if (!itm || !itm.name) return; 
-                    let cName = cleanName(itm.name);
+                    
+                    // ⚡ Товары с разными статусами не слипаются в один!
+                    let cName = cleanName(itm.name) + "_" + (itm.status || 'pending'); 
+                    
                     if (!mergedItems[cName]) mergedItems[cName] = { ...itm };
                     else mergedItems[cName].qty += (parseFloat(itm.qty) || 0);
                     
-                    if (itm.status === 'ordered') {
-                        hasOrderedItems = true;
+                    let stat = itm.status || 'pending';
+                    if (stat === 'ordered') hasOrderedItems = true;
+                    if (stat === 'pending' || stat === 'from_stoplist') hasPendingItems = true; // ⚡ Проверяем, есть ли новые товары
+                    
+                    if (stat === 'pending' || stat === 'ordered' || stat === 'from_stoplist') {
                         let vRaw = (itm.vendor || 'Лента').toLowerCase();
                         if (vRaw.includes('озон') || vRaw.includes('ozon') || vRaw.includes('wb')) activeVendors.add('ozon');
                         else if (vRaw.includes('купер') || vRaw.includes('kuper')) activeVendors.add('kuper');
@@ -2559,13 +2566,17 @@ async function saveSvodEdits() {
                 o.items = Object.values(mergedItems);
                 if (o.items.length === 0) o.items = [{ name: "НЕТ ЗАКАЗА", qty: 0 }];
                 
-                if (hasOrderedItems) {
-                    o.svod = true;
-                    // ⚡ ЗДЕСЬ УДАЛЕНА АВТОМАТИЧЕСКАЯ АРХИВАЦИЯ. ЗАКАЗ ОСТАНЕТСЯ НА ЭКРАНЕ!
-                    if (activeVendors.has('lenta')) o.lenta_received = false;
-                    if (activeVendors.has('ozon')) o.ozon_received = false;
-                    if (activeVendors.has('kuper')) o.kuper_received = false;
+                if (hasOrderedItems) o.svod = true;
+                
+                // ⚡ ЖЕЛЕЗНОЕ ПРАВИЛО: Если есть "Ожидает", заказ НЕ ОФОРМЛЕН (не уходит в архив!)
+                if (hasPendingItems) {
+                    o.ordered = false;
                 }
+
+                // ⚡ СБРОС ГАЛОЧЕК: Бариста снова увидит накладную
+                if (activeVendors.has('lenta')) o.lenta_received = false;
+                if (activeVendors.has('ozon')) o.ozon_received = false;
+                if (activeVendors.has('kuper')) o.kuper_received = false;
 
                 delete o._isChanged;
                 
@@ -2577,16 +2588,15 @@ async function saveSvodEdits() {
                 }
             }
 
-            // ⚡ 5. МГНОВЕННОЕ ФОНОВОЕ СОХРАНЕНИЕ (БЕЗ ЗАВИСАНИЯ)
+            // 5. МГНОВЕННОЕ ФОНОВОЕ СОХРАНЕНИЕ
             if (Object.keys(updates).length > 0) {
                 let cleanUpdates = JSON.parse(JSON.stringify(updates));
                 
-                // Моментально обновляем кэш в браузере
                 for (let uk in cleanUpdates) {
                     cachedData.orders[uk] = cleanUpdates[uk];
+                    cachedData.orders[uk].key = uk; // Фиксируем ключ для безопасности
                 }
                 
-                // Запускаем отправку данных в фоне и забываем про нее (никаких await!)
                 fetch(`${FB_URL}/orders.json`, { 
                     method: 'PATCH', 
                     body: JSON.stringify(cleanUpdates) 
@@ -2604,8 +2614,7 @@ async function saveSvodEdits() {
             if(btn) { btn.innerHTML = origText; btn.disabled = false; }
             alert("❌ Ошибка при сохранении: " + e.message); 
         }
-    }
-    
+    }    
 
     function recalcSvodTotals() {
         preserveSvodInputs();
@@ -2850,18 +2859,19 @@ async function restoreOrdersFromHistory() {
             let oKey = cb.value;
             let o = cachedData.orders[oKey];
             if (o) {
+                // ⚡ Принудительно отвязываем заказ от Истории
                 o.ordered = false;
                 o.svod = false;
+                o.key = oKey; // Фиксируем ключ
+                
                 updates[oKey + "/ordered"] = false;
                 updates[oKey + "/svod"] = false;
             }
         });
 
         if (Object.keys(updates).length > 0) {
-            // Мгновенная отрисовка на экране
-            renderOrdersSvod(); 
+            renderOrdersSvod(); // Мгновенная отрисовка
             
-            // Фоновая отправка на сервер
             fetch(`${FB_URL}/orders.json`, { method: 'PATCH', body: JSON.stringify(updates) })
                 .then(() => {
                     if (btn) {

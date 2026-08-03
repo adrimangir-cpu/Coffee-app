@@ -196,14 +196,16 @@ h1, h2, h3, h4 { font-family: var(--font-fashion); color: var(--brand-maroon); f
 
 
 
-========================================= */
+/* ⚡ НОВАЯ СЕТКА ДЛЯ ЭКРАНА "СВОД И ЗАКАЗЫ" (Десктоп) */
 .svod-dashboard-layout {
-    display: grid;
-    grid-template-columns: 1fr 300px; /* ⚡ Уменьшили Историю до 280px, сильно расширив таблицу */
-    gap: 16px; /* ⚡ Уменьшили отступ между блоками */
-    align-items: start;
+    display: grid !important;
+    grid-template-columns: 45% 55% !important; /* ⚡ Уменьшили Закупку, расширили Историю */
+    gap: 20px !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    align-items: start !important;
+    box-sizing: border-box !important;
 }
-
 .svod-left-col, .svod-right-col {
     display: flex !important;
     flex-direction: column !important;
@@ -680,6 +682,7 @@ let tempSvodQty = {};
 let tempSvodStatus = {};
 let tempSvodVendor = {};
 let tempSvodShop = {};
+let tempSvodName = {};
 let tempSvodNewRows = [];
 let isMissingEditMode = false;
 let missingDeletions = new Set();
@@ -1008,7 +1011,7 @@ function toggleSvodDate(safeDate) {
         } catch (e) { alert(`❌ Ошибка: ` + e.message); }
     }
 
-   function renderReceivingsControl() {
+  function renderReceivingsControl() {
         const box = document.getElementById('content');
         setupUniversalActionBar('', false, ''); 
         
@@ -1017,11 +1020,13 @@ function toggleSvodDate(safeDate) {
         Object.values(orderCatalog).forEach(c => { if (c && c.name) orderCatMapFast[c.name] = c; });
 
         let fourteenDaysAgo = Date.now() - (14 * 24 * 60 * 60 * 1000);
+        
+        // ⚡ ЖЕЛЕЗНОЕ ПРАВИЛО: o.ordered === true (не летит бариста до кнопки "Заказы оформлены")
         let ordersArr = Object.values(cachedData.orders || {}).filter(o => 
-            o && (o.mode === 'order' || o.mode === 'new_shop') && o.timestamp >= fourteenDaysAgo
+            o && (o.mode === 'order' || o.mode === 'new_shop') && o.timestamp >= fourteenDaysAgo && o.ordered === true
         ).sort((a,b) => b.timestamp - a.timestamp);
         
-    let html = ``;
+        let html = ``;
         
         // 1. ОЖИДАЮТ ПРИЕМКИ БАРИСТА
         let pendingReceivings = {};
@@ -2261,11 +2266,8 @@ window.syncStoplistWithMenu = async function() {
 
     function toggleSvodEdit() { 
         isSvodEditMode = !isSvodEditMode; 
-        svodDeletions = []; 
-        tempSvodQty = {}; 
-        tempSvodStatus = {}; 
-        tempSvodVendor = {}; 
-        tempSvodShop = {};
+        svodDeletions = []; tempSvodQty = {}; tempSvodStatus = {}; tempSvodVendor = {}; 
+        tempSvodName = {}; // ⚡ СБРОС ТОВАРОВ
         tempSvodNewRows = []; 
         renderOrdersSvod(); 
     }
@@ -2279,53 +2281,51 @@ window.syncStoplistWithMenu = async function() {
             if (vSel && catItem.vendor) {
                 let vLower = catItem.vendor.toLowerCase();
                 let found = Array.from(vSel.options).some(o => o.value.toLowerCase() === vLower);
-                if (!found) {
-                    vSel.insertAdjacentHTML('beforeend', `<option value="${catItem.vendor}">${catItem.vendor}</option>`);
-                }
+                if (!found) vSel.insertAdjacentHTML('beforeend', `<option value="${catItem.vendor}">${catItem.vendor}</option>`);
                 vSel.value = Array.from(vSel.options).find(o => o.value.toLowerCase() === vLower).value;
             }
         }
         recalcSvodTotals();
     }
 
-   function addSvodRowUI(btn, dateStr, shop, safeShopDate, safeDate) {
-  let vendorOptions = ["Лента", "Озон", "Купер", "Wildberries", "Самокат", "METRO"].map(v => `<option value="${v}">${v}</option>`).join('');
-  let tr = document.createElement('tr');
-  tr.className = `svod-row svoditem_${safeShopDate} svodlvl3_of_${safeDate} new-svod-row`;
-  tr.style.backgroundColor = "#e8f5e9";
-  tr.innerHTML = `
-    <td style="text-align:center; font-weight:bold; color:#4caf50; font-size:18px;">+</td>
-    <td style="padding-left:15px;">
-      <input type="text" list="svod_items_list" class="new-svod-name" data-date="${dateStr}" data-shop="${shop.replace(/"/g, '&quot;')}" placeholder="Поиск товара..." style="font-size:15px; padding:6px; width:100%; border:2px solid #4caf50; font-weight:500; background:#212121; color:#fff;" oninput="updateNewRowVendorAndPrice(this)">
-    </td>
-    <td style="text-align:left;">
-      <input type="number" class="new-svod-qty" value="1" oninput="recalcSvodTotals()" style="width:70px; text-align:center; font-size:15px; font-weight:bold; border:2px solid #4caf50; border-radius:6px; padding:4px;">
-    </td>
-    <td style="text-align:center;">
-      <select class="new-svod-status" style="font-size: 13px; padding: 4px; border: 2px solid #4caf50; border-radius: 4px; width: 100%; font-weight:bold; color:#2e7d32; background:#e8f5e9;" onchange="recalcSvodTotals()">
-        <option value="pending">Ожидает </option>
-        <option value="ordered">Заказано ✅</option>
-        <option value="already_received">Принят ✅</option>
-        <option value="error">Ошибка ❌</option>
-      </select>
-    </td>
-    <td>
-      <select class="new-svod-vendor" style="font-size: 14px; padding: 4px; border: 1px solid #ccc; border-radius: 4px; width: 100%;" onchange="recalcSvodTotals()">
-        ${vendorOptions}
-      </select>
-    </td>
-    <td style="text-align:center;">
-      <button class="btn-del" onclick="this.closest('tr').remove(); recalcSvodTotals();">🗑</button>
-    </td>
-  `;
-  btn.closest('tr').insertAdjacentElement('beforebegin', tr);
-}
+    function addSvodRowUI(btn, dateStr, shop, safeShopDate, safeDate) {
+      let vendorOptions = ["Лента", "Озон", "Купер", "Wildberries", "Самокат", "METRO"].map(v => `<option value="${v}">${v}</option>`).join('');
+      let tr = document.createElement('tr');
+      tr.className = `svod-row svoditem_${safeShopDate} svodlvl3_of_${safeDate} new-svod-row`;
+      tr.style.backgroundColor = "#e8f5e9";
+      tr.innerHTML = `
+        <td style="text-align:center; font-weight:bold; color:#4caf50; font-size:18px;">+</td>
+        <td style="padding-left:15px;">
+          <input type="text" list="svod_items_list" class="new-svod-name" data-date="${dateStr}" data-shop="${shop.replace(/"/g, '&quot;')}" placeholder="Поиск товара..." style="font-size:15px; padding:6px; width:100%; border:2px solid #4caf50; font-weight:500; background:#212121; color:#fff;" oninput="updateNewRowVendorAndPrice(this)">
+        </td>
+        <td style="text-align:left;">
+          <input type="number" class="new-svod-qty" value="1" oninput="recalcSvodTotals()" style="width:70px; text-align:center; font-size:15px; font-weight:bold; border:2px solid #4caf50; border-radius:6px; padding:4px;">
+        </td>
+        <td style="text-align:center;">
+          <select class="new-svod-status" style="font-size: 13px; padding: 4px; border: 2px solid #4caf50; border-radius: 4px; width: 100%; font-weight:bold; color:#2e7d32; background:#e8f5e9;" onchange="recalcSvodTotals()">
+            <option value="pending">Ожидает </option>
+            <option value="ordered">Заказано ✅</option>
+            <option value="already_received">Принят ✅</option>
+            <option value="error">Ошибка ❌</option>
+          </select>
+        </td>
+        <td>
+          <select class="new-svod-vendor" style="font-size: 14px; padding: 4px; border: 1px solid #ccc; border-radius: 4px; width: 100%;" onchange="recalcSvodTotals()">
+            ${vendorOptions}
+          </select>
+        </td>
+        <td style="text-align:center;">
+          <button class="btn-del" onclick="this.closest('tr').remove(); recalcSvodTotals();">🗑</button>
+        </td>
+      `;
+      btn.closest('tr').insertAdjacentElement('beforebegin', tr);
+    }
 
-// ⚡ 1. ИЗОЛИРУЕМ ТОВАРЫ ДРУГ ОТ ДРУГА ПО СТАТУСАМ
+    // ⚡ 1. ИЗОЛИРУЕМ ТОВАРЫ ПО УНИКАЛЬНЫМ КЛЮЧАМ
     function preserveSvodInputs() {
         document.querySelectorAll('.edit-svod-input').forEach(inp => {
             let d = inp.getAttribute('data-date');
-            let k = inp.getAttribute('data-key'); // ⚡ УНИКАЛЬНЫЙ КЛЮЧ
+            let k = inp.getAttribute('data-key'); 
             let s = inp.getAttribute('data-shop');
 
             if (!tempSvodQty[d]) tempSvodQty[d] = {};
@@ -2342,13 +2342,14 @@ window.syncStoplistWithMenu = async function() {
             tempSvodVendor[d][s][k] = sel.value;
         });
         
-        document.querySelectorAll('.edit-svod-shop-select').forEach(sel => {
+        // ⚡ ЧИТАЕМ ИЗМЕНЕНИЕ ИМЕНИ ТОВАРА
+        document.querySelectorAll('.edit-svod-item-select').forEach(sel => {
             let d = sel.getAttribute('data-date');
-            let s = sel.getAttribute('data-original-shop');
+            let s = sel.getAttribute('data-shop');
             let k = sel.getAttribute('data-key');
-            if (!tempSvodShop[d]) tempSvodShop[d] = {};
-            if (!tempSvodShop[d][s]) tempSvodShop[d][s] = {};
-            tempSvodShop[d][s][k] = sel.value;
+            if (!tempSvodName[d]) tempSvodName[d] = {};
+            if (!tempSvodName[d][s]) tempSvodName[d][s] = {};
+            tempSvodName[d][s][k] = sel.value;
         });
 
         tempSvodNewRows = [];
@@ -2375,9 +2376,9 @@ window.syncStoplistWithMenu = async function() {
         });
     }
 
-    // ⚡ 2. ГЛАВНАЯ ФУНКЦИЯ СОХРАНЕНИЯ (ЗАЩИТА ОТ УМНОЖЕНИЯ)
+    // ⚡ 2. ГЛАВНАЯ ФУНКЦИЯ СОХРАНЕНИЯ (СМЕНА ТОВАРА)
     async function saveSvodEdits() {
-        preserveSvodInputs(); // Читаем ДО любых пауз
+        preserveSvodInputs(); 
         
         if (document.activeElement) document.activeElement.blur();
         let btn = document.getElementById('svod-btn-edit'); 
@@ -2386,13 +2387,13 @@ window.syncStoplistWithMenu = async function() {
         let origText = btn ? btn.innerHTML : "Редактировать";
         if (btn) { btn.disabled = true; btn.innerHTML = "⌛ СОХРАНЕНИЕ..."; }
         
-        await new Promise(r => setTimeout(r, 10)); // Микро-пауза для отрисовки кнопки
+        await new Promise(r => setTimeout(r, 10)); 
         
         try {
             let updates = {};
             let workingOrders = {};
 
-            // КОПИРУЕМ АКТИВНЫЕ ЗАКАЗЫ И ПРЕДВАРИТЕЛЬНО ИХ СЛИВАЕМ (ФИКС БАГА С УМНОЖЕНИЕМ x2)
+            // КОПИРУЕМ И ПРЕД-СЛИВАЕМ
             for (let k in cachedData.orders) {
                 let o = cachedData.orders[k];
                 if (!o || (o.mode !== 'order' && o.mode !== 'new_shop')) continue;
@@ -2416,15 +2417,7 @@ window.syncStoplistWithMenu = async function() {
                 }
             }
 
-            const findOrderKey = (shop, dateStr) => {
-                return Object.keys(workingOrders).find(k => {
-                    let o = workingOrders[k];
-                    if (o.shop !== shop || !o.timestamp) return false;
-                    return new Date(o.timestamp).toLocaleDateString('ru-RU') === dateStr;
-                });
-            };
-
-            // ОБНОВЛЕНИЕ СУЩЕСТВУЮЩИХ СТРОК
+            // ПРИМЕНЯЕМ ИЗМЕНЕНИЯ ЭКРАНА
             for (let k in workingOrders) {
                 let o = workingOrders[k];
                 let dKey = new Date(o.timestamp).toLocaleDateString('ru-RU');
@@ -2441,10 +2434,13 @@ window.syncStoplistWithMenu = async function() {
                     let qtyVal = tempSvodQty[dKey]?.[o.shop]?.[compKey];
                     let statVal = tempSvodStatus[dKey]?.[o.shop]?.[compKey];
                     let vendVal = tempSvodVendor[dKey]?.[o.shop]?.[compKey];
-                    let shopVal = tempSvodShop[dKey]?.[o.shop]?.[compKey];
+                    
+                    // ⚡ ПЕРЕЗАПИСЬ ИМЕНИ ТОВАРА
+                    let nameVal = tempSvodName[dKey]?.[o.shop]?.[compKey]; 
 
                     if (qtyVal !== undefined && parseFloat(qtyVal) !== parseFloat(itm.qty)) { itm.qty = parseFloat(qtyVal) || 0; o._isChanged = true; }
                     if (vendVal && vendVal !== itm.vendor) { itm.vendor = vendVal; o._isChanged = true; }
+                    if (nameVal && nameVal !== itm.name) { itm.name = nameVal; o._isChanged = true; } // ⚡
                     if (statVal && statVal !== itm.status) {
                         o._isChanged = true;
                         itm.status = statVal; 
@@ -2453,27 +2449,8 @@ window.syncStoplistWithMenu = async function() {
                         itm.error = (statVal === 'error');
                     }
                     
-                    if (itm.qty > 0) {
-                        if (shopVal && shopVal !== o.shop) {
-                            o._isChanged = true;
-                            let targetK = findOrderKey(shopVal, dKey);
-                            if (targetK) {
-                                workingOrders[targetK].items.push(itm);
-                                workingOrders[targetK]._isChanged = true;
-                            } else {
-                                let pseudoKey = "new_" + dKey + "_" + shopVal;
-                                if (!workingOrders[pseudoKey]) {
-                                    let [d, m, y] = dKey.split('.');
-                                    workingOrders[pseudoKey] = { shop: shopVal, mode: 'order', items: [], timestamp: new Date(y, m-1, d).getTime(), svod: false, ordered: false, userId: 'admin_dashboard', _isChanged: true };
-                                }
-                                workingOrders[pseudoKey].items.push(itm);
-                            }
-                        } else {
-                            newItemsArr.push(itm);
-                        }
-                    } else {
-                        o._isChanged = true;
-                    }
+                    if (itm.qty > 0) newItemsArr.push(itm);
+                    else o._isChanged = true;
                 }
                 o.items = newItemsArr;
             }
@@ -2494,7 +2471,7 @@ window.syncStoplistWithMenu = async function() {
 
                 let itemObj = { name: name, qty: qty, vendor: vendor, status: status, bot_error: (status==='error'), not_found: (status==='error'), cat: cat };
 
-                let targetK = findOrderKey(shop, dateStr);
+                let targetK = Object.keys(workingOrders).find(wk => workingOrders[wk].shop === shop && new Date(workingOrders[wk].timestamp).toLocaleDateString('ru-RU') === dateStr);
                 if (targetK) {
                     workingOrders[targetK].items.push(itemObj);
                     workingOrders[targetK]._isChanged = true;
@@ -2508,25 +2485,23 @@ window.syncStoplistWithMenu = async function() {
                 }
             });
 
-            // ФИНАЛЬНАЯ ПРОВЕРКА И ПРИВЯЗКА К ЭКРАНУ
+            // ФИНАЛЬНАЯ ПРОВЕРКА (НЕ АРХИВИРОВАТЬ ПРИ НОВЫХ ТОВАРАХ)
             for (let k in workingOrders) {
                 let o = workingOrders[k];
                 if (!o._isChanged) continue;
                 
                 let mergedItems = {};
-                let hasOrderedItems = false;
                 let hasPendingItems = false; 
                 let activeVendors = new Set();
                 
                 o.items.forEach(itm => {
                     if (!itm || !itm.name) return; 
                     
-                    let cName = itm.name + "___" + (itm.status || 'pending'); 
+                    let cName = cleanName(itm.name) + "_" + (itm.status || 'pending'); 
                     if (!mergedItems[cName]) mergedItems[cName] = { ...itm };
                     else mergedItems[cName].qty += (parseFloat(itm.qty) || 0);
                     
                     let stat = itm.status || 'pending';
-                    if (stat === 'ordered') hasOrderedItems = true;
                     if (stat === 'pending' || stat === 'from_stoplist') hasPendingItems = true; 
                     
                     if (stat === 'pending' || stat === 'ordered' || stat === 'from_stoplist') {
@@ -2540,9 +2515,7 @@ window.syncStoplistWithMenu = async function() {
                 o.items = Object.values(mergedItems);
                 if (o.items.length === 0) o.items = [{ name: "НЕТ ЗАКАЗА", qty: 0 }];
                 
-                if (hasOrderedItems) o.svod = true;
-                
-                // ⚡ ЕСЛИ ЕСТЬ ХОТЬ ОДИН ТОВАР В ОЖИДАНИИ -> ЗАКАЗ НЕ УХОДИТ В АРХИВ
+                // ⚡ ЖЕЛЕЗНОЕ ПРАВИЛО: Если в заказе есть "Ожидает", он не оформлен
                 if (hasPendingItems) o.ordered = false;
 
                 if (activeVendors.has('lenta')) o.lenta_received = false;
@@ -2562,13 +2535,11 @@ window.syncStoplistWithMenu = async function() {
             // МГНОВЕННОЕ ФОНОВОЕ СОХРАНЕНИЕ
             if (Object.keys(updates).length > 0) {
                 let cleanUpdates = JSON.parse(JSON.stringify(updates));
-                for (let uk in cleanUpdates) {
-                    cachedData.orders[uk] = cleanUpdates[uk];
-                }
+                for (let uk in cleanUpdates) cachedData.orders[uk] = cleanUpdates[uk];
                 db.ref('orders').update(cleanUpdates).catch(e => console.error(e));
             }
 
-            isSvodEditMode = false; svodDeletions = []; tempSvodQty = {}; tempSvodStatus = {}; tempSvodVendor = {}; tempSvodShop = {}; tempSvodNewRows = [];
+            isSvodEditMode = false; svodDeletions = []; tempSvodQty = {}; tempSvodStatus = {}; tempSvodVendor = {}; tempSvodName = {}; tempSvodNewRows = [];
             
             if(btn) btn.innerHTML = "✅ СОХРАНЕНО!";
             renderOrdersSvod(); 
@@ -2581,7 +2552,7 @@ window.syncStoplistWithMenu = async function() {
         }
     }
 
-    // ⚡ 3. БЫСТРЫЕ ДЕЙСТВИЯ (КЛИК ПО СТАТУСУ И УДАЛЕНИЕ)
+    // ⚡ 3. БЫСТРЫЕ ДЕЙСТВИЯ (КЛИК ПО СТАТУСУ И СМЕНА ТОВАРА)
     async function instantStatusToggle(dateStr, shop, compKey, currentStatus) {
         preserveSvodInputs(); 
         
@@ -2611,7 +2582,6 @@ window.syncStoplistWithMenu = async function() {
             
             if (itemIdx !== -1) {
                 let isError = (newStatus === 'error' || newStatus === 'not_found'); 
-                let isOrdered = (newStatus === 'ordered' || newStatus === 'already_received');
                 
                 itemsArr[itemIdx].status = newStatus;
                 itemsArr[itemIdx].bot_error = isError;
@@ -2622,18 +2592,6 @@ window.syncStoplistWithMenu = async function() {
                 localUpdates[`${targetOrderKey}/items/${itemIdx}/bot_error`] = isError;
                 localUpdates[`${targetOrderKey}/items/${itemIdx}/not_found`] = isError;
                 
-                if (isOrdered) {
-                    let vRaw = (itemsArr[itemIdx].vendor || 'Лента').toLowerCase();
-                    let vKey = 'lenta';
-                    if (vRaw.includes('озон') || vRaw.includes('ozon') || vRaw.includes('wb')) vKey = 'ozon';
-                    else if (vRaw.includes('купер') || vRaw.includes('kuper')) vKey = 'kuper';
-                    
-                    localUpdates[`${targetOrderKey}/${vKey}_received`] = false;
-                    order[`${vKey}_received`] = false;
-                    localUpdates[`${targetOrderKey}/svod`] = true;
-                    order.svod = true;
-                }
-                
                 let cleanUpdates = JSON.parse(JSON.stringify(localUpdates));
                 db.ref('orders').update(cleanUpdates).catch(e => console.error(e));
             }
@@ -2641,32 +2599,20 @@ window.syncStoplistWithMenu = async function() {
         renderOrdersSvod(); 
     }
 
-    function markSvodStatusChange(dateKey, shop, compKey, currentStatus) {
+    function markSvodItemChange(dateKey, shop, compKey, newName) {
         preserveSvodInputs();
-        if (!tempSvodStatus[dateKey]) tempSvodStatus[dateKey] = {};
-        if (!tempSvodStatus[dateKey][shop]) tempSvodStatus[dateKey][shop] = {};
-        
-        let newStatus = 'ordered'; 
-        if (currentStatus === 'pending' || currentStatus === 'from_stoplist') newStatus = 'ordered';
-        else if (currentStatus === 'ordered') newStatus = 'not_needed';
-        else if (currentStatus === 'not_needed') newStatus = 'error';
-        else if (currentStatus === 'error') newStatus = 'pending';
-
-        tempSvodStatus[dateKey][shop][compKey] = newStatus;
+        if (!tempSvodName[dateKey]) tempSvodName[dateKey] = {};
+        if (!tempSvodName[dateKey][shop]) tempSvodName[dateKey][shop] = {};
+        tempSvodName[dateKey][shop][compKey] = newName;
         renderOrdersSvod(); 
     }
 
     function markSvodVendorChange(dateKey, shop, compKey, newVendor) {
         preserveSvodInputs();
+        if (!tempSvodVendor[dateKey]) tempSvodVendor[dateKey] = {};
+        if (!tempSvodVendor[dateKey][shop]) tempSvodVendor[dateKey][shop] = {};
+        tempSvodVendor[dateKey][shop][compKey] = newVendor;
         recalcSvodTotals(); 
-    }
-
-    function markSvodShopChange(dateKey, oldShop, compKey, newShop) {
-        preserveSvodInputs();
-        if (!tempSvodShop[dateKey]) tempSvodShop[dateKey] = {};
-        if (!tempSvodShop[dateKey][oldShop]) tempSvodShop[dateKey][oldShop] = {};
-        tempSvodShop[dateKey][oldShop][compKey] = newShop;
-        renderOrdersSvod(); 
     }
 
     function markSvodDelete(btn, dateStr, shop, compKey) {
@@ -2678,13 +2624,11 @@ window.syncStoplistWithMenu = async function() {
     // ⚡ 4. ПЕРЕСЧЕТ ИТОГОВ НА ЛЕТУ
     function recalcSvodTotals() {
         preserveSvodInputs();
-        let totalLentaAll = 0, totalLentaRem = 0; 
-        let totalOzonAll = 0, totalOzonRem = 0; 
-        let totalKuperAll = 0, totalKuperRem = 0;
+        let totalLentaAll = 0, totalLentaRem = 0, totalOzonAll = 0, totalOzonRem = 0, totalKuperAll = 0, totalKuperRem = 0;
         let shopLentaSums = {};
         
-        const calculateRow = (shop, name, date, qty, vendor, itemStatus, isDeleted, inTransit) => {
-            let catItem = Object.values(cachedData.catalogOrder).find(c => c && c.name === name) || {};
+        const calculateRow = (shop, targetName, date, qty, vendor, itemStatus, isDeleted, inTransit) => {
+            let catItem = Object.values(cachedData.catalogOrder).find(c => c && c.name === targetName) || {};
             let isAutoKuper = false;
             let isLenta = vendor.includes('лента') || vendor.includes('lenta');
             
@@ -2707,16 +2651,9 @@ window.syncStoplistWithMenu = async function() {
             if (inTransit || itemStatus === 'error' || itemStatus === 'not_needed' || isDeleted) cost = 0;
             let isRemaining = (itemStatus === 'pending' || itemStatus === 'from_stoplist' || itemStatus === 'partial');
             
-            if (vendor.includes('лента') || vendor.includes('lenta')) {
-                totalLentaAll += cost;
-                if (isRemaining) totalLentaRem += cost;
-            } else if (vendor.includes('озон') || vendor.includes('ozon')) {
-                totalOzonAll += cost;
-                if (isRemaining) totalOzonRem += cost;
-            } else if (vendor.includes('купер') || vendor.includes('kuper')) {
-                totalKuperAll += cost;
-                if (isRemaining) totalKuperRem += cost;
-            }
+            if (vendor.includes('лента') || vendor.includes('lenta')) { totalLentaAll += cost; if (isRemaining) totalLentaRem += cost; } 
+            else if (vendor.includes('озон') || vendor.includes('ozon')) { totalOzonAll += cost; if (isRemaining) totalOzonRem += cost; } 
+            else if (vendor.includes('купер') || vendor.includes('kuper')) { totalKuperAll += cost; if (isRemaining) totalKuperRem += cost; }
         };
 
         document.querySelectorAll('.edit-svod-input').forEach(inp => {
@@ -2725,16 +2662,16 @@ window.syncStoplistWithMenu = async function() {
             let name = inp.getAttribute('data-item'); 
             let date = inp.getAttribute('data-date');
             
-            // Используем compKey для надежности
+            let targetName = (tempSvodName[date] && tempSvodName[date][shop] && tempSvodName[date][shop][compKey]) ? tempSvodName[date][shop][compKey] : name;
+            
             let vendorSelect = document.querySelector(`.edit-svod-vendor-select[data-key="${compKey.replace(/'/g, "\\'").replace(/"/g, '&quot;')}"][data-date="${date}"][data-shop="${shop.replace(/'/g, "\\'").replace(/"/g, '&quot;')}"]`);
             let vendor = vendorSelect ? vendorSelect.value.toLowerCase() : (inp.getAttribute('data-vendor') || 'лента').toLowerCase();
-            let targetShop = (tempSvodShop[date] && tempSvodShop[date][shop] && tempSvodShop[date][shop][compKey]) ? tempSvodShop[date][shop][compKey] : shop;
             let inTransit = inp.getAttribute('data-transit') === 'true';
             let isDeleted = inp.getAttribute('data-deleted') === 'true';
             let itemStatus = inp.getAttribute('data-status');
             let qty = parseFloat(inp.value) || 0;
 
-            calculateRow(targetShop, name, date, qty, vendor, itemStatus, isDeleted, inTransit);
+            calculateRow(shop, targetName, date, qty, vendor, itemStatus, isDeleted, inTransit);
         });
 
         document.querySelectorAll('.new-svod-row').forEach(row => {
@@ -2747,23 +2684,15 @@ window.syncStoplistWithMenu = async function() {
             if(name && qty > 0) calculateRow(shop, name, date, qty, vendor, status, false, false);
         });
         
-        let elLenta = document.getElementById('svod-total-lenta');
-        let remLenta = document.getElementById('svod-rem-lenta');
-        let elOzon = document.getElementById('svod-total-ozon');
-        let remOzon = document.getElementById('svod-rem-ozon');
-        let elKuper = document.getElementById('svod-total-kuper');
-        let remKuper = document.getElementById('svod-rem-kuper');
-        let elAll = document.getElementById('svod-total-all');
-        let remAll = document.getElementById('svod-rem-all');
+        let elLenta = document.getElementById('svod-total-lenta'); let remLenta = document.getElementById('svod-rem-lenta');
+        let elOzon = document.getElementById('svod-total-ozon'); let remOzon = document.getElementById('svod-rem-ozon');
+        let elKuper = document.getElementById('svod-total-kuper'); let remKuper = document.getElementById('svod-rem-kuper');
+        let elAll = document.getElementById('svod-total-all'); let remAll = document.getElementById('svod-rem-all');
         
-        if(elLenta) elLenta.innerText = Math.round(totalLentaAll) + " ₽";
-        if(remLenta) remLenta.innerText = Math.round(totalLentaRem) + " ₽";
-        if(elOzon) elOzon.innerText = Math.round(totalOzonAll) + " ₽";
-        if(remOzon) remOzon.innerText = Math.round(totalOzonRem) + " ₽";
-        if(elKuper) elKuper.innerText = Math.round(totalKuperAll) + " ₽";
-        if(remKuper) remKuper.innerText = Math.round(totalKuperRem) + " ₽";
-        if(elAll) elAll.innerText = Math.round(totalLentaAll + totalOzonAll + totalKuperAll) + " ₽";
-        if(remAll) remAll.innerText = Math.round(totalLentaRem + totalOzonRem + totalKuperRem) + " ₽";
+        if(elLenta) elLenta.innerText = Math.round(totalLentaAll) + " ₽"; if(remLenta) remLenta.innerText = Math.round(totalLentaRem) + " ₽";
+        if(elOzon) elOzon.innerText = Math.round(totalOzonAll) + " ₽"; if(remOzon) remOzon.innerText = Math.round(totalOzonRem) + " ₽";
+        if(elKuper) elKuper.innerText = Math.round(totalKuperAll) + " ₽"; if(remKuper) remKuper.innerText = Math.round(totalKuperRem) + " ₽";
+        if(elAll) elAll.innerText = Math.round(totalLentaAll + totalOzonAll + totalKuperAll) + " ₽"; if(remAll) remAll.innerText = Math.round(totalLentaRem + totalOzonRem + totalKuperRem) + " ₽";
     }
 
     // ⚡ 5. ГЛАВНАЯ ФУНКЦИЯ ОТРИСОВКИ ТАБЛИЦЫ
@@ -2830,7 +2759,7 @@ window.syncStoplistWithMenu = async function() {
                             i.status = 'already_received';
                         }
 
-                        // ⚡ СОЗДАЕМ КОМБИНИРОВАННЫЙ КЛЮЧ
+                        // СОЗДАЕМ УНИКАЛЬНЫЙ КЛЮЧ
                         let compKey = i.name + "___" + (i.status || 'pending');
 
                         if (!sd.items[compKey]) sd.items[compKey] = { name: i.name, qty: 0, bot_error: false, status: i.status || 'pending', vendor: i.vendor };
@@ -2855,12 +2784,11 @@ window.syncStoplistWithMenu = async function() {
                         let name = itemsObj[compKey].name;
                         let vendor = itemsObj[compKey].vendor || (Object.values(cachedData.catalogOrder || {}).find(c => c && c.name === name) || {}).vendor || 'Лента';
                         let actualVendor = (tempSvodVendor[dateStr] && tempSvodVendor[dateStr][shop] && tempSvodVendor[dateStr][shop][compKey]) ? tempSvodVendor[dateStr][shop][compKey] : vendor;
-                        let actualShop = (tempSvodShop[dateStr] && tempSvodShop[dateStr][shop] && tempSvodShop[dateStr][shop][compKey]) ? tempSvodShop[dateStr][shop][compKey] : shop;
-                        if (!shopLentaSums[actualShop]) shopLentaSums[actualShop] = 0;
+                        if (!shopLentaSums[shop]) shopLentaSums[shop] = 0;
                         let itemStatus = (tempSvodStatus[dateStr] && tempSvodStatus[dateStr][shop] && tempSvodStatus[dateStr][shop][compKey]) ? tempSvodStatus[dateStr][shop][compKey] : itemsObj[compKey].status;
                         
                         if (!svodDeletions.some(d => d.date === dateStr && d.shop === shop && d.key === compKey) && itemStatus !== 'error' && itemStatus !== 'not_found' && itemStatus !== 'not_needed' && itemStatus !== 'already_received' && (actualVendor.toLowerCase().includes('лента') || actualVendor.toLowerCase().includes('lenta'))) {
-                            shopLentaSums[actualShop] += (((tempSvodQty[dateStr] && tempSvodQty[dateStr][shop] && tempSvodQty[dateStr][shop][compKey] !== undefined) ? tempSvodQty[dateStr][shop][compKey] : itemsObj[compKey].qty) * (parseFloat((Object.values(cachedData.catalogOrder || {}).find(c => c && c.name === name) || {}).price) || 0));
+                            shopLentaSums[shop] += (((tempSvodQty[dateStr] && tempSvodQty[dateStr][shop] && tempSvodQty[dateStr][shop][compKey] !== undefined) ? tempSvodQty[dateStr][shop][compKey] : itemsObj[compKey].qty) * (parseFloat((Object.values(cachedData.catalogOrder || {}).find(c => c && c.name === name) || {}).price) || 0));
                         }
                     });
                 });
@@ -2942,7 +2870,7 @@ window.syncStoplistWithMenu = async function() {
                                 let name = shopsObj[shop].items[compKey].name;
                                 let catItem = Object.values(cachedData.catalogOrder || {}).find(c => c && c.name === name) || {};
                                 let actualVendor = (tempSvodVendor[dateStr] && tempSvodVendor[dateStr][shop] && tempSvodVendor[dateStr][shop][compKey]) ? tempSvodVendor[dateStr][shop][compKey] : (shopsObj[shop].items[compKey].vendor || catItem.vendor || 'Лента');
-                                let actualShop = (tempSvodShop[dateStr] && tempSvodShop[dateStr][shop] && tempSvodShop[dateStr][shop][compKey]) ? tempSvodShop[dateStr][shop][compKey] : shop;
+                                let targetName = (tempSvodName[dateStr] && tempSvodName[dateStr][shop] && tempSvodName[dateStr][shop][compKey]) ? tempSvodName[dateStr][shop][compKey] : name;
                                 let actualQty = (tempSvodQty[dateStr] && tempSvodQty[dateStr][shop] && tempSvodQty[dateStr][shop][compKey] !== undefined) ? tempSvodQty[dateStr][shop][compKey] : shopsObj[shop].items[compKey].qty;
                                 let isDeleted = svodDeletions.some(d => d.date === dateStr && d.shop === shop && d.key === compKey);
                                 
@@ -2950,7 +2878,7 @@ window.syncStoplistWithMenu = async function() {
                                 let isLenta = actualVendor.toLowerCase().includes('лента') || actualVendor.toLowerCase().includes('lenta');
                                 let isOzon = actualVendor.toLowerCase().includes('озон') || actualVendor.toLowerCase().includes('ozon');
 
-                                if (isLenta && shopLentaSums[actualShop] > 0 && shopLentaSums[actualShop] < 2000) { actualVendor = 'Купер (Авто)'; isAutoKuper = true; }
+                                if (isLenta && shopLentaSums[shop] > 0 && shopLentaSums[shop] < 2000) { actualVendor = 'Купер (Авто)'; isAutoKuper = true; }
 
                                 let vName = actualVendor || 'Неизвестно';
                                 if (!vendorCounters[vName]) vendorCounters[vName] = 0;
@@ -2962,7 +2890,7 @@ window.syncStoplistWithMenu = async function() {
 
                                 let checkInfoHtml = "-"; 
                                 let isStrictMissing = false;
-                                let mObj = Object.values(cachedData.missing || {}).find(m => m && m.shop === actualShop && cleanName(m.name) === cleanName(name) && m.status !== 'arrived' && m.status !== 'canceled');
+                                let mObj = Object.values(cachedData.missing || {}).find(m => m && m.shop === shop && cleanName(m.name) === cleanName(name) && m.status !== 'arrived' && m.status !== 'canceled');
                                 
                                 let rowBgStyle = "background-color: transparent;";
 
@@ -2993,14 +2921,6 @@ window.syncStoplistWithMenu = async function() {
                                 let price2 = parseFloat(catItem.price2) || 0;
                                 let finalPrice = (!isAutoKuper && (actualVendor.toLowerCase().includes('купер')) && price2 > 0) ? price2 : price1;
 
-                                let cost = finalPrice * (isDeleted ? 0 : actualQty);
-                                if (itemStatus === 'error' || itemStatus === 'not_found' || itemStatus === 'not_needed' || isDeleted) cost = 0; 
-                                
-                                let isRemaining = (itemStatus === 'pending' || itemStatus === 'from_stoplist' || itemStatus === 'partial');
-                                if (actualVendor.toLowerCase().includes('лента')) { totalLentaAll += cost; if(isRemaining) totalLentaRem += cost; } 
-                                else if (isOzon) { totalOzonAll += cost; if(isRemaining) totalOzonRem += cost; } 
-                                else if (actualVendor.toLowerCase().includes('купер')) { totalKuperAll += cost; if(isRemaining) totalKuperRem += cost; }
-
                                 let linksHtml = [(catItem.link ? `<a href="${catItem.link}" target="_blank" style="color:var(--brand-olive); font-size:12px; font-weight:600; text-decoration:none; text-transform:uppercase;">Осн</a>` : ""), (catItem.link2 ? `<a href="${catItem.link2}" target="_blank" style="color:var(--brand-danger); font-size:12px; font-weight:600; text-decoration:none; text-transform:uppercase; margin-left:8px;">Рез</a>` : "")].filter(Boolean).join(" ");
                                 let jsName = name.replace(/'/g, "\\'").replace(/"/g, '&quot;'), jsShop = shop.replace(/'/g, "\\'").replace(/"/g, '&quot;');
                                 let htmlName = name.replace(/"/g, '&quot;'), htmlShop = shop.replace(/"/g, '&quot;');
@@ -3023,8 +2943,11 @@ window.syncStoplistWithMenu = async function() {
                                     <tr class="svod-row svoditem_${safeShopDate} svodlvl3_of_${safeDate}" style="display:${displayShop}; opacity: ${isDeleted ? '0.4' : '1'}; ${rowBgStyle}">
                                         <td style="text-align:center; color:var(--text-muted); font-weight:600; font-size:12px;">${displayNum}</td>
                                         <td>
-                                            <div style="font-weight:500; margin-bottom:6px;">${name}</div>
-                                            <select class="edit-svod-shop-select" data-original-shop="${htmlShop}" data-item="${htmlName}" data-key="${htmlCompKey}" data-date="${dateStr}" style="font-size: 12px; padding: 6px; width: 100%;" onchange="markSvodShopChange('${dateStr}', '${jsShop}', '${jsCompKey}', this.value)" ${isDeleted ? 'disabled' : ''}>${shopListAll.map(sName => `<option value="${sName}" ${sName === actualShop ? 'selected' : ''}>${sName}</option>`).join('')}</select>
+                                            <div style="font-weight:500; margin-bottom:6px; display:none;">${targetName}</div>
+                                            <select class="edit-svod-item-select" data-shop="${htmlShop}" data-key="${htmlCompKey}" data-date="${dateStr}" style="font-size: 13px; padding: 6px; width: 100%; border:2px solid #7E57C2; border-radius:6px; color:#311b92; font-weight:bold;" onchange="markSvodItemChange('${dateStr}', '${jsShop}', '${jsCompKey}', this.value)" ${isDeleted ? 'disabled' : ''}>
+                                                <option value="${targetName.replace(/"/g, '&quot;')}" selected>${targetName}</option>
+                                                ${optionsHtml}
+                                            </select>
                                         </td>
                                         <td style="text-align:center; font-size:13px;">${checkInfoHtml}</td>
                                         <td style="text-align:left;"><input type="number" class="edit-svod-input" data-date="${dateStr}" data-shop="${htmlShop}" data-key="${htmlCompKey}" data-item="${htmlName}" data-vendor="${actualVendor}" data-price="${finalPrice}" data-deleted="${isDeleted}" data-status="${itemStatus}" value="${actualQty}" ${isDeleted ? 'disabled' : ''} oninput="recalcSvodTotals()" style="width: 45px; text-align: center; padding: 4px; font-weight:bold; font-size:15px; margin-right: 10px;"></td>
@@ -3084,7 +3007,9 @@ window.syncStoplistWithMenu = async function() {
             Object.values(orderCatalogFast).forEach(c => { if (c && c.name) orderCatMapFast[c.name] = c; });
 
             let fourteenDaysAgo = Date.now() - (14 * 24 * 60 * 60 * 1000);
-            let recvOrdersArr = allOrders.filter(o => o && (o.mode === 'order' || o.mode === 'new_shop') && o.timestamp >= fourteenDaysAgo);
+            
+            // ⚡ ЖЕЛЕЗНОЕ ПРАВИЛО: НЕ ЛЕТИТ К БАРИСТА ДО НАЖАТИЯ "ЗАКАЗЫ ОФОРМЛЕНЫ"
+            let recvOrdersArr = allOrders.filter(o => o && (o.mode === 'order' || o.mode === 'new_shop') && o.timestamp >= fourteenDaysAgo && o.ordered === true);
             let pendingReceivings = {};
             let allMissingItems = Object.values(cachedData.missing || {});
 

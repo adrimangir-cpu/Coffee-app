@@ -2501,7 +2501,6 @@ window.syncStoplistWithMenu = async function() {
         if (!mergedItems[cName]) mergedItems[cName] = { ...itm };
         else mergedItems[cName].qty += (parseFloat(itm.qty) || 0);
         
-        // ⚡ ГЛАВНЫЙ ФИКС: Если есть ожидающие товары (ручные добавления), заказ "оживает"
         if (itm.status === 'pending' || itm.status === 'from_stoplist') {
             hasPendingItems = true;
         }
@@ -2514,8 +2513,16 @@ window.syncStoplistWithMenu = async function() {
         }
       });
       
-      o.items = Object.values(mergedItems);
-      if (o.items.length === 0) o.items = [{ name: "НЕТ ЗАКАЗА", qty: 0 }];
+      // ⚡ ГЛАВНЫЙ ФИКС: Преобразуем массив в защищенный словарь для Мини-аппа
+      let finalItemsArray = Object.values(mergedItems);
+      if (finalItemsArray.length === 0) finalItemsArray = [{ name: "НЕТ ЗАКАЗА", qty: 0 }];
+      
+      let itemsDict = {};
+      finalItemsArray.forEach((itm, idx) => {
+          let safeKey = "item_" + Date.now() + "_" + idx + "_" + Math.floor(Math.random() * 10000);
+          itemsDict[safeKey] = itm;
+      });
+      o.items = itemsDict;
       
       if (!hasPendingItems && activeVendors.size > 0) {
         o.ordered = true;
@@ -2524,7 +2531,6 @@ window.syncStoplistWithMenu = async function() {
         if (activeVendors.has('ozon')) o.ozon_received = false;
         if (activeVendors.has('kuper')) o.kuper_received = false;
       } else {
-        // ⚡ Выводим заказ обратно в мини-апп, если добавились новые товары
         o.ordered = false;
         o.svod = false;
       }
@@ -2553,7 +2559,6 @@ window.syncStoplistWithMenu = async function() {
     alert("❌ Ошибка при сохранении: " + e.message);
   }
 }
-
     // ⚡ 3. БЫСТРЫЕ ДЕЙСТВИЯ (КЛИК ПО СТАТУСУ И СМЕНА ТОВАРА)
     async function instantStatusToggle(dateStr, shop, compKey, currentStatus) {
         preserveSvodInputs(); 
@@ -2632,7 +2637,6 @@ window.syncStoplistWithMenu = async function() {
         let shopLentaSums = {};
         
         const calculateRow = (shop, name, date, qty, vendor, itemStatus, isDeleted, inTransit) => {
-            // ⚡ ИСПРАВЛЕНИЕ: Безопасный поиск по справочнику
             let catItem = Object.values(cachedData.catalogOrder || {}).find(c => c && c.name === name) || {};
             let isAutoKuper = false;
             let isLenta = vendor.includes('лента') || vendor.includes('lenta');
@@ -2642,18 +2646,21 @@ window.syncStoplistWithMenu = async function() {
                 isAutoKuper = true;
             }
 
+            // ⚡ НАДЕЖНЫЙ ПАРСИНГ ЦЕН (Убираем пробелы, если цена "1 200")
+            let p1Raw = String(catItem.price || "0").replace(/\s/g, '').replace(',', '.');
+            let p2Raw = String(catItem.price2 || "0").replace(/\s/g, '').replace(',', '.');
+            let price1 = parseFloat(p1Raw) || 0;
+            let price2 = parseFloat(p2Raw) || 0;
+
             if (!shopLentaSums[shop]) shopLentaSums[shop] = 0;
             if (!isDeleted && !inTransit && itemStatus !== 'error' && itemStatus !== 'not_needed' && itemStatus !== 'already_received' && (isLenta || isAutoKuper)) {
-                shopLentaSums[shop] += (qty * (parseFloat(catItem.price)||0));
+                shopLentaSums[shop] += (qty * price1);
             }
             
-            let price1 = parseFloat(catItem.price) || 0;
-            let price2 = parseFloat(catItem.price2) || 0;
             let isRegularKuper = !isAutoKuper && (vendor.includes('купер') || vendor.includes('kuper'));
             let finalPrice = (isRegularKuper && price2 > 0) ? price2 : price1;
             
             let cost = finalPrice * (isDeleted ? 0 : qty);
-            
             if (inTransit || itemStatus === 'error' || itemStatus === 'not_needed' || isDeleted) cost = 0;
             
             let isRemaining = (itemStatus === 'pending' || itemStatus === 'from_stoplist' || itemStatus === 'partial');
@@ -2698,15 +2705,12 @@ window.syncStoplistWithMenu = async function() {
         });
         
         let sb = document.getElementById('svod-summary-block');
-        if(sb) sb.style.display = 'flex';
-        let elLenta = document.getElementById('svod-total-lenta');
-        let remLenta = document.getElementById('svod-rem-lenta');
-        let elOzon = document.getElementById('svod-total-ozon');
-        let remOzon = document.getElementById('svod-rem-ozon');
-        let elKuper = document.getElementById('svod-total-kuper');
-        let remKuper = document.getElementById('svod-rem-kuper');
-        let elAll = document.getElementById('svod-total-all');
-        let remAll = document.getElementById('svod-rem-all');
+        if(sb) sb.style.display = 'flex'; // ⚡ ПРИНУДИТЕЛЬНО ВОЗВРАЩАЕМ БЛОК ИТОГОВ НА ЭКРАН
+        
+        let elLenta = document.getElementById('svod-total-lenta'); let remLenta = document.getElementById('svod-rem-lenta');
+        let elOzon = document.getElementById('svod-total-ozon'); let remOzon = document.getElementById('svod-rem-ozon');
+        let elKuper = document.getElementById('svod-total-kuper'); let remKuper = document.getElementById('svod-rem-kuper');
+        let elAll = document.getElementById('svod-total-all'); let remAll = document.getElementById('svod-rem-all');
         
         if(elLenta) elLenta.innerText = Math.round(totalLentaAll) + " ₽";
         if(remLenta) remLenta.innerText = Math.round(totalLentaRem) + " ₽";
@@ -2719,7 +2723,7 @@ window.syncStoplistWithMenu = async function() {
     }
 
     // ⚡ 5. ГЛАВНАЯ ФУНКЦИЯ ОТРИСОВКИ ТАБЛИЦЫ
-    async function renderOrdersSvod() {
+  async function renderOrdersSvod() {
         try {
             const box = document.getElementById('content');
             let totalLentaAll = 0, totalLentaRem = 0, totalOzonAll = 0, totalOzonRem = 0, totalKuperAll = 0, totalKuperRem = 0;
@@ -2782,7 +2786,6 @@ window.syncStoplistWithMenu = async function() {
                             i.status = 'already_received';
                         }
 
-                        // СОЗДАЕМ УНИКАЛЬНЫЙ КЛЮЧ
                         let compKey = i.name + "___" + (i.status || 'pending');
 
                         if (!sd.items[compKey]) sd.items[compKey] = { name: i.name, qty: 0, bot_error: false, status: i.status || 'pending', vendor: i.vendor };
@@ -2811,7 +2814,12 @@ window.syncStoplistWithMenu = async function() {
                         let itemStatus = (tempSvodStatus[dateStr] && tempSvodStatus[dateStr][shop] && tempSvodStatus[dateStr][shop][compKey]) ? tempSvodStatus[dateStr][shop][compKey] : itemsObj[compKey].status;
                         
                         if (!svodDeletions.some(d => d.date === dateStr && d.shop === shop && d.key === compKey) && itemStatus !== 'error' && itemStatus !== 'not_found' && itemStatus !== 'not_needed' && itemStatus !== 'already_received' && (actualVendor.toLowerCase().includes('лента') || actualVendor.toLowerCase().includes('lenta'))) {
-                            shopLentaSums[shop] += (((tempSvodQty[dateStr] && tempSvodQty[dateStr][shop] && tempSvodQty[dateStr][shop][compKey] !== undefined) ? tempSvodQty[dateStr][shop][compKey] : itemsObj[compKey].qty) * (parseFloat((Object.values(cachedData.catalogOrder || {}).find(c => c && c.name === name) || {}).price) || 0));
+                            // ⚡ ФИКС 1: НАДЕЖНЫЙ ПАРСИНГ ЦЕНЫ ДЛЯ РАСЧЕТА ТИПА КУПЕРА
+                            let rawPrice = (Object.values(cachedData.catalogOrder || {}).find(c => c && c.name === name) || {}).price;
+                            let cleanPrice = parseFloat(String(rawPrice || "0").replace(/\s/g, '').replace(',', '.')) || 0;
+                            let qtyForSum = (tempSvodQty[dateStr] && tempSvodQty[dateStr][shop] && tempSvodQty[dateStr][shop][compKey] !== undefined) ? tempSvodQty[dateStr][shop][compKey] : itemsObj[compKey].qty;
+                            
+                            shopLentaSums[shop] += (qtyForSum * cleanPrice);
                         }
                     });
                 });
@@ -2940,9 +2948,20 @@ window.syncStoplistWithMenu = async function() {
 
                                 let itemStatus = (tempSvodStatus[dateStr] && tempSvodStatus[dateStr][shop] && tempSvodStatus[dateStr][shop][compKey]) ? tempSvodStatus[dateStr][shop][compKey] : baseStatus;
                                 
-                                let price1 = parseFloat(catItem.price) || 0;
-                                let price2 = parseFloat(catItem.price2) || 0;
+                                // ⚡ ФИКС 2: НАДЕЖНЫЙ ПАРСИНГ ЦЕН ДЛЯ ИТОГОВ
+                                let p1Raw = String(catItem.price || "0").replace(/\s/g, '').replace(',', '.');
+                                let p2Raw = String(catItem.price2 || "0").replace(/\s/g, '').replace(',', '.');
+                                let price1 = parseFloat(p1Raw) || 0;
+                                let price2 = parseFloat(p2Raw) || 0;
                                 let finalPrice = (!isAutoKuper && (actualVendor.toLowerCase().includes('купер')) && price2 > 0) ? price2 : price1;
+
+                                let cost = finalPrice * (isDeleted ? 0 : actualQty);
+                                if (itemStatus === 'error' || itemStatus === 'not_found' || itemStatus === 'not_needed' || isDeleted) cost = 0; 
+                                
+                                let isRemaining = (itemStatus === 'pending' || itemStatus === 'from_stoplist' || itemStatus === 'partial');
+                                if (actualVendor.toLowerCase().includes('лента')) { totalLentaAll += cost; if(isRemaining) totalLentaRem += cost; } 
+                                else if (isOzon) { totalOzonAll += cost; if(isRemaining) totalOzonRem += cost; } 
+                                else if (actualVendor.toLowerCase().includes('купер')) { totalKuperAll += cost; if(isRemaining) totalKuperRem += cost; }
 
                                 let linksHtml = [(catItem.link ? `<a href="${catItem.link}" target="_blank" style="color:var(--brand-olive); font-size:12px; font-weight:600; text-decoration:none; text-transform:uppercase;">Осн</a>` : ""), (catItem.link2 ? `<a href="${catItem.link2}" target="_blank" style="color:var(--brand-danger); font-size:12px; font-weight:600; text-decoration:none; text-transform:uppercase; margin-left:8px;">Рез</a>` : "")].filter(Boolean).join(" ");
                                 let jsName = name.replace(/'/g, "\\'").replace(/"/g, '&quot;'), jsShop = shop.replace(/'/g, "\\'").replace(/"/g, '&quot;');
@@ -3013,7 +3032,7 @@ window.syncStoplistWithMenu = async function() {
             
             html += `</table></div>`;
 
-            let displaySum = (totalLentaAll > 0 || totalOzonAll > 0 || totalKuperAll > 0 || isSvodEditMode) ? 'flex' : 'none';
+            let displaySum = 'flex'; // ⚡ ИТОГИ ОТОБРАЖАЮТСЯ ВСЕГДА
 
             html += `<div class="summary-block" id="svod-summary-block" style="display:${displaySum};">
                 <div class="summary-item">Лента<br><b id="svod-total-lenta">${Math.round(totalLentaAll)}</b><br><span style="font-size:10px;">Остаток: <span id="svod-rem-lenta">${Math.round(totalLentaRem)}</span></span></div>
@@ -6684,15 +6703,20 @@ async function exportGraphsToExcel() {
     });
     
 
-    // 2. Все Справочники и Меню
+   // 2. Все Справочники и Меню
     db.ref('catalogs').on('value', (snapshot) => {
         let cats = snapshot.val() || {};
         
-        cachedData.catalogOrder = { ...(cats.order || {}), ...(cats.newshop || {}) };
+        // ⚡ ФИКС СЛИЯНИЯ БАЗ: Защита от потери цен при объединении
+        let safeCatalogOrder = {};
+        let counter = 0;
+        Object.values(cats.order || {}).forEach(v => { if(v) safeCatalogOrder["item_" + (counter++)] = v; });
+        Object.values(cats.newshop || {}).forEach(v => { if(v) safeCatalogOrder["item_" + (counter++)] = v; });
+        
+        cachedData.catalogOrder = safeCatalogOrder;
         cachedData.catalogChecklist = cats.checklist || {};
         cachedData.catalogStoplist = cats.stoplist || {}; 
         
-        // ⚡ Раскидываем свежие справочники по кэш-папкам
         saveToCache('catalogs/order', cats.order || {});
         saveToCache('catalogs/newshop', cats.newshop || {});
         saveToCache('catalogs/checklist', cats.checklist || {});

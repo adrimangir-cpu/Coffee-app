@@ -1772,12 +1772,16 @@ window.syncStoplistWithMenu = async function() {
                 renderGraphsTab();
             }
         
-            else if (type === 'orders') {
+            eelse if (type === 'orders') {
                 isSvodEditMode = false; svodDeletions = []; tempSvodQty = {}; tempSvodStatus = {}; tempSvodVendor = {}; tempSvodShop = {}; tempSvodNewRows = [];
-                let ordersObj = await fetchOptimistic('orders');
+                let [ordersObj, chkCat] = await Promise.all([
+                    fetchOptimistic('orders'),
+                    fetchOptimistic('catalogs/checklist')
+                ]);
                 if (currentTabType !== fetchId) return;
                 Object.keys(ordersObj).forEach(k => { if (ordersObj[k]) ordersObj[k].key = k; });
                 cachedData.orders = ordersObj;
+                cachedData.catalogChecklist = chkCat;
                 await renderOrdersSvod();
             }
             else if (type === 'marketplace') {
@@ -1802,12 +1806,18 @@ window.syncStoplistWithMenu = async function() {
                 
                 renderMissing();
             }
-                
             else if (type === 'stoplists') {
-                cachedData.orders = await fetchOptimistic('orders');
+                // ⚡ ФИКС 1: Теперь подгружаем сам справочник Стоп-листов, чтобы связи напитков не исчезали!
+                let [resOrders, resStop] = await Promise.all([
+                    fetchOptimistic('orders'),
+                    fetchOptimistic('catalogs/stoplist')
+                ]);
+                cachedData.orders = resOrders;
+                cachedData.catalogStoplist = resStop || {};
                 if (currentTabType !== fetchId) return;
                 renderStoplists();
             }
+                
             else if (type === 'checks_table') {
                 isChecklistEditMode = false; 
                 // ⚡ ФИКС: Теперь мы принудительно подгружаем настройки (resSettings) при открытии вкладки
@@ -2421,12 +2431,17 @@ window.syncStoplistWithMenu = async function() {
       for (let i = 0; i < o.items.length; i++) {
         let itm = o.items[i];
         if (!itm || !itm.name || itm.name === "НЕТ ЗАКАЗА") continue;
-        let isDeleted = svodDeletions.some(d => d.date === dKey && d.shop === o.shop && d.name === itm.name);
+        
+
+        let compKey = itm.name + "___" + (itm.status || 'pending');
+        
+        let isDeleted = svodDeletions.some(d => d.date === dKey && d.shop === o.shop && (d.key === compKey || d.name === itm.name));
         if (isDeleted) { o._isChanged = true; continue; }
-        let qtyVal = tempSvodQty[dKey]?.[o.shop]?.[itm.name];
-        let statVal = tempSvodStatus[dKey]?.[o.shop]?.[itm.name];
-        let vendVal = tempSvodVendor[dKey]?.[o.shop]?.[itm.name];
-        let shopVal = tempSvodShop[dKey]?.[o.shop]?.[itm.name];
+        
+        let qtyVal = tempSvodQty[dKey]?.[o.shop]?.[compKey];
+        let statVal = tempSvodStatus[dKey]?.[o.shop]?.[compKey];
+        let vendVal = tempSvodVendor[dKey]?.[o.shop]?.[compKey];
+        let shopVal = tempSvodShop[dKey]?.[o.shop]?.[compKey];
         if (qtyVal !== undefined && parseFloat(qtyVal) !== parseFloat(itm.qty)) { itm.qty = parseFloat(qtyVal) || 0; o._isChanged = true; }
         if (vendVal && vendVal !== itm.vendor) { itm.vendor = vendVal; o._isChanged = true; }
         if (statVal && statVal !== itm.status) {

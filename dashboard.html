@@ -1954,8 +1954,9 @@ window.syncStoplistWithMenu = async function() {
             let orders = cachedData.orders || {};
             let missing = cachedData.missing || {};
             
-            // ⚡ Берем ТОЛЬКО Справочник Закупки
+            // ⚡ ИСКЛЮЧАЕМ ТОВАРЫ ИЗ ЧЕК-ЛИСТА
             let ordItems = Object.values(cachedData.catalogOrder || {}).filter(c => c && c.name);
+            let chkItems = Object.values(cachedData.catalogChecklist || {}).map(c => String(c?.name || '').trim().toLowerCase());
 
             let missingStatusMap = {};
             Object.values(missing).forEach(m => {
@@ -2014,8 +2015,8 @@ window.syncStoplistWithMenu = async function() {
                     if (i && i.name && i.qty === 'Закончилось') {
                         let cName = cleanName(i.name);
                         
-                        // ⚡ ИЩЕМ СТРОГО В ЗАКУПКЕ! (Игнорируем чек-листы)
-                        let catItem = ordItems.find(c => cleanName(c.name) === cName);
+                        // ⚡ ИЩЕМ СТРОГО В ЗАКУПКЕ И ИГНОРИРУЕМ ЧЕК-ЛИСТЫ!
+                        let catItem = ordItems.find(c => cleanName(c.name) === cName && !chkItems.includes(cName));
                         
                         if (catItem) {
                             let isTransit = missingStatusMap[shop] && (missingStatusMap[shop][cName] === 'transit' || missingStatusMap[shop][cName] === 'pending');
@@ -2416,6 +2417,7 @@ window.syncStoplistWithMenu = async function() {
         workingOrders[k]._isChanged = false;
       }
     }
+    
     const findOrderKey = (shop, dateStr) => {
       return Object.keys(workingOrders).find(k => {
         let o = workingOrders[k];
@@ -2432,7 +2434,6 @@ window.syncStoplistWithMenu = async function() {
         let itm = o.items[i];
         if (!itm || !itm.name || itm.name === "НЕТ ЗАКАЗА") continue;
         
-
         let compKey = itm.name + "___" + (itm.status || 'pending');
         
         let isDeleted = svodDeletions.some(d => d.date === dKey && d.shop === o.shop && (d.key === compKey || d.name === itm.name));
@@ -2442,15 +2443,18 @@ window.syncStoplistWithMenu = async function() {
         let statVal = tempSvodStatus[dKey]?.[o.shop]?.[compKey];
         let vendVal = tempSvodVendor[dKey]?.[o.shop]?.[compKey];
         let shopVal = tempSvodShop[dKey]?.[o.shop]?.[compKey];
+        let nameVal = tempSvodName[dKey]?.[o.shop]?.[compKey];
+        
+        if (nameVal && nameVal !== itm.name) { itm.name = nameVal; o._isChanged = true; }
         if (qtyVal !== undefined && parseFloat(qtyVal) !== parseFloat(itm.qty)) { itm.qty = parseFloat(qtyVal) || 0; o._isChanged = true; }
         if (vendVal && vendVal !== itm.vendor) { itm.vendor = vendVal; o._isChanged = true; }
         if (statVal && statVal !== itm.status) {
           o._isChanged = true;
           itm.status = statVal;
-          itm.bot_error = (statVal === 'error');
-          itm.not_found = (statVal === 'error');
-          itm.error = (statVal === 'error');
+          itm.bot_error = (statVal === 'error' || statVal === 'not_found');
+          itm.not_found = (statVal === 'error' || statVal === 'not_found');
         }
+        
         if (itm.qty > 0) {
           if (shopVal && shopVal !== o.shop) {
             o._isChanged = true;
@@ -2486,7 +2490,9 @@ window.syncStoplistWithMenu = async function() {
       if (!name || qty <= 0) return;
       let catItem = Object.values(cachedData.catalogOrder || {}).find(c => c && c.name === name) || {};
       let cat = catItem.cat || "Прочее";
-      let itemObj = { name: name, qty: qty, vendor: vendor, status: status, bot_error: (status==='error'), not_found: (status==='error'), cat: cat };
+      let isError = (status === 'error' || status === 'not_found');
+      let itemObj = { name: name, qty: qty, vendor: vendor, status: status, bot_error: isError, not_found: isError, cat: cat };
+      
       let targetK = findOrderKey(shop, dateStr);
       if (targetK) {
         workingOrders[targetK].items.push(itemObj);
@@ -2511,10 +2517,12 @@ window.syncStoplistWithMenu = async function() {
       
       o.items.forEach(itm => {
         if (!itm || !itm.name) return;
-        let cName = cleanName(itm.name);
         
-        if (!mergedItems[cName]) mergedItems[cName] = { ...itm };
-        else mergedItems[cName].qty += (parseFloat(itm.qty) || 0);
+        // ⚡ ИСПРАВЛЕНИЕ: склеиваем товары СТРОГО с учетом их статуса, чтобы они не перезаписывали друг друга!
+        let compKey = itm.name + "___" + (itm.status || 'pending');
+        
+        if (!mergedItems[compKey]) mergedItems[compKey] = { ...itm };
+        else mergedItems[compKey].qty += (parseFloat(itm.qty) || 0);
         
         if (itm.status === 'pending' || itm.status === 'from_stoplist') {
             hasPendingItems = true;
@@ -2528,7 +2536,6 @@ window.syncStoplistWithMenu = async function() {
         }
       });
       
-      // ⚡ ГЛАВНЫЙ ФИКС: Преобразуем массив в защищенный словарь для Мини-аппа
       let finalItemsArray = Object.values(mergedItems);
       if (finalItemsArray.length === 0) finalItemsArray = [{ name: "НЕТ ЗАКАЗА", qty: 0 }];
       
@@ -2558,13 +2565,15 @@ window.syncStoplistWithMenu = async function() {
         updates[k] = o;
       }
     }
+    
     if (Object.keys(updates).length > 0) {
       let cleanUpdates = JSON.parse(JSON.stringify(updates));
       for (let uk in cleanUpdates) cachedData.orders[uk] = cleanUpdates[uk];
       promises.push(db.ref('orders').update(cleanUpdates));
     }
     await Promise.all(promises);
-    isSvodEditMode = false; svodDeletions = []; tempSvodQty = {}; tempSvodStatus = {}; tempSvodVendor = {}; tempSvodShop = {}; tempSvodNewRows = [];
+    
+    isSvodEditMode = false; svodDeletions = []; tempSvodQty = {}; tempSvodStatus = {}; tempSvodVendor = {}; tempSvodShop = {}; tempSvodName = {}; tempSvodNewRows = [];
     if(btn) btn.innerHTML = "✅ СОХРАНЕНО!";
     renderOrdersSvod();
     setTimeout(() => { if(btn) { btn.innerHTML = origText; btn.disabled = false; } }, 1200);
@@ -2574,6 +2583,7 @@ window.syncStoplistWithMenu = async function() {
     alert("❌ Ошибка при сохранении: " + e.message);
   }
 }
+    
     // ⚡ 3. БЫСТРЫЕ ДЕЙСТВИЯ (КЛИК ПО СТАТУСУ И СМЕНА ТОВАРА)
     async function instantStatusToggle(dateStr, shop, compKey, currentStatus) {
         preserveSvodInputs(); 
@@ -2595,27 +2605,46 @@ window.syncStoplistWithMenu = async function() {
 
         if (targetOrderKey) {
             let order = cachedData.orders[targetOrderKey];
-            let itemsArr = Array.isArray(order.items) ? order.items : Object.values(order.items || {});
             
             let name = compKey.split('___')[0];
             let oldStatus = compKey.split('___')[1];
             
-            let itemIdx = itemsArr.findIndex(i => i && i.name === name && (i.status || 'pending') === oldStatus);
+            // ⚡ ИЩЕМ КЛЮЧ ТОВАРА БЕЗОПАСНО, ДАЖЕ ЕСЛИ ЭТО СЛОВАРЬ
+            let itemKey = Object.keys(order.items || {}).find(k => {
+                let i = order.items[k];
+                return i && i.name === name && (i.status || 'pending') === oldStatus;
+            });
             
-            if (itemIdx !== -1) {
+            if (itemKey !== undefined) {
                 let isError = (newStatus === 'error' || newStatus === 'not_found'); 
+                let isOrdered = (newStatus === 'ordered' || newStatus === 'already_received');
                 
-                itemsArr[itemIdx].status = newStatus;
-                itemsArr[itemIdx].bot_error = isError;
-                itemsArr[itemIdx].not_found = isError;
+                order.items[itemKey].status = newStatus;
+                order.items[itemKey].bot_error = isError;
+                order.items[itemKey].not_found = isError;
 
                 let localUpdates = {};
-                localUpdates[`${targetOrderKey}/items/${itemIdx}/status`] = newStatus;
-                localUpdates[`${targetOrderKey}/items/${itemIdx}/bot_error`] = isError;
-                localUpdates[`${targetOrderKey}/items/${itemIdx}/not_found`] = isError;
+                localUpdates[`${targetOrderKey}/items/${itemKey}/status`] = newStatus;
+                localUpdates[`${targetOrderKey}/items/${itemKey}/bot_error`] = isError;
+                localUpdates[`${targetOrderKey}/items/${itemKey}/not_found`] = isError;
+                
+                if (isOrdered) {
+                    let vRaw = (order.items[itemKey].vendor || 'Лента').toLowerCase();
+                    let vKey = 'lenta';
+                    if (vRaw.includes('озон') || vRaw.includes('ozon') || vRaw.includes('wb')) vKey = 'ozon';
+                    else if (vRaw.includes('купер') || vRaw.includes('kuper')) vKey = 'kuper';
+                    
+                    localUpdates[`${targetOrderKey}/${vKey}_received`] = false;
+                    order[`${vKey}_received`] = false;
+                    
+                    localUpdates[`${targetOrderKey}/ordered`] = true;
+                    localUpdates[`${targetOrderKey}/svod`] = true;
+                    order.ordered = true; 
+                    order.svod = true;
+                }
                 
                 let cleanUpdates = JSON.parse(JSON.stringify(localUpdates));
-                db.ref('orders').update(cleanUpdates).catch(e => console.error(e));
+                fetch(`${FB_URL}/orders.json`, { method: 'PATCH', body: JSON.stringify(cleanUpdates) });
             }
         }
         renderOrdersSvod(); 
@@ -5402,25 +5431,20 @@ window.syncStoplistWithMenu = async function() {
             const b64 = XLSX.write(wb, { type: "base64", bookType: "xlsx" });
 
             const excelDataUri = "data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64," + b64;
-            const ADMIN_CHAT_ID = "708179577"; 
             
-            await fetch(`${FB_URL}/bot_control/notifications.json`, {
-                method: 'POST',
-                body: JSON.stringify({ 
-                    type: "checklist_pdf",
-                    chat_id: ADMIN_CHAT_ID, 
-                    file_data: excelDataUri, 
-                    filename: `Техкарты_Себестоимость_${new Date().toLocaleDateString('ru-RU')}.xlsx`,
-                    text: "📊 Автоматический расчет себестоимости и Техкарты",
-                    timestamp: Date.now() 
-                })
-            });
+            // ⚡ ФИКС: СКАЧИВАЕМ ФАЙЛ НАПРЯМУЮ, А НЕ ОТПРАВЛЯЕМ В БАЗУ FIREBASE
+            let a = document.createElement('a');
+            a.href = excelDataUri;
+            a.download = `Техкарты_Себестоимость_${new Date().toLocaleDateString('ru-RU')}.xlsx`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
 
             hideReportOverlay();
-            alert("✅ Файл Excel успешно отправлен в Telegram!");
+            alert("✅ Файл Excel успешно сохранен на ваше устройство!");
         } catch(e) {
             hideReportOverlay();
-            alert("❌ Ошибка при отправке Excel: " + e.message);
+            alert("❌ Ошибка при генерации Excel: " + e.message);
         }
     }
     

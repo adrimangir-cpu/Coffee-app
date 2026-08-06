@@ -5980,6 +5980,14 @@ async function exportGraphsToExcel() {
             </div>
         `; 
         
+        // ⚡ ФИКС 2: Собираем список существующих категорий для выпадающего меню
+        let kbCats = new Set();
+        Object.values(cachedData.knowledge || {}).forEach(item => {
+            if (item && item.cat) kbCats.add(item.cat.trim());
+        });
+        let kbCatOptionsHtml = Array.from(kbCats).map(c => `<option value="${c.replace(/"/g, '&quot;')}"></option>`).join("");
+        html += `<datalist id="kb_categories_list">${kbCatOptionsHtml}</datalist>`;
+        
         let grouped = {};
         Object.keys(cachedData.knowledge || {}).forEach(k => {
             let item = cachedData.knowledge[k]; if(!item) return;
@@ -6028,15 +6036,33 @@ async function exportGraphsToExcel() {
                     }
                     photoSlotsHtml += `</div>`;
                 }
+
+                // ⚡ ФИКС 3: Список всех других инструкций для прикрепления ссылки
+                let kbLinkOptions = `<option value="">-- Без вложенной инструкции --</option>`;
+                Object.keys(cachedData.knowledge || {}).forEach(linkId => {
+                    if (linkId !== k) { // Исключаем саму себя
+                        let linkItem = cachedData.knowledge[linkId];
+                        let selected = (item.linked_kb_id === linkId) ? "selected" : "";
+                        kbLinkOptions += `<option value="${linkId}" ${selected}>${linkItem.title} (${linkItem.cat})</option>`;
+                    }
+                });
                 
                 html += `
                     <div style="border-bottom:1px dashed var(--line-delicate); padding:20px; background:#fff;">
                         <div style="display:flex; gap:10px; margin-bottom:10px; flex-wrap:wrap;">
-                            <input type="text" value="${item.cat || ''}" onchange="updateKbVal('${k}','cat',this.value)" style="width:250px;" placeholder="Название категории...">
+                            <input type="text" list="kb_categories_list" value="${item.cat || ''}" onchange="updateKbVal('${k}','cat',this.value)" style="width:250px;" placeholder="Выберите или введите категорию...">
                             <input type="text" value="${item.title || ''}" onchange="updateKbVal('${k}','title',this.value)" style="flex:1; font-weight:900; min-width: 250px;" placeholder="Заголовок инструкции...">
                             <button class="btn-del" onclick="deleteKbItem('${k}')" style="padding:6px 12px;">Удалить</button>
                         </div>
                         <textarea id="kb_text_${k}" rows="4" onchange="updateKbVal('${k}','text',this.value)" style="font-weight:normal; font-size:15px; width:100%; resize:vertical; line-height:1.5; padding:10px;" placeholder="Пропишите регламент, правила или инструкции...">${textValue}</textarea>
+                        
+                        <div style="margin-top:10px; padding:10px; background:#f5f5f5; border-radius:8px; border:1px dashed #ccc;">
+                            <b style="font-size:13px; color:#311b92;">🔗 Вложить ссылку на другую инструкцию (появится в мини-аппе):</b>
+                            <select onchange="updateKbVal('${k}', 'linked_kb_id', this.value)" style="width:100%; padding:8px; margin-top:5px; border-radius:6px; border:1px solid #7E57C2;">
+                                ${kbLinkOptions}
+                            </select>
+                        </div>
+
                         <button onclick="wrapSelectedTextWithPhotoTag('${k}')" class="btn-add" style="margin-top:8px; padding:6px 12px; font-size:13px;">🖼 Прикрепить фото к выделенному тексту</button>
                         <div style="margin-top:5px;">${photoSlotsHtml}</div>
                     </div>`;
@@ -6120,7 +6146,7 @@ async function exportGraphsToExcel() {
         renderKnowledgeBase();
     };
 
-    async function saveKnowledgeBase(btn) {
+   async function saveKnowledgeBase(btn) {
         if (document.activeElement) document.activeElement.blur(); // ⚡ Защита ввода
         let origText = btn.innerHTML;
         if (Object.keys(window.knowledgeChanges || {}).length === 0) { 
@@ -6134,9 +6160,16 @@ async function exportGraphsToExcel() {
                 updates[id] = window.knowledgeChanges[id] === null ? null : window.knowledgeChanges[id];
             }
             
-            // ⚡ МГНОВЕННЫЙ ПАКЕТНЫЙ ЗАПРОС
+            // ⚡ МГНОВЕННЫЙ ПАКЕТНЫЙ ЗАПРОС В БАЗУ
             await db.ref('knowledge_base').update(updates); 
             
+            // ⚡ ФИКС 1: Принудительно обновляем локальный кэш дашборда до перезагрузки вкладки
+            for(let id in updates) {
+                if (updates[id] === null) delete cachedData.knowledge[id];
+                else cachedData.knowledge[id] = updates[id];
+            }
+            saveToCache('knowledge_base', cachedData.knowledge);
+
             window.knowledgeChanges = {};
             btn.innerHTML = "✅ ИНСТРУКЦИИ СОХРАНЕНЫ!";
             setTimeout(() => { btn.innerHTML = origText; btn.disabled = false; loadTab('knowledge_base'); }, 1200);

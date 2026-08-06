@@ -5961,9 +5961,37 @@ async function exportGraphsToExcel() {
         }
     }
 
- function renderKnowledgeBase() {
+function renderKnowledgeBase() {
         const box = document.getElementById('content');
         
+        // ⚡ ГАРАНТИЯ: Создаем железобетонную функцию прямо здесь, чтобы она 100% работала
+        window.toggleKbCategory = function(safeCatId) {
+            let targetClass = 'kb_box_' + safeCatId;
+            let arrowId = 'arrow_kb_' + safeCatId;
+
+            // 1. Безопасно находим все открытые папки Базы Знаний
+            let allTrs = document.querySelectorAll('tr');
+            allTrs.forEach(tr => {
+                let kbClass = Array.from(tr.classList).find(c => c.startsWith('kb_box_'));
+                
+                // Если это другая папка и она открыта — закрываем её
+                if (kbClass && kbClass !== targetClass && tr.style.display !== 'none') {
+                    tr.style.display = 'none'; // Скрываем
+                    
+                    let otherSafeId = kbClass.replace('kb_box_', '');
+                    let arrEl = document.getElementById('arrow_kb_' + otherSafeId);
+                    if (arrEl) arrEl.innerText = '▼';
+                    
+                    if (typeof updateExpanded === 'function') updateExpanded(kbClass, false);
+                }
+            });
+
+            // 2. Открываем ту папку, по которой мы кликнули
+            if (typeof toggleCatElements === 'function') {
+                toggleCatElements(targetClass, arrowId);
+            }
+        };
+
         setupUniversalActionBar(`
             <div class="kb-actions action-container sticky-action-panel action-panel-dropdown" style="display: flex; flex-direction: column; margin-top: 10px;">
                 <div style="display:flex; gap:10px; width:100%;">
@@ -5980,7 +6008,6 @@ async function exportGraphsToExcel() {
             </div>
         `; 
         
-        // ⚡ ФИКС 2: Собираем список существующих категорий для выпадающего меню
         let kbCats = new Set();
         Object.values(cachedData.knowledge || {}).forEach(item => {
             if (item && item.cat) kbCats.add(item.cat.trim());
@@ -6006,7 +6033,8 @@ async function exportGraphsToExcel() {
             let safeCatId = getSafeId("kb_cat_" + cat);
             let isOpen = expandedDivs.has(`kb_box_${safeCatId}`);
             
-            html += `<tr class="cat-group-header" onclick="toggleKbCategory('kb_box_${safeCatId}', 'arrow_kb_${safeCatId}')">
+            // ⚡ Применяем умную функцию открытия/закрытия
+            html += `<tr class="cat-group-header" onclick="window.toggleKbCategory('${safeCatId}')">
                         <td><b>${cat}</b> <span id="arrow_kb_${safeCatId}" style="float:right;">${isOpen?'▲':'▼'}</span></td>
                      </tr>`;
             
@@ -6037,10 +6065,9 @@ async function exportGraphsToExcel() {
                     photoSlotsHtml += `</div>`;
                 }
 
-                // ⚡ ФИКС 3: Список всех других инструкций для прикрепления ссылки
                 let kbLinkOptions = `<option value="">-- Без вложенной инструкции --</option>`;
                 Object.keys(cachedData.knowledge || {}).forEach(linkId => {
-                    if (linkId !== k) { // Исключаем саму себя
+                    if (linkId !== k) { 
                         let linkItem = cachedData.knowledge[linkId];
                         let selected = (item.linked_kb_id === linkId) ? "selected" : "";
                         kbLinkOptions += `<option value="${linkId}" ${selected}>${linkItem.title} (${linkItem.cat})</option>`;
@@ -6072,7 +6099,6 @@ async function exportGraphsToExcel() {
         html += `</table></div>`;
         box.innerHTML = html;
     }
-
     function updateKbVal(id, field, val) {
         if(!window.knowledgeChanges) window.knowledgeChanges = {};
         if(!cachedData.knowledge[id]) cachedData.knowledge[id] = {};

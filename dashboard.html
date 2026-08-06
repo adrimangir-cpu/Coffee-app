@@ -2546,15 +2546,16 @@ window.syncStoplistWithMenu = async function() {
       });
       o.items = itemsDict;
       
-      if (!hasPendingItems && activeVendors.size > 0) {
-        o.ordered = true;
+      // ⚡ ФИКС 3: Заказ уходит в архив ТОЛЬКО по нажатию "Заказы оформлены"
+      if (hasPendingItems) {
+        o.ordered = false; // Возвращаем из архива, если появились ожидающие товары
+      }
+      
+      if (activeVendors.size > 0) {
         o.svod = true;
         if (activeVendors.has('lenta')) o.lenta_received = false;
         if (activeVendors.has('ozon')) o.ozon_received = false;
         if (activeVendors.has('kuper')) o.kuper_received = false;
-      } else {
-        o.ordered = false;
-        o.svod = false;
       }
       
       delete o._isChanged;
@@ -2609,7 +2610,6 @@ window.syncStoplistWithMenu = async function() {
             let name = compKey.split('___')[0];
             let oldStatus = compKey.split('___')[1];
             
-            // ⚡ ИЩЕМ КЛЮЧ ТОВАРА БЕЗОПАСНО, ДАЖЕ ЕСЛИ ЭТО СЛОВАРЬ
             let itemKey = Object.keys(order.items || {}).find(k => {
                 let i = order.items[k];
                 return i && i.name === name && (i.status || 'pending') === oldStatus;
@@ -2637,10 +2637,16 @@ window.syncStoplistWithMenu = async function() {
                     localUpdates[`${targetOrderKey}/${vKey}_received`] = false;
                     order[`${vKey}_received`] = false;
                     
-                    localUpdates[`${targetOrderKey}/ordered`] = true;
+                    // ⚡ ФИКС 1: УБРАЛИ АВТОМАТИЧЕСКУЮ ОТПРАВКУ ЗАКАЗА В АРХИВ!
+                    
                     localUpdates[`${targetOrderKey}/svod`] = true;
-                    order.ordered = true; 
                     order.svod = true;
+                }
+
+                // ⚡ ФИКС 2: Если вернули товар в "Ожидает", вытаскиваем весь заказ из архива
+                if (newStatus === 'pending' || newStatus === 'from_stoplist') {
+                    localUpdates[`${targetOrderKey}/ordered`] = false;
+                    order.ordered = false;
                 }
                 
                 let cleanUpdates = JSON.parse(JSON.stringify(localUpdates));

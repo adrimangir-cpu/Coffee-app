@@ -5965,38 +5965,85 @@ function renderKnowledgeBase() {
         const box = document.getElementById('content');
         
         // ⚡ ГАРАНТИЯ: Создаем железобетонную функцию прямо здесь, чтобы она 100% работала
-        window.toggleKbCategory = function(safeCatId) {
-            let targetClass = 'kb_box_' + safeCatId;
-            let arrowId = 'arrow_kb_' + safeCatId;
+        // ⚡ ФУНКЦИЯ 1: ЖЕЛЕЗОБЕТОННОЕ ОТКРЫТИЕ ПАПОК С АВТОСВОРАЧИВАНИЕМ
+    window.toggleKbCategory = function(safeCatId) {
+        let targetClass = 'kb_box_' + safeCatId;
+        let arrowId = 'arrow_kb_' + safeCatId;
 
-            // 1. Безопасно находим все открытые папки Базы Знаний
-            let allTrs = document.querySelectorAll('tr');
-            allTrs.forEach(tr => {
-                let kbClass = Array.from(tr.classList).find(c => c.startsWith('kb_box_'));
+        // 1. Ищем все открытые папки базы знаний и закрываем их
+        let allFolders = document.querySelectorAll('tr[class*="kb_box_"]');
+        allFolders.forEach(el => {
+            let kbClass = Array.from(el.classList).find(c => c.startsWith('kb_box_'));
+            // Если это ДРУГАЯ папка и она сейчас открыта — прячем её
+            if (kbClass && kbClass !== targetClass && el.style.display !== 'none') {
+                el.style.display = 'none'; // Скрываем
+                updateExpanded(kbClass, false); // Удаляем из памяти открытых
                 
-                // Если это другая папка и она открыта — закрываем её
-                if (kbClass && kbClass !== targetClass && tr.style.display !== 'none') {
-                    tr.style.display = 'none'; // Скрываем
-                    
-                    let otherSafeId = kbClass.replace('kb_box_', '');
-                    let arrEl = document.getElementById('arrow_kb_' + otherSafeId);
-                    if (arrEl) arrEl.innerText = '▼';
-                    
-                    if (typeof updateExpanded === 'function') updateExpanded(kbClass, false);
-                }
-            });
-
-            // 2. Открываем ту папку, по которой мы кликнули
-            if (typeof toggleCatElements === 'function') {
-                toggleCatElements(targetClass, arrowId);
+                // Переворачиваем стрелочку обратно
+                let arrId = kbClass.replace('kb_box_', 'arrow_kb_');
+                let arrEl = document.getElementById(arrId);
+                if (arrEl) arrEl.innerText = '▼';
             }
-        };
+        });
 
+        // 2. Открываем или закрываем ту папку, по которой кликнули
+        toggleCatElements(targetClass, arrowId);
+    };
+
+    // ⚡ ФУНКЦИЯ 2: МГНОВЕННОЕ СОХРАНЕНИЕ БЕЗ ПЕРЕЗАГРУЗОК
+    window.saveKnowledgeBase = async function(btn) {
+        if (document.activeElement) document.activeElement.blur(); // Снимаем фокус
+        
+        let origText = btn.innerHTML;
+        if (!window.knowledgeChanges || Object.keys(window.knowledgeChanges).length === 0) { 
+            btn.innerHTML = "✅ ИЗМЕНЕНИЙ НЕТ"; 
+            setTimeout(() => { btn.innerHTML = origText; }, 1200); 
+            return; 
+        }
+        
+        btn.disabled = true; 
+        btn.innerHTML = "⌛ СОХРАНЕНИЕ...";
+        
+        try {
+            let updates = {};
+            for(let id in window.knowledgeChanges) {
+                updates[id] = window.knowledgeChanges[id] === null ? null : window.knowledgeChanges[id];
+            }
+            
+            // 1. Записываем изменения на сервер
+            await db.ref('knowledge_base').update(updates); 
+            
+            // 2. СКАЧИВАЕМ АБСОЛЮТНО СВЕЖИЕ ДАННЫЕ (чтобы кэш не глючил)
+            let freshSnap = await db.ref('knowledge_base').once('value');
+            cachedData.knowledge = freshSnap.val() || {};
+            
+            // 3. Обновляем память дашборда навсегда
+            if (typeof saveToCache === 'function') saveToCache('knowledge_base', cachedData.knowledge);
+
+            // Очищаем трекер
+            window.knowledgeChanges = {};
+            btn.innerHTML = "✅ СОХРАНЕНО!";
+            
+            // 4. ПЕРЕРИСОВЫВАЕМ ИНТЕРФЕЙС НА ЛЕТУ (никаких loadTab и зависаний!)
+            renderKnowledgeBase();
+            
+            setTimeout(() => { btn.innerHTML = origText; btn.disabled = false; }, 1200);
+        } catch(e) { 
+            btn.innerHTML = origText; 
+            btn.disabled = false; 
+            alert("Ошибка сохранения: " + e.message); 
+        }
+    };
+
+    // ⚡ ФУНКЦИЯ 3: ИНТЕРФЕЙС БАЗЫ ЗНАНИЙ
+    function renderKnowledgeBase() {
+        const box = document.getElementById('content');
+        
         setupUniversalActionBar(`
             <div class="kb-actions action-container sticky-action-panel action-panel-dropdown" style="display: flex; flex-direction: column; margin-top: 10px;">
                 <div style="display:flex; gap:10px; width:100%;">
                     <button class="btn-add" style="flex:1;" onclick="addKbRuleUI()">➕ Создать новое правило/инструкцию</button>
-                    <button class="btn-save" style="flex:1;" onclick="saveKnowledgeBase(this)">💾 Сохранить базу знаний</button>
+                    <button class="btn-save" style="flex:1;" onclick="window.saveKnowledgeBase(this)">💾 Сохранить базу знаний</button>
                 </div>
             </div>
         `, expandedDivs.has('main_action_bar_state'), 'arrow_kb_actions');
@@ -6008,6 +6055,7 @@ function renderKnowledgeBase() {
             </div>
         `; 
         
+        // Список категорий для автодополнения
         let kbCats = new Set();
         Object.values(cachedData.knowledge || {}).forEach(item => {
             if (item && item.cat) kbCats.add(item.cat.trim());
@@ -6033,7 +6081,6 @@ function renderKnowledgeBase() {
             let safeCatId = getSafeId("kb_cat_" + cat);
             let isOpen = expandedDivs.has(`kb_box_${safeCatId}`);
             
-            // ⚡ Применяем умную функцию открытия/закрытия
             html += `<tr class="cat-group-header" onclick="window.toggleKbCategory('${safeCatId}')">
                         <td><b>${cat}</b> <span id="arrow_kb_${safeCatId}" style="float:right;">${isOpen?'▲':'▼'}</span></td>
                      </tr>`;
@@ -6099,6 +6146,7 @@ function renderKnowledgeBase() {
         html += `</table></div>`;
         box.innerHTML = html;
     }
+    
     function updateKbVal(id, field, val) {
         if(!window.knowledgeChanges) window.knowledgeChanges = {};
         if(!cachedData.knowledge[id]) cachedData.knowledge[id] = {};

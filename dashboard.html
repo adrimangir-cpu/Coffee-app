@@ -6046,11 +6046,11 @@ async function exportGraphsToExcel() {
         let html = `
             <div class="card" style="background:#fff3e0!important; padding:15px 20px; font-size:14px; margin-bottom:20px; border:2px dashed #ffb74d!important;">
                 💡 <b>Как прикрепить фото к тексту:</b><br>
-                1. Напишите текст. 2. Выделите слово. 3. Нажмите кнопку <b>"🖼 Прикрепить фото"</b> ниже. 4. Вставьте картинку (Ctrl+V) в появившийся слот.<br>
-                ✨ <b>Вставка таблиц:</b> Просто скопируйте таблицу из Excel или Word и вставьте её (Ctrl+V) прямо в текстовое поле!
+                1. Напишите текст инструкции. 2. Выделите левой кнопкой мыши нужное слово. 3. Нажмите кнопку <b>"🖼 Прикрепить фото к выделенному тексту"</b> под полем ввода. 4. В появившееся ниже окошко вставьте скопированную картинку (Ctrl+V).
             </div>
         `; 
         
+        // Список категорий для автодополнения
         let kbCats = new Set();
         Object.values(cachedData.knowledge || {}).forEach(item => {
             if (item && item.cat) kbCats.add(item.cat.trim());
@@ -6067,7 +6067,7 @@ async function exportGraphsToExcel() {
         });
 
         let sortedCats = Object.keys(grouped).sort();
-        if(sortedCats.length === 0) html += `<div class="card" style="text-align:center; color:var(--text-muted); font-weight:bold; padding:30px;">База знаний пока пуста.</div>`;
+        if(sortedCats.length === 0) html += `<div class="card" style="text-align:center; color:var(--text-muted); font-weight:bold; padding:30px;">База знаний пока пуста. Нажмите кнопку выше, чтобы добавить свод правил.</div>`;
 
         html += `<div class="card" style="padding:0;">
                     <table style="width:100%; margin:0;">`;
@@ -6077,10 +6077,11 @@ async function exportGraphsToExcel() {
             let isOpen = expandedDivs.has(`kb_box_${safeCatId}`);
             
             html += `<tr class="cat-group-header" onclick="window.toggleKbCategory('${safeCatId}')">
-                        <td><b>${cat}</b> <span id="arrow_kb_${safeCatId}" style="float:right;">${isOpen?'▲':'▼'}</span></td>
+                        <td style="padding:15px 20px; font-size:16px;"><b>${cat}</b> <span id="arrow_kb_${safeCatId}" style="float:right; color:var(--brand-maroon);">${isOpen?'▲':'▼'}</span></td>
                      </tr>`;
             
-            html += `<tr class="kb_box_${safeCatId}" style="display:${isOpen ? 'table-row' : 'none'}; background: var(--bg-paper);"><td style="padding:15px;">`;
+            // Серый фон контейнера, как на скриншоте
+            html += `<tr class="kb_box_${safeCatId}" style="display:${isOpen ? 'table-row' : 'none'};"><td style="padding:10px 15px; background:#ecebe9;">`;
                 
             grouped[cat].forEach(node => {
                 let k = node.id; let item = node.data;
@@ -6092,11 +6093,11 @@ async function exportGraphsToExcel() {
                 
                 while ((match = regex.exec(textValue)) !== null) {
                     let n = match[1];
-                    let word = match[2].replace(/<[^>]*>?/gm, ''); // Очищаем от HTML тегов для заголовка
+                    let word = match[2];
                     let pKey = `photo_${n}`;
                     let pData = item[pKey] || "";
                     
-                    photoSlotsHtml += `<div style="display:flex; align-items:center; gap:10px; margin-top:12px; background:var(--bg-window); padding:8px 12px; border-radius:8px; border:1px solid var(--line-delicate);">
+                    photoSlotsHtml += `<div style="display:flex; align-items:center; gap:10px; margin-top:12px; background:var(--bg-paper); padding:8px 12px; border-radius:8px; border:1px solid var(--line-delicate);">
                         <b style="width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:14px;">📸 Фото для: "${word}"</b>`;
                     
                     if (pData) {
@@ -6116,35 +6117,37 @@ async function exportGraphsToExcel() {
                     }
                 });
                 
-                // ⚡ ЛОГИКА АККОРДЕОНА: Проверяем, открыто ли само правило
-                let safeRuleId = getSafeId("rule_" + k);
-                let isRuleOpen = expandedDivs.has(`kb_rule_body_${safeRuleId}`);
-                if (!item.title && !item.text) isRuleOpen = true; // Открываем новые правила автоматически
+                // Проверяем, развернуто ли конкретное правило
+                let isRuleOpen = expandedDivs.has(`kb_rule_${k}`);
+                if (!item.title && !item.text) isRuleOpen = true; // Авто-раскрытие для новых правил
 
+                // Плашка правила в стиле скриншота image_02dac4.jpg
                 html += `
-                    <div style="border-bottom:1px dashed var(--line-delicate); padding:15px; background:var(--bg-window); margin-bottom:12px; border-radius:8px; border:1px solid #ddd; box-shadow: 0 4px 10px rgba(0,0,0,0.03);">
-                        
-                        <!-- ⚡ ЗАГОЛОВОК ПРАВИЛА С КНОПКОЙ РАСКРЫТИЯ -->
-                        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; cursor:pointer;" onclick="toggleCatElements('kb_rule_body_${safeRuleId}', 'arrow_rule_${safeRuleId}')">
-                            <input type="text" list="kb_categories_list" value="${item.cat || ''}" onchange="updateKbVal('${k}','cat',this.value)" onclick="event.stopPropagation()" style="width:200px; padding:8px; border-radius:6px; font-size:14px;" placeholder="Категория...">
-                            <input type="text" value="${item.title || ''}" onchange="updateKbVal('${k}','title',this.value)" onclick="event.stopPropagation()" style="flex:1; font-weight:900; min-width:200px; padding:8px; font-size:16px; border-radius:6px;" placeholder="Заголовок инструкции...">
-                            <button class="btn-del" onclick="event.stopPropagation(); deleteKbItem('${k}')" style="padding:8px 14px;">Удалить</button>
-                            <span id="arrow_rule_${safeRuleId}" style="margin-left:10px; color:var(--text-muted); font-size:16px;">${isRuleOpen ? '▲' : '▼'}</span>
+                    <div style="background:#fff; border-radius:6px; margin-bottom:6px; border:1px solid #dcdcdc; box-shadow:0 1px 3px rgba(0,0,0,0.05);">
+                        <!-- Шапка правила (всегда видна) -->
+                        <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 15px; cursor:pointer;" onclick="toggleCatElements('kb_rule_${k}', 'arrow_rule_${k}')">
+                            <div style="display:flex; gap:15px; flex:1; align-items:center;">
+                                <input type="text" list="kb_categories_list" value="${item.cat || ''}" onchange="updateKbVal('${k}','cat',this.value)" onclick="event.stopPropagation()" style="width:200px; padding:6px 10px; border-radius:4px; border:1px solid #eee; font-size:13px; color:var(--text-muted);" placeholder="Категория">
+                                <input type="text" value="${item.title || ''}" onchange="updateKbVal('${k}','title',this.value)" onclick="event.stopPropagation()" style="flex:1; font-weight:bold; font-size:14px; color:var(--text-main); border:none; outline:none; background:transparent;" placeholder="Название инструкции...">
+                            </div>
+                            <div style="display:flex; gap:15px; align-items:center;">
+                                <button class="btn-del" onclick="event.stopPropagation(); deleteKbItem('${k}')" style="background:transparent; border:none; color:var(--brand-danger); font-size:10px; text-transform:uppercase; font-weight:bold; cursor:pointer; opacity:0.7; padding:4px;">удалить</button>
+                                <span id="arrow_rule_${k}" style="color:var(--brand-maroon); font-size:14px; margin-left:10px;">${isRuleOpen ? '▲' : '▼'}</span>
+                            </div>
                         </div>
-
-                        <!-- ⚡ СВОРАЧИВАЕМОЕ ТЕЛО ПРАВИЛА (С РЕДАКТОРОМ И ФОТО) -->
-                        <div class="kb_rule_body_${safeRuleId}" style="display:${isRuleOpen ? 'block' : 'none'}; margin-top:15px;">
-                            <!-- ⚡ УМНЫЙ РЕДАКТОР ВМЕСТО TEXTAREA -->
-                            <div id="kb_text_${k}" class="kb-editor-textarea" contenteditable="true" style="min-height: 120px; font-size:15px; padding:15px; border:1px solid #ccc; border-radius:8px; background:#fff;">${textValue}</div>
+                        
+                        <!-- Тело правила (сворачивается) -->
+                        <div class="kb_rule_${k}" style="display:${isRuleOpen ? 'block' : 'none'}; padding:15px; border-top:1px solid #eee; background:#fafafa;">
+                            <textarea id="kb_text_${k}" rows="5" onchange="updateKbVal('${k}','text',this.value)" style="font-weight:normal; font-size:14px; width:100%; resize:vertical; line-height:1.5; padding:10px; border:1px solid #ccc; border-radius:6px;" placeholder="Пропишите регламент, правила или инструкции...">${textValue}</textarea>
                             
-                            <div style="margin-top:15px; padding:10px; background:#f5f5f5; border-radius:8px; border:1px dashed #ccc;">
-                                <b style="font-size:13px; color:#311b92;">🔗 Вложить ссылку на другую инструкцию (появится в мини-аппе):</b>
-                                <select onchange="updateKbVal('${k}', 'linked_kb_id', this.value)" style="width:100%; padding:8px; margin-top:5px; border-radius:6px; border:1px solid #7E57C2;">
+                            <div style="margin-top:10px; padding:10px; background:#fff; border-radius:6px; border:1px dashed #ccc;">
+                                <b style="font-size:12px; color:#311b92;">🔗 Вложить ссылку на другую инструкцию:</b>
+                                <select onchange="updateKbVal('${k}', 'linked_kb_id', this.value)" style="width:100%; padding:6px; margin-top:5px; border-radius:4px; border:1px solid #ddd; font-size:13px;">
                                     ${kbLinkOptions}
                                 </select>
                             </div>
 
-                            <button onclick="wrapSelectedTextWithPhotoTag('${k}')" class="btn-add" style="margin-top:15px; padding:8px 14px; font-size:13px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);">🖼 Прикрепить фото к выделенному тексту</button>
+                            <button onclick="wrapSelectedTextWithPhotoTag('${k}')" class="action-bar-toggle-btn" style="margin-top:10px; padding:6px 12px; font-size:12px; border:1px solid var(--line-delicate); background:#fff;">🖼 Прикрепить фото к выделенному тексту</button>
                             <div style="margin-top:5px;">${photoSlotsHtml}</div>
                         </div>
                     </div>`;
@@ -6153,32 +6156,6 @@ async function exportGraphsToExcel() {
         });
         html += `</table></div>`;
         box.innerHTML = html;
-
-        // ⚡ ИНИЦИАЛИЗАЦИЯ CKEDITOR 4 ПОСЛЕ ОТРИСОВКИ DOM
-        setTimeout(() => {
-            if (typeof CKEDITOR !== 'undefined') {
-                CKEDITOR.disableAutoInline = true; // Отключаем автозапуск
-                // Уничтожаем старые инстансы, чтобы избежать утечек памяти при перерисовке
-                for (let name in CKEDITOR.instances) { CKEDITOR.instances[name].destroy(true); }
-                
-                document.querySelectorAll('.kb-editor-textarea').forEach(el => {
-                    CKEDITOR.inline(el.id, {
-                        extraPlugins: 'pastefromword', // Плагин чистого копирования из офиса
-                        toolbar: [
-                            { name: 'clipboard', items: [ 'PasteFromWord', '-', 'Undo', 'Redo' ] },
-                            { name: 'basicstyles', items: [ 'Bold', 'Italic', 'Underline', 'Strike', 'RemoveFormat' ] },
-                            { name: 'paragraph', items: [ 'NumberedList', 'BulletedList', '-', 'Outdent', 'Indent' ] },
-                            { name: 'insert', items: [ 'Table', 'HorizontalRule' ] },
-                            { name: 'colors', items: [ 'TextColor', 'BGColor' ] }
-                        ]
-                    });
-                    // Привязываем сохранение изменений в базу данных
-                    CKEDITOR.instances[el.id].on('change', function() {
-                        updateKbVal(el.id.replace('kb_text_', ''), 'text', this.getData());
-                    });
-                });
-            }
-        }, 150);
     }
     
     function updateKbVal(id, field, val) {

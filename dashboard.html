@@ -274,6 +274,46 @@ h1, h2, h3, h4 { font-family: var(--font-fashion); color: var(--brand-maroon); f
     
 
 
+/* ⚡ Стили для умного редактора Базы Знаний */
+.kb-rich-editor {
+    font-family: var(--font-data);
+    font-size: 15px;
+    width: 100%;
+    min-height: 120px;
+    padding: 12px;
+    border: 1px solid var(--line-delicate);
+    border-radius: 6px;
+    background: #fff;
+    overflow-y: auto;
+    line-height: 1.5;
+    box-sizing: border-box;
+    cursor: text;
+}
+.kb-rich-editor:empty:before {
+    content: attr(data-placeholder);
+    color: #999;
+}
+/* Чтобы вставленные таблицы из Word/Excel красиво выглядели */
+.kb-rich-editor table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 10px 0;
+}
+.kb-rich-editor th, .kb-rich-editor td {
+    border: 1px solid #ddd;
+    padding: 8px;
+    text-align: left;
+}
+.kb-rich-editor th {
+    background-color: #f5f5f5;
+}
+.kb-rich-editor ul, .kb-rich-editor ol {
+    padding-left: 24px;
+    margin: 10px 0;
+}
+
+
+    
     .kb-editor-textarea table {
         display: block;
         max-width: 100%;
@@ -6093,7 +6133,7 @@ async function exportGraphsToExcel() {
                 
                 while ((match = regex.exec(textValue)) !== null) {
                     let n = match[1];
-                    let word = match[2];
+                    let word = match[2].replace(/<[^>]*>?/gm, ''); // Очищаем от HTML тегов для вывода в заголовок
                     let pKey = `photo_${n}`;
                     let pData = item[pKey] || "";
                     
@@ -6121,7 +6161,7 @@ async function exportGraphsToExcel() {
                 let isRuleOpen = expandedDivs.has(`kb_rule_${k}`);
                 if (!item.title && !item.text) isRuleOpen = true; // Авто-раскрытие для новых правил
 
-                // Плашка правила в стиле скриншота image_02dac4.jpg
+                // Плашка правила
                 html += `
                     <div style="background:#fff; border-radius:6px; margin-bottom:6px; border:1px solid #dcdcdc; box-shadow:0 1px 3px rgba(0,0,0,0.05);">
                         <!-- Шапка правила (всегда видна) -->
@@ -6138,7 +6178,9 @@ async function exportGraphsToExcel() {
                         
                         <!-- Тело правила (сворачивается) -->
                         <div class="kb_rule_${k}" style="display:${isRuleOpen ? 'block' : 'none'}; padding:15px; border-top:1px solid #eee; background:#fafafa;">
-                            <textarea id="kb_text_${k}" rows="5" onchange="updateKbVal('${k}','text',this.value)" style="font-weight:normal; font-size:14px; width:100%; resize:vertical; line-height:1.5; padding:10px; border:1px solid #ccc; border-radius:6px;" placeholder="Пропишите регламент, правила или инструкции...">${textValue}</textarea>
+                            
+                            <!-- ⚡ УМНОЕ ТЕКСТОВОЕ ПОЛЕ -->
+                            <div id="kb_text_${k}" class="kb-rich-editor" contenteditable="true" onblur="updateKbVal('${k}','text',this.innerHTML)" data-placeholder="Пропишите регламент, вставьте таблицу или скопированный текст...">${textValue}</div>
                             
                             <div style="margin-top:10px; padding:10px; background:#fff; border-radius:6px; border:1px dashed #ccc;">
                                 <b style="font-size:12px; color:#311b92;">🔗 Вложить ссылку на другую инструкцию:</b>
@@ -6147,7 +6189,7 @@ async function exportGraphsToExcel() {
                                 </select>
                             </div>
 
-                            <button onclick="wrapSelectedTextWithPhotoTag('${k}')" class="action-bar-toggle-btn" style="margin-top:10px; padding:6px 12px; font-size:12px; border:1px solid var(--line-delicate); background:#fff;">🖼 Прикрепить фото к выделенному тексту</button>
+                            <button onclick="wrapSelectedTextWithPhotoTag('${k}')" class="btn-add" style="margin-top:10px; padding:6px 12px; font-size:12px; border:1px solid var(--line-delicate); background:#fff;">🖼 Прикрепить фото к выделенному тексту</button>
                             <div style="margin-top:5px;">${photoSlotsHtml}</div>
                         </div>
                     </div>`;
@@ -6181,32 +6223,44 @@ async function exportGraphsToExcel() {
         renderKnowledgeBase();
     }
 
+   // ⚡ Оборачивает выделенный текст в умный тег (Обновлено для contenteditable)
     window.wrapSelectedTextWithPhotoTag = function(id) {
-        let editor = CKEDITOR.instances[`kb_text_${id}`];
-        if (!editor) return;
-
-        let selectedText = editor.getSelection().getSelectedText();
+        let editor = document.getElementById(`kb_text_${id}`);
+        let selection = window.getSelection();
         
-        if (!selectedText || selectedText.trim() === "") {
-            alert("Сначала выделите левой кнопкой мыши слово или фразу в тексте, а затем нажмите эту кнопку!");
+        // Проверяем, выделил ли пользователь текст
+        if (selection.rangeCount === 0 || selection.toString().trim() === "") {
+            alert("Сначала выделите левой кнопкой мыши слово или фразу в тексте (например, 'кофемашина'), а затем нажмите эту кнопку!");
             return;
         }
 
-        let currentHtml = editor.getData();
+        let range = selection.getRangeAt(0);
+
+        // Проверяем, что выделение находится именно внутри нужного правила
+        if (!editor.contains(range.commonAncestorContainer)) {
+            alert("Выделите текст именно внутри поля инструкции!");
+            return;
+        }
+
+        let selectedText = range.toString();
+        let currentHtml = editor.innerHTML;
+        
         let maxN = 0;
         let regex = /\[ФОТО_(\d+)\]/g;
         let match;
-        
         while ((match = regex.exec(currentHtml)) !== null) {
-            maxN = Math.max(maxN, parseInt(match[1]));
+            if (parseInt(match[1]) > maxN) maxN = parseInt(match[1]);
         }
         let newN = maxN + 1;
-
-        // ⚡ Вставляем HTML, оборачивая текст умными тегами
-        editor.insertHtml(`[ФОТО_${newN}]` + selectedText + `[/ФОТО_${newN}]`);
-
-        updateKbVal(id, 'text', editor.getData());
-        renderKnowledgeBase(); // Перерисовываем, чтобы снизу появился слот для вставки картинки
+        
+        // Вставляем наш тег вокруг выделенного слова
+        let replacement = document.createTextNode(`[ФОТО_${newN}]${selectedText}[/ФОТО_${newN}]`);
+        range.deleteContents();
+        range.insertNode(replacement);
+        
+        // Сохраняем в базу и перерисовываем
+        updateKbVal(id, 'text', editor.innerHTML);
+        renderKnowledgeBase();
     };
 
     window.handleKbPhotoPasteN = async function(e, id, n) {

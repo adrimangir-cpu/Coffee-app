@@ -1310,6 +1310,40 @@
         }
     }
     
+    // ⚡ НОВАЯ ФУНКЦИЯ: Автосворачивание и плавный скролл Базы Знаний
+    window.toggleKbItem = function(safeId) {
+        triggerHaptic();
+        let targetId = 'kb_content_' + safeId;
+        let targetArrowId = 'arr_kb_' + safeId;
+        let targetEl = document.getElementById(targetId);
+        if (!targetEl) return;
+        
+        let isOpening = targetEl.style.display === 'none' || targetEl.style.display === '';
+
+        // 1. Закрываем все остальные открытые инструкции
+        document.querySelectorAll('.kb-content-block').forEach(el => {
+            if (el.id !== targetId && el.style.display === 'block') {
+                el.style.display = 'none';
+                let arrowIdToReset = el.id.replace('kb_content_', 'arr_kb_');
+                let arrow = document.getElementById(arrowIdToReset);
+                if (arrow) arrow.innerText = '▼';
+            }
+        });
+
+        // 2. Открываем/закрываем выбранную
+        targetEl.style.display = isOpening ? 'block' : 'none';
+        let arrowEl = document.getElementById(targetArrowId);
+        if (arrowEl) arrowEl.innerText = isOpening ? "▲" : "▼";
+
+        // 3. Плавно подтягиваем к верху экрана
+        if (isOpening) {
+            setTimeout(() => {
+                const y = targetEl.parentElement.getBoundingClientRect().top + window.scrollY - 70;
+                window.scrollTo({ top: y, behavior: 'smooth' });
+            }, 150);
+        }
+    };
+
     function renderKnowledge(data, searchQuery = "") {
         let html = "";
         let sortedKeys = Object.keys(data).sort((a,b) => (data[b].timestamp||0) - (data[a].timestamp||0));
@@ -1322,10 +1356,7 @@
                 if(!doc) return;
                 let safeId = getSafeId(k);
                 
-                // Читаем текст и восстанавливаем переносы строк
                 let formattedText = doc.text ? doc.text.replace(/\n/g, '<br>') : '';
-                
-                // ⚡ ПОДДЕРЖКА ФОТО В ТЕКСТЕ
                 let photoRegex = /\[ФОТО_(\d+)\](.*?)\[\/ФОТО_\d+\]/g;
                 formattedText = formattedText.replace(photoRegex, (match, n, word) => {
                     let photoData = doc[`photo_${n}`] || "";
@@ -1335,12 +1366,9 @@
                     return `<b>${word}</b>`;
                 });
 
-                // ⚡ УМНЫЙ ПОИСК С ПОДСВЕТКОЙ
                 let isExpanded = false;
                 if (searchQuery !== "") {
-                    // Разворачиваем карточку, если ищем
                     isExpanded = true;
-                    // Подсвечиваем найденное слово желтым маркером
                     let searchRegex = new RegExp(`(${searchQuery})`, 'gi');
                     formattedText = formattedText.replace(searchRegex, `<span style="background-color: #ffeb3b; padding: 2px 4px; border-radius: 4px; font-weight: bold; color: #000;">$1</span>`);
                 }
@@ -1348,18 +1376,18 @@
                 let displayStyle = isExpanded ? 'block' : 'none';
                 let arrowSymbol = isExpanded ? '▲' : '▼';
 
-                // ⚡ ФИКС: Кнопка перехода на связанную инструкцию
                 let linkedInstructionHtml = "";
                 if (doc.linked_kb_id && state.knowledgeData && state.knowledgeData[doc.linked_kb_id]) {
                     let linkedTitle = state.knowledgeData[doc.linked_kb_id].title;
                     linkedInstructionHtml = `<div style="margin-top:15px; background:#e1f5fe; padding:12px; border-radius:8px; font-weight:bold; color:#0277bd; cursor:pointer; text-align:center; border: 1px dashed #0288d1;" onclick="filterKnowledge('${escapeName(linkedTitle)}')">🔗 Читать также: ${linkedTitle}</div>`;
                 }
 
+                // ⚡ ИСПОЛЬЗУЕМ НОВУЮ ФУНКЦИЮ toggleKbItem и КЛАСС kb-content-block
                 html += `<div class="report-card" style="padding:0; overflow:hidden; border:2px solid #D1C4E9; margin-bottom:15px;">
-                            <div style="padding:15px; background:#ede7f6; font-weight:900; color:#311b92; font-size:17px; display:flex; justify-content:space-between; align-items:center; cursor:pointer;" onclick="toggleElements('kb_${safeId}', 'arr_kb_${safeId}')">
+                            <div style="padding:15px; background:#ede7f6; font-weight:900; color:#311b92; font-size:17px; display:flex; justify-content:space-between; align-items:center; cursor:pointer;" onclick="toggleKbItem('${safeId}')">
                                 <span>${doc.title}</span><span id="arr_kb_${safeId}" style="opacity:0.5; font-size:14px;">${arrowSymbol}</span>
                             </div>
-                            <div class="kb_${safeId}" style="display:${displayStyle}; padding:15px; background:#fff; font-size:15px; line-height:1.5;">
+                            <div id="kb_content_${safeId}" class="kb-content-block" style="display:${displayStyle}; padding:15px; background:#fff; font-size:15px; line-height:1.5;">
                                 ${formattedText}
                                 ${linkedInstructionHtml}
                             </div>
@@ -3346,12 +3374,20 @@ window.viewStopList = async function() {
 
         try {
             let stopCatalog = (state.cachedCatalogs && state.cachedCatalogs.stoplist) ? state.cachedCatalogs.stoplist : {};
+            
             let allProducts = {};
+            let orderProductsKeys = new Set(); // ⚡ Новое: собираем ключи только тех товаров, что есть в закупке
+
             if (state.cachedCatalogs) {
                 ['order', 'newshop', 'checklist'].forEach(catKey => {
                     let cat = state.cachedCatalogs[catKey] || {};
                     Object.values(cat).forEach(c => {
-                        if (c && c.name) allProducts[getStatusKey(c.name)] = c;
+                        if (c && c.name) {
+                            let sKey = getStatusKey(c.name);
+                            allProducts[sKey] = c;
+                            // Если товар из закупки — помечаем его
+                            if (catKey === 'order' || catKey === 'newshop') orderProductsKeys.add(sKey);
+                        }
                     });
                 });
             }
@@ -3445,11 +3481,14 @@ window.viewStopList = async function() {
                 let statHtml = "";
                 let statusObj = statusMap[cleanedItemName];
                 
-                if (statusObj) {
-                    let bgColor = statusObj.color === '#2e7d32' ? '#e8f5e9' : (statusObj.color === '#1565C0' ? '#e3f2fd' : '#fff3e0');
-                    statHtml = `<span style="background:${bgColor}; color:${statusObj.color}; padding:2px 5px; border-radius:4px; font-size:11px; font-weight:900; margin-left:5px;">${statusObj.text}</span>`;
-                } else if (allProducts[cleanedItemName]) {
-                    statHtml = `<span style="background:#f5f5f5; color:#888; padding:2px 5px; border-radius:4px; font-size:11px; font-weight:900; margin-left:5px;">Не заказано ➖</span>`;
+                // ⚡ ГЛАВНОЕ: Показываем статус ТОЛЬКО если товар есть в Справочнике Закупки!
+                if (orderProductsKeys.has(cleanedItemName)) {
+                    if (statusObj) {
+                        let bgColor = statusObj.color === '#2e7d32' ? '#e8f5e9' : (statusObj.color === '#1565C0' ? '#e3f2fd' : '#fff3e0');
+                        statHtml = `<span style="background:${bgColor}; color:${statusObj.color}; padding:2px 5px; border-radius:4px; font-size:11px; font-weight:900; margin-left:5px;">${statusObj.text}</span>`;
+                    } else {
+                        statHtml = `<span style="background:#f5f5f5; color:#888; padding:2px 5px; border-radius:4px; font-size:11px; font-weight:900; margin-left:5px;">Не заказано ➖</span>`;
+                    }
                 }
 
                 let isSyrup = (info.cat && String(info.cat).toLowerCase().includes("сироп")) || cleanedItemName.includes("сироп");

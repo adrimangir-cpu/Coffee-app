@@ -2823,11 +2823,45 @@
         renderCartItemsInModal(); 
     }
 
-    function showPopupError(title, message) {
-      var banner = document.getElementById('validation-banner');
-      banner.innerHTML = `<b>${title}</b><br>${message}`; 
-      banner.style.display = 'block';
-      setTimeout(() => { banner.style.display = 'none'; }, 6000);
+   function showPopupError(title, message) {
+        // ⚡ 1. Вызываем жесткую вибрацию ошибки (работает на телефонах)
+        try {
+            if (window.Telegram && Telegram.WebApp && Telegram.WebApp.HapticFeedback) {
+                Telegram.WebApp.HapticFeedback.notificationOccurred('error');
+            }
+        } catch(e) {}
+
+        var banner = document.getElementById('validation-banner');
+        
+        if (banner) {
+            // ⚡ 2. Делаем текст более угрожающим и понятным
+            banner.innerHTML = `
+                <div style="display:flex; align-items:flex-start; gap:10px;">
+                    <span style="font-size:30px; line-height:1;">⚠️</span>
+                    <div>
+                        <b style="font-size:18px; margin-bottom:4px; display:block;">${title}</b>
+                        <span style="font-size:15px; line-height:1.4;">${message}</span>
+                    </div>
+                </div>
+                <div style="text-align:center; margin-top:12px; font-size:12px; opacity:0.8; border-top:1px solid rgba(255,255,255,0.2); padding-top:8px;">
+                    Нажмите на это уведомление, чтобы скрыть
+                </div>
+            `; 
+            
+            // ⚡ 3. Задаем ярко-красный цвет и показываем
+            banner.style.backgroundColor = '#D32F2F';
+            banner.style.display = 'block';
+            
+            // ⚡ 4. Держим на экране дольше (8 секунд вместо 6), чтобы бариста точно прочитал
+            setTimeout(() => { banner.style.display = 'none'; }, 8000);
+        } else {
+            // ⚡ 5. Резервный план: если HTML-баннер сломался, используем системные окна
+            if (window.Telegram && Telegram.WebApp && Telegram.WebApp.showAlert) {
+                Telegram.WebApp.showAlert("🚨 " + title + "\n\n" + message);
+            } else {
+                alert("🚨 " + title + "\n\n" + message);
+            }
+        }
     }
 
    
@@ -4523,18 +4557,23 @@ window.showLastOrder = async function() {
     }
 
   // ⚡ ЕДИНСТВЕННАЯ И ЗАЩИЩЕННАЯ ФУНКЦИЯ ОТПРАВКИ (Фоновая отправка без зависаний)
+    // ⚡ ЕДИНСТВЕННАЯ И ЗАЩИЩЕННАЯ ФУНКЦИЯ ОТПРАВКИ (С таймером защиты от зависаний)
     window.validateAndSubmit = async function(isFromModal) {
-        // 1. Проверяем, нужно ли открыть корзину
         if (!isFromModal && (state.currentMode === 'order' || state.currentMode === 'new_shop' || state.currentMode === 'marketplace')) { 
             toggleCartModal(true); 
             return; 
         }
         
-        // 2. Блокируем двойные нажатия
         if (state.isProcessing) return;
 
         let btn = document.getElementById('modal-submit-button'); 
         let mainBtn = document.getElementById('main-action-button'); 
+
+        // ⚡ Создаем таймер: если база не ответит за 8 секунд, принудительно выдаем ошибку
+        const TIMEOUT_MS = 8000;
+        const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error("Плохой интернет! Сервер не ответил. Попробуйте еще раз.")), TIMEOUT_MS)
+        );
 
         // ----------------------------------------------------
         // МАРКЕТПЛЕЙС
@@ -4556,22 +4595,26 @@ window.showLastOrder = async function() {
                     submitTimestamp = prevMonthEnd.getTime();
                 }
 
+                let promises = [];
                 for(let item of state.mpBasket) {
-                    database.ref("marketplace_records").push({
+                    promises.push(database.ref("marketplace_records").push({
                         vendor: item.vendor,
                         type: item.amount < 0 ? 'refund' : 'purchase',
                         address: item.address,
                         amount: parseFloat(item.amount),
                         timestamp: submitTimestamp,
                         userId: globalTgUserId
-                    });
+                    }));
                 }
+                
+                // ⚡ Ждем отправки, но НЕ БОЛЬШЕ 8 СЕКУНД
+                await Promise.race([Promise.all(promises), timeoutPromise]); 
                 
                 state.mpBasket = [];
                 localStorage.removeItem("draft_marketplace");
             } catch(e) {
                 hideGlobalLoader();
-                showPopupError("Ошибка", e.message);
+                showPopupError("Ошибка сети", e.message);
                 state.isProcessing = false; 
                 if(btn) { btn.innerText = "ПОДТВЕРДИТЬ И ОТПРАВИТЬ"; btn.disabled = false; }
                 if(mainBtn) { mainBtn.innerText = "ОТПРАВИТЬ"; mainBtn.disabled = false; }
@@ -4615,7 +4658,7 @@ window.showLastOrder = async function() {
                 return true;
             }).map(([n,q]) => {
                 let catName = (state.userBasket["_catinfo"] && state.userBasket["_catinfo"][n]) || (state.productCatalog[n] ? state.productCatalog[n].cat : "Прочее");
-                return {name: n, qty: q, cat: catName};
+                return {name: n.trim(), qty: q, cat: catName.trim()}; 
             });
 
             if (flatData.length === 0 && state.currentMode !== 'checklist') {
@@ -4661,8 +4704,8 @@ window.showLastOrder = async function() {
                     }
 
                     let finalDataToSave = {
-                        shop: state.currentShop, mode: state.currentMode, items: flatData,
-                        comment: mergedComments.join(" | "), timestamp: Date.now(), userId: globalTgUserId,
+                        shop: state.currentShop.trim(), mode: state.currentMode, items: flatData,
+                        comment: mergedComments.join(" | "), timestamp: firebase.database.ServerValue.TIMESTAMP, userId: globalTgUserId,
                         svod: false, ordered: false, lenta_received: false, ozon_received: false, kuper_received: false
                     };
 
@@ -4692,24 +4735,30 @@ window.showLastOrder = async function() {
                             if (newComment) comments.push(newComment);
                             finalDataToSave.comment = comments.join(" | ");
                         }
-                        database.ref(`orders/${pendingKeyToUpdate}`).set(finalDataToSave);
+                        // ⚡ Ждем записи, но с таймером защиты
+                        let savePromise = database.ref(`orders/${pendingKeyToUpdate}`).set(finalDataToSave);
+                        await Promise.race([savePromise, timeoutPromise]);
                     } else {
-                        database.ref("orders").push(finalDataToSave);
+                        // ⚡ Ждем записи, но с таймером защиты
+                        let pushPromise = database.ref("orders").push(finalDataToSave);
+                        await Promise.race([pushPromise, timeoutPromise]);
                     }
                 } else {
                     let recordPayload = {
-                        shop: state.currentShop, mode: state.currentMode, items: flatData,
+                        shop: state.currentShop.trim(), mode: state.currentMode, items: flatData,
                         comment: document.getElementById('comment') ? document.getElementById('comment').value : "",
-                        timestamp: Date.now(), userId: globalTgUserId, svod: false, ordered: false,
+                        timestamp: firebase.database.ServerValue.TIMESTAMP, userId: globalTgUserId, svod: false, ordered: false,
                         lenta_received: false, ozon_received: false, kuper_received: false
                     };
-                    database.ref("orders").push(recordPayload);
+                    // ⚡ Ждем записи, но с таймером защиты
+                    let pushPromise = database.ref("orders").push(recordPayload);
+                    await Promise.race([pushPromise, timeoutPromise]);
                 }
 
                 localStorage.removeItem("draft_" + state.currentShop + "_" + state.currentMode);
             } catch(e) {
                 hideGlobalLoader(); 
-                showPopupError("Ошибка", "Произошла ошибка при отправке.");
+                showPopupError("Ошибка сети", e.message);
                 state.isProcessing = false;
                 if(btn) { btn.innerText = "ПОДТВЕРДИТЬ И ОТПРАВИТЬ"; btn.disabled = false; }
                 if(mainBtn) { mainBtn.innerText = "ОТПРАВИТЬ"; mainBtn.disabled = false; }
@@ -4717,7 +4766,7 @@ window.showLastOrder = async function() {
             }
         } 
 
-        // 3. Мгновенный показ экрана Успеха
+        // 3. Мгновенный показ экрана Успеха (ТОЛЬКО если данные 100% улетели)
         hideGlobalLoader(); 
         toggleCartModal(false);
         document.getElementById('success-screen').style.display = 'flex';
@@ -4735,7 +4784,6 @@ window.showLastOrder = async function() {
             else if (previousMode === 'checklist' || previousMode === 'stoplist_fill') showScreen('step-sub-lists', false);
             else showScreen('step-2', false); 
 
-            // Жестко разблокируем кнопки только после того, как ушли с экрана
             state.isProcessing = false; 
             if(btn) { btn.innerText = "ПОДТВЕРДИТЬ И ОТПРАВИТЬ"; btn.disabled = false; }
             if(mainBtn) { mainBtn.innerText = "ОТПРАВИТЬ"; mainBtn.disabled = false; }

@@ -656,6 +656,20 @@ tr[class*="svodlvl3_"] > td:nth-child(2), tr[class*="lvl3_"] > td:nth-child(2) {
 #graph-table tbody tr.graph-row.selected-row > td textarea {
     color: #1a237e !important; /* Яркий текст при выделении */
 }
+
+
+    /* ⚡ ЗАЩИТА ТЕХКАРТ И ЭСПРЕССО ОТ ГЛОБАЛЬНЫХ СТИЛЕЙ */
+.recipe-block-container input, .recipe-block-container select, .esp_box_ input {
+    width: auto !important;
+    border: 1px solid #ccc !important;
+    padding: 6px !important;
+    box-shadow: none !important;
+    min-height: auto !important;
+}
+.recipe-item-row input[type="text"]:first-of-type {
+    width: 100% !important; /* Название ингредиента тянется */
+}
+
     
 </style>
     
@@ -1125,12 +1139,18 @@ function toggleSvodDate(safeDate) {
         let orderCatMapFast = {};
         Object.values(orderCatalog).forEach(c => { if (c && c.name) orderCatMapFast[c.name] = c; });
 
-        let fourteenDaysAgo = Date.now() - (14 * 24 * 60 * 60 * 1000);
+       let fourteenDaysAgo = Date.now() - (14 * 24 * 60 * 60 * 1000);
         
-        // ⚡ ЖЕЛЕЗНОЕ ПРАВИЛО: o.ordered === true (не летит бариста до кнопки "Заказы оформлены")
-        let ordersArr = Object.values(cachedData.orders || {}).filter(o => 
-            o && (o.mode === 'order' || o.mode === 'new_shop') && o.timestamp >= fourteenDaysAgo && o.ordered === true
-        ).sort((a,b) => b.timestamp - a.timestamp);
+
+        let ordersArr = Object.values(cachedData.orders || {}).filter(o => {
+            if (!o || (o.mode !== 'order' && o.mode !== 'new_shop') || o.timestamp < fourteenDaysAgo) return false;
+            
+            if (o.ordered) return true; // Если весь лист отправлен в архив - берем
+            
+            // ИЛИ если внутри есть хотя бы один товар со статусом "Заказано", "Принят" или "Из стоп-листа"
+            let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
+            return itemsArr.some(i => i && (i.status === 'ordered' || i.status === 'already_received' || i.status === 'from_stoplist'));
+        }).sort((a,b) => b.timestamp - a.timestamp);
         
         let html = ``;
         
@@ -5043,6 +5063,8 @@ window.syncStoplistWithMenu = async function() {
         Object.keys(currentCatalog).forEach(k => {
             let item = currentCatalog[k]; 
             let gc = item.globalCat || "Основное меню"; 
+            if (appSettings.hidden_categories_stoplist && appSettings.hidden_categories_stoplist[gc]) return;
+            
             let sc = item.cat || "Прочее";
             if (!grouped[gc]) grouped[gc] = {}; 
             if (!grouped[gc][sc]) grouped[gc][sc] = [];

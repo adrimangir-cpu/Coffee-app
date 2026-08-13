@@ -585,8 +585,8 @@
     if (!firebase.apps.length) {
         firebase.initializeApp(firebaseConfig);
     }
-  
     const database = firebase.database();
+
     const TG_ADMIN_IDS = ["708179577"];
     const TG_BOSS_IDS = ["501871781","708179577"];
 
@@ -619,82 +619,6 @@
       schedule: { name: "", currentTool: "MORNING", days: {} } 
     };
 
-
-  // ==========================================
-    // ⚡ УМНАЯ ОЧЕРЕДЬ ОТПРАВКИ (OFFLINE QUEUE) ⚡
-    // ==========================================
-    window.teikuQueue = {
-        isProcessing: false,
-        init: function() {
-            setInterval(() => this.process(), 5000);
-            window.addEventListener('online', () => this.process());
-            this.updateUI();
-            this.process();
-        },
-        add: function(path, method, payload) {
-            let queue = JSON.parse(localStorage.getItem("teiku_offline_queue") || "[]");
-            queue.push({
-                id: Date.now() + "_" + Math.random().toString(36).substr(2, 5),
-                path: path,
-                method: method.toUpperCase(),
-                payload: payload,
-                timestamp: Date.now()
-            });
-            localStorage.setItem("teiku_offline_queue", JSON.stringify(queue));
-            this.updateUI();
-            this.process();
-        },
-        process: async function() {
-            if (this.isProcessing) return;
-            let queue = JSON.parse(localStorage.getItem("teiku_offline_queue") || "[]");
-            if (queue.length === 0) {
-                this.updateUI();
-                return;
-            }
-            if (!navigator.onLine) return; // Ждем появления сети
-
-            this.isProcessing = true;
-            this.updateUI();
-            
-            let newQueue = [...queue];
-            for (let i = 0; i < queue.length; i++) {
-                let task = queue[i];
-                try {
-                    let ref = database.ref(task.path);
-                    if (task.method === 'SET') await ref.set(task.payload);
-                    else if (task.method === 'UPDATE') await ref.update(task.payload);
-                    else if (task.method === 'DELETE') await ref.remove();
-                    
-                    // Успех! Удаляем из очереди
-                    newQueue = newQueue.filter(t => t.id !== task.id);
-                    localStorage.setItem("teiku_offline_queue", JSON.stringify(newQueue));
-                } catch(e) {
-                    console.error("Сбой очереди, повтор позже:", e);
-                    break; // Останавливаем на первой ошибке, чтобы сохранить хронологию
-                }
-            }
-            this.isProcessing = false;
-            this.updateUI();
-        },
-        updateUI: function() {
-            let queue = JSON.parse(localStorage.getItem("teiku_offline_queue") || "[]");
-            let indicator = document.getElementById('queue-indicator');
-            if (queue.length > 0) {
-                if (!indicator) {
-                    indicator = document.createElement('div');
-                    indicator.id = 'queue-indicator';
-                    indicator.style.cssText = 'position:fixed; top:env(safe-area-inset-top); left:0; right:0; background:#E65100; color:#fff; text-align:center; padding:6px 10px; font-size:12px; font-weight:bold; z-index:999999; box-shadow:0 2px 10px rgba(0,0,0,0.3); pointer-events:none;';
-                    document.body.appendChild(indicator);
-                }
-                indicator.innerHTML = `🔄 Синхронизация в фоне... Очередь: ${queue.length}`;
-                indicator.style.display = 'block';
-            } else if (indicator) {
-                indicator.style.display = 'none';
-            }
-        }
-    };
-
-  
     function showGlobalLoader(text = "Загрузка данных...") {
         let el = document.getElementById('global-loader');
         if(el) {
@@ -3953,7 +3877,7 @@ window.showLastOrder = async function() {
         }
     }
 
-   window.finishReceiving = async function(vendorKey, keysStr, expectedCount, dateStr) {
+   async function finishReceiving(vendorKey, keysStr, expectedCount, dateStr) {
         let checkedCount = 0;
         let missingMap = {};
         let arrivedItemsToClear = [];
@@ -3978,83 +3902,105 @@ window.showLastOrder = async function() {
         }
 
         triggerHaptic();
+        showReportOverlay("Сохранение приемки...");
         
-        let keys = keysStr.split(',');
-        let updates = {};
-        
-        // ОБНОВЛЕНИЕ ТОВАРОВ НАПРЯМУЮ: Меняем status = 'already_received'
-        for (let k of keys) {
-            updates[k + '/' + vendorKey + '_received'] = true;
-            updates[k + '/' + vendorKey + '_received_ts'] = Date.now();
+        try {
+            let keys = keysStr.split(',');
+            let promises = [];
+            let updates = {};
             
-            let o = state.globalOrders.find(ord => ord.key === k);
-            if (o && o.items) {
-                let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items);
-                itemsArr.forEach((itm, idx) => {
-                    if (itm && itm.status === 'ordered') {
-                        if (arrivedItemsToClear.includes(itm.name)) {
-                            updates[`${k}/items/${idx}/status`] = 'already_received';
+            // ⚡ ОБНОВЛЕНИЕ ТОВАРОВ НАПРЯМУЮ: Меняем status = 'already_received'
+            for (let k of keys) {
+                updates[k + '/' + vendorKey + '_received'] = true;
+                updates[k + '/' + vendorKey + '_received_ts'] = Date.now();
+                
+                let o = state.globalOrders.find(ord => ord.key === k);
+                if (o && o.items) {
+                    let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items);
+                    itemsArr.forEach((itm, idx) => {
+                        if (itm && itm.status === 'ordered') {
+                            if (arrivedItemsToClear.includes(itm.name)) {
+                                updates[`${k}/items/${idx}/status`] = 'already_received';
+                            }
+                            // Missing items stay 'ordered', but we create a missing_items record for them below.
                         }
-                    }
-                });
+                    });
+                }
             }
-        }
 
-        // ⚡ ОТПРАВЛЯЕМ В ФОНОВУЮ ОЧЕРЕДЬ
-        window.teikuQueue.add("orders", "UPDATE", updates);
+            promises.push(database.ref("orders").update(updates));
 
-        for(let name in missingMap) {
-            let mKey = database.ref("push_items_missing").push().key;
-            window.teikuQueue.add(`push_items_missing/${mKey}`, "SET", { 
-                shop: state.currentShop, name: name, qty: missingMap[name], 
-                status: "pending", timestamp: Date.now() 
-            });
-        }
-        
-        if (arrivedItemsToClear.length > 0) {
-            window.autoRemoveFromStoplist(state.currentShop, arrivedItemsToClear);
-            setTimeout(() => {
-                alert("✅ ПРИЕМКА УСПЕШНА!\n\nТовары отправлены в фоне.");
-            }, 800);
-        }
-        
-        if (state.receivingChoices) {
-            for (let k in state.receivingChoices) {
-                if (state.receivingChoices[k].vendor === vendorKey && state.receivingChoices[k].date === dateStr) delete state.receivingChoices[k];
+            for(let name in missingMap) {
+                promises.push(database.ref("push_items_missing").push({ 
+                    shop: state.currentShop, name: name, qty: missingMap[name], 
+                    status: "pending", timestamp: Date.now() 
+                }));
             }
+            
+            await Promise.all(promises); 
+
+            if (arrivedItemsToClear.length > 0) {
+                await autoRemoveFromStoplist(state.currentShop, arrivedItemsToClear);
+                setTimeout(() => {
+                    alert("✅ ПРИЕМКА УСПЕШНА!\n\nТовары, которые вы только что приняли, были автоматически удалены из Стоп-листа и снова доступны в Тех. картах.");
+                }, 800);
+            }
+            
+            if (state.receivingChoices) {
+                for (let k in state.receivingChoices) {
+                    if (state.receivingChoices[k].vendor === vendorKey && state.receivingChoices[k].date === dateStr) delete state.receivingChoices[k];
+                }
+            }
+
+            hideGlobalLoader(); 
+            showLastOrder(); 
+        } catch(e) {
+            hideGlobalLoader(); 
+            showPopupError("Ошибка", e.message);
+            showLastOrder();
         }
+    }
 
-        hideGlobalLoader(); 
-        hideReportOverlay();
-        showLastOrder(); 
-    };
-
-    window.finishMissingReceiving = async function() {
+    async function finishMissingReceiving() {
         if (!state.missingChoices || Object.keys(state.missingChoices).length === 0) {
             showPopupError("Внимание", "Вы не отметили ни одного недовоза как 'Доехал'.");
             return;
         }
 
         triggerHaptic();
+        showReportOverlay("Сохранение данных...");
         
-        let namesToRemove = [];
-        for (let key in state.missingChoices) {
-            // ⚡ ОТПРАВЛЯЕМ В ФОНОВУЮ ОЧЕРЕДЬ
-            window.teikuQueue.add(`missing_items/${key}`, "UPDATE", { status: 'arrived', timestamp: Date.now() });
-            namesToRemove.push(state.missingChoices[key]);
+        try {
+            let namesToRemove = [];
+            for (let key in state.missingChoices) {
+                
+                // ⚡ ИСПРАВЛЕНИЕ: Гладкое сохранение через .update()
+                await database.ref("missing_items/" + key).update({
+                    status: 'arrived',
+                    timestamp: Date.now()
+                });
+                
+                namesToRemove.push(state.missingChoices[key]);
+            }
+            
+            await autoRemoveFromStoplist(state.currentShop, namesToRemove);
+            
+            // ⚡ Уведомляем бариста
+            setTimeout(() => {
+                alert("✅ НЕДОВОЗЫ ДОЕХАЛИ!\n\nЭти товары были автоматически удалены из Стоп-листа и снова доступны в Тех. картах.");
+            }, 800);
+            
+            state.missingChoices = {};
+            hideGlobalLoader(); 
+            showLastOrder(); 
+        } catch(e) {
+            hideGlobalLoader(); 
+            showPopupError("Ошибка", e.message);
+            showLastOrder();
         }
-        
-        window.autoRemoveFromStoplist(state.currentShop, namesToRemove);
-        
-        setTimeout(() => {
-            alert("✅ НЕДОВОЗЫ ДОЕХАЛИ!\n\nДанные отправлены в фоне.");
-        }, 800);
-        
-        state.missingChoices = {};
-        showLastOrder(); 
-    };
+    }
 
-   window.saveAllMissingChanges = async function() {
+    async function saveAllMissingChanges() {
         triggerHaptic();
         let selects = document.querySelectorAll('.missing-status-select');
         let updates = [];
@@ -4075,23 +4021,32 @@ window.showLastOrder = async function() {
             return;
         }
 
-        let arrivedByShop = {};
-        for (let u of updates) {
-            // ⚡ ОТПРАВЛЯЕМ В ФОНОВУЮ ОЧЕРЕДЬ
-            window.teikuQueue.add(`missing_items/${u.key}`, "UPDATE", { status: u.val, timestamp: Date.now() });
-            if (u.val === 'arrived') {
-                if(!arrivedByShop[u.shop]) arrivedByShop[u.shop] = [];
-                arrivedByShop[u.shop].push(u.name);
+        showReportOverlay("Сохранение изменений...");
+        try {
+            let arrivedByShop = {};
+            for (let u of updates) {
+                await database.ref("missing_items/" + u.key).update({
+                    status: u.val,
+                    timestamp: Date.now()
+                });
+                if (u.val === 'arrived') {
+                    if(!arrivedByShop[u.shop]) arrivedByShop[u.shop] = [];
+                    arrivedByShop[u.shop].push(u.name);
+                }
             }
-        }
 
-        for(let shop in arrivedByShop) {
-            window.autoRemoveFromStoplist(shop, arrivedByShop[shop]);
-        }
+            for(let shop in arrivedByShop) {
+                await autoRemoveFromStoplist(shop, arrivedByShop[shop]);
+            }
 
-        hideGlobalLoader(); 
-        openMissingAdmin();
-    };
+            hideGlobalLoader(); // ⚡ Снимаем лоадер!
+            openMissingAdmin();
+        } catch(e) {
+            hideGlobalLoader(); // ⚡ Снимаем лоадер!
+            showPopupError("Ошибка", e.message);
+            openMissingAdmin();
+        }
+    }
 
     async function openMissingAdmin() {
         showReportOverlay("Проверка недовозов...");
@@ -4177,23 +4132,21 @@ window.showLastOrder = async function() {
         }
     }
     
-    window.deleteMissingItem = async function(key) {
+    async function deleteMissingItem(key) {
         if (window.Telegram && Telegram.WebApp && Telegram.WebApp.showConfirm) {
-            Telegram.WebApp.showConfirm("Удалить недовоз навсегда?", function(confirmed) {
+            Telegram.WebApp.showConfirm("Удалить недовоз навсегда?", async function(confirmed) {
                 if (confirmed) {
-                    // ⚡ ОТПРАВЛЯЕМ В ФОНОВУЮ ОЧЕРЕДЬ
-                    window.teikuQueue.add(`missing_items/${key}`, "DELETE", null);
+                    await database.ref("missing_items/" + key).remove();
                     openMissingAdmin();
                 }
             });
         } else {
             if(confirm("Удалить недовоз навсегда?")) {
-                // ⚡ ОТПРАВЛЯЕМ В ФОНОВУЮ ОЧЕРЕДЬ
-                window.teikuQueue.add(`missing_items/${key}`, "DELETE", null);
+                await database.ref("missing_items/" + key).remove();
                 openMissingAdmin();
             }
         }
-    };
+    }
 
     function closeCartOnOverlay(e) { if (e.target.id === 'cart-modal') toggleCartModal(false); }
 
@@ -4649,51 +4602,84 @@ window.showLastOrder = async function() {
             toggleCartModal(true); 
             return; 
         }
+        
         if (state.isProcessing) return;
 
         let btn = document.getElementById('modal-submit-button'); 
         let mainBtn = document.getElementById('main-action-button'); 
 
+        // ⚡ Создаем таймер: если база не ответит за 8 секунд, принудительно выдаем ошибку
+        const TIMEOUT_MS = 8000;
+        const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error("Плохой интернет! Сервер не ответил. Попробуйте еще раз.")), TIMEOUT_MS)
+        );
+
+        // ----------------------------------------------------
         // МАРКЕТПЛЕЙС
+        // ----------------------------------------------------
         if (state.currentMode === 'marketplace') {
             if (state.mpBasket.length === 0) return showPopupError("Внимание", "Корзина пуста!");
             if (state.isMpEditMode) return showPopupError("Внимание", "Сначала сохраните изменения");
             
             state.isProcessing = true;
-            if(btn) { btn.innerText = "СОХРАНЕНО!"; }
-            if(mainBtn) { mainBtn.innerText = "СОХРАНЕНО!"; }
+            if(btn) { btn.innerText = "ОТПРАВЛЯЮ..."; btn.disabled = true; }
+            if(mainBtn) { mainBtn.innerText = "ОТПРАВЛЯЮ..."; mainBtn.disabled = true; }
+            showGlobalLoader("Отправка данных...");
             
-            let submitTimestamp = Date.now();
-            if (state.mpMonthOption === 'prev') {
-                let now = new Date();
-                let prevMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
-                submitTimestamp = prevMonthEnd.getTime();
-            }
+            try {
+                let submitTimestamp = firebase.database.ServerValue.TIMESTAMP;
+                if (state.mpMonthOption === 'prev') {
+                    let now = new Date();
+                    let prevMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
+                    submitTimestamp = prevMonthEnd.getTime();
+                }
 
-            for(let item of state.mpBasket) {
-                let newKey = database.ref("marketplace_records").push().key;
-                window.teikuQueue.add(`marketplace_records/${newKey}`, "SET", {
-                    vendor: item.vendor, type: item.amount < 0 ? 'refund' : 'purchase',
-                    address: item.address, amount: parseFloat(item.amount), timestamp: submitTimestamp, userId: globalTgUserId
-                });
+                let promises = [];
+                for(let item of state.mpBasket) {
+                    promises.push(database.ref("marketplace_records").push({
+                        vendor: item.vendor,
+                        type: item.amount < 0 ? 'refund' : 'purchase',
+                        address: item.address,
+                        amount: parseFloat(item.amount),
+                        timestamp: submitTimestamp,
+                        userId: globalTgUserId
+                    }));
+                }
+                
+                // ⚡ Ждем отправки, но НЕ БОЛЬШЕ 8 СЕКУНД
+                await Promise.race([Promise.all(promises), timeoutPromise]); 
+                
+                state.mpBasket = [];
+                localStorage.removeItem("draft_marketplace");
+            } catch(e) {
+                hideGlobalLoader();
+                showPopupError("Ошибка сети", e.message);
+                state.isProcessing = false; 
+                if(btn) { btn.innerText = "ПОДТВЕРДИТЬ И ОТПРАВИТЬ"; btn.disabled = false; }
+                if(mainBtn) { mainBtn.innerText = "ОТПРАВИТЬ"; mainBtn.disabled = false; }
+                return;
             }
-            state.mpBasket = []; localStorage.removeItem("draft_marketplace");
         } 
+        // ----------------------------------------------------
         // ЗАКУПКИ, ЧЕК-ЛИСТЫ, СТОП-ЛИСТЫ
+        // ----------------------------------------------------
         else {
             if (state.currentMode === 'checklist') {
-                let missingCategories = new Set(); let totalMissing = 0;
+                let missingCategories = new Set(); 
+                let totalMissing = 0;
                 for (let key in state.productCatalog) {
                     let item = state.productCatalog[key];
                     if (item && item.cat && item.name !== "Товар" && item.name !== "Дата заполнения") {
                         let val = state.userBasket[item.name];
                         if (val === undefined || val === null || String(val).trim() === "" || String(val).trim() === "-" || String(val).trim() === "--") { 
-                            missingCategories.add(item.cat); totalMissing++; 
+                            missingCategories.add(item.cat); 
+                            totalMissing++; 
                         }
                     }
                 }
                 if (totalMissing > 0) {
-                    triggerHaptic(); let catList = Array.from(missingCategories).join(', ');
+                    triggerHaptic(); 
+                    let catList = Array.from(missingCategories).join(', ');
                     showPopupError("Чек-лист заполнен не полностью!", `Осталось позиций: ${totalMissing}.<br><small>Пожалуйста, проверьте: ${catList}</small>`);
                     return;
                 }
@@ -4703,8 +4689,10 @@ window.showLastOrder = async function() {
                 if (n === "_catinfo") return false;
                 if (String(q).trim() === "-" || String(q).trim() === "--" || String(q).trim() === "") return false;
                 if (state.currentMode !== 'checklist' && (q == 0 || String(q) === "0")) return false; 
+                
                 if (state.currentMode === 'order' || state.currentMode === 'new_shop') {
-                    if (!Object.values(state.productCatalog).some(c => c && c.name === n)) return false;
+                    let itemExists = Object.values(state.productCatalog).some(c => c && c.name === n);
+                    if (!itemExists) return false;
                 }
                 return true;
             }).map(([n,q]) => {
@@ -4712,78 +4700,113 @@ window.showLastOrder = async function() {
                 return {name: n.trim(), qty: q, cat: catName.trim()}; 
             });
 
-            if (flatData.length === 0 && state.currentMode !== 'checklist') return showPopupError("Внимание", "Заполните данные перед отправкой!");
+            if (flatData.length === 0 && state.currentMode !== 'checklist') {
+                return showPopupError("Внимание", "Заполните данные перед отправкой!");
+            }
 
             if ((state.currentMode === 'order' || state.currentMode === 'new_shop') && state.tempTotalKuper !== undefined) {
                 if (state.tempTotalKuper > 0 && state.tempTotalKuper < 1000) {
                     let diff = 1000 - state.tempTotalKuper;
-                    return showPopupError("Минимальная сумма", `Не хватает до минимальной суммы Купера: <b>~ ${Math.round(diff)} ₽</b><br><small>Текущая сумма: ${Math.round(state.tempTotalKuper)} ₽</small>`);
+                    showPopupError("Минимальная сумма", `Не хватает до минимальной суммы Купера: <b>~ ${Math.round(diff)} ₽</b><br><small>Текущая сумма: ${Math.round(state.tempTotalKuper)} ₽</small>`);
+                    return;
                 }
             }
 
             state.isProcessing = true;
-            if(btn) { btn.innerText = "СОХРАНЕНО!"; }
-            if(mainBtn) { mainBtn.innerText = "СОХРАНЕНО!"; }
+            if(btn) { btn.innerText = "ОТПРАВЛЯЮ..."; btn.disabled = true; }
+            if(mainBtn) { mainBtn.innerText = "ОТПРАВЛЯЮ..."; mainBtn.disabled = true; }
+            showGlobalLoader("Отправка данных..."); 
 
-            if (state.currentMode === 'order' || state.currentMode === 'new_shop') {
-                let pendingKeyToUpdate = null;
-                let mergedComments = [];
-                let newComment = document.getElementById('comment') ? document.getElementById('comment').value.trim() : "";
-                if (newComment) mergedComments.push(newComment);
+            try {
+                if (state.currentMode === 'order' || state.currentMode === 'new_shop') {
+                    let existingSnap = null;
+                    try {
+                        existingSnap = await Promise.race([
+                            database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(10).once("value"),
+                            new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 1500))
+                        ]);
+                    } catch(e) { existingSnap = null; }
 
-                // Ищем отложенный заказ прямо в памяти телефона (работает даже без интернета)
-                if (state.globalOrders) {
-                    state.globalOrders.forEach(o => {
-                        if (o && (o.mode === 'order' || o.mode === 'new_shop') && o.svod === false && o.ordered === false) {
-                            if (!pendingKeyToUpdate) pendingKeyToUpdate = o.key;
-                            else window.teikuQueue.add(`orders/${o.key}`, "DELETE", null); 
-                        }
-                    });
-                }
+                    let pendingKeyToUpdate = null;
+                    let mergedComments = [];
+                    let newComment = document.getElementById('comment') ? document.getElementById('comment').value.trim() : "";
+                    if (newComment) mergedComments.push(newComment);
 
-                let finalDataToSave = {
-                    shop: state.currentShop.trim(), mode: state.currentMode, items: flatData,
-                    comment: mergedComments.join(" | "), timestamp: Date.now(), userId: globalTgUserId,
-                    svod: false, ordered: false, lenta_received: false, ozon_received: false, kuper_received: false
-                };
-
-                if (pendingKeyToUpdate) {
-                    let mergedItems = {};
-                    let currentOrder = state.globalOrders ? state.globalOrders.find(o => o.key === pendingKeyToUpdate) : null;
-                    
-                    if (currentOrder) {
-                        let oldItems = Array.isArray(currentOrder.items) ? currentOrder.items : Object.values(currentOrder.items || {});
-                        oldItems.forEach(i => {
-                            if (i && i.name && i.name !== "НЕТ ЗАКАЗА") mergedItems[i.name] = { ...i, qty: parseFloat(i.qty) || 0 };
+                    if (existingSnap) {
+                        existingSnap.forEach(c => {
+                            let o = c.val();
+                            if (o && (o.mode === 'order' || o.mode === 'new_shop') && o.svod === false && o.ordered === false) {
+                                if (!pendingKeyToUpdate) pendingKeyToUpdate = c.key;
+                                else database.ref(`orders/${c.key}`).remove(); 
+                            }
                         });
-                        flatData.forEach(item => {
-                            if (!mergedItems[item.name]) mergedItems[item.name] = { ...item, qty: parseFloat(item.qty) || 0 };
-                            else mergedItems[item.name].qty += parseFloat(item.qty) || 0;
-                        });
-                        finalDataToSave.items = Object.values(mergedItems);
-                        let comments = [];
-                        if (currentOrder.comment && currentOrder.comment.trim() !== "") comments.push(currentOrder.comment.trim());
-                        if (newComment) comments.push(newComment);
-                        finalDataToSave.comment = comments.join(" | ");
                     }
-                    window.teikuQueue.add(`orders/${pendingKeyToUpdate}`, "SET", finalDataToSave);
+
+                    let finalDataToSave = {
+                        shop: state.currentShop.trim(), mode: state.currentMode, items: flatData,
+                        comment: mergedComments.join(" | "), timestamp: firebase.database.ServerValue.TIMESTAMP, userId: globalTgUserId,
+                        svod: false, ordered: false, lenta_received: false, ozon_received: false, kuper_received: false
+                    };
+
+                    if (pendingKeyToUpdate) {
+                        let mergedItems = {};
+                        let currentOrder = null;
+                        try {
+                            let snapNode = await Promise.race([
+                                database.ref(`orders/${pendingKeyToUpdate}`).once('value'),
+                                new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 1000))
+                            ]);
+                            currentOrder = snapNode.val();
+                        } catch(e) {}
+                        
+                        if (currentOrder) {
+                            let oldItems = Array.isArray(currentOrder.items) ? currentOrder.items : Object.values(currentOrder.items || {});
+                            oldItems.forEach(i => {
+                                if (i && i.name && i.name !== "НЕТ ЗАКАЗА") mergedItems[i.name] = { ...i, qty: parseFloat(i.qty) || 0 };
+                            });
+                            flatData.forEach(item => {
+                                if (!mergedItems[item.name]) mergedItems[item.name] = { ...item, qty: parseFloat(item.qty) || 0 };
+                                else mergedItems[item.name].qty += parseFloat(item.qty) || 0;
+                            });
+                            finalDataToSave.items = Object.values(mergedItems);
+                            let comments = [];
+                            if (currentOrder.comment && currentOrder.comment.trim() !== "") comments.push(currentOrder.comment.trim());
+                            if (newComment) comments.push(newComment);
+                            finalDataToSave.comment = comments.join(" | ");
+                        }
+                        // ⚡ Ждем записи, но с таймером защиты
+                        let savePromise = database.ref(`orders/${pendingKeyToUpdate}`).set(finalDataToSave);
+                        await Promise.race([savePromise, timeoutPromise]);
+                    } else {
+                        // ⚡ Ждем записи, но с таймером защиты
+                        let pushPromise = database.ref("orders").push(finalDataToSave);
+                        await Promise.race([pushPromise, timeoutPromise]);
+                    }
                 } else {
-                    let newKey = database.ref("orders").push().key;
-                    window.teikuQueue.add(`orders/${newKey}`, "SET", finalDataToSave);
+                    let recordPayload = {
+                        shop: state.currentShop.trim(), mode: state.currentMode, items: flatData,
+                        comment: document.getElementById('comment') ? document.getElementById('comment').value : "",
+                        timestamp: firebase.database.ServerValue.TIMESTAMP, userId: globalTgUserId, svod: false, ordered: false,
+                        lenta_received: false, ozon_received: false, kuper_received: false
+                    };
+                    // ⚡ Ждем записи, но с таймером защиты
+                    let pushPromise = database.ref("orders").push(recordPayload);
+                    await Promise.race([pushPromise, timeoutPromise]);
                 }
-            } else {
-                let recordPayload = {
-                    shop: state.currentShop.trim(), mode: state.currentMode, items: flatData,
-                    comment: document.getElementById('comment') ? document.getElementById('comment').value : "",
-                    timestamp: Date.now(), userId: globalTgUserId, svod: false, ordered: false,
-                    lenta_received: false, ozon_received: false, kuper_received: false
-                };
-                let newKey = database.ref("orders").push().key;
-                window.teikuQueue.add(`orders/${newKey}`, "SET", recordPayload);
+
+                localStorage.removeItem("draft_" + state.currentShop + "_" + state.currentMode);
+            } catch(e) {
+                hideGlobalLoader(); 
+                showPopupError("Ошибка сети", e.message);
+                state.isProcessing = false;
+                if(btn) { btn.innerText = "ПОДТВЕРДИТЬ И ОТПРАВИТЬ"; btn.disabled = false; }
+                if(mainBtn) { mainBtn.innerText = "ОТПРАВИТЬ"; mainBtn.disabled = false; }
+                return;
             }
-            localStorage.removeItem("draft_" + state.currentShop + "_" + state.currentMode);
         } 
 
+        // 3. Мгновенный показ экрана Успеха (ТОЛЬКО если данные 100% улетели)
+        hideGlobalLoader(); 
         toggleCartModal(false);
         document.getElementById('success-screen').style.display = 'flex';
         
@@ -4791,7 +4814,9 @@ window.showLastOrder = async function() {
             document.getElementById('success-screen').style.display = 'none';
             if(document.getElementById('comment')) document.getElementById('comment').value = "";
             let previousMode = state.currentMode; 
-            state.userBasket = {}; updateBadgeUI(); state.screenHistory = [];
+            state.userBasket = {}; 
+            updateBadgeUI();
+            state.screenHistory = [];
             
             if (previousMode === 'marketplace') returnToPanel(); 
             else if (previousMode === 'order' || previousMode === 'new_shop') showScreen('step-sub-orders', false);
@@ -4803,6 +4828,7 @@ window.showLastOrder = async function() {
             if(mainBtn) { mainBtn.innerText = "ОТПРАВИТЬ"; mainBtn.disabled = false; }
         }, 1200);
     };
+  
    
   
 // ==========================================
@@ -4823,14 +4849,8 @@ window.showLastOrder = async function() {
     // ==========================================
     // ⚡ ГЛАВНЫЙ СТАРТ ПРИЛОЖЕНИЯ (ИСПРАВЛЕНА АВТОРИЗАЦИЯ)
     // ==========================================
-  // ==========================================
-    // ⚡ ГЛАВНЫЙ СТАРТ ПРИЛОЖЕНИЯ
-    // ==========================================
-    window.onload = async () => { 
-        if (window.teikuQueue) window.teikuQueue.init(); 
-        loadUIState();
+   window.onload = async () => { 
         showGlobalLoader("Запуск приложения..."); 
-        
         try { 
             if (window.Telegram && Telegram.WebApp) {
                 Telegram.WebApp.ready(); 
@@ -4851,18 +4871,21 @@ window.showLastOrder = async function() {
         updateHeaderSelectOptions();
         state.cachedCatalogs = {};
         
+        // ⚡ Добавили invoices и invoices_history для мгновенного старта из памяти
         const paths = ['order', 'newshop', 'stoplist', 'checklist', 'menu', 'espresso_recipes', 'tasks_calendar', 'knowledge_base', 'invoices', 'invoices_history'];
         for (let p of paths) {
-            let cachedDataLocal = await loadFromRealCache(p);
-            if (cachedDataLocal) state.cachedCatalogs[p] = cachedDataLocal;
+            let cachedData = await loadFromRealCache(p);
+            if (cachedData) state.cachedCatalogs[p] = cachedData;
         }
         
         state.globalOrders = []; state.globalMissing = [];
         restoreMpDraft(); 
         if(typeof startRealtimeUpdates === 'function') startRealtimeUpdates(); 
 
+        // ⚡ 1. Ищем адрес локально
         let savedShop = localStorage.getItem("teiku_main_shop");
         
+        // ⚡ 2. Если локально пусто, тянем из облака Telegram (защита от сброса кэша)
         if (!savedShop && window.Telegram && Telegram.WebApp && Telegram.WebApp.CloudStorage) {
             savedShop = await new Promise((resolve) => {
                 Telegram.WebApp.CloudStorage.getItem("teiku_main_shop", (err, val) => {
@@ -4874,6 +4897,7 @@ window.showLastOrder = async function() {
         
         hideGlobalLoader(); 
         
+        // ЛОГИКА РАСПРЕДЕЛЕНИЯ
         if (isAdmin || isBoss) {
             openControlPanel(isAdmin ? 'admin' : 'boss'); 
         } else {
@@ -4953,3 +4977,4 @@ window.showLastOrder = async function() {
   </script>
 </body>
 </html>
+  

@@ -3574,11 +3574,14 @@ window.viewStopList = async function() {
             });
             
             if (newItems.length !== itemsArr.length) {
-                if (newItems.length === 0) {
-                    await database.ref(`orders/${latestStoplist.key}/items`).set([{name: "Всё в наличии", qty: "В наличии"}]);
-                } else {
-                    await database.ref(`orders/${latestStoplist.key}/items`).set(newItems);
-                }
+                let DB_URL = "https://project-lenta22-default-rtdb.firebaseio.com";
+                let payload = newItems.length === 0 ? [{name: "Всё в наличии", qty: "В наличии"}] : newItems;
+                
+                // ⚡ FETCH ПРЯМИКОМ В БАЗУ
+                await fetch(`${DB_URL}/orders/${latestStoplist.key}/items.json`, {
+                    method: 'PUT',
+                    body: JSON.stringify(payload)
+                });
             }
         } catch(e) {
             console.error("Auto stoplist update failed:", e);
@@ -3643,12 +3646,12 @@ window.showLastOrder = async function() {
 
         let fourteenDaysAgo = Date.now() - (14 * 24 * 60 * 60 * 1000);
         
-        // ⚡ ФИКС 2: ПОШТУЧНАЯ ПРИЕМКА! Теперь бариста видит товары, даже если заказ оформлен частично
+        // ⚡ МГНОВЕННАЯ ПРИЕМКА: Показываем заказ, если он ушел в Свод (админ нажал "Заказано") ИЛИ полностью оформлен
         let recvOrdersArr = (state.globalOrders || []).filter(o => {
             if (!o || (o.mode !== 'order' && o.mode !== 'new_shop') || o.timestamp < fourteenDaysAgo) return false;
-            if (o.ordered === true) return true;
             
-            // Пропускаем в приемку, если хотя бы 1 товар из списка получил статус "ordered"
+            if (o.ordered === true || o.svod === true) return true; // ⚡ Добавлено o.svod === true
+            
             let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
             return itemsArr.some(i => i && (i.status === 'ordered' || i.status === 'already_received'));
         });
@@ -3928,16 +3931,26 @@ window.showLastOrder = async function() {
                 }
             }
 
-            promises.push(database.ref("orders").update(updates));
+            let DB_URL = "https://project-lenta22-default-rtdb.firebaseio.com";
+            
+            // ⚡ ИСПОЛЬЗУЕМ FETCH ДЛЯ ГАРАНТИИ ОТПРАВКИ
+            if (Object.keys(updates).length > 0) {
+                promises.push(fetch(`${DB_URL}/orders.json`, {
+                    method: 'PATCH', body: JSON.stringify(updates)
+                }));
+            }
 
             for(let name in missingMap) {
-                promises.push(database.ref("push_items_missing").push({ 
-                    shop: state.currentShop, name: name, qty: missingMap[name], 
-                    status: "pending", timestamp: Date.now() 
+                promises.push(fetch(`${DB_URL}/push_items_missing.json`, {
+                    method: 'POST',
+                    body: JSON.stringify({ 
+                        shop: state.currentShop, name: name, qty: missingMap[name], 
+                        status: "pending", timestamp: Date.now() 
+                    })
                 }));
             }
             
-            await Promise.all(promises); 
+            await Promise.all(promises);
 
             if (arrivedItemsToClear.length > 0) {
                 await autoRemoveFromStoplist(state.currentShop, arrivedItemsToClear);
@@ -4774,23 +4787,32 @@ window.showLastOrder = async function() {
                             if (newComment) comments.push(newComment);
                             finalDataToSave.comment = comments.join(" | ");
                         }
-                        // ⚡ Ждем записи, но с таймером защиты
-                        let savePromise = database.ref(`orders/${pendingKeyToUpdate}`).set(finalDataToSave);
+                        let DB_URL = "https://project-lenta22-default-rtdb.firebaseio.com";
+                    finalDataToSave.timestamp = Date.now(); // ⚡ Меняем формат времени для REST API
+                    
+                    if (pendingKeyToUpdate) {
+                        // ⚡ ЖЕЛЕЗОБЕТОННЫЙ HTTP-ЗАПРОС ВМЕСТО WEBSOCKET
+                        let savePromise = fetch(`${DB_URL}/orders/${pendingKeyToUpdate}.json`, {
+                            method: 'PUT', body: JSON.stringify(finalDataToSave)
+                        });
                         await Promise.race([savePromise, timeoutPromise]);
                     } else {
-                        // ⚡ Ждем записи, но с таймером защиты
-                        let pushPromise = database.ref("orders").push(finalDataToSave);
+                        let pushPromise = fetch(`${DB_URL}/orders.json`, {
+                            method: 'POST', body: JSON.stringify(finalDataToSave)
+                        });
                         await Promise.race([pushPromise, timeoutPromise]);
                     }
                 } else {
+                    let DB_URL = "https://project-lenta22-default-rtdb.firebaseio.com";
                     let recordPayload = {
                         shop: state.currentShop.trim(), mode: state.currentMode, items: flatData,
                         comment: document.getElementById('comment') ? document.getElementById('comment').value : "",
-                        timestamp: firebase.database.ServerValue.TIMESTAMP, userId: globalTgUserId, svod: false, ordered: false,
+                        timestamp: Date.now(), userId: globalTgUserId, svod: false, ordered: false,
                         lenta_received: false, ozon_received: false, kuper_received: false
                     };
-                    // ⚡ Ждем записи, но с таймером защиты
-                    let pushPromise = database.ref("orders").push(recordPayload);
+                    let pushPromise = fetch(`${DB_URL}/orders.json`, {
+                        method: 'POST', body: JSON.stringify(recordPayload)
+                    });
                     await Promise.race([pushPromise, timeoutPromise]);
                 }
 

@@ -4608,9 +4608,7 @@ window.showLastOrder = async function() {
         return tasksForDay;
     }
 
-  // ⚡ ЕДИНСТВЕННАЯ И ЗАЩИЩЕННАЯ ФУНКЦИЯ ОТПРАВКИ (Фоновая отправка без зависаний)
-    // ⚡ ЕДИНСТВЕННАЯ И ЗАЩИЩЕННАЯ ФУНКЦИЯ ОТПРАВКИ (С таймером защиты от зависаний)
-    window.validateAndSubmit = async function(isFromModal) {
+  window.validateAndSubmit = async function(isFromModal) {
         if (!isFromModal && (state.currentMode === 'order' || state.currentMode === 'new_shop' || state.currentMode === 'marketplace')) { 
             toggleCartModal(true); 
             return; 
@@ -4621,7 +4619,7 @@ window.showLastOrder = async function() {
         let btn = document.getElementById('modal-submit-button'); 
         let mainBtn = document.getElementById('main-action-button'); 
 
-        // ⚡ Создаем таймер: если база не ответит за 8 секунд, принудительно выдаем ошибку
+        // ⚡ ТАЙМЕР ЗАЩИТЫ ОТ ЗАВИСАНИЯ (8 СЕКУНД)
         const TIMEOUT_MS = 8000;
         const timeoutPromise = new Promise((_, reject) => 
             setTimeout(() => reject(new Error("Плохой интернет! Сервер не ответил. Попробуйте еще раз.")), TIMEOUT_MS)
@@ -4640,7 +4638,7 @@ window.showLastOrder = async function() {
             showGlobalLoader("Отправка данных...");
             
             try {
-                let submitTimestamp = firebase.database.ServerValue.TIMESTAMP;
+                let submitTimestamp = Date.now();
                 if (state.mpMonthOption === 'prev') {
                     let now = new Date();
                     let prevMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
@@ -4648,18 +4646,23 @@ window.showLastOrder = async function() {
                 }
 
                 let promises = [];
+                let DB_URL = "https://project-lenta22-default-rtdb.firebaseio.com";
+                
                 for(let item of state.mpBasket) {
-                    promises.push(database.ref("marketplace_records").push({
-                        vendor: item.vendor,
-                        type: item.amount < 0 ? 'refund' : 'purchase',
-                        address: item.address,
-                        amount: parseFloat(item.amount),
-                        timestamp: submitTimestamp,
-                        userId: globalTgUserId
+                    // ⚡ БРОНЕБОЙНАЯ ОТПРАВКА НАПРЯМУЮ ЧЕРЕЗ HTTP
+                    promises.push(fetch(`${DB_URL}/marketplace_records.json`, {
+                        method: 'POST',
+                        body: JSON.stringify({
+                            vendor: item.vendor,
+                            type: item.amount < 0 ? 'refund' : 'purchase',
+                            address: item.address,
+                            amount: parseFloat(item.amount),
+                            timestamp: submitTimestamp,
+                            userId: globalTgUserId
+                        })
                     }));
                 }
                 
-                // ⚡ Ждем отправки, но НЕ БОЛЬШЕ 8 СЕКУНД
                 await Promise.race([Promise.all(promises), timeoutPromise]); 
                 
                 state.mpBasket = [];
@@ -4731,6 +4734,8 @@ window.showLastOrder = async function() {
             showGlobalLoader("Отправка данных..."); 
 
             try {
+                let DB_URL = "https://project-lenta22-default-rtdb.firebaseio.com";
+                
                 if (state.currentMode === 'order' || state.currentMode === 'new_shop') {
                     let existingSnap = null;
                     try {
@@ -4750,14 +4755,14 @@ window.showLastOrder = async function() {
                             let o = c.val();
                             if (o && (o.mode === 'order' || o.mode === 'new_shop') && o.svod === false && o.ordered === false) {
                                 if (!pendingKeyToUpdate) pendingKeyToUpdate = c.key;
-                                else database.ref(`orders/${c.key}`).remove(); 
+                                else fetch(`${DB_URL}/orders/${c.key}.json`, {method:'DELETE'}).catch(()=>{}); 
                             }
                         });
                     }
 
                     let finalDataToSave = {
                         shop: state.currentShop.trim(), mode: state.currentMode, items: flatData,
-                        comment: mergedComments.join(" | "), timestamp: firebase.database.ServerValue.TIMESTAMP, userId: globalTgUserId,
+                        comment: mergedComments.join(" | "), timestamp: Date.now(), userId: globalTgUserId,
                         svod: false, ordered: false, lenta_received: false, ozon_received: false, kuper_received: false
                     };
 
@@ -4787,29 +4792,27 @@ window.showLastOrder = async function() {
                             if (newComment) comments.push(newComment);
                             finalDataToSave.comment = comments.join(" | ");
                         }
-                        let DB_URL = "https://project-lenta22-default-rtdb.firebaseio.com";
-                    finalDataToSave.timestamp = Date.now(); // ⚡ Меняем формат времени для REST API
-                    
-                    if (pendingKeyToUpdate) {
-                        // ⚡ ЖЕЛЕЗОБЕТОННЫЙ HTTP-ЗАПРОС ВМЕСТО WEBSOCKET
+                        
+                        // ⚡ БРОНЕБОЙНАЯ ОТПРАВКА НАПРЯМУЮ ЧЕРЕЗ HTTP
                         let savePromise = fetch(`${DB_URL}/orders/${pendingKeyToUpdate}.json`, {
                             method: 'PUT', body: JSON.stringify(finalDataToSave)
                         });
                         await Promise.race([savePromise, timeoutPromise]);
                     } else {
+                        // ⚡ БРОНЕБОЙНАЯ ОТПРАВКА НАПРЯМУЮ ЧЕРЕЗ HTTP
                         let pushPromise = fetch(`${DB_URL}/orders.json`, {
                             method: 'POST', body: JSON.stringify(finalDataToSave)
                         });
                         await Promise.race([pushPromise, timeoutPromise]);
                     }
                 } else {
-                    let DB_URL = "https://project-lenta22-default-rtdb.firebaseio.com";
                     let recordPayload = {
                         shop: state.currentShop.trim(), mode: state.currentMode, items: flatData,
                         comment: document.getElementById('comment') ? document.getElementById('comment').value : "",
                         timestamp: Date.now(), userId: globalTgUserId, svod: false, ordered: false,
                         lenta_received: false, ozon_received: false, kuper_received: false
                     };
+                    // ⚡ БРОНЕБОЙНАЯ ОТПРАВКА НАПРЯМУЮ ЧЕРЕЗ HTTP
                     let pushPromise = fetch(`${DB_URL}/orders.json`, {
                         method: 'POST', body: JSON.stringify(recordPayload)
                     });
@@ -4827,7 +4830,6 @@ window.showLastOrder = async function() {
             }
         } 
 
-        // 3. Мгновенный показ экрана Успеха (ТОЛЬКО если данные 100% улетели)
         hideGlobalLoader(); 
         toggleCartModal(false);
         document.getElementById('success-screen').style.display = 'flex';

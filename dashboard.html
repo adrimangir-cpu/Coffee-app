@@ -2654,19 +2654,12 @@ window.syncStoplistWithMenu = async function() {
                 }
             }
             
-            if (Object.keys(updates).length > 0) {
+           if (Object.keys(updates).length > 0) {
                 let cleanUpdates = JSON.parse(JSON.stringify(updates));
                 for (let uk in cleanUpdates) cachedData.orders[uk] = cleanUpdates[uk];
                 
-                let savePromise = fetch(`${FB_URL}/orders.json`, {
-                    method: 'PATCH',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(cleanUpdates)
-                });
-                
-                // Жесткий таймаут 8 секунд, чтобы кнопка никогда не висела вечно
-                let timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Таймаут сервера")), 8000));
-                promises.push(Promise.race([savePromise, timeoutPromise]));
+                // ⚡ ФИКС: Используем родной метод Firebase (он не отваливается по тайм-ауту и идеально работает с большими данными)
+                promises.push(db.ref('orders').update(cleanUpdates));
             }
             await Promise.all(promises);
             
@@ -7073,6 +7066,24 @@ window.onload = () => {
   let tabBtn = document.querySelector(`.tab-btn[onclick*="'${savedTab}'"]`) || document.querySelector('.tab-btn.active');
   loadTab(savedTab, tabBtn);
 };
+
+
+    // ==========================================
+    // ⚡ МГНОВЕННОЕ ФОНОВОЕ ОБНОВЛЕНИЕ (REAL-TIME FIREBASE)
+    // ==========================================
+    // Теперь Дашборд реагирует на действия Озон-бота МОМЕНТАЛЬНО, без перезагрузки страницы
+    db.ref('orders').on('value', (snapshot) => {
+        let ordersObj = snapshot.val() || {};
+        Object.keys(ordersObj).forEach(k => { if (ordersObj[k]) ordersObj[k].key = k; });
+        cachedData.orders = ordersObj;
+        
+        // Перерисовываем Свод только если мы на вкладке заказов и НЕ в режиме ручного редактирования
+        if (currentTabType === 'orders' && !isSvodEditMode) {
+            renderOrdersSvod();
+        }
+    });
+
+    window.onload = () => showMainMenu();
     
     // ==========================================
     // УМНАЯ АВТО-СИНХРОНИЗАЦИЯ ФОТО ПО ДУБЛИКАТАМ

@@ -927,14 +927,16 @@ async function fetchOptimistic(path) {
 }
 
 function cleanName(str) {
-  if (!str) return "";
-  return str.toLowerCase()
-    .replace(/ё/g, 'е')
-    .replace(/\([^)]*\)/g, '')
-    .replace(/[0-9.,]+\s*(кг|г|мл|л|шт)/g, '')
-    .replace(/(брекет|коробка)/g, '')
-    .replace(/[^a-zа-я0-9]/g, '');
-}
+        if (!str) return "";
+        return str.toLowerCase()
+            .replace(/ё/g, 'е')
+    
+            .replace(/[0-9.,]+\s*(кг|г|мл|л|шт)/g, '') 
+            .replace(/(брекет|коробка)/g, '') 
+            
+            .replace(/[^a-zа-я0-9\s\(\)]/g, '')
+            .trim(); 
+    }
 
 function loadUIState() {
   try { expandedDivs = new Set(JSON.parse(localStorage.getItem('expandedDivs') || '[]')); } catch(e) {}
@@ -2655,7 +2657,16 @@ window.syncStoplistWithMenu = async function() {
             if (Object.keys(updates).length > 0) {
                 let cleanUpdates = JSON.parse(JSON.stringify(updates));
                 for (let uk in cleanUpdates) cachedData.orders[uk] = cleanUpdates[uk];
-                promises.push(db.ref('orders').update(cleanUpdates));
+                
+                let savePromise = fetch(`${FB_URL}/orders.json`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(cleanUpdates)
+                });
+                
+                // Жесткий таймаут 8 секунд, чтобы кнопка никогда не висела вечно
+                let timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Таймаут сервера")), 8000));
+                promises.push(Promise.race([savePromise, timeoutPromise]));
             }
             await Promise.all(promises);
             

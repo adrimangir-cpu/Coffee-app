@@ -3350,6 +3350,8 @@ window.viewStopList = async function() {
         state.currentMode = 'stoplist_view';
         document.getElementById('report-overlay').style.display = 'flex';
         document.getElementById('report-header').innerText = "Актуальный стоп-лист";
+
+        // ⚡ ФИКС 1: Жестко показываем экран загрузки
         document.getElementById('report-content-area').innerHTML = `
             <div class="report-card">
                 <div class="loading-pulse" style="text-align:center; font-weight:900; color:#7E57C2; padding: 20px;">
@@ -3358,18 +3360,14 @@ window.viewStopList = async function() {
                 </div>
             </div>`;
 
-        // ⚡ Гарантированно подгружаем базу для этого экрана
-
-        // ⚡ Гарантированно подгружаем базу для этого экрана
-        if (!state.ordersLoaded || !state.globalOrders || state.globalOrders.length === 0) {
-            try {
-                let snap = await database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(50).once("value");
-                let arr = [];
-                snap.forEach(c => { let v = c.val(); if(v){ v.key = c.key; arr.push(v); } });
-                state.globalOrders = arr.sort((a,b) => b.timestamp - a.timestamp);
-                state.ordersLoaded = true;
-            } catch(e) {}
-        }
+        // ⚡ ФИКС 2: Полностью игнорируем кэш памяти телефона и ВСЕГДА принудительно 
+        // скачиваем свежие заказы с сервера (убрали проверку if (!state.ordersLoaded))
+        try {
+            let snap = await database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(50).once("value");
+            let arr = [];
+            snap.forEach(c => { let v = c.val(); if(v){ v.key = c.key; arr.push(v); } });
+            state.globalOrders = arr.sort((a,b) => b.timestamp - a.timestamp);
+        } catch(e) {}
 
         try {
             let stopCatalog = (state.cachedCatalogs && state.cachedCatalogs.stoplist) ? state.cachedCatalogs.stoplist : {};

@@ -2658,8 +2658,21 @@ window.syncStoplistWithMenu = async function() {
                 let cleanUpdates = JSON.parse(JSON.stringify(updates));
                 for (let uk in cleanUpdates) cachedData.orders[uk] = cleanUpdates[uk];
                 
-                // ⚡ ФИКС: Используем родной метод Firebase (он не отваливается по тайм-ауту и идеально работает с большими данными)
-                promises.push(db.ref('orders').update(cleanUpdates));
+                // ⚡ БРОНЕБОЙНОЕ СОХРАНЕНИЕ: Отправляем через прямой HTTP-запрос, 
+                // обходя спящие сокеты Firebase, чтобы кнопка никогда не зависала.
+                const rawFetch = typeof originalFetch !== 'undefined' ? originalFetch : fetch;
+                
+                let savePromise = rawFetch(`${FB_URL}/orders.json`, { 
+                    method: 'PATCH', 
+                    body: JSON.stringify(cleanUpdates) 
+                }).then(res => {
+                    if (!res.ok) throw new Error("Ошибка сервера");
+                });
+                
+                // Таймаут 10 секунд на случай реального отсутствия интернета
+                let timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Плохой интернет (Таймаут)")), 10000));
+                
+                promises.push(Promise.race([savePromise, timeoutPromise]));
             }
             await Promise.all(promises);
             

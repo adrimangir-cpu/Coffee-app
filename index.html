@@ -636,10 +636,12 @@
         if (!str) return "";
         return str.toLowerCase()
             .replace(/ё/g, 'е')
-            .replace(/\([^)]*\)/g, '') 
+           
             .replace(/[0-9.,]+\s*(кг|г|мл|л|шт)/g, '') 
             .replace(/(брекет|коробка)/g, '') 
-            .replace(/[^a-zа-я0-9]/g, ''); 
+           
+            .replace(/[^a-zа-я0-9\s\(\)]/g, '')
+            .trim(); 
     }
 
     function triggerHaptic() { 
@@ -3392,11 +3394,12 @@ window.viewStopList = async function() {
                 });
             }
 
-            let stopInfoMap = {};
+           let stopInfoMap = {};
             Object.values(stopCatalog).forEach(c => {
                 if (c && c.name) {
                     let nameClean = getStatusKey(c.name); 
-                    if (!stopInfoMap[nameClean]) stopInfoMap[nameClean] = { sez: new Set(), main: new Set(), cat: c.cat || "" };
+                    // ⚡ ФИКС: Сохраняем globalCat, чтобы потом проверять на скрытие
+                    if (!stopInfoMap[nameClean]) stopInfoMap[nameClean] = { sez: new Set(), main: new Set(), cat: c.cat || "", globalCat: c.globalCat || "Основное меню" };
                     if (c.sez) c.sez.split(',').forEach(s => { if (s.trim()) stopInfoMap[nameClean].sez.add(s.trim()); });
                     if (c.main) c.main.split(',').forEach(s => { if (s.trim()) stopInfoMap[nameClean].main.add(s.trim()); });
                 }
@@ -3467,15 +3470,23 @@ window.viewStopList = async function() {
             let itemsArr = Array.isArray(latest.items) ? latest.items : Object.values(latest.items);
             let hasStoppedItems = false;
 
-            itemsArr.forEach(i => {
+           temsArr.forEach(i => {
                 if(!i || !i.name || i.qty !== 'Закончилось' || i.name === 'Всё в наличии') return;
-                hasStoppedItems = true;
                 
                 let cleanedItemName = getStatusKey(i.name);
                 if (seenNames.has(cleanedItemName)) return;
-                seenNames.add(cleanedItemName);
 
-                let stopInfo = stopInfoMap[cleanedItemName] || { sez: new Set(), main: new Set(), cat: "" };
+                let stopInfo = stopInfoMap[cleanedItemName] || { sez: new Set(), main: new Set(), cat: "", globalCat: "Основное меню" };
+
+           
+                let gCat = stopInfo.globalCat || "Основное меню";
+                if (state.appSettings && state.appSettings.hidden_categories_stoplist && state.appSettings.hidden_categories_stoplist[gCat]) {
+                    return; 
+                }
+
+                hasStoppedItems = true;
+                seenNames.add(cleanedItemName);
+                
                 let info = { sez: Array.from(stopInfo.sez).join(", "), main: Array.from(stopInfo.main).join(", "), cat: stopInfo.cat };
 
                 let statHtml = "";

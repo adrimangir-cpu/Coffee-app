@@ -3360,14 +3360,17 @@ window.viewStopList = async function() {
                 </div>
             </div>`;
 
-        // ⚡ ФИКС 2: Полностью игнорируем кэш памяти телефона и ВСЕГДА принудительно 
-        // скачиваем свежие заказы с сервера (убрали проверку if (!state.ordersLoaded))
+       // ⚡ ИСПРАВЛЕНИЕ: Ждем ответа сервера МАКСИМУМ 1.5 секунды.
+        // Если интернет слабый, мы не висим 5 минут, а берем последний известный кэш (state.globalOrders)
         try {
-            let snap = await database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(50).once("value");
+            let snap = await Promise.race([
+                database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(50).once("value"),
+                new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 1500))
+            ]);
             let arr = [];
             snap.forEach(c => { let v = c.val(); if(v){ v.key = c.key; arr.push(v); } });
             state.globalOrders = arr.sort((a,b) => b.timestamp - a.timestamp);
-        } catch(e) {}
+        } catch(e) {} // При таймауте просто идем дальше, ничего не зависает
 
         try {
             let stopCatalog = (state.cachedCatalogs && state.cachedCatalogs.stoplist) ? state.cachedCatalogs.stoplist : {};
@@ -3634,7 +3637,13 @@ window.showLastOrder = async function() {
         }
         
         if (promises.length > 0) {
-            try { await Promise.all(promises); } catch(e){}
+            try { 
+                // ⚡ ИСПРАВЛЕНИЕ: Жесткий лимит 1.5 сек. Не висим бесконечно!
+                await Promise.race([
+                    Promise.all(promises),
+                    new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 1500))
+                ]);
+            } catch(e){}
         }
 
         let orderCatalog = (state.cachedCatalogs && state.cachedCatalogs.order) ? state.cachedCatalogs.order : {};
@@ -4675,7 +4684,8 @@ window.showLastOrder = async function() {
                 localStorage.removeItem("draft_marketplace");
             } catch(e) {
                 hideGlobalLoader();
-                showPopupError("Ошибка сети", e.message);
+                persistMpDraft(); // ⚡ ЖЕЛЕЗНОЕ АВТОСОХРАНЕНИЕ
+                showPopupError("Интернет пропал 🌐", "Ваши данные не отправлены, но сохранены в черновик. Убедитесь, что интернет стабилен, и попробуйте нажать кнопку еще раз.");
                 state.isProcessing = false; 
                 if(btn) { btn.innerText = "ПОДТВЕРДИТЬ И ОТПРАВИТЬ"; btn.disabled = false; }
                 if(mainBtn) { mainBtn.innerText = "ОТПРАВИТЬ"; mainBtn.disabled = false; }
@@ -4828,7 +4838,8 @@ window.showLastOrder = async function() {
                 localStorage.removeItem("draft_" + state.currentShop + "_" + state.currentMode);
             } catch(e) {
                 hideGlobalLoader(); 
-                showPopupError("Ошибка сети", e.message);
+                persistDraft(); // ⚡ ЖЕЛЕЗНОЕ АВТОСОХРАНЕНИЕ
+                showPopupError("Интернет пропал 🌐", "Отчет не отправлен! Но не переживайте, все товары и количества сохранены. Проверьте связь и нажмите 'Отправить' еще раз.");
                 state.isProcessing = false;
                 if(btn) { btn.innerText = "ПОДТВЕРДИТЬ И ОТПРАВИТЬ"; btn.disabled = false; }
                 if(mainBtn) { mainBtn.innerText = "ОТПРАВИТЬ"; mainBtn.disabled = false; }

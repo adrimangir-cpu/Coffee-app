@@ -1003,18 +1003,24 @@
  if (!container || !state.currentShop) return;
 
  let today = new Date(); today.setHours(0,0,0,0);
+ let dow = new Date().getDay(); // 0=Вс..6=Сб
  let orders = state.globalOrders || [];
  let missing = state.globalMissing || [];
 
+ // Чек-лист — только по понедельникам и четвергам
+ let showChecklist = (dow === 1 || dow === 4);
  let checklistToday = orders.some(o => o && o.mode === 'checklist' && (o.timestamp||0) >= today.getTime());
 
- let day = new Date().getDay();
+ // Закупка — период Ср-Чт / Пт-Вс, как в остальной логике приложения
  let orderStart = new Date(); orderStart.setHours(0,0,0,0);
- if (day === 3 || day === 4) { orderStart.setDate(orderStart.getDate() - (day - 3)); }
- else if (day === 5 || day === 6 || day === 0) { let diff = day === 0 ? 2 : day - 5; orderStart.setDate(orderStart.getDate() - diff); }
- else { let diff = day === 1 ? 3 : 4; orderStart.setDate(orderStart.getDate() - diff); }
- let orderPlaced = orders.some(o => o && (o.mode === 'order' || o.mode === 'new_shop') && (o.timestamp||0) >= orderStart.getTime());
+ if (dow === 3 || dow === 4) { orderStart.setDate(orderStart.getDate() - (dow - 3)); }
+ else if (dow === 5 || dow === 6 || dow === 0) { let diff = dow === 0 ? 2 : dow - 5; orderStart.setDate(orderStart.getDate() - diff); }
+ else { let diff = dow === 1 ? 3 : 4; orderStart.setDate(orderStart.getDate() - diff); }
+ let orderPlacedThisPeriod = orders.some(o => o && (o.mode === 'order' || o.mode === 'new_shop') && (o.timestamp||0) >= orderStart.getTime());
+ let lastOrderEntry = orders.find(o => o && (o.mode === 'order' || o.mode === 'new_shop'));
+ let lastOrderDateStr = lastOrderEntry ? new Date(lastOrderEntry.timestamp).toLocaleDateString('ru-RU', {day:'numeric', month:'short'}) : 'ещё не было';
 
+ // Стоп-лист — каждый день
  let latestStoplist = orders.find(o => o && o.mode === 'stoplist_fill');
  let stopCount = 0;
  if (latestStoplist && latestStoplist.items) {
@@ -1022,12 +1028,31 @@
  stopCount = itemsArr.filter(i => i && i.qty === 'Закончилось' && i.name !== 'Всё в наличии').length;
  }
 
- let pendingCount = missing.filter(m => m && m.status !== 'arrived' && m.status !== 'canceled').length;
+ // Приёмка — каждый день, недовозы считаются внутри неё же (не отдельная плитка)
+ let activeMissingCount = missing.filter(m => m && m.status !== 'arrived' && m.status !== 'canceled').length;
+ let fourteenDaysAgo = Date.now() - (14 * 24 * 60 * 60 * 1000);
+ let awaitingCount = 0;
+ orders.forEach(o => {
+ if (o && (o.mode === 'order' || o.mode === 'new_shop') && (o.timestamp||0) >= fourteenDaysAgo) {
+ let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
+ itemsArr.forEach(i => { if (i && i.status === 'ordered') awaitingCount++; });
+ }
+ });
+ let receivingPending = activeMissingCount + awaitingCount;
+
+ // Задачи на сегодня из Календаря дел
+ let tasksToday = [];
+ try {
+ let tasksArr = Object.values((state.cachedCatalogs && state.cachedCatalogs['tasks_calendar']) || {});
+ if (typeof getTasksForDate === 'function') tasksToday = getTasksForDate(new Date(), tasksArr);
+ } catch(e) {}
 
  let dateStr = today.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' });
  let shopDisplay = state.currentShop === 'Красноказарменная' ? 'МЭИ' : state.currentShop;
 
- const flowerSvg = '<svg width="38" height="38" viewBox="0 0 100 100" fill="none" stroke="#16161A" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"><path d="M50 50 C 30 30, 30 10, 50 10 C 70 10, 70 30, 50 50 Z"/><path d="M50 50 C 70 30, 90 30, 90 50 C 90 70, 70 70, 50 50 Z"/><path d="M50 50 C 70 70, 70 90, 50 90 C 30 90, 30 70, 50 50 Z"/><path d="M50 50 C 30 70, 10 70, 10 50 C 10 30, 30 30, 50 50 Z"/><circle cx="50" cy="50" r="6" fill="#16161A"/></svg>';
+ const flowerSvg = '<svg width="34" height="34" viewBox="0 0 100 100" fill="none" stroke="#16161A" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"><path d="M50 50 C 30 30, 30 10, 50 10 C 70 10, 70 30, 50 50 Z"/><path d="M50 50 C 70 30, 90 30, 90 50 C 90 70, 70 70, 50 50 Z"/><path d="M50 50 C 70 70, 70 90, 50 90 C 30 90, 30 70, 50 50 Z"/><path d="M50 50 C 30 70, 10 70, 10 50 C 10 30, 30 30, 50 50 Z"/><circle cx="50" cy="50" r="6" fill="#16161A"/></svg>';
+ const flowerBg1 = '<svg width="130" height="130" viewBox="0 0 100 100" fill="none" stroke="#16161A" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" style="position:absolute; top:-30px; right:-40px; opacity:0.06; transform:rotate(12deg); pointer-events:none;"><path d="M50 50 C 30 30, 30 10, 50 10 C 70 10, 70 30, 50 50 Z"/><path d="M50 50 C 70 30, 90 30, 90 50 C 90 70, 70 70, 50 50 Z"/><path d="M50 50 C 70 70, 70 90, 50 90 C 30 90, 30 70, 50 50 Z"/><path d="M50 50 C 30 70, 10 70, 10 50 C 10 30, 30 30, 50 50 Z"/></svg>';
+ const flowerBg2 = '<svg width="80" height="80" viewBox="0 0 100 100" fill="none" stroke="#16161A" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" style="position:absolute; bottom:10px; left:-30px; opacity:0.05; transform:rotate(-18deg); pointer-events:none;"><path d="M50 50 C 30 30, 30 10, 50 10 C 70 10, 70 30, 50 50 Z"/><path d="M50 50 C 70 30, 90 30, 90 50 C 90 70, 70 70, 50 50 Z"/><path d="M50 50 C 70 70, 70 90, 50 90 C 30 90, 30 70, 50 50 Z"/><path d="M50 50 C 30 70, 10 70, 10 50 C 10 30, 30 30, 50 50 Z"/></svg>';
 
  function statCard(done, title, doneText, pendingText, onclickJs, iconSvg) {
  let dotColor = done ? '#3F8A4C' : '#A9762E';
@@ -1043,16 +1068,41 @@
  let iconBox = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="20" r="1"/><circle cx="17" cy="20" r="1"/><path d="M2.5 3h2l2.2 11.4A2 2 0 0 0 8.6 16h8a2 2 0 0 0 2-1.6L20.5 7H6"/></svg>';
  let iconStop = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M6 6l12 12"/></svg>';
  let iconTruck = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7h11v9H2z"/><path d="M13 10h4l3 3v3h-7z"/><circle cx="6.5" cy="18" r="1.6"/><circle cx="17" cy="18" r="1.6"/></svg>';
+ let iconCal = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="16" rx="2"/><path d="M3.5 9.5h17M8 3v4M16 3v4"/></svg>';
 
- let html = '<div style="display:flex; align-items:flex-start; justify-content:space-between; margin-bottom:20px;">' +
+ // Карточки — набор зависит от дня недели: чек-лист только пн/чт
+ let cards = [];
+ if (showChecklist) {
+ cards.push(statCard(checklistToday, 'Чек-лист', 'Заполнен сегодня', 'Ещё не заполнен', "initWorkflow('checklist')", iconChecklist));
+ }
+ cards.push(statCard(orderPlacedThisPeriod, 'Закупка', 'Собрана · посл. ' + lastOrderDateStr, 'Собрать закупку · посл. ' + lastOrderDateStr, "initWorkflow('order')", iconBox));
+ cards.push(statCard(stopCount === 0, 'Стоп-лист', 'Всё в наличии', stopCount + ' поз. нет в наличии', "showScreen('step-stoplist')", iconStop));
+ cards.push(statCard(receivingPending === 0, 'Приёмка', 'Всё принято', receivingPending + ' ожидает приёмки', "showLastOrder()", iconTruck));
+
+ let pendingBanner = "";
+ if (receivingPending > 0) {
+ pendingBanner = '<div onclick="showLastOrder()" style="background:#16161A; color:#fff; border-radius:18px; padding:14px 16px; display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; cursor:pointer;">' +
+ '<div><div style="font-weight:700; font-size:14px;">Есть незавершённая приёмка</div>' +
+ '<div style="font-size:12.5px; opacity:0.75; margin-top:2px;">' + receivingPending + ' позиций ждут — не потеряйте</div></div>' +
+ '<span style="font-size:18px;">&#8594;</span></div>';
+ }
+
+ let tasksCard = "";
+ if (tasksToday.length > 0) {
+ let namesPreview = tasksToday.slice(0,3).map(t => t.name).join(', ') + (tasksToday.length > 3 ? '…' : '');
+ tasksCard = '<div onclick="initCalendarTasksWorkflow()" style="background:#fff; border-radius:18px; padding:14px 16px; display:flex; align-items:center; gap:10px; margin-bottom:14px; box-shadow:var(--shadow-card); cursor:pointer;">' +
+ '<div style="color:#16161A;">' + iconCal + '</div>' +
+ '<div style="flex:1;"><div style="font-weight:700; font-size:13.5px; color:#16161A;">Сегодня по календарю: ' + tasksToday.length + '</div>' +
+ '<div style="font-size:12px; color:#57565E; margin-top:1px;">' + namesPreview + '</div></div></div>';
+ }
+
+ let html = '<div style="position:relative; overflow:hidden; margin-bottom:18px;">' + flowerBg1 +
+ '<div style="display:flex; align-items:flex-start; justify-content:space-between; position:relative;">' +
  '<div><div style="font-size:13px; color:#98979E; font-weight:600; text-transform:capitalize;">' + dateStr + ' · ' + shopDisplay + '</div>' +
- '<div style="font-size:26px; font-weight:700; color:#16161A; margin-top:2px;">Teiku</div></div>' + flowerSvg + '</div>' +
- '<div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:10px;">' +
- statCard(checklistToday, 'Чек-лист', 'Заполнен сегодня', 'Ещё не заполнен', "switchTab('lists')", iconChecklist) +
- statCard(orderPlaced, 'Закупка', 'Оформлена', 'Ещё не оформлена', "switchTab('orders')", iconBox) +
- statCard(stopCount === 0, 'Стоп-лист', 'Всё в наличии', stopCount + ' поз. нет в наличии', "showScreen('step-stoplist')", iconStop) +
- statCard(pendingCount === 0, 'Недовозы', 'Нет ожидающих', pendingCount + ' в пути/на проверке', "showLastOrder()", iconTruck) +
- '</div>';
+ '<div style="font-size:32px; font-weight:800; font-style:italic; letter-spacing:-1px; color:#16161A; margin-top:2px;">Teiku</div></div>' + flowerSvg + '</div></div>' +
+ pendingBanner + tasksCard +
+ '<div style="position:relative;">' + flowerBg2 +
+ '<div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:10px; position:relative;">' + cards.join('') + '</div></div>';
 
  container.innerHTML = html;
  }
@@ -1591,7 +1641,7 @@
  document.getElementById('invoices-container').innerHTML = `
  <div class="report-card">
  <div class="loading-pulse" style="text-align:center; font-weight:700; color:#16161A; padding: 20px;">
- ⏳ Загрузка накладных...<br>
+ Загрузка накладных...<br>
  <span style="font-size:13px; color:#98979E; margin-top:10px; display:block;">Синхронизация с базой, секундочку...</span>
  </div>
  </div>`;
@@ -2029,7 +2079,7 @@
  </div>`;
  } else {
  recipeHtml += `<div style="text-align:center; margin-bottom:15px;" onclick="showDrinkPhoto('${escapeName(drink.name)}')">
- <div class="lazy-placeholder" style="width:100px; height:100px; background:#F3F2EE; border-radius:16px; margin:0 auto; display:flex; align-items:center; justify-content:center; color:#16161A; font-size:12px; font-weight:bold;">⏳ Фото...</div>
+ <div class="lazy-placeholder" style="width:100px; height:100px; background:#F3F2EE; border-radius:16px; margin:0 auto; display:flex; align-items:center; justify-content:center; color:#16161A; font-size:12px; font-weight:bold;">Фото...</div>
  <img class="lazy-drink-img" data-src="${drink.photo}" style="width:100px; height:100px; object-fit:cover; border-radius:16px; border:2px solid #E7E2D3; box-shadow: 0 4px 10px rgba(0,0,0,0.1); cursor:pointer; display:none; margin: 0 auto;" alt="Фото напитка">
  <div style="font-size:12px; color:#16161A; font-weight:bold; margin-top:6px;">Нажми, чтобы увеличить</div>
  </div>`;
@@ -2431,7 +2481,7 @@
  statusMap[pKey] = { locked: true, text: 'В пути (Недовоз) ', color: '#16161A' };
  seenInOrders.add(pKey);
  } else if (m.status === 'pending') {
- statusMap[pKey] = { locked: true, text: 'Проверка админом ⏳', color: '#8F5E20' };
+ statusMap[pKey] = { locked: true, text: 'Проверка админом ', color: '#8F5E20' };
  seenInOrders.add(pKey);
  } else if (m.status === 'canceled' && !m.added_to_basket) {
  let catItem = Object.values(state.productCatalog).find(c => c && getStatusKey(c.name) === pKey);
@@ -2477,7 +2527,7 @@
  } else if (isOrderedByAdmin && !isReceived) {
  statusMap[pKey] = { locked: true, text: 'Оформлено (В пути) ', color: '#3F8A4C' };
  } else if (!isOrderedByAdmin && !isReceived) {
- statusMap[pKey] = { locked: true, text: 'Ожидает оформления ⏳', color: '#A9762E' };
+ statusMap[pKey] = { locked: true, text: 'Ожидает оформления ', color: '#A9762E' };
  }
  }
  });
@@ -3058,7 +3108,7 @@
  document.getElementById('report-content-area').innerHTML = `
  <div class="report-card">
  <div class="loading-pulse" style="text-align:center; font-weight:700; color:#16161A; padding: 20px;">
- ⏳ Синхронизация с базой...<br>
+ Синхронизация с базой...<br>
  <span style="font-size:13px; color:#98979E; margin-top:10px; display:block;">Загружаю ваши заказы, секундочку...</span>
  </div>
  </div>`;
@@ -3218,7 +3268,7 @@
  } else if (item.status === 'not_needed') {
  stHtml = `<span style="color:#6B6459; background:#EDE7DA; padding:4px 10px; border-radius:8px; font-size:12px; font-weight:700;">Не заказан </span>`;
  } else {
- stHtml = `<span style="color:#A9762E; background:#F7F1E6; padding:4px 10px; border-radius:8px; font-size:12px; font-weight:700;">Ожидает оформления ⏳</span>`;
+ stHtml = `<span style="color:#A9762E; background:#F7F1E6; padding:4px 10px; border-radius:8px; font-size:12px; font-weight:700;">Ожидает оформления </span>`;
  }
 
  blockHtml += `<div style="display:flex; justify-content:space-between; align-items:center; padding:12px 0; border-bottom:1px solid #F0EFEB;">
@@ -3430,7 +3480,7 @@ window.viewStopList = async function() {
  document.getElementById('report-content-area').innerHTML = `
  <div class="report-card">
  <div class="loading-pulse" style="text-align:center; font-weight:700; color:#16161A; padding: 20px;">
- ⏳ Получение данных...<br>
+ Получение данных...<br>
  <span style="font-size:13px; color:#98979E; margin-top:10px; display:block;">Синхронизация с базой</span>
  </div>
  </div>`;
@@ -3495,7 +3545,7 @@ window.viewStopList = async function() {
  statusMap[pKey] = { locked: true, text: 'В пути (Недовоз) ', color: '#16161A' };
  seenInOrders.add(pKey);
  } else if (m.status === 'pending') {
- statusMap[pKey] = { locked: true, text: 'Проверка админом ⏳', color: '#8F5E20' };
+ statusMap[pKey] = { locked: true, text: 'Проверка админом ', color: '#8F5E20' };
  seenInOrders.add(pKey);
  }
  });
@@ -3522,7 +3572,7 @@ window.viewStopList = async function() {
  } else if (isOrderedByAdmin && !isReceived) {
  statusMap[pKey] = { locked: true, text: 'Оформлено (В пути) ', color: '#3F8A4C' };
  } else if (!isOrderedByAdmin && !isReceived) {
- statusMap[pKey] = { locked: true, text: 'Ожидает оформления ⏳', color: '#A9762E' };
+ statusMap[pKey] = { locked: true, text: 'Ожидает оформления ', color: '#A9762E' };
  }
  }
  });
@@ -3685,7 +3735,7 @@ window.showLastOrder = async function() {
  document.getElementById('report-content-area').innerHTML = `
  <div class="report-card">
  <div class="loading-pulse" style="text-align:center; font-weight:700; color:#16161A; padding: 20px;">
- ⏳ Синхронизация...<br>
+ Синхронизация...<br>
  <span style="font-size:13px; color:#98979E; margin-top:10px; display:block;">Пожалуйста, подождите...</span>
  </div>
  </div>`;
@@ -3774,9 +3824,9 @@ window.showLastOrder = async function() {
  });
 
  let missingVendors = [];
- if (lentaItems.length > 0) missingVendors.push({ name: " Лента", items: lentaItems });
- if (ozonItems.length > 0) missingVendors.push({ name: " Озон", items: ozonItems });
- if (kuperItems.length > 0) missingVendors.push({ name: " Купер", items: kuperItems });
+ if (lentaItems.length > 0) missingVendors.push({ name: "Лента", items: lentaItems });
+ if (ozonItems.length > 0) missingVendors.push({ name: "Озон", items: ozonItems });
+ if (kuperItems.length > 0) missingVendors.push({ name: "Купер", items: kuperItems });
  
  if (missingVendors.length > 0) {
  if (!pendingReceivings[o.shop]) pendingReceivings[o.shop] = [];
@@ -3809,7 +3859,7 @@ window.showLastOrder = async function() {
  <span style="margin-bottom:8px; font-size:16px;"><b>${m.name}</b> (x${m.qty})</span>
  <div style="display:flex; justify-content:space-between; width:100%; align-items:center;">
  <span style="background:${bg}; color:${statColor}; padding:4px 8px; border-radius:8px; font-size:12px; font-weight:700;">${statText}</span>
- <button id="${btnMissArrId}" onclick="toggleMissingArrived('${m.key}', '${safeNameEsc}', '${btnMissArrId}')" style="border:${isMarked ? '2px solid #3F8A4C' : '1px solid #E4E3DE'}; background:${isMarked ? '#EAF3EA' : '#FAFAF9'}; color:${isMarked ? '#3F8A4C' : '#98979E'}; padding:8px 15px; border-radius:10px; font-weight:700; font-size:14px; cursor:pointer;">Доехал </button>
+ <button id="${btnMissArrId}" onclick="toggleMissingArrived('${m.key}', '${safeNameEsc}', '${btnMissArrId}')" style="border:${isMarked ? '2px solid #3F8A4C' : '1px solid #E4E3DE'}; background:${isMarked ? '#EAF3EA' : '#FAFAF9'}; color:${isMarked ? '#3F8A4C' : '#98979E'}; padding:8px 15px; border-radius:10px; font-weight:700; font-size:14px; cursor:pointer;">Доехал</button>
  </div>
  </div>`;
  });

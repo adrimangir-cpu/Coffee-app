@@ -6434,15 +6434,18 @@ async function exportGraphsToExcel() {
         btn.disabled = true; btn.innerHTML = "⌛ УМНОЕ СЛИЯНИЕ БАЗЫ...";
         
         try {
-            let freshSnap = await fetch(`${FB_URL}/catalogs/invoices.json`).then(r => r.json()) || {};
-            let updates = {}; // ⚡ Для пакетного обновления
-            let promises = [];
-            let touchedGCats = {}; // ⚡ какие глобальные категории затронуты
-            
-            // ⚡ ФИКС: Используем ПРЯМЫЕ HTTP-запросы (rawFetch), обходя "спящие" веб-сокеты Firebase
+            // ⚡ 1. Вытаскиваем "чистый" метод отправки в обход спящих сокетов Firebase
             const rawFetch = typeof originalFetch !== 'undefined' ? originalFetch : fetch;
-
-            // ⚡ В архив уходит ТОЛЬКО прошлая накладная той глобальной категории, которую обновляем
+            
+            // ⚡ 2. СКАЧИВАЕМ базу строго по HTTP (именно тут раньше зависало!)
+            let res = await rawFetch(`${FB_URL}/catalogs/invoices.json`);
+            let freshSnap = await res.json() || {};
+            
+            let updates = {}; 
+            let promises = [];
+            let touchedGCats = {}; 
+            
+            // ⚡ 3. Архивируем прошлую накладную
             if (window.isNewInvoiceUpload && Object.keys(freshSnap).length > 0) {
                 let archiveGCat = window.invoiceUploadGCat || getCurrentInvoiceGCat();
                 let archiveItems = {};
@@ -6466,6 +6469,7 @@ async function exportGraphsToExcel() {
                 window.invoiceUploadGCat = null;
             }
             
+            // ⚡ 4. Применяем изменения (меняем цены и названия)
             for (let id in window.invoiceChanges) {
                 let item = window.invoiceChanges[id];
                 if (item === null) {
@@ -6488,27 +6492,30 @@ async function exportGraphsToExcel() {
                 }
             }
             
-            // ⚡ Метки времени по глобальным категориям
+            // ⚡ 5. Метки времени
             let nowTs = Date.now();
             let metaGroups = (freshSnap._meta && freshSnap._meta.groups) ? { ...freshSnap._meta.groups } : {};
             Object.keys(touchedGCats).forEach(g => { metaGroups[g] = nowTs; });
             updates['_meta'] = { timestamp: nowTs, groups: metaGroups };
             
-            // ⚡ Бронебойная отправка большого объекта через PATCH напрямую на сервер
+            // ⚡ 6. Бронебойная отправка большого объекта через PATCH
             promises.push(rawFetch(`${FB_URL}/catalogs/invoices.json`, { 
                 method: 'PATCH', 
                 body: JSON.stringify(updates) 
             }).then(res => { if (!res.ok) throw new Error("Ошибка обновления базы"); }));
             
-            // ⚡ Таймаут 15 секунд на случай реального обрыва сети
+            // ⚡ 7. Таймаут 15 секунд на случай реального обрыва сети
             let timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Плохой интернет (Таймаут 15с)")), 15000));
             
+            // Ждем завершения отправки
             await Promise.race([Promise.all(promises), timeoutPromise]);
+            
             window.invoiceChanges = {};
             btn.innerHTML = "✅ БАЗА СИНХРОНИЗИРОВАНА!";
             
-            let updateData = await fetch(`${FB_URL}/catalogs/invoices.json`).then(r => r.json()) || {};
-            currentCatalog = updateData;
+            // ⚡ 8. Обновляем UI чистым запросом (чтобы не было старых данных)
+            let updateRes = await rawFetch(`${FB_URL}/catalogs/invoices.json`);
+            currentCatalog = await updateRes.json() || {};
             renderInvoiceProducts();
             
             setTimeout(() => { btn.innerHTML = origText; btn.disabled = false; }, 1500);

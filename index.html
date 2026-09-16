@@ -471,6 +471,8 @@
  <button onclick="switchInvoiceTab('history')" id="tab-inv-history" style="flex: 1; padding: 12px; border: none; border-radius: 10px; font-size: 15px; font-weight:700; background: transparent; color: #98979E;">Архив (Прошлые)</button>
  </div>
 
+ <div id="invoice-gcat-bar" style="display:flex; gap:8px; overflow-x:auto; padding-bottom:4px; margin-bottom:12px;"></div>
+
  <div class="search-bar">
  <input type="text" id="invoice-search-input" class="search-input" placeholder="Поиск товара или категории..." oninput="filterInvoices(this.value)" autocomplete="off">
  <div class="search-count" id="invoice-search-count"></div>
@@ -1915,6 +1917,7 @@
 
  const processAndRender = (invDataRaw, historyDataRaw) => {
  let activeTimestamp = invDataRaw._meta ? invDataRaw._meta.timestamp : null;
+ let activeGroups = (invDataRaw._meta && invDataRaw._meta.groups) ? invDataRaw._meta.groups : {};
  let activeItems = Object.assign({}, invDataRaw);
  if(activeItems._meta) delete activeItems._meta; 
 
@@ -1929,6 +1932,7 @@
  state.invoiceDataFull = {
  active: activeItems,
  activeTimestamp: activeTimestamp,
+ activeGroups: activeGroups,
  history: historyData
  };
  
@@ -1951,7 +1955,7 @@
 
  Promise.all([
  database.ref('catalogs/invoices').once('value'),
- database.ref('catalogs/invoices_history').orderByKey().limitToLast(2).once('value')
+ database.ref('catalogs/invoices_history').orderByKey().limitToLast(12).once('value')
  ]).then(([activeSnap, historySnap]) => {
  let freshInv = activeSnap.val() || {};
  let freshHist = historySnap.val() || {};
@@ -1972,6 +1976,53 @@
  });
  }
  
+ /* ===== Глобальные категории накладных ===== */
+ function getInvoiceItemGCat(item) {
+ return (item && item.gcat && String(item.gcat).trim()) ? String(item.gcat).trim() : "Товары";
+ }
+
+ function getAvailableInvoiceGCats() {
+ let set = new Set();
+ let act = (state.invoiceDataFull && state.invoiceDataFull.active) ? state.invoiceDataFull.active : {};
+ Object.values(act).forEach(i => { if (i && i.name) set.add(getInvoiceItemGCat(i)); });
+ let hist = (state.invoiceDataFull && state.invoiceDataFull.history) ? state.invoiceDataFull.history : [];
+ hist.forEach(h => {
+ let items = h.items || {};
+ let g = h.gcat ? String(h.gcat).trim() : null;
+ if (g) set.add(g);
+ else Object.values(items).forEach(i => { if (i && i.name) set.add(getInvoiceItemGCat(i)); });
+ });
+ return [...set].filter(Boolean).sort((a,b) => a.localeCompare(b));
+ }
+
+ function getCurrentInvoiceGCat() {
+ let list = getAvailableInvoiceGCats();
+ if (list.length === 0) return null;
+ if (!state.invoiceGCat || list.indexOf(state.invoiceGCat) === -1) {
+ state.invoiceGCat = (list.indexOf("Товары") >= 0) ? "Товары" : list[0];
+ }
+ return state.invoiceGCat;
+ }
+
+ function selectInvoiceGCat(gcat) {
+ triggerHaptic();
+ state.invoiceGCat = gcat;
+ switchInvoiceTab(state.currentInvoiceTab || 'active');
+ }
+
+ function renderInvoiceGCatBar() {
+ let bar = document.getElementById('invoice-gcat-bar');
+ if (!bar) return;
+ let list = getAvailableInvoiceGCats();
+ let cur = getCurrentInvoiceGCat();
+ if (list.length <= 1) { bar.innerHTML = ""; bar.style.display = 'none'; return; }
+ bar.style.display = 'flex';
+ bar.innerHTML = list.map(g => {
+ let isOn = (g === cur);
+ return `<button onclick="selectInvoiceGCat('${escapeName(g)}')" style="flex:0 0 auto; padding:9px 16px; border-radius:999px; border:1px solid ${isOn ? '#16161A' : 'var(--border-subtle)'}; background:${isOn ? '#16161A' : '#FFF'}; color:${isOn ? '#FFF' : 'var(--ink-soft)'}; font-size:13.5px; font-weight:600; white-space:nowrap;">${g}</button>`;
+ }).join("");
+ }
+
  function switchInvoiceTab(tab) {
  triggerHaptic();
  state.currentInvoiceTab = tab;
@@ -1990,17 +2041,26 @@
  btnActive.style.background = '#16161A'; btnActive.style.color = '#FFF';
  btnHistory.style.background = 'transparent'; btnHistory.style.color = '#98979E';
  
+ renderInvoiceGCatBar();
  state.invoiceData = state.invoiceDataFull.active.items || state.invoiceDataFull.active;
  renderInvoices(state.invoiceData, state.invoiceDataFull.activeTimestamp);
  } else {
  btnHistory.style.background = '#3A2E22'; btnHistory.style.color = '#FFF';
  btnActive.style.background = 'transparent'; btnActive.style.color = '#98979E';
+ renderInvoiceGCatBar();
  renderInvoiceHistory();
  }
  }
 
  function renderInvoiceHistory() {
- let historyArr = state.invoiceDataFull.history || [];
+ let historyAll = state.invoiceDataFull.history || [];
+ let curG = getCurrentInvoiceGCat();
+ let historyArr = curG ? historyAll.filter(h => {
+ let g = h.gcat ? String(h.gcat).trim() : null;
+ if (g) return g === curG;
+ let items = Object.values(h.items || h || {});
+ return items.some(i => i && i.name && getInvoiceItemGCat(i) === curG);
+ }) : historyAll;
  if (historyArr.length === 0) {
  document.getElementById('invoices-container').innerHTML = "<div class='report-card' style='text-align:center;'>Архив пуст</div>";
  return;
@@ -2018,7 +2078,7 @@
  </div>
  <div class="${sId}" style="display:none; margin-top:10px;">`;
  
- let grouped = groupInvoiceItems(hist.items || hist);
+ let grouped = groupInvoiceItems(hist.items || hist, curG);
  html += generateInvoiceItemsHtml(grouped, { query: "" });
  html += `</div></div>`;
  });
@@ -2026,10 +2086,11 @@
  document.getElementById('invoices-container').innerHTML = html;
  }
 
- function groupInvoiceItems(itemsData) {
+ function groupInvoiceItems(itemsData, gcatFilter) {
  let grouped = {};
  Object.values(itemsData).forEach(i => {
  if(!i || !i.name) return;
+ if (gcatFilter && getInvoiceItemGCat(i) !== gcatFilter) return;
  let c = i.cat || "Прочее";
  if(!grouped[c]) grouped[c] = [];
  grouped[c].push(i);
@@ -2069,12 +2130,15 @@
 
  let q = state.invoiceSearch || "";
  let html = "";
- if (timestamp) {
- let dateStr = new Date(timestamp).toLocaleDateString('ru-RU', {day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'});
- html += `<div class="item-meta" style="text-align:center; margin-bottom:12px; background:#FFF; padding:8px; border-radius:12px; box-shadow:var(--shadow-card);">Дата загрузки: ${dateStr}</div>`;
+ let curG = getCurrentInvoiceGCat();
+ let groups = (state.invoiceDataFull && state.invoiceDataFull.activeGroups) ? state.invoiceDataFull.activeGroups : {};
+ let ts = (curG && groups && groups[curG]) ? groups[curG] : timestamp;
+ if (ts) {
+ let dateStr = new Date(ts).toLocaleDateString('ru-RU', {day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'});
+ html += `<div class="item-meta" style="text-align:center; margin-bottom:12px; background:#FFF; padding:8px; border-radius:12px; box-shadow:var(--shadow-card);">${curG ? curG + ' · ' : ''}Дата загрузки: ${dateStr}</div>`;
  }
 
- let grouped = groupInvoiceItems(invData);
+ let grouped = groupInvoiceItems(invData, curG);
  let sortedCats = Object.keys(grouped).sort();
 
  if(sortedCats.length === 0) {
@@ -4794,7 +4858,7 @@ window.showLastOrder = async function() {
  });
  });
 
- database.ref('catalogs/invoices_history').orderByKey().limitToLast(2).on('value', snap => {
+ database.ref('catalogs/invoices_history').orderByKey().limitToLast(12).on('value', snap => {
  let fresh = snap.val();
  if (fresh) {
  if (!state.cachedCatalogs) state.cachedCatalogs = {};

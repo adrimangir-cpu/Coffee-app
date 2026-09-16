@@ -6439,6 +6439,9 @@ async function exportGraphsToExcel() {
             let promises = [];
             let touchedGCats = {}; // ⚡ какие глобальные категории затронуты
             
+            // ⚡ ФИКС: Используем ПРЯМЫЕ HTTP-запросы (rawFetch), обходя "спящие" веб-сокеты Firebase
+            const rawFetch = typeof originalFetch !== 'undefined' ? originalFetch : fetch;
+
             // ⚡ В архив уходит ТОЛЬКО прошлая накладная той глобальной категории, которую обновляем
             if (window.isNewInvoiceUpload && Object.keys(freshSnap).length > 0) {
                 let archiveGCat = window.invoiceUploadGCat || getCurrentInvoiceGCat();
@@ -6453,7 +6456,11 @@ async function exportGraphsToExcel() {
                         ? freshSnap._meta.groups[archiveGCat]
                         : (freshSnap._meta ? freshSnap._meta.timestamp : Date.now());
                     let archivePayload = { timestamp: prevTs || Date.now(), gcat: archiveGCat, items: archiveItems };
-                    promises.push(fetch(`${FB_URL}/catalogs/invoices_history.json`, { method: 'POST', body: JSON.stringify(archivePayload) }));
+                    
+                    promises.push(rawFetch(`${FB_URL}/catalogs/invoices_history.json`, { 
+                        method: 'POST', 
+                        body: JSON.stringify(archivePayload) 
+                    }).then(res => { if (!res.ok) throw new Error("Ошибка создания истории"); }));
                 }
                 window.isNewInvoiceUpload = false;
                 window.invoiceUploadGCat = null;
@@ -6481,14 +6488,22 @@ async function exportGraphsToExcel() {
                 }
             }
             
-            // ⚡ Метки времени по глобальным категориям (общий timestamp оставляем для совместимости)
+            // ⚡ Метки времени по глобальным категориям
             let nowTs = Date.now();
             let metaGroups = (freshSnap._meta && freshSnap._meta.groups) ? { ...freshSnap._meta.groups } : {};
             Object.keys(touchedGCats).forEach(g => { metaGroups[g] = nowTs; });
             updates['_meta'] = { timestamp: nowTs, groups: metaGroups };
-            promises.push(db.ref('catalogs/invoices').update(updates)); // ⚡ Пакетное обновление
             
-            await Promise.all(promises);
+            // ⚡ Бронебойная отправка большого объекта через PATCH напрямую на сервер
+            promises.push(rawFetch(`${FB_URL}/catalogs/invoices.json`, { 
+                method: 'PATCH', 
+                body: JSON.stringify(updates) 
+            }).then(res => { if (!res.ok) throw new Error("Ошибка обновления базы"); }));
+            
+            // ⚡ Таймаут 15 секунд на случай реального обрыва сети
+            let timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Плохой интернет (Таймаут 15с)")), 15000));
+            
+            await Promise.race([Promise.all(promises), timeoutPromise]);
             window.invoiceChanges = {};
             btn.innerHTML = "✅ БАЗА СИНХРОНИЗИРОВАНА!";
             

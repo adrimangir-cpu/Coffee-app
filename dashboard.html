@@ -6423,7 +6423,7 @@ async function exportGraphsToExcel() {
         renderInvoiceProducts();
     }
 
-   async function saveInvoiceCatalog(btn) {
+ async function saveInvoiceCatalog(btn) {
         if (document.activeElement) document.activeElement.blur(); // ⚡ Защита ввода
         let origText = btn.innerHTML;
         if (Object.keys(window.invoiceChanges || {}).length === 0) {
@@ -6434,18 +6434,14 @@ async function exportGraphsToExcel() {
         btn.disabled = true; btn.innerHTML = "⌛ УМНОЕ СЛИЯНИЕ БАЗЫ...";
         
         try {
-            // ⚡ 1. Вытаскиваем "чистый" метод отправки в обход спящих сокетов Firebase
-            const rawFetch = typeof originalFetch !== 'undefined' ? originalFetch : fetch;
-            
-            // ⚡ 2. СКАЧИВАЕМ базу строго по HTTP (именно тут раньше зависало!)
-            let res = await rawFetch(`${FB_URL}/catalogs/invoices.json`);
-            let freshSnap = await res.json() || {};
+            // ⚡ 1. Скачиваем текущую базу для сравнения
+            let freshSnap = await fetch(`${FB_URL}/catalogs/invoices.json`).then(r => r.json()) || {};
             
             let updates = {}; 
             let promises = [];
             let touchedGCats = {}; 
             
-            // ⚡ 3. Архивируем прошлую накладную
+            // ⚡ 2. Архивируем прошлую накладную нужной категории
             if (window.isNewInvoiceUpload && Object.keys(freshSnap).length > 0) {
                 let archiveGCat = window.invoiceUploadGCat || getCurrentInvoiceGCat();
                 let archiveItems = {};
@@ -6460,16 +6456,24 @@ async function exportGraphsToExcel() {
                         : (freshSnap._meta ? freshSnap._meta.timestamp : Date.now());
                     let archivePayload = { timestamp: prevTs || Date.now(), gcat: archiveGCat, items: archiveItems };
                     
-                    promises.push(rawFetch(`${FB_URL}/catalogs/invoices_history.json`, { 
-                        method: 'POST', 
-                        body: JSON.stringify(archivePayload) 
-                    }).then(res => { if (!res.ok) throw new Error("Ошибка создания истории"); }));
+                    // Отправляем в историю
+                    promises.push(db.ref('catalogs/invoices_history').push(archivePayload));
                 }
                 window.isNewInvoiceUpload = false;
                 window.invoiceUploadGCat = null;
             }
             
-            // ⚡ 4. Применяем изменения (меняем цены и названия)
+            // ⚡ 3. СУПЕР-ОПТИМИЗАЦИЯ: Создаем "оглавление" базы для моментального поиска
+            // Это полностью убирает зависание браузера при загрузке больших накладных!
+            let existingMap = {};
+            for (let k in freshSnap) {
+                if (k === '_meta' || !freshSnap[k]) continue;
+                let cName = cleanName(freshSnap[k].name);
+                let cCat = getInvoiceItemGCat(freshSnap[k]);
+                existingMap[cCat + "___" + cName] = k;
+            }
+            
+            // ⚡ 4. Применяем изменения из загруженного Excel
             for (let id in window.invoiceChanges) {
                 let item = window.invoiceChanges[id];
                 if (item === null) {
@@ -6477,14 +6481,15 @@ async function exportGraphsToExcel() {
                 } else {
                     let cName = cleanName(item.name);
                     let itemGCat = getInvoiceItemGCat(item);
-                    let existingMatchKey = Object.keys(freshSnap).find(k =>
-                        k !== '_meta' && freshSnap[k] && cleanName(freshSnap[k].name) === cName
-                        && getInvoiceItemGCat(freshSnap[k]) === itemGCat
-                    );
+                    
+                    // Мгновенный поиск товара (за 0.001 сек вместо зависания)
+                    let existingMatchKey = existingMap[itemGCat + "___" + cName];
                     let targetId = existingMatchKey ? existingMatchKey : id;
                     let targetPayload = { ...item, gcat: itemGCat };
+                    
                     touchedGCats[itemGCat] = true;
                     
+                    // Сохраняем старое фото, если есть
                     if (!targetPayload.photo && freshSnap[targetId] && freshSnap[targetId].photo) {
                         targetPayload.photo = freshSnap[targetId].photo;
                     }
@@ -6492,30 +6497,26 @@ async function exportGraphsToExcel() {
                 }
             }
             
-            // ⚡ 5. Метки времени
+            // ⚡ 5. Метки времени для обновленных категорий
             let nowTs = Date.now();
             let metaGroups = (freshSnap._meta && freshSnap._meta.groups) ? { ...freshSnap._meta.groups } : {};
             Object.keys(touchedGCats).forEach(g => { metaGroups[g] = nowTs; });
             updates['_meta'] = { timestamp: nowTs, groups: metaGroups };
             
-            // ⚡ 6. Бронебойная отправка большого объекта через PATCH
-            promises.push(rawFetch(`${FB_URL}/catalogs/invoices.json`, { 
-                method: 'PATCH', 
-                body: JSON.stringify(updates) 
-            }).then(res => { if (!res.ok) throw new Error("Ошибка обновления базы"); }));
+            // ⚡ 6. Пакетное обновление всей базы разом
+            promises.push(db.ref('catalogs/invoices').update(updates)); 
             
-            // ⚡ 7. Таймаут 15 секунд на случай реального обрыва сети
+            // Таймаут 15 сек, чтобы кнопка не висела вечно при обрыве интернета
             let timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Плохой интернет (Таймаут 15с)")), 15000));
             
-            // Ждем завершения отправки
             await Promise.race([Promise.all(promises), timeoutPromise]);
             
             window.invoiceChanges = {};
             btn.innerHTML = "✅ БАЗА СИНХРОНИЗИРОВАНА!";
             
-            // ⚡ 8. Обновляем UI чистым запросом (чтобы не было старых данных)
-            let updateRes = await rawFetch(`${FB_URL}/catalogs/invoices.json`);
-            currentCatalog = await updateRes.json() || {};
+            // Обновляем данные на экране
+            let updateData = await fetchOptimistic('catalogs/invoices');
+            currentCatalog = updateData;
             renderInvoiceProducts();
             
             setTimeout(() => { btn.innerHTML = origText; btn.disabled = false; }, 1500);

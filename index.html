@@ -981,6 +981,87 @@
  return database.ref().push().key;
  }
 
+ // ==========================================
+ // Недели, даты и идемпотентные ключи отправки
+ // ==========================================
+ function getWeekKey(ts) {
+ // ISO-неделя (понедельник — воскресенье), например 2026-W39.
+ let d = new Date(ts || Date.now());
+ d.setHours(0, 0, 0, 0);
+ let day = (d.getDay() + 6) % 7;
+ d.setDate(d.getDate() - day + 3);
+ let firstThursday = new Date(d.getFullYear(), 0, 4);
+ let fday = (firstThursday.getDay() + 6) % 7;
+ firstThursday.setDate(firstThursday.getDate() - fday + 3);
+ let week = 1 + Math.round((d - firstThursday) / (7 * 24 * 3600 * 1000));
+ return d.getFullYear() + '-W' + String(week).padStart(2, '0');
+ }
+
+ function formatShortDate(ts) {
+ if (!ts) return "";
+ return new Date(ts).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' });
+ }
+
+ function getMissingCreatedTs(m) {
+ return (m && (m.created_ts || m.timestamp)) || 0;
+ }
+
+ function getMissingDateLabel(m) {
+ let ts = getMissingCreatedTs(m);
+ if (!ts) return "";
+ let days = Math.floor((Date.now() - ts) / (24 * 3600 * 1000));
+ let ageText = days <= 0 ? "сегодня" : (days === 1 ? "вчера" : days + " дн. назад");
+ return "от " + formatShortDate(ts) + " · " + ageText;
+ }
+
+ // ==========================================
+ // ИНДЕКСЫ: артикул товара (sku) и код строки закупки (lid)
+ // ==========================================
+ // sku — постоянный артикул позиции (ключ справочника закупки). Он не
+ // зависит от того, как написано название, и поэтому один и тот же товар
+ // узнаётся во своде, приёмке и недовозах.
+ // lid — код конкретной строки закупки: по нему видно, из какого именно
+ // листа пришла позиция, и повторы больше не «схлопываются» друг с другом.
+ function resolveSku(name) {
+ if (!name) return "";
+ let target = cleanName(name);
+ let found = Object.keys(state.productCatalog || {}).find(k => {
+ let c = state.productCatalog[k];
+ return c && c.name && cleanName(c.name) === target;
+ });
+ if (found) return found;
+ // Товара нет в справочнике — строим артикул из названия, он тоже стабилен.
+ return 'n:' + target;
+ }
+
+ function makeLineId() {
+ let t = Date.now().toString(36).toUpperCase().slice(-5);
+ let r = Math.random().toString(36).slice(2, 5).toUpperCase();
+ return 'L' + t + r;
+ }
+
+ function getItemSku(item) {
+ if (!item) return "";
+ if (item.sku) return item.sku;
+ return 'n:' + cleanName(item.name || "");
+ }
+
+ function getStableRecordId(slot) {
+ // Один и тот же ключ на повторные нажатия «Отправить»: если первая
+ // попытка всё-таки дошла до базы (или досылается из фоновой очереди),
+ // повтор перезапишет ту же запись, а не создаст дубликат.
+ try {
+ let k = 'pending_record_id_' + slot;
+ let v = localStorage.getItem(k);
+ if (!v) { v = generatePushId(); localStorage.setItem(k, v); }
+ return v;
+ } catch (e) { return generatePushId(); }
+ }
+
+ function clearStableRecordId(slot) {
+ try { localStorage.removeItem('pending_record_id_' + slot); } catch (e) {}
+ }
+
  function getOutboxQueue() {
  try { return JSON.parse(localStorage.getItem('outbox_queue_v1') || '[]'); } catch(e) { return []; }
  }
@@ -990,7 +1071,11 @@
  }
  function queueOutboxRequest(url, method, body, draftKey) {
  let q = getOutboxQueue();
- q.push({ id: Date.now() + '_' + Math.random().toString(36).slice(2), url, method, body, draftKey: draftKey || null, attempts: 0, createdAt: Date.now() });
+ let entry = { id: Date.now() + '_' + Math.random().toString(36).slice(2), url, method, body, draftKey: draftKey || null, attempts: 0, createdAt: Date.now() };
+ // Если такой же запрос уже стоит в очереди — заменяем его, а не
+ // добавляем второй: иначе одна отправка уходит в базу дважды.
+ let same = q.findIndex(x => x && x.url === url && x.method === method);
+ if (same >= 0) q[same] = entry; else q.push(entry);
  setOutboxQueue(q);
  }
 
@@ -2893,16 +2978,25 @@
 
  let restoredItems = [];
 
+ // Если у недовоза есть артикул, статус вешаем и на название товара из
+ // справочника — тогда недовоз не «теряется» из-за другого написания.
+ const missingAliasKeys = (m) => {
+ let keys = [getStatusKey(m.name)];
+ if (m.sku && state.productCatalog && state.productCatalog[m.sku] && state.productCatalog[m.sku].name) {
+ keys.push(getStatusKey(state.productCatalog[m.sku].name));
+ }
+ return [...new Set(keys.filter(Boolean))];
+ };
+
  state.globalMissing.forEach(m => {
  if (!m || !m.name || m.timestamp < cutoffTime) return;
  let pKey = getStatusKey(m.name);
+ let aliasKeys = missingAliasKeys(m);
  
  if (m.status === 'transit') {
- statusMap[pKey] = { locked: true, text: 'В пути (Недовоз) ', color: '#16161A' };
- seenInOrders.add(pKey);
+ aliasKeys.forEach(kk => { statusMap[kk] = { locked: true, text: 'В пути (Недовоз) ', color: '#16161A' }; seenInOrders.add(kk); });
  } else if (m.status === 'pending') {
- statusMap[pKey] = { locked: true, text: 'Проверка админом ', color: '#8F5E20' };
- seenInOrders.add(pKey);
+ aliasKeys.forEach(kk => { statusMap[kk] = { locked: true, text: 'Проверка админом ', color: '#8F5E20' }; seenInOrders.add(kk); });
  } else if (m.status === 'canceled' && !m.added_to_basket) {
  let catItem = Object.values(state.productCatalog).find(c => c && getStatusKey(c.name) === pKey);
  if (catItem && (state.currentMode === 'order' || state.currentMode === 'new_shop')) {
@@ -3137,7 +3231,12 @@
  html += `</div></div>`;
  });
  
- let emptyText = sq ? "Ничего не найдено" : "Товары не найдены";
+ let pathKeyNow = state.currentMode === 'checklist' ? 'checklist' : (state.currentMode === 'stoplist_fill' ? 'stoplist' : (state.currentMode === 'new_shop' ? 'newshop' : 'order'));
+ let catLoadedNow = !!(state.cachedCatalogs && state.cachedCatalogs[pathKeyNow] && Object.keys(state.cachedCatalogs[pathKeyNow]).length > 0);
+ // Пока база ещё качается — честно пишем «загружаю», а не «товаров нет».
+ let emptyText = sq ? "Ничего не найдено" : (catLoadedNow
+ ? "Товары не найдены"
+ : "Загружаю список позиций…<br><small style='font-weight:500; color:#98979E;'>Пара секунд, не закрывайте экран</small>");
  document.getElementById('dynamic-list-container').innerHTML = html || ("<p style='text-align:center; padding:40px; font-weight:600; color:#98979E;'>" + emptyText + "</p>");
 
  let psCnt = document.getElementById('product-search-count');
@@ -3595,10 +3694,20 @@
  } catch(e) {}
  
  let activeMissingMap = {};
+ let missingDateMap = {};
+ let activeMissingSkuMap = {};
+ let missingDateSkuMap = {};
  missingData.forEach(m => { 
  if (m && m.name) {
  if (m.status !== 'arrived' && m.status !== 'canceled') {
  activeMissingMap[cleanName(m.name)] = m.status;
+ missingDateMap[cleanName(m.name)] = formatShortDate(getMissingCreatedTs(m));
+ // Дубль индекса: если у недовоза есть артикул, он находится по нему
+ // независимо от того, как написано название в листе.
+ if (m.sku) {
+ activeMissingSkuMap[String(m.sku)] = m.status;
+ missingDateSkuMap[String(m.sku)] = formatShortDate(getMissingCreatedTs(m));
+ }
  }
  }
  });
@@ -3650,13 +3759,15 @@
  let isReceived = !!o[`${vendor}_received`];
  let receivedTs = o[`${vendor}_received_ts`];
  
- let missingStat = activeMissingMap[cName];
+ let iSku = getItemSku(i);
+ let missingStat = activeMissingSkuMap[iSku] || activeMissingMap[cName];
  let currentRealStatus = latestOrderStatuses[cName] || i.status || 'pending'; 
  
  if (missingStat === 'pending' || missingStat === 'transit') {
  aggregated[i.name].status = 'error'; 
  aggregated[i.name].is_error = true;
- aggregated[i.name].missingLabel = missingStat === 'transit' ? 'В пути (Недовоз) ' : 'Недовоз ';
+ let mDate = (missingDateSkuMap[iSku] || missingDateMap[cName]) ? (' от ' + (missingDateSkuMap[iSku] || missingDateMap[cName])) : '';
+ aggregated[i.name].missingLabel = (missingStat === 'transit' ? 'В пути (Недовоз)' : 'Недовоз') + mDate + ' ';
  } else if (missingStat === 'canceled') {
  aggregated[i.name].status = 'not_needed'; 
  aggregated[i.name].missingLabel = 'ОТМЕНЕН ';
@@ -3989,13 +4100,15 @@ window.viewStopList = async function() {
 
  globalMissingFresh.forEach(m => {
  if (!m || !m.name || m.timestamp < cutoffTime) return;
- let pKey = getStatusKey(m.name);
+ let aliasKeys = [getStatusKey(m.name)];
+ if (m.sku && state.productCatalog && state.productCatalog[m.sku] && state.productCatalog[m.sku].name) {
+ aliasKeys.push(getStatusKey(state.productCatalog[m.sku].name));
+ }
+ aliasKeys = [...new Set(aliasKeys.filter(Boolean))];
  if (m.status === 'transit') {
- statusMap[pKey] = { locked: true, text: 'В пути (Недовоз) ', color: '#16161A' };
- seenInOrders.add(pKey);
+ aliasKeys.forEach(kk => { statusMap[kk] = { locked: true, text: 'В пути (Недовоз) ', color: '#16161A' }; seenInOrders.add(kk); });
  } else if (m.status === 'pending') {
- statusMap[pKey] = { locked: true, text: 'Проверка админом ', color: '#8F5E20' };
- seenInOrders.add(pKey);
+ aliasKeys.forEach(kk => { statusMap[kk] = { locked: true, text: 'Проверка админом ', color: '#8F5E20' }; seenInOrders.add(kk); });
  }
  });
 
@@ -4304,8 +4417,10 @@ window.showLastOrder = async function() {
  let safeNameEsc = escapeName(m.name), btnMissArrId = `btn_miss_arr_${m.key}`, btnMissId = `btn_miss_${m.key}`;
  let isMarked = state.missingChoices && state.missingChoices[m.key] !== undefined;
 
+ let mDateLabel = getMissingDateLabel(m);
  html += `<div class="report-card-item" style="flex-direction:column; align-items:flex-start; border-bottom:1px solid #F0EFEB;">
- <span style="margin-bottom:8px; font-size:16px;"><b>${m.name}</b> (x${m.qty})</span>
+ <span style="margin-bottom:4px; font-size:16px;"><b>${m.name}</b> (x${m.qty})</span>
+ <span style="margin-bottom:8px; font-size:12px; color:#98979E; font-weight:600;">Недовоз ${mDateLabel}</span>
  <div style="display:flex; justify-content:space-between; width:100%; align-items:center;">
  <span style="background:${bg}; color:${statColor}; padding:4px 8px; border-radius:8px; font-size:12px; font-weight:700;">${statText}</span>
  <button id="${btnMissArrId}" onclick="toggleMissingArrived('${m.key}', '${safeNameEsc}', '${btnMissArrId}')" style="border:${isMarked ? '2px solid #3F8A4C' : '1px solid #E4E3DE'}; background:${isMarked ? '#EAF3EA' : '#FAFAF9'}; color:${isMarked ? '#3F8A4C' : '#98979E'}; padding:8px 15px; border-radius:10px; font-weight:700; font-size:14px; cursor:pointer;">Доехал</button>
@@ -4491,7 +4606,7 @@ window.showLastOrder = async function() {
  if (choice.vendor === vendorKey && choice.date === dateStr) {
  checkedCount++;
  if (choice.status === 'missing') {
- missingMap[choice.name] = choice.qty;
+ missingMap[choice.name] = { qty: choice.qty, sku: "", lid: "", orderKeys: [] };
  } else if (choice.status === 'arrived') {
  arrivedItemsToClear.push(choice.name);
  }
@@ -4524,6 +4639,13 @@ window.showLastOrder = async function() {
  if (arrivedItemsToClear.includes(itm.name)) {
  updates[`${k}/items/${idx}/status`] = 'already_received';
  }
+ // Переносим индексы позиции в недовоз, чтобы он потом
+ // сошёлся с этой же строкой закупки, а не с похожей по названию.
+ if (missingMap[itm.name]) {
+ if (!missingMap[itm.name].sku) missingMap[itm.name].sku = getItemSku(itm);
+ if (!missingMap[itm.name].lid && itm.lid) missingMap[itm.name].lid = itm.lid;
+ if (missingMap[itm.name].orderKeys.indexOf(k) === -1) missingMap[itm.name].orderKeys.push(k);
+ }
  }
  });
  }
@@ -4543,9 +4665,16 @@ window.showLastOrder = async function() {
  // уйдёт в фоновую очередь, повторная отправка не создаст дубль.
  const missingId = generatePushId();
  const missingUrl = `${DB_URL}/push_items_missing/${missingId}.json`;
+ const mInfo = missingMap[name] || {};
  const missingBody = JSON.stringify({ 
- shop: state.currentShop, name: name, qty: missingMap[name], 
- status: "pending", timestamp: Date.now() 
+ shop: state.currentShop, name: name, qty: mInfo.qty, 
+ // Индексы: по ним недовоз однозначно связан со своей строкой закупки.
+ sku: mInfo.sku || resolveSku(name), lid: mInfo.lid || makeLineId(),
+ nkey: cleanName(name), order_keys: (mInfo.orderKeys || []).join(','),
+ status: "pending", timestamp: Date.now(),
+ // created_ts не меняется при смене статуса — по нему видно,
+ // с какого числа недовоз висит.
+ created_ts: Date.now(), week: getWeekKey(Date.now())
  });
  promises.push(fetch(missingUrl, { method: 'PUT', body: missingBody })
  .catch(e => { queueOutboxRequest(missingUrl, 'PUT', missingBody); throw e; }));
@@ -4698,6 +4827,7 @@ window.showLastOrder = async function() {
  
  historyHtml += `<div style="padding:10px; border-bottom:1px solid #F0EFEB; background:#FAFAF9; border-radius:8px; margin-bottom:8px;">
  <b style="font-size:15px; color:#16161A;">${m.shop}</b> — ${m.name} (${m.qty} шт)<br>
+ <span style="font-size:12px; color:#98979E; font-weight:600;">Недовоз ${getMissingDateLabel(m)}${m.timestamp ? ' · закрыт ' + formatShortDate(m.timestamp) : ''}</span><br>
  <span style="font-size:13px; color:${statColor}; font-weight:bold;">${statText}</span>
  </div>`;
  } else {
@@ -4707,7 +4837,9 @@ window.showLastOrder = async function() {
  <div style="display:flex; justify-content:space-between; align-items:flex-start;">
  <div style="flex:1;">
  <b style="font-size:17px; color:#16161A;">${m.shop}</b><br>
- <span style="font-size:16px; font-weight:700;">${m.name} (${m.qty} шт)</span>
+ <span style="font-size:16px; font-weight:700;">${m.name} (${m.qty} шт)</span><br>
+ <span style="font-size:12.5px; color:#8C3B28; font-weight:700;">Висит ${getMissingDateLabel(m)}</span>
+ ${m.lid ? `<span style="font-size:11px; color:#98979E; font-weight:600; display:block; margin-top:2px;">Индекс строки: ${m.lid}</span>` : ''}
  ${linksHtml}
  </div>
  <button class="btn-del" onclick="deleteMissingItem('${m.key}')" style="padding:6px 10px; margin-left:10px; background:#F7E9E4; color:#8C3B28; border:none; border-radius:8px; cursor:pointer; display:inline-flex; align-items:center;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/><path d="M10 11v6M14 11v6"/></svg></button>
@@ -5208,7 +5340,16 @@ window.showLastOrder = async function() {
  return; 
  }
  
- if (state.isProcessing) return;
+ if (state.isProcessing) {
+ // Раньше повторное нажатие молча игнорировалось — выглядело как
+ // зависшая кнопка. Теперь бариста видит, что происходит.
+ if (state.processingStartedAt && (Date.now() - state.processingStartedAt) > 25000) {
+ state.isProcessing = false; // подвисшая отправка — разблокируем
+ } else {
+ showPopupError("Отправка уже идёт", "Данные отправляются, подождите пару секунд.<br><small>Повторные нажатия не нужны — лист не задвоится.</small>");
+ return;
+ }
+ }
 
  let btn = document.getElementById('modal-submit-button'); 
  let mainBtn = document.getElementById('main-action-button'); 
@@ -5223,6 +5364,7 @@ window.showLastOrder = async function() {
  if (state.isMpEditMode) return showPopupError("Внимание", "Сначала сохраните изменения");
  
  state.isProcessing = true;
+ state.processingStartedAt = Date.now();
  if(btn) { btn.innerText = "ОТПРАВЛЯЮ..."; btn.disabled = true; }
  if(mainBtn) { mainBtn.innerText = "ОТПРАВЛЯЮ..."; mainBtn.disabled = true; }
  showGlobalLoader("Отправка данных...");
@@ -5241,8 +5383,8 @@ window.showLastOrder = async function() {
  // Идемпотентный ключ на каждую запись генерируется заранее (без
  // сети) — используем его и для прямой попытки, и для фоновой
  // очереди при сбое, чтобы повторная отправка не задвоила запись.
- mpAttempts = state.mpBasket.map(item => {
- const id = generatePushId();
+ mpAttempts = state.mpBasket.map((item, mpIdx) => {
+ const id = getStableRecordId('mp_' + mpIdx);
  const url = `${DB_URL}/marketplace_records/${id}.json`;
  const body = JSON.stringify({
  vendor: item.vendor,
@@ -5259,6 +5401,7 @@ window.showLastOrder = async function() {
  
  await Promise.race([Promise.all(promises), timeoutPromise]); 
  
+ mpAttempts.forEach((a, mpIdx) => clearStableRecordId('mp_' + mpIdx));
  state.mpBasket = [];
  localStorage.removeItem("draft_marketplace");
  } catch(e) {
@@ -5306,7 +5449,13 @@ window.showLastOrder = async function() {
  return true;
  }).map(([n,q]) => {
  let catName = (state.userBasket["_catinfo"] && state.userBasket["_catinfo"][n]) || (state.productCatalog[n] ? state.productCatalog[n].cat : "Прочее");
- return {name: n.trim(), qty: q, cat: catName.trim()}; 
+ // Индексы присваиваются в момент заполнения листа и дальше идут с
+ // позицией по всем проверкам: свод → приёмка → недовозы.
+ return {
+ name: n.trim(), qty: q, cat: catName.trim(),
+ sku: resolveSku(n), lid: makeLineId(),
+ nkey: cleanName(n), week: getWeekKey(Date.now())
+ }; 
  });
 
  if (flatData.length === 0 && state.currentMode !== 'checklist') {
@@ -5322,6 +5471,7 @@ window.showLastOrder = async function() {
  }
 
  state.isProcessing = true;
+ state.processingStartedAt = Date.now();
  if(btn) { btn.innerText = "ОТПРАВЛЯЮ..."; btn.disabled = true; }
  if(mainBtn) { mainBtn.innerText = "ОТПРАВЛЯЮ..."; mainBtn.disabled = true; }
  showGlobalLoader("Отправка данных..."); 
@@ -5348,7 +5498,10 @@ window.showLastOrder = async function() {
  if (existingSnap) {
  existingSnap.forEach(c => {
  let o = c.val();
- if (o && (o.mode === 'order' || o.mode === 'new_shop') && o.svod === false && o.ordered === false) {
+ // Сливаем новый лист только с незакрытым заказом ТЕКУЩЕЙ недели:
+ // иначе лист прошлой недели наслаивался на новый и портил закупку.
+ if (o && (o.mode === 'order' || o.mode === 'new_shop') && o.svod === false && o.ordered === false
+ && getWeekKey(o.timestamp) === getWeekKey(Date.now())) {
  if (!pendingKeyToUpdate) pendingKeyToUpdate = c.key;
  else fetch(`${DB_URL}/orders/${c.key}.json`, {method:'DELETE'}).catch(()=>{}); 
  }
@@ -5358,6 +5511,7 @@ window.showLastOrder = async function() {
  let finalDataToSave = {
  shop: state.currentShop.trim(), mode: state.currentMode, items: flatData,
  comment: mergedComments.join(" | "), timestamp: Date.now(), userId: globalTgUserId,
+ week: getWeekKey(Date.now()),
  svod: false, ordered: false, lenta_received: false, ozon_received: false, kuper_received: false
  };
 
@@ -5374,12 +5528,26 @@ window.showLastOrder = async function() {
  
  if (currentOrder) {
  let oldItems = Array.isArray(currentOrder.items) ? currentOrder.items : Object.values(currentOrder.items || {});
+ // Сливаем по артикулу, а не по строке названия: «молоко 3,2%» и
+ // «Молоко 3.2 %» — это одна позиция, а не две.
  oldItems.forEach(i => {
- if (i && i.name && i.name !== "НЕТ ЗАКАЗА") mergedItems[i.name] = { ...i, qty: parseFloat(i.qty) || 0 };
+ if (i && i.name && i.name !== "НЕТ ЗАКАЗА") {
+ let k = getItemSku(i);
+ mergedItems[k] = { ...i, qty: parseFloat(i.qty) || 0 };
+ if (!mergedItems[k].lid) mergedItems[k].lid = makeLineId();
+ if (!mergedItems[k].sku) mergedItems[k].sku = k;
+ }
  });
  flatData.forEach(item => {
- if (!mergedItems[item.name]) mergedItems[item.name] = { ...item, qty: parseFloat(item.qty) || 0 };
- else mergedItems[item.name].qty += parseFloat(item.qty) || 0;
+ let k = getItemSku(item);
+ if (!mergedItems[k]) mergedItems[k] = { ...item, qty: parseFloat(item.qty) || 0 };
+ else {
+ // Позиция уже была в незакрытом листе — индекс строки сохраняем,
+ // количество суммируем, и в истории строки видно, что был долив.
+ mergedItems[k].qty += parseFloat(item.qty) || 0;
+ mergedItems[k].refilled = (mergedItems[k].refilled || 0) + 1;
+ mergedItems[k].last_add_ts = Date.now();
+ }
  });
  finalDataToSave.items = Object.values(mergedItems);
  let comments = [];
@@ -5394,9 +5562,9 @@ window.showLastOrder = async function() {
  submitMethod = 'PUT';
  submitBody = JSON.stringify(finalDataToSave);
  } else {
- // Новый заказ: ключ генерируем на телефоне заранее, чтобы
- // повтор (ручной или из фоновой очереди) не создал дубль.
- submitUrl = `${DB_URL}/orders/${generatePushId()}.json`;
+ // Новый заказ: ключ фиксируем на телефоне и переиспользуем при
+ // повторных нажатиях, чтобы не появилось двух одинаковых заказов.
+ submitUrl = `${DB_URL}/orders/${getStableRecordId(draftKeyForOutbox)}.json`;
  submitMethod = 'PUT';
  submitBody = JSON.stringify(finalDataToSave);
  }
@@ -5404,10 +5572,12 @@ window.showLastOrder = async function() {
  let recordPayload = {
  shop: state.currentShop.trim(), mode: state.currentMode, items: flatData,
  comment: document.getElementById('comment') ? document.getElementById('comment').value : "",
- timestamp: Date.now(), userId: globalTgUserId, svod: false, ordered: false,
+ timestamp: Date.now(), userId: globalTgUserId, week: getWeekKey(Date.now()),
+ svod: false, ordered: false,
  lenta_received: false, ozon_received: false, kuper_received: false
  };
- submitUrl = `${DB_URL}/orders/${generatePushId()}.json`;
+ // Один лист = один ключ: пять нажатий подряд дадут одну запись.
+ submitUrl = `${DB_URL}/orders/${getStableRecordId(draftKeyForOutbox)}.json`;
  submitMethod = 'PUT';
  submitBody = JSON.stringify(recordPayload);
  }
@@ -5423,6 +5593,7 @@ window.showLastOrder = async function() {
  }
 
  localStorage.removeItem("draft_" + state.currentShop + "_" + state.currentMode);
+ clearStableRecordId(draftKeyForOutbox);
  } catch(e) {
  hideGlobalLoader(); 
  persistDraft();
@@ -5472,6 +5643,10 @@ window.showLastOrder = async function() {
  window.onload = async () => { 
  renderFlowerBackground();
  showGlobalLoader("Запуск приложения..."); 
+ // Страховка: что бы ни случилось со сетью или Telegram, экран
+ // загрузки снимается максимум через 7 секунд, и приложением
+ // можно пользоваться (данные догрузятся в фоне).
+ setTimeout(() => { try { hideGlobalLoader(); } catch(e) {} }, 7000);
  try { 
  if (window.Telegram && Telegram.WebApp) {
  Telegram.WebApp.ready(); 
@@ -5494,10 +5669,13 @@ window.showLastOrder = async function() {
  state.cachedCatalogs = {};
  
  const paths = ['order', 'newshop', 'stoplist', 'checklist', 'menu', 'espresso_recipes', 'tasks_calendar', 'knowledge_base', 'invoices', 'invoices_history'];
- for (let p of paths) {
+ // Параллельно вместо последовательного чтения — старт заметно быстрее.
+ await Promise.all(paths.map(async (p) => {
+ try {
  let cachedData = await loadFromRealCache(p);
  if (cachedData) state.cachedCatalogs[p] = cachedData;
- }
+ } catch (e) {}
+ }));
  
  state.globalOrders = []; state.globalMissing = [];
  restoreMpDraft(); 
@@ -5506,10 +5684,17 @@ window.showLastOrder = async function() {
  let savedShop = localStorage.getItem("teiku_main_shop");
  
  if (!savedShop && window.Telegram && Telegram.WebApp && Telegram.WebApp.CloudStorage) {
+ // Раньше, если Telegram не отвечал на этот запрос, приложение
+ // навсегда оставалось на экране загрузки. Теперь ждём максимум 1.5 сек.
  savedShop = await new Promise((resolve) => {
+ let done = false;
+ let finish = (v) => { if (!done) { done = true; resolve(v); } };
+ setTimeout(() => finish(null), 1500);
+ try {
  Telegram.WebApp.CloudStorage.getItem("teiku_main_shop", (err, val) => {
- resolve(err ? null : val);
+ finish(err ? null : val);
  });
+ } catch (e) { finish(null); }
  });
  if (savedShop) localStorage.setItem("teiku_main_shop", savedShop);
  }

@@ -943,7 +943,7 @@
     else if (vRaw.includes('купер') || vRaw.includes('kuper')) vendor = 'kuper';
 
     // накладная этого поставщика уже принята — позиция закрыта
-    if (o[vendor + '_received']) return;
+    if (isClosedByVendorFlag(o, i, vendor)) return;
 
     awaitingNames.add(pKey);
     invoiceKeys.add(dateStr + '|' + vendor);
@@ -1040,6 +1040,35 @@
  return 'L' + t + r;
  }
 
+ // Позиция считается принятой флагом поставщика, только если её заказали
+ // ДО этой приёмки. Если админ оформил её позже (ordered_ts > received_ts),
+ // она снова ждёт приёмку — раньше такие позиции «принимались сами».
+ // ---------- Свежесть данных ----------
+ // fresh = пришло с сервера в этой сессии; иначе показан кэш телефона.
+ function markDataFresh(kind) {
+ if (!state.dataFresh) state.dataFresh = {};
+ state.dataFresh[kind] = Date.now();
+ }
+ function freshnessBadge(kinds) {
+ let f = state.dataFresh || {};
+ let times = kinds.map(k => f[k] || 0);
+ let isFresh = times.every(t => t > 0);
+ if (isFresh) {
+ let t = new Date(Math.min(...times)).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+ return `<div class="fresh-badge" style="display:flex; align-items:center; gap:8px; justify-content:center; font-size:12px; font-weight:700; color:#3F8A4C; background:#EAF3EA; border-radius:999px; padding:6px 12px; margin:0 auto 12px; width:max-content;"><span style="width:7px; height:7px; border-radius:50%; background:#3F8A4C;"></span>Актуальные данные · ${t}</div>`;
+ }
+ return `<div class="fresh-badge" style="display:flex; align-items:center; gap:8px; justify-content:center; font-size:12px; font-weight:700; color:#8F5E20; background:#F7F1E6; border-radius:999px; padding:6px 12px; margin:0 auto 12px; width:max-content;"><span style="width:7px; height:7px; border-radius:50%; background:#D2AC64;"></span>Сохранённые данные · обновляю…</div>`;
+ }
+
+ function isClosedByVendorFlag(o, i, vendor) {
+ if (i && i.recv_done) return true; // позицию уже отметили при приёмке
+ if (!o || !o[vendor + '_received']) return false;
+ let recTs = o[vendor + '_received_ts'] || 0;
+ let ordTs = (i && i.ordered_ts) || 0;
+ if (ordTs && recTs && ordTs > recTs) return false;
+ return true;
+ }
+
  function getItemSku(item) {
  if (!item) return "";
  if (item.sku) return item.sku;
@@ -1088,6 +1117,9 @@
  let remaining = [];
  for (let item of q) {
  try {
+ if (item.url && item.url.indexOf('/push_items_missing/') !== -1) {
+ item.url = item.url.replace('/push_items_missing/', '/missing_items/');
+ }
  const resp = await fetch(item.url, { method: item.method, body: item.body });
  if (!resp || !resp.ok) throw new Error('http_' + (resp ? resp.status : 'network'));
  if (item.draftKey) { try { localStorage.removeItem(item.draftKey); } catch(e){} }
@@ -1495,6 +1527,27 @@
  return "id_" + res;
  }
 
+ function captureReportUiState() {
+ let area = document.getElementById('report-content-area');
+ if (!area) return null;
+ let open = [];
+ area.querySelectorAll('[class]').forEach(el => {
+ if (el.style && el.style.display === 'block' && el.classList.length === 1) open.push(el.classList[0]);
+ });
+ return { open: [...new Set(open)], scroll: area.scrollTop };
+ }
+ function restoreReportUiState(ui) {
+ if (!ui) return;
+ let area = document.getElementById('report-content-area');
+ if (!area) return;
+ ui.open.forEach(cls => {
+ area.querySelectorAll('.' + cls).forEach(el => { el.style.display = 'block'; });
+ let arr = document.getElementById('arr_' + cls);
+ if (arr) arr.innerText = '▲';
+ });
+ area.scrollTop = ui.scroll;
+ }
+
  function toggleElements(cls, arrowId) {
  triggerHaptic();
  let els = document.querySelectorAll('.' + cls);
@@ -1841,6 +1894,9 @@
  database.ref(`schedules/${target.year}_${target.month}/${state.schedule.name}`).set(payload).catch(e => {
  console.error("Ошибка сохранения графика в фоне:", e);
  });
+ // Отдельная копия «как прислал сотрудник»: дашборд сравнивает с ней,
+ // правки админа в schedules её не затрагивают.
+ database.ref(`schedules_submitted/${target.year}_${target.month}/${state.schedule.name}`).set({ ...payload, _submitted_ts: Date.now() }).catch(() => {});
  
  document.getElementById('success-screen').style.display = 'flex';
  setTimeout(() => {
@@ -4030,14 +4086,14 @@
  }
  }
 
-window.viewStopList = async function() {
+window.viewStopList = async function(silent) {
  if(!checkShopSelected()) return;
- triggerHaptic();
+ if (silent !== true) triggerHaptic();
  state.currentMode = 'stoplist_view';
  document.getElementById('report-overlay').style.display = 'flex';
  document.getElementById('report-header').innerText = "Актуальный стоп-лист";
 
- document.getElementById('report-content-area').innerHTML = `
+ if (silent !== true) document.getElementById('report-content-area').innerHTML = `
  <div class="report-card">
  <div class="loading-pulse" style="text-align:center; font-weight:700; color:#16161A; padding: 20px;">
  Получение данных...<br>
@@ -4045,20 +4101,24 @@ window.viewStopList = async function() {
  </div>
  </div>`;
 
- try {
+ // Если свежие заказы уже пришли по живой подписке — повторно не качаем.
+ // Иначе запрашиваем; пока ждём, рисуем кэш с пометкой «сохранённые данные».
+ if (silent !== true && !(state.dataFresh && state.dataFresh.orders)) try {
  const ordersPromise = database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(50).once("value");
- let snap = await fetchWithFastFallback(ordersPromise, 2500, (lateSnap) => {
- // Пришло позже тайм-аута — не выбрасываем: обновляем кэш и,
- // если бариста всё ещё на этом экране, дорисовываем актуальные данные.
+ let snap = await fetchWithFastFallback(ordersPromise, 1500, (lateSnap) => {
+ // Пришло позже тайм-аута — обновляем и ТИХО перерисовываем
+ // (без нового запроса: раньше здесь запускалась повторная загрузка).
  let lateArr = [];
  lateSnap.forEach(c => { let v = c.val(); if(v){ v.key = c.key; lateArr.push(v); } });
  state.globalOrders = lateArr.sort((a,b) => b.timestamp - a.timestamp);
- if (state.currentMode === 'stoplist_view') viewStopList();
+ markDataFresh('orders');
+ if (state.currentMode === 'stoplist_view') viewStopList(true);
  });
  if (snap) {
  let arr = [];
  snap.forEach(c => { let v = c.val(); if(v){ v.key = c.key; arr.push(v); } });
  state.globalOrders = arr.sort((a,b) => b.timestamp - a.timestamp);
+ markDataFresh('orders');
  }
  } catch(e) {}
 
@@ -4152,7 +4212,8 @@ window.viewStopList = async function() {
 
  let html = `<div class="report-card">
  <div style='font-size: 19px; color: #8C3B28; font-weight:700; margin-bottom: 8px; text-align:center;'>АКТУАЛЬНЫЙ СТОП-ЛИСТ</div>
- <div style='font-size: 14px; color: #98979E; text-align:center; margin-bottom:15px; font-weight:700;'>(от ${new Date(latest.timestamp).toLocaleString()})</div>`;
+ <div style='font-size: 14px; color: #98979E; text-align:center; margin-bottom:10px; font-weight:700;'>(от ${new Date(latest.timestamp).toLocaleString()})</div>
+ ${freshnessBadge(['orders'])}`;
 
  let allSyrups = [], mainListItems = [], seenNames = new Set();
  let itemsArr = Array.isArray(latest.items) ? latest.items : Object.values(latest.items);
@@ -4285,15 +4346,16 @@ window.viewStopList = async function() {
  }
  
 
-window.showLastOrder = async function() {
+window.showLastOrder = async function(silent) {
  if(!checkShopSelected()) return;
- triggerHaptic();
+ let uiState = silent === true ? captureReportUiState() : null;
+ if (silent !== true) triggerHaptic();
  hideGlobalLoader(); 
  state.currentMode = 'receiving';
  document.getElementById('report-overlay').style.display = 'flex';
  document.getElementById('report-header').innerText = "Приемка закупки";
 
- if (!state.ordersLoaded || !state.missingLoaded) {
+ if (silent !== true && (!state.ordersLoaded || !state.missingLoaded)) {
  document.getElementById('report-content-area').innerHTML = `
  <div class="report-card">
  <div class="loading-pulse" style="text-align:center; font-weight:700; color:#16161A; padding: 20px;">
@@ -4303,34 +4365,45 @@ window.showLastOrder = async function() {
  </div>`;
  }
 
- // ⚡ ФИКС 1: ВСЕГДА запрашиваем свежие данные при открытии приемки, игнорируя старый кэш
+ let promises = [];
+ // Качаем с сервера, пока нет СВЕЖИХ данных (кэш телефона не считается):
+ // раньше наличие кэша останавливало загрузку и экран показывал старьё.
+ let fr = state.dataFresh || {};
+ if (silent !== true && !fr.orders) {
+ promises.push(database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(50).once("value").then(snap => {
+ let arr = [];
+ snap.forEach(c => { let v = c.val(); if(v){ v.key = c.key; arr.push(v); } });
+ state.globalOrders = arr.sort((a,b) => b.timestamp - a.timestamp);
+ state.ordersLoaded = true;
+ markDataFresh('orders');
+ }));
+ }
+ if (silent !== true && !fr.missing) {
+ promises.push(database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value").then(mSnap => {
+ let mArr = [];
+ mSnap.forEach(c => { let v = c.val(); if(v){ v.key = c.key; mArr.push(v); } });
+ state.globalMissing = mArr;
+ state.missingLoaded = true;
+ markDataFresh('missing');
+ }));
+ }
+ 
+ if (promises.length > 0) {
  let timedOut = false;
  try { 
-     let ordersPromise = database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(50).once("value");
-     let missingPromise = database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value");
-
-     let results = await Promise.race([
-         Promise.all([ordersPromise, missingPromise]),
-         new Promise((resolve) => setTimeout(() => { timedOut = true; resolve(null); }, 2500))
-     ]);
-
-     if (results) {
-         let [oSnap, mSnap] = results;
-         
-         let oArr = [];
-         oSnap.forEach(c => { let v = c.val(); if(v){ v.key = c.key; oArr.push(v); } });
-         state.globalOrders = oArr.sort((a,b) => b.timestamp - a.timestamp);
-         
-         let mArr = [];
-         mSnap.forEach(c => { let v = c.val(); if(v){ v.key = c.key; mArr.push(v); } });
-         state.globalMissing = mArr;
-
-         state.ordersLoaded = true;
-         state.missingLoaded = true;
-         // Сохраняем время последней успешной синхронизации
-         state.lastSyncTime = new Date().toLocaleTimeString('ru-RU', {hour: '2-digit', minute:'2-digit', second:'2-digit'});
-     }
+ await Promise.race([
+ Promise.all(promises),
+ new Promise((resolve) => setTimeout(() => { timedOut = true; resolve(); }, 2500))
+ ]);
  } catch(e){}
+ if (timedOut) {
+ // Не бросаем медленный ответ — когда он всё же придёт, обновляем
+ // экран приемки, если бариста всё ещё на нём находится.
+ Promise.all(promises).then(() => {
+ if (state.currentMode === 'receiving') showLastOrder(true);
+ }).catch(() => {});
+ }
+ }
 
  let orderCatalog = (state.cachedCatalogs && state.cachedCatalogs.order) ? state.cachedCatalogs.order : {};
  let orderCatMapFast = {};
@@ -4373,16 +4446,16 @@ window.showLastOrder = async function() {
  if (vRaw.includes('озон') || vRaw.includes('ozon') || vRaw.includes('wb')) vendor = 'ozon';
  else if (vRaw.includes('купер') || vRaw.includes('kuper')) vendor = 'kuper';
 
- if (vendor === 'lenta' && !o.lenta_received) lentaItems.push(i);
- if (vendor === 'ozon' && !o.ozon_received) ozonItems.push(i);
- if (vendor === 'kuper' && !o.kuper_received) kuperItems.push(i);
+ if (vendor === 'lenta') lentaItems.push(i);
+ if (vendor === 'ozon') ozonItems.push(i);
+ if (vendor === 'kuper') kuperItems.push(i);
  }
  });
 
  let missingVendors = [];
- if (lentaItems.length > 0) missingVendors.push({ name: " Лента", items: lentaItems });
- if (ozonItems.length > 0) missingVendors.push({ name: " Озон", items: ozonItems });
- if (kuperItems.length > 0) missingVendors.push({ name: " Купер", items: kuperItems });
+ if (lentaItems.length > 0) missingVendors.push({ name: "Лента", items: lentaItems });
+ if (ozonItems.length > 0) missingVendors.push({ name: "Озон", items: ozonItems });
+ if (kuperItems.length > 0) missingVendors.push({ name: "Купер", items: kuperItems });
  
  if (missingVendors.length > 0) {
  if (!pendingReceivings[o.shop]) pendingReceivings[o.shop] = [];
@@ -4395,12 +4468,7 @@ window.showLastOrder = async function() {
  }
  });
 
- // ⚡ ФИКС 2: Показываем пользователю, когда данные обновлялись последний раз
- let syncIndicator = state.lastSyncTime 
-     ? `<div style="text-align:center; font-size:12px; color:var(--ink-faint); margin-bottom:12px; font-weight:600;">Данные актуальны на ${state.lastSyncTime}</div>` 
-     : '';
-
- let html = `${syncIndicator}<div style="display: flex; gap: 10px; margin-bottom: 20px; background: #FFF; padding: 6px; border-radius: 14px; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
+ let html = freshnessBadge(['orders', 'missing']) + `<div style="display: flex; gap: 10px; margin-bottom: 20px; background: #FFF; padding: 6px; border-radius: 14px; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
  <button onclick="state.currentReceivingTab = 'active'; showLastOrder();" style="flex: 1; padding: 12px; border: none; border-radius: 10px; font-size: 14px; font-weight:700; white-space:nowrap; ${state.currentReceivingTab === 'active' || !state.currentReceivingTab ? 'background: #16161A; color: #FFF;' : 'background: transparent; color: #98979E;'}">Текущая приёмка</button>
  <button onclick="state.currentReceivingTab = 'history'; showLastOrder();" style="flex: 1; padding: 12px; border: none; border-radius: 10px; font-size: 14px; font-weight:700; white-space:nowrap; ${state.currentReceivingTab === 'history' ? 'background: #3A2E22; color: #FFF;' : 'background: transparent; color: #98979E;'}">История · 14 дней</button>
  </div>`;
@@ -4409,8 +4477,8 @@ window.showLastOrder = async function() {
  if (activeMissing.length > 0) {
  let missListId = "missing_active_list";
  html += `<div class="report-card" style="border: 2px solid #D2AC64; margin-bottom: 15px;">
- <div class="report-card-title" style="color:#8F5E20; cursor:pointer; font-size:16px;" onclick="toggleElements('${missListId}', 'arr_${missListId}')">Ожидаемые недовозы <span id="arr_${missListId}">▼</span></div>
- <div class="${missListId}" style="display:none;">`;
+ <div class="report-card-title" style="color:#8F5E20; cursor:pointer; font-size:16px;" onclick="toggleElements('${missListId}', 'arr_${missListId}')">Ожидаемые недовозы · ${activeMissing.length} <span id="arr_${missListId}">▲</span></div>
+ <div class="${missListId}" style="display:block;">`;
  activeMissing.forEach(m => {
  let statText = m.status === 'transit' ? "В пути" : "Ожидает проверки", statColor = m.status === 'transit' ? "#16161A" : "#8F5E20", bg = m.status === 'transit' ? "#EFEFED" : "#F7F1E6";
  let safeNameEsc = escapeName(m.name), btnMissArrId = `btn_miss_arr_${m.key}`, btnMissId = `btn_miss_${m.key}`;
@@ -4445,7 +4513,7 @@ window.showLastOrder = async function() {
  if (vRaw.includes('озон') || vRaw.includes('ozon') || vRaw.includes('wb')) vendor = 'ozon';
  else if (vRaw.includes('купер') || vRaw.includes('kuper')) vendor = 'kuper';
 
- let isOldReceived = vendor === 'ozon' ? o.ozon_received : (vendor === 'kuper' ? o.kuper_received : o.lenta_received);
+ let isOldReceived = isClosedByVendorFlag(o, i, vendor);
 
  if (!isOldReceived) {
  if (!activeByDate[orderDate]) activeByDate[orderDate] = { lenta: { items: {}, keys: new Set() }, ozon: { items: {}, keys: new Set() }, kuper: { items: {}, keys: new Set() }, timestamp: o.timestamp };
@@ -4461,11 +4529,12 @@ window.showLastOrder = async function() {
  if (Object.keys(activeByDate).length === 0) {
  html += `<div class="report-card"><div style="text-align:center; font-weight:700;">Нет новых товаров для приемки.</div></div>`;
  } else {
+ // Считаем реальное число накладных и позиций, ожидающих приемки:
+ // накладная = дата + поставщик, у которого есть непринятые позиции.
  let invCount = 0, posCount = 0;
  Object.keys(activeByDate).forEach(d => {
  ['lenta','ozon','kuper'].forEach(v => {
- // ⚡ ФИКС 3: Строгое сравнение имен через cleanName при подсчете счетчика
- let names = Object.keys(activeByDate[d][v].items || {}).filter(n => !activeMissing.some(am => cleanName(am.name) === cleanName(n)));
+ let names = Object.keys(activeByDate[d][v].items || {}).filter(n => !activeMissing.some(am => am.name === n));
  if (names.length > 0) { invCount++; posCount += names.length; }
  });
  });
@@ -4482,8 +4551,7 @@ window.showLastOrder = async function() {
  <div class="${listId}" style="display:none; margin-top:10px;">`;
  let expCount = 0;
  names.forEach(name => {
- // ⚡ ФИКС 4: Строгое сравнение имен через cleanName при отрисовке, чтобы недовозы не "терялись"
- if(activeMissing.some(am => cleanName(am.name) === cleanName(name))) {
+ if(activeMissing.some(am => am.name === name)) {
  res += `<div class="report-card-item"><span><b>${name}</b></span><span style="color:#8F5E20; font-size:12px;">Уже в недовозах</span></div>`;
  } else {
  expCount++;
@@ -4533,11 +4601,11 @@ window.showLastOrder = async function() {
  if (vRaw.includes('озон') || vRaw.includes('ozon') || vRaw.includes('wb')) { vendorLabel = 'ОЗОН / WB'; vendorKey = 'ozon'; }
  else if (vRaw.includes('купер') || vRaw.includes('kuper')) { vendorLabel = 'КУПЕР'; vendorKey = 'kuper'; }
 
- let isMissingActive = activeMissing.some(m => cleanName(m.name) === cName && m.timestamp >= o.timestamp - 86400000); 
- let isMissingResolved = historyMissing.some(m => cleanName(m.name) === cName && m.timestamp >= o.timestamp - 86400000);
+ let isMissingActive = activeMissing.some(m => m.name === i.name && m.timestamp >= o.timestamp - 86400000); 
+ let isMissingResolved = historyMissing.some(m => m.name === i.name && m.timestamp >= o.timestamp - 86400000);
  
  let stText = "Ожидает", stColor = "#7A7873";
- let isOldReceived = o[vendorKey + '_received'];
+ let isOldReceived = isClosedByVendorFlag(o, i, vendorKey);
  
  if (i.status === 'error' || i.not_found || i.bot_error) {
  stText = " Нет в наличии"; stColor = "#8C3B28";
@@ -4573,7 +4641,8 @@ window.showLastOrder = async function() {
  }
  
  document.getElementById('report-content-area').innerHTML = html;
-}
+ restoreReportUiState(uiState);
+ }
 
  
  function setReceiveChoice(name, qty, vendor, status, btnArrId, btnMissId, dateStr) {
@@ -4637,6 +4706,7 @@ window.showLastOrder = async function() {
  if (itm && itm.status === 'ordered') {
  if (arrivedItemsToClear.includes(itm.name)) {
  updates[`${k}/items/${idx}/status`] = 'already_received';
+ updates[`${k}/items/${idx}/recv_done`] = true;
  }
  // Переносим индексы позиции в недовоз, чтобы он потом
  // сошёлся с этой же строкой закупки, а не с похожей по названию.
@@ -4644,6 +4714,8 @@ window.showLastOrder = async function() {
  if (!missingMap[itm.name].sku) missingMap[itm.name].sku = getItemSku(itm);
  if (!missingMap[itm.name].lid && itm.lid) missingMap[itm.name].lid = itm.lid;
  if (missingMap[itm.name].orderKeys.indexOf(k) === -1) missingMap[itm.name].orderKeys.push(k);
+ updates[`${k}/items/${idx}/recv_done`] = true;
+ updates[`${k}/items/${idx}/missing_reported`] = true;
  }
  }
  });
@@ -4663,7 +4735,9 @@ window.showLastOrder = async function() {
  // Идемпотентный ключ вместо POST: если сеть подведёт и запрос
  // уйдёт в фоновую очередь, повторная отправка не создаст дубль.
  const missingId = generatePushId();
- const missingUrl = `${DB_URL}/push_items_missing/${missingId}.json`;
+ // Пишем сразу в missing_items: раньше недовоз уходил в промежуточную
+ // папку push_items_missing и появлялся только после открытия дашборда.
+ const missingUrl = `${DB_URL}/missing_items/${missingId}.json`;
  const mInfo = missingMap[name] || {};
  const missingBody = JSON.stringify({ 
  shop: state.currentShop, name: name, qty: mInfo.qty, 
@@ -4680,6 +4754,13 @@ window.showLastOrder = async function() {
  }
  
  await Promise.all(promises);
+
+ // Мгновенно показываем созданные недовозы, не дожидаясь ответа базы.
+ Object.keys(missingMap).forEach(name => {
+ if (!(state.globalMissing || []).some(m => m && m.name === name && m.status === 'pending')) {
+ (state.globalMissing = state.globalMissing || []).push({ name: name, qty: (missingMap[name] || {}).qty, shop: state.currentShop, status: 'pending', timestamp: Date.now(), created_ts: Date.now(), key: 'local_' + name });
+ }
+ });
 
  if (arrivedItemsToClear.length > 0) {
  await autoRemoveFromStoplist(state.currentShop, arrivedItemsToClear);
@@ -5020,8 +5101,33 @@ window.showLastOrder = async function() {
  } catch(e) {}
  }
 
+ // Экран приёмки / стоп-листа перерисовывается, как только пришли свежие
+ // данные — раньше он так и оставался со старыми данными из кэша.
+ let liveRefreshTimer = null;
+ function refreshLiveReportScreen() {
+ if (liveRefreshTimer) clearTimeout(liveRefreshTimer);
+ liveRefreshTimer = setTimeout(() => {
+ let overlay = document.getElementById('report-overlay');
+ if (!overlay || overlay.style.display === 'none') return;
+ if (state.currentMode === 'receiving') showLastOrder(true);
+ else if (state.currentMode === 'stoplist_view') viewStopList(true);
+ }, 250);
+ }
+
+ function rescueStuckMissing() {
+ // Недовозы, застрявшие в старой папке push_items_missing, переносим
+ // в missing_items сами, не дожидаясь открытия дашборда.
+ database.ref('push_items_missing').orderByChild('shop').equalTo(state.currentShop).once('value').then(snap => {
+ let upd = {};
+ snap.forEach(c => { upd['missing_items/' + c.key] = c.val(); upd['push_items_missing/' + c.key] = null; });
+ if (Object.keys(upd).length) database.ref().update(upd).catch(() => {});
+ }).catch(() => {});
+ }
+
  function startShopDataSync() {
  if (!state.currentShop) return;
+ state.dataFresh = {};
+ rescueStuckMissing();
  
  if (state.activeOrderRef) state.activeOrderRef.off();
  if (state.activeMissingRef) state.activeMissingRef.off();
@@ -5053,9 +5159,11 @@ window.showLastOrder = async function() {
  snap.forEach(c => { let val = c.val(); if(val) { val.key = c.key; shopOrders.push(val); } });
  state.globalOrders = shopOrders.sort((a,b) => b.timestamp - a.timestamp);
  state.ordersLoaded = true;
+ markDataFresh('orders');
  try { localStorage.setItem("data_orders_" + state.currentShop, JSON.stringify(state.globalOrders)); } catch(e){}
  triggerActiveRender();
  refreshHomeDashboardIfVisible();
+ refreshLiveReportScreen();
  });
 
  state.activeMissingRef.on('value', snap => {
@@ -5063,9 +5171,11 @@ window.showLastOrder = async function() {
  snap.forEach(c => { let val = c.val(); if(val) { val.key = c.key; missing.push(val); } });
  state.globalMissing = missing;
  state.missingLoaded = true;
+ markDataFresh('missing');
  try { localStorage.setItem("data_missing_" + state.currentShop, JSON.stringify(state.globalMissing)); } catch(e){}
  triggerActiveRender();
  refreshHomeDashboardIfVisible();
+ refreshLiveReportScreen();
  });
  }
  

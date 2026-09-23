@@ -4303,34 +4303,34 @@ window.showLastOrder = async function() {
  </div>`;
  }
 
- // ⚡ ФИКС: ВСЕГДА запрашиваем свежие данные при открытии приемки, игнорируя старый кэш
-  let timedOut = false;
-  try { 
-      let ordersPromise = database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(50).once("value");
-      let missingPromise = database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value");
+ // ⚡ ФИКС 1: ВСЕГДА запрашиваем свежие данные при открытии приемки, игнорируя старый кэш
+ let timedOut = false;
+ try { 
+     let ordersPromise = database.ref("orders").orderByChild("shop").equalTo(state.currentShop).limitToLast(50).once("value");
+     let missingPromise = database.ref("missing_items").orderByChild("shop").equalTo(state.currentShop).once("value");
 
-      let results = await Promise.race([
-          Promise.all([ordersPromise, missingPromise]),
-          new Promise((resolve) => setTimeout(() => { timedOut = true; resolve(null); }, 2500))
-      ]);
+     let results = await Promise.race([
+         Promise.all([ordersPromise, missingPromise]),
+         new Promise((resolve) => setTimeout(() => { timedOut = true; resolve(null); }, 2500))
+     ]);
 
-      if (results) {
-          let [oSnap, mSnap] = results;
-          
-          let oArr = [];
-          oSnap.forEach(c => { let v = c.val(); if(v){ v.key = c.key; oArr.push(v); } });
-          state.globalOrders = oArr.sort((a,b) => b.timestamp - a.timestamp);
-          
-          let mArr = [];
-          mSnap.forEach(c => { let v = c.val(); if(v){ v.key = c.key; mArr.push(v); } });
-          state.globalMissing = mArr;
+     if (results) {
+         let [oSnap, mSnap] = results;
+         
+         let oArr = [];
+         oSnap.forEach(c => { let v = c.val(); if(v){ v.key = c.key; oArr.push(v); } });
+         state.globalOrders = oArr.sort((a,b) => b.timestamp - a.timestamp);
+         
+         let mArr = [];
+         mSnap.forEach(c => { let v = c.val(); if(v){ v.key = c.key; mArr.push(v); } });
+         state.globalMissing = mArr;
 
-          state.ordersLoaded = true;
-          state.missingLoaded = true;
-          // Сохраняем время последней успешной синхронизации
-          state.lastSyncTime = new Date().toLocaleTimeString('ru-RU', {hour: '2-digit', minute:'2-digit', second:'2-digit'});
-      }
-  } catch(e){}
+         state.ordersLoaded = true;
+         state.missingLoaded = true;
+         // Сохраняем время последней успешной синхронизации
+         state.lastSyncTime = new Date().toLocaleTimeString('ru-RU', {hour: '2-digit', minute:'2-digit', second:'2-digit'});
+     }
+ } catch(e){}
 
  let orderCatalog = (state.cachedCatalogs && state.cachedCatalogs.order) ? state.cachedCatalogs.order : {};
  let orderCatMapFast = {};
@@ -4373,16 +4373,16 @@ window.showLastOrder = async function() {
  if (vRaw.includes('озон') || vRaw.includes('ozon') || vRaw.includes('wb')) vendor = 'ozon';
  else if (vRaw.includes('купер') || vRaw.includes('kuper')) vendor = 'kuper';
 
- if (vendor === 'lenta') lentaItems.push(i);
- if (vendor === 'ozon') ozonItems.push(i);
- if (vendor === 'kuper') kuperItems.push(i);
+ if (vendor === 'lenta' && !o.lenta_received) lentaItems.push(i);
+ if (vendor === 'ozon' && !o.ozon_received) ozonItems.push(i);
+ if (vendor === 'kuper' && !o.kuper_received) kuperItems.push(i);
  }
  });
 
  let missingVendors = [];
- if (lentaItems.length > 0) missingVendors.push({ name: "Лента", items: lentaItems });
- if (ozonItems.length > 0) missingVendors.push({ name: "Озон", items: ozonItems });
- if (kuperItems.length > 0) missingVendors.push({ name: "Купер", items: kuperItems });
+ if (lentaItems.length > 0) missingVendors.push({ name: " Лента", items: lentaItems });
+ if (ozonItems.length > 0) missingVendors.push({ name: " Озон", items: ozonItems });
+ if (kuperItems.length > 0) missingVendors.push({ name: " Купер", items: kuperItems });
  
  if (missingVendors.length > 0) {
  if (!pendingReceivings[o.shop]) pendingReceivings[o.shop] = [];
@@ -4395,39 +4395,77 @@ window.showLastOrder = async function() {
  }
  });
 
- // ⚡ ФИКС: Показываем пользователю, когда данные обновлялись последний раз
-  let syncIndicator = state.lastSyncTime 
-      ? `<div style="text-align:center; font-size:12px; color:var(--ink-faint); margin-bottom:12px; font-weight:600;">Данные актуальны на ${state.lastSyncTime}</div>` 
-      : '';
+ // ⚡ ФИКС 2: Показываем пользователю, когда данные обновлялись последний раз
+ let syncIndicator = state.lastSyncTime 
+     ? `<div style="text-align:center; font-size:12px; color:var(--ink-faint); margin-bottom:12px; font-weight:600;">Данные актуальны на ${state.lastSyncTime}</div>` 
+     : '';
 
-  let html = `${syncIndicator}<div style="display: flex; gap: 10px; margin-bottom: 20px; background: #FFF; padding: 6px; border-radius: 14px; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
-  <button onclick="state.currentReceivingTab = 'active'; showLastOrder();" style="flex: 1; padding: 12px; border: none; border-radius: 10px; font-size: 14px; font-weight:700; white-space:nowrap; ${state.currentReceivingTab === 'active' || !state.currentReceivingTab ? 'background: #16161A; color: #FFF;' : 'background: transparent; color: #98979E;'}">Текущая приёмка</button>
-  <button onclick="state.currentReceivingTab = 'history'; showLastOrder();" style="flex: 1; padding: 12px; border: none; border-radius: 10px; font-size: 14px; font-weight:700; white-space:nowrap; ${state.currentReceivingTab === 'history' ? 'background: #3A2E22; color: #FFF;' : 'background: transparent; color: #98979E;'}">История · 14 дней</button>
-  </div>`;
+ let html = `${syncIndicator}<div style="display: flex; gap: 10px; margin-bottom: 20px; background: #FFF; padding: 6px; border-radius: 14px; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
+ <button onclick="state.currentReceivingTab = 'active'; showLastOrder();" style="flex: 1; padding: 12px; border: none; border-radius: 10px; font-size: 14px; font-weight:700; white-space:nowrap; ${state.currentReceivingTab === 'active' || !state.currentReceivingTab ? 'background: #16161A; color: #FFF;' : 'background: transparent; color: #98979E;'}">Текущая приёмка</button>
+ <button onclick="state.currentReceivingTab = 'history'; showLastOrder();" style="flex: 1; padding: 12px; border: none; border-radius: 10px; font-size: 14px; font-weight:700; white-space:nowrap; ${state.currentReceivingTab === 'history' ? 'background: #3A2E22; color: #FFF;' : 'background: transparent; color: #98979E;'}">История · 14 дней</button>
+ </div>`;
 
-  if (!state.currentReceivingTab || state.currentReceivingTab === 'active') {
-      // ... код ... (пропускаем до функции renderList)
-      Object.keys(activeByDate).sort((a,b) => activeByDate[b].timestamp - activeByDate[a].timestamp).forEach(dateStr => {
-      const renderList = (grpData, keysSet, vendorKey, bClass, bText) => {
-      let names = Object.keys(grpData).sort(); if(names.length === 0) return "";
-      let listId = getSafeId(dateStr + vendorKey), kStr = Array.from(keysSet).join(',');
-      let borderColor = vendorKey === 'ozon' ? '#16161A' : (vendorKey === 'kuper' ? '#3F8A4C' : '#A9762E');
-  
-      let res = `<div class="report-card" style="margin-bottom:10px; border-left:4px solid ${borderColor};">
-      <div class="report-card-title" style="cursor:pointer; font-size:16px;" onclick="toggleElements('${listId}', 'arr_${listId}')">Накладная ${bText} от ${dateStr} <span id="arr_${listId}">▼</span></div>
-      <div class="${listId}" style="display:none; margin-top:10px;">`;
-      let expCount = 0;
-      names.forEach(name => {
-      // ⚡ ФИКС ЛОГИКИ: Строгое сравнение имен через cleanName, чтобы недовозы не "терялись"
-      if(activeMissing.some(am => cleanName(am.name) === cleanName(name))) {
-          res += `<div class="report-card-item"><span><b>${name}</b></span><span style="color:#8F5E20; font-size:12px;">Уже в недовозах</span></div>`;
-      } else {
+ if (!state.currentReceivingTab || state.currentReceivingTab === 'active') {
+ if (activeMissing.length > 0) {
+ let missListId = "missing_active_list";
+ html += `<div class="report-card" style="border: 2px solid #D2AC64; margin-bottom: 15px;">
+ <div class="report-card-title" style="color:#8F5E20; cursor:pointer; font-size:16px;" onclick="toggleElements('${missListId}', 'arr_${missListId}')">Ожидаемые недовозы <span id="arr_${missListId}">▼</span></div>
+ <div class="${missListId}" style="display:none;">`;
+ activeMissing.forEach(m => {
+ let statText = m.status === 'transit' ? "В пути" : "Ожидает проверки", statColor = m.status === 'transit' ? "#16161A" : "#8F5E20", bg = m.status === 'transit' ? "#EFEFED" : "#F7F1E6";
+ let safeNameEsc = escapeName(m.name), btnMissArrId = `btn_miss_arr_${m.key}`, btnMissId = `btn_miss_${m.key}`;
+ let isMarked = state.missingChoices && state.missingChoices[m.key] !== undefined;
 
- // накладная = дата + поставщик, у которого есть непринятые позиции.
+ let mDateLabel = getMissingDateLabel(m);
+ html += `<div class="report-card-item" style="flex-direction:column; align-items:flex-start; border-bottom:1px solid #F0EFEB;">
+ <span style="margin-bottom:4px; font-size:16px;"><b>${m.name}</b> (x${m.qty})</span>
+ <span style="margin-bottom:8px; font-size:12px; color:#98979E; font-weight:600;">Недовоз ${mDateLabel}</span>
+ <div style="display:flex; justify-content:space-between; width:100%; align-items:center;">
+ <span style="background:${bg}; color:${statColor}; padding:4px 8px; border-radius:8px; font-size:12px; font-weight:700;">${statText}</span>
+ <button id="${btnMissArrId}" onclick="toggleMissingArrived('${m.key}', '${safeNameEsc}', '${btnMissArrId}')" style="border:${isMarked ? '2px solid #3F8A4C' : '1px solid #E4E3DE'}; background:${isMarked ? '#EAF3EA' : '#FAFAF9'}; color:${isMarked ? '#3F8A4C' : '#98979E'}; padding:8px 15px; border-radius:10px; font-weight:700; font-size:14px; cursor:pointer;">Доехал</button>
+ </div>
+ </div>`;
+ });
+ html += `<button onclick="finishMissingReceiving()" class="btn-mode btn-mode-solid" style="background: var(--warning-gradient) !important; margin-top:15px; padding:12px !important;">ПОДТВЕРДИТЬ НЕДОВОЗЫ</button></div></div>`;
+ }
+
+ let activeByDate = {};
+ recvOrdersArr.forEach(o => {
+ let orderDate = new Date(o.timestamp).toLocaleDateString('ru-RU');
+ let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items || {});
+ 
+ itemsArr.forEach((i, idx) => {
+ if (!i || !i.name || i.name === "НЕТ ЗАКАЗА") return;
+ 
+ if (i.status === 'ordered') {
+ let cName = cleanName(i.name);
+ let catItem = orderCatMapFast[cName] || {};
+ let vRaw = (i.vendor || catItem.vendor || 'Лента').toLowerCase();
+ let vendor = 'lenta';
+ if (vRaw.includes('озон') || vRaw.includes('ozon') || vRaw.includes('wb')) vendor = 'ozon';
+ else if (vRaw.includes('купер') || vRaw.includes('kuper')) vendor = 'kuper';
+
+ let isOldReceived = vendor === 'ozon' ? o.ozon_received : (vendor === 'kuper' ? o.kuper_received : o.lenta_received);
+
+ if (!isOldReceived) {
+ if (!activeByDate[orderDate]) activeByDate[orderDate] = { lenta: { items: {}, keys: new Set() }, ozon: { items: {}, keys: new Set() }, kuper: { items: {}, keys: new Set() }, timestamp: o.timestamp };
+ let targetGroup = activeByDate[orderDate][vendor];
+ if(!targetGroup.items[i.name]) targetGroup.items[i.name] = {qty: 0};
+ targetGroup.items[i.name].qty += parseFloat(i.qty) || 0;
+ targetGroup.keys.add(o.key);
+ }
+ }
+ });
+ });
+
+ if (Object.keys(activeByDate).length === 0) {
+ html += `<div class="report-card"><div style="text-align:center; font-weight:700;">Нет новых товаров для приемки.</div></div>`;
+ } else {
  let invCount = 0, posCount = 0;
  Object.keys(activeByDate).forEach(d => {
  ['lenta','ozon','kuper'].forEach(v => {
- let names = Object.keys(activeByDate[d][v].items || {}).filter(n => !activeMissing.some(am => am.name === n));
+ // ⚡ ФИКС 3: Строгое сравнение имен через cleanName при подсчете счетчика
+ let names = Object.keys(activeByDate[d][v].items || {}).filter(n => !activeMissing.some(am => cleanName(am.name) === cleanName(n)));
  if (names.length > 0) { invCount++; posCount += names.length; }
  });
  });
@@ -4444,7 +4482,8 @@ window.showLastOrder = async function() {
  <div class="${listId}" style="display:none; margin-top:10px;">`;
  let expCount = 0;
  names.forEach(name => {
- if(activeMissing.some(am => am.name === name)) {
+ // ⚡ ФИКС 4: Строгое сравнение имен через cleanName при отрисовке, чтобы недовозы не "терялись"
+ if(activeMissing.some(am => cleanName(am.name) === cleanName(name))) {
  res += `<div class="report-card-item"><span><b>${name}</b></span><span style="color:#8F5E20; font-size:12px;">Уже в недовозах</span></div>`;
  } else {
  expCount++;
@@ -4494,8 +4533,8 @@ window.showLastOrder = async function() {
  if (vRaw.includes('озон') || vRaw.includes('ozon') || vRaw.includes('wb')) { vendorLabel = 'ОЗОН / WB'; vendorKey = 'ozon'; }
  else if (vRaw.includes('купер') || vRaw.includes('kuper')) { vendorLabel = 'КУПЕР'; vendorKey = 'kuper'; }
 
- let isMissingActive = activeMissing.some(m => m.name === i.name && m.timestamp >= o.timestamp - 86400000); 
- let isMissingResolved = historyMissing.some(m => m.name === i.name && m.timestamp >= o.timestamp - 86400000);
+ let isMissingActive = activeMissing.some(m => cleanName(m.name) === cName && m.timestamp >= o.timestamp - 86400000); 
+ let isMissingResolved = historyMissing.some(m => cleanName(m.name) === cName && m.timestamp >= o.timestamp - 86400000);
  
  let stText = "Ожидает", stColor = "#7A7873";
  let isOldReceived = o[vendorKey + '_received'];
@@ -4534,7 +4573,7 @@ window.showLastOrder = async function() {
  }
  
  document.getElementById('report-content-area').innerHTML = html;
- }
+}
 
  
  function setReceiveChoice(name, qty, vendor, status, btnArrId, btnMissId, dateStr) {

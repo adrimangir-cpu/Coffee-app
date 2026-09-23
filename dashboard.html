@@ -546,7 +546,7 @@ tr[class*="svodlvl3_"] > td:nth-child(2), tr[class*="lvl3_"] > td:nth-child(2) {
     
     
     
-  @media (max-width: 900px) {
+    @media (max-width: 900px) {
   body { padding-bottom: 55px; }
   
   /* Нижнее меню */
@@ -596,14 +596,14 @@ tr[class*="svodlvl3_"] > td:nth-child(2), tr[class*="lvl3_"] > td:nth-child(2) {
   
   h3, h4 { font-size: 20px !important; margin-bottom: 12px !important; }
 
- table { min-width: 480px !important; }
-#graph-table { min-width: 1400px !important; }
+  /* ⚡ Таблицы: сжимаем ширину еще сильнее (чтобы меньше свайпать) */
+  table { min-width: 480px !important; }
   
-  /* ⚡ ТЕКСТ ВНУТРИ УВЕЛИЧИЛИ */
+  /* ⚡ ТЕКСТ ВНУТРИ УВЕЛИЧИЛИ (было 10px, стало 11.5px/12px) */
   td, th { padding: 8px 6px !important; font-size: 11.5px !important; }
   td input, td select { font-size: 11.5px !important; padding: 6px !important; }
   
-  /* ⚡ КАТЕГОРИИ УМЕНЬШИЛИ */
+  /* ⚡ КАТЕГОРИИ УМЕНЬШИЛИ (было 16px, стало 13px) */
   .cat-group-header td { padding: 8px !important; }
   .cat-group-header td b { font-size: 13px !important; }
   
@@ -628,8 +628,7 @@ tr[class*="svodlvl3_"] > td:nth-child(2), tr[class*="lvl3_"] > td:nth-child(2) {
 }
 
 @media (max-width: 480px) {
-  /* ⚡ ФИКС для маленьких телефонов: таблица остается широкой для скролла */
-  table { min-width: 800px !important; } 
+  table { min-width: 380px !important; } /* Сжали для маленьких айфонов */
   #page-title-display { font-size: 18px !important; }
 }
 
@@ -957,6 +956,32 @@ tr[class*="miss_shop_"] > td[colspan] {
   color: var(--text-main) !important;
 }
 [style*="color:#555" i], [style*="color:#666" i], [style*="color:#777" i] { color: var(--text-muted) !important; }
+
+/* ===== МОБИЛЬНЫЕ ТАБЛИЦЫ: не сжимаем, а прокручиваем по горизонтали ===== */
+@media (max-width: 900px) {
+  .card, .svod-dashboard-layout .card, .graphs-wrapper { overflow-x: auto !important; -webkit-overflow-scrolling: touch; }
+  #content table:not(#graph-table), .svod-dashboard-layout table {
+    width: max-content !important;
+    min-width: 100% !important;
+  }
+  #content th { white-space: nowrap !important; }
+  #content td { min-width: 64px; }
+  #content td:first-child, #content th:first-child { min-width: 40px; }
+  #content td input, #content td select { min-width: 70px; }
+  .cat-group-header td { white-space: nowrap; }
+
+  /* График: широкие колонки сотрудников, закреплены только дата и день */
+  .graphs-wrapper { max-height: 70vh; }
+  #graph-table { width: max-content !important; min-width: 100% !important; }
+  #graph-table .user-header-cell { min-width: 104px !important; }
+  #graph-table td, #graph-table th { font-size: 13px !important; padding: 5px 4px !important; }
+  #graph-table .stick-left-1, #graph-table .stick-left-2 { min-width: 36px !important; max-width: 36px !important; }
+  #graph-table .stick-left-2 { left: 36px !important; }
+  #graph-table .stick-right-1, #graph-table .stick-right-2, #graph-table .stick-right-3 {
+    position: static !important; box-shadow: none !important;
+  }
+  #graph-table .check-cell { min-width: 150px !important; max-width: 150px !important; white-space: normal !important; }
+}
 </style>
     
     
@@ -1151,7 +1176,39 @@ if (!firebase.apps.length) {
 }
 const db = firebase.database();
 
+// ⚡ ГЛОБАЛЬНЫЙ ПЕРЕХВАТЧИК "Failed to fetch"
 const originalFetch = window.fetch;
+window.fetch = async function(url, options = {}) {
+  if (typeof url === 'string' && url.startsWith(FB_URL)) {
+    let method = (options.method || 'GET').toUpperCase();
+    let path = new URL(url).pathname.replace(/^\//, '').replace(/\.json$/, '');
+    try {
+      if (method === 'GET') {
+        let snap = await db.ref(path).once('value');
+        return { ok: true, json: async () => snap.val() };
+      } else if (method === 'PUT') {
+        let data = options.body ? JSON.parse(options.body) : null;
+        await db.ref(path).set(data);
+        return { ok: true, json: async () => data };
+      } else if (method === 'PATCH') {
+        let data = options.body ? JSON.parse(options.body) : null;
+        await db.ref(path).update(data);
+        return { ok: true, json: async () => data };
+      } else if (method === 'POST') {
+        let data = options.body ? JSON.parse(options.body) : null;
+        let ref = await db.ref(path).push(data);
+        return { ok: true, json: async () => ({ name: ref.key }) };
+      } else if (method === 'DELETE') {
+        await db.ref(path).remove();
+        return { ok: true, json: async () => null };
+      }
+    } catch (e) {
+      console.error("Firebase SDK Override Error:", e);
+      throw new TypeError("Failed to fetch");
+    }
+  }
+  return originalFetch.apply(this, arguments);
+};
 
 let currentCatalog = {};
 let currentMenu = {};
@@ -1195,6 +1252,17 @@ setTimeout(() => {
     }
   });
 }, 2000);
+
+// Позиция закрыта приёмкой, только если бариста её отметил (recv_done)
+// или её заказали ДО приёмки поставщика. Заказанное позже снова ждёт приёмку.
+function isClosedByVendorFlag(o, i, vendor) {
+    if (i && i.recv_done) return true;
+    if (!o || !o[vendor + '_received']) return false;
+    let recTs = o[vendor + '_received_ts'] || 0;
+    let ordTs = (i && i.ordered_ts) || 0;
+    if (ordTs && recTs && ordTs > recTs) return false;
+    return true;
+}
 
 window.getOzonRepeatStatus = function(shop, itemName, cachedData, vendor, itemSku) {
     let vLower = (vendor || '').toLowerCase();
@@ -1303,19 +1371,54 @@ async function fetchOptimistic(path) {
   if (path === 'catalogs/stoplist' && typeof cachedData !== 'undefined' && cachedData.catalogStoplist && Object.keys(cachedData.catalogStoplist).length > 0) return cachedData.catalogStoplist;
 
   let cached = await loadFromCache(path);
-  
-  fetch(`${FB_URL}/${path}.json`).then(r => r.json()).then(data => {
-    let finalData = data || {};
-    saveToCache(path, finalData);
-  }).catch(e => null);
+  let tabAtStart = typeof currentTabType !== 'undefined' ? currentTabType : null;
   
   if (cached && Object.keys(cached).length > 0) {
+    // Показываем кэш, но честно помечаем его и, как только придут свежие
+    // данные, перерисовываем вкладку (раньше кэш висел до перезагрузки).
+    setDbFreshness('cache');
+    fetch(`${FB_URL}/${path}.json`).then(r => r.json()).then(data => {
+      let finalData = data || {};
+      saveToCache(path, finalData);
+      setDbFreshness('fresh');
+      if (JSON.stringify(finalData) !== JSON.stringify(cached) && typeof currentTabType !== 'undefined' && currentTabType === tabAtStart) {
+        refreshTabWithFreshData(tabAtStart);
+      }
+    }).catch(e => null);
     return cached;
   } else {
     let fresh = await fetch(`${FB_URL}/${path}.json`).then(r => r.json()).catch(e => null);
-    if (fresh) saveToCache(path, fresh);
+    if (fresh) { saveToCache(path, fresh); setDbFreshness('fresh'); }
     return fresh || {};
   }
+}
+
+// ---------- Свежесть данных в плашке статуса ----------
+function setDbFreshness(kind) {
+  let el = document.getElementById('db-status');
+  if (!el) return;
+  let t = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+  if (kind === 'fresh') { el.innerText = 'Актуально · ' + t; el.dataset.fresh = '1'; }
+  else if (kind === 'cache') { el.innerText = 'Сохранённые данные · обновляю…'; el.dataset.fresh = '0'; }
+}
+
+// Перерисовать открытую вкладку свежими данными, не сбивая режим правки.
+let freshReloadTimer = null;
+function refreshTabWithFreshData(tab) {
+  if (freshReloadTimer) clearTimeout(freshReloadTimer);
+  freshReloadTimer = setTimeout(() => {
+    if (currentTabType !== tab) return;
+    let busy = (typeof isSvodEditMode !== 'undefined' && isSvodEditMode) ||
+               (typeof isMissingEditMode !== 'undefined' && isMissingEditMode) ||
+               (typeof isMpEditMode !== 'undefined' && isMpEditMode) ||
+               (typeof isChecklistEditMode !== 'undefined' && isChecklistEditMode) ||
+               (tab === 'menu' && typeof hasUnsavedMenuChanges === 'function' && hasUnsavedMenuChanges()) ||
+               (tab === 'graphs' && window.graphDraft && typeof originalGraphDraft !== 'undefined' && JSON.stringify(window.graphDraft) !== JSON.stringify(originalGraphDraft)) ||
+               (document.activeElement && ['INPUT','SELECT','TEXTAREA'].includes(document.activeElement.tagName));
+    if (busy) return;
+    let btn = document.querySelector(`.tab-btn[onclick*="'${tab}'"]`);
+    loadTab(tab, btn);
+  }, 400);
 }
 
 function cleanName(str) {
@@ -1545,9 +1648,9 @@ function toggleSvodDate(safeDate) {
                     if (vRaw.includes('озон') || vRaw.includes('ozon')) vendor = 'ozon';
                     else if (vRaw.includes('купер') || vRaw.includes('kuper')) vendor = 'kuper';
 
-                    if (vendor === 'lenta' && !o.lenta_received) lentaItems.push(i);
-                    if (vendor === 'ozon' && !o.ozon_received) ozonItems.push(i);
-                    if (vendor === 'kuper' && !o.kuper_received) kuperItems.push(i);
+                    if (vendor === 'lenta' && !isClosedByVendorFlag(o, i, 'lenta')) lentaItems.push(i);
+                    if (vendor === 'ozon' && !isClosedByVendorFlag(o, i, 'ozon')) ozonItems.push(i);
+                    if (vendor === 'kuper' && !isClosedByVendorFlag(o, i, 'kuper')) kuperItems.push(i);
                 }
             });
 
@@ -1797,8 +1900,31 @@ window.sendChecklistPdf = async function() {
         renderGraphsTab();
     }
     
-    function toggleGraphCompare() {
+    // База для «Сравнить с черновиком» — последнее отправление сотрудника
+    // (schedules_submitted). Если сотрудник ещё не отправлял график после
+    // обновления — берём сохранённый график как раньше.
+    function getGraphBaseline(user, day) {
+        let t = getTargetDateLogic();
+        let ym = `${t.year}_${t.month}`;
+        let sub = (window.graphSubmitted && window.graphSubmitted[ym]) ? window.graphSubmitted[ym][user] : null;
+        if (sub) return { has: true, text: (sub[day] && sub[day].text) || "" };
+        if (originalGraphDraft && originalGraphDraft[user] && originalGraphDraft[user][day]) {
+            return { has: true, text: originalGraphDraft[user][day].text || "" };
+        }
+        return { has: false, text: "" };
+    }
+
+    async function toggleGraphCompare() {
         isGraphCompareMode = !isGraphCompareMode;
+        if (isGraphCompareMode) {
+            try {
+                let t = getTargetDateLogic();
+                let ym = `${t.year}_${t.month}`;
+                let fresh = await fetch(`${FB_URL}/schedules_submitted/${ym}.json`).then(r => r.json());
+                if (!window.graphSubmitted) window.graphSubmitted = {};
+                window.graphSubmitted[ym] = fresh || {};
+            } catch(e) {}
+        }
         renderGraphsTab();
     }
 
@@ -2126,6 +2252,90 @@ window.syncStoplistWithMenu = async function() {
     // ==========================================
     
     // ⚡ ФУНКЦИЯ СЖАТИЯ: Уменьшает вес фото в 20 раз перед отправкой
+    // ==========================================
+    // ТЯЖЁЛЫЕ ФОТО В КАТАЛОГАХ
+    // Старые фото лежат в базе PNG по 0,5–4 МБ (≈120 МБ всего). Из-за этого
+    // и дашборд, и приложение минутами качают каталоги, а свежие заказы и
+    // стоп-лист встают в очередь за ними. Кнопка пережимает их в JPEG 600px.
+    // ==========================================
+    const HEAVY_PHOTO_LIMIT = 150 * 1024;
+    function collectHeavyPhotos(cats) {
+        let list = [];
+        ['order', 'newshop', 'checklist', 'stoplist', 'menu'].forEach(cat => {
+            let c = (cats || {})[cat] || {};
+            Object.keys(c).forEach(id => {
+                let v = c[id];
+                if (v && typeof v.photo === 'string' && v.photo.startsWith('data:image') && v.photo.length > HEAVY_PHOTO_LIMIT) {
+                    list.push({ cat: cat, id: id, size: v.photo.length, photo: v.photo });
+                }
+            });
+        });
+        return list;
+    }
+    function checkHeavyPhotos(cats) {
+        try {
+            let heavy = collectHeavyPhotos(cats);
+            let old = document.getElementById('heavy-photo-banner');
+            if (heavy.length === 0) { if (old) old.remove(); return; }
+            let mb = (heavy.reduce((a, h) => a + h.size, 0) / 1048576).toFixed(0);
+            if (!old) {
+                old = document.createElement('div');
+                old.id = 'heavy-photo-banner';
+                old.style.cssText = 'position:fixed; left:50%; transform:translateX(-50%); bottom:62px; z-index:6000; background:#16161A; color:#FFF; border-radius:18px; padding:12px 16px; box-shadow:0 10px 30px rgba(0,0,0,.25); display:flex; gap:12px; align-items:center; flex-wrap:wrap; max-width:calc(100vw - 24px); font-size:13px; font-weight:600;';
+                document.body.appendChild(old);
+            }
+            old.innerHTML = `<span>Фото в каталогах весят ~${mb} МБ (${heavy.length} шт.) — из-за этого база грузится минутами.</span>
+                <button id="btn-optimize-photos" onclick="optimizeHeavyPhotos()" style="background:#FFF; color:#16161A; border:none; border-radius:999px; padding:8px 14px; font-weight:700; cursor:pointer;">Сжать фото</button>
+                <button onclick="this.parentNode.remove()" style="background:transparent; color:#FFF; border:1px solid rgba(255,255,255,.4); border-radius:999px; padding:8px 12px; cursor:pointer;">Позже</button>`;
+            window.__heavyCats = cats;
+        } catch (e) {}
+    }
+    function recompressDataUrl(dataUrl, maxWidth = 600, quality = 0.72) {
+        return new Promise(resolve => {
+            let img = new Image();
+            img.onload = () => {
+                let w = img.width, h = img.height;
+                if (w > maxWidth) { h = Math.round(h * (maxWidth / w)); w = maxWidth; }
+                let cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+                let ctx = cv.getContext('2d');
+                ctx.fillStyle = '#FFFFFF'; ctx.fillRect(0, 0, w, h); // прозрачный PNG → белый фон
+                ctx.drawImage(img, 0, 0, w, h);
+                resolve(cv.toDataURL('image/jpeg', quality));
+            };
+            img.onerror = () => resolve(null);
+            img.src = dataUrl;
+        });
+    }
+    window.optimizeHeavyPhotos = async function() {
+        let heavy = collectHeavyPhotos(window.__heavyCats || {});
+        if (heavy.length === 0) return;
+        if (!confirm(`Сжать ${heavy.length} фото в каталогах?\n\nФото станут JPEG шириной 600px — на экране выглядят так же, но весят в 10–20 раз меньше. Меняется только поле «фото», остальные данные не трогаются.\n\nПеред сжатием скачается резервная копия старых фото (файл .json).`)) return;
+        try {
+            let backup = {};
+            heavy.forEach(h => { (backup[h.cat] = backup[h.cat] || {})[h.id] = h.photo; });
+            let blob = new Blob([JSON.stringify(backup)], { type: 'application/json' });
+            let a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = 'teiku_photos_backup_' + new Date().toISOString().slice(0, 10) + '.json';
+            document.body.appendChild(a); a.click(); a.remove();
+        } catch (e) {}
+        let btn = document.getElementById('btn-optimize-photos');
+        let done = 0, saved = 0;
+        for (let h of heavy) {
+            if (btn) btn.innerText = `Сжимаю ${done + 1}/${heavy.length}…`;
+            let small = await recompressDataUrl(h.photo);
+            if (small && small.length < h.size) {
+                try {
+                    await fetch(`${FB_URL}/catalogs/${h.cat}/${h.id}/photo.json`, { method: 'PUT', body: JSON.stringify(small) });
+                    saved += h.size - small.length;
+                } catch (e) {}
+            }
+            done++;
+        }
+        let banner = document.getElementById('heavy-photo-banner');
+        if (banner) banner.innerHTML = `<span>Готово: сжато ${done} фото, база легче на ~${(saved / 1048576).toFixed(0)} МБ.</span><button onclick="this.parentNode.remove()" style="background:#FFF; color:#16161A; border:none; border-radius:999px; padding:8px 14px; font-weight:700;">Ок</button>`;
+    };
+
     function compressImageToBase64(file, maxWidth = 600, quality = 0.7) {
         return new Promise((resolve, reject) => {
             const reader = new FileReader();
@@ -3136,6 +3346,15 @@ window.syncStoplistWithMenu = async function() {
                 localUpdates[`${targetOrderKey}/items/${itemKey}/status`] = newStatus;
                 localUpdates[`${targetOrderKey}/items/${itemKey}/bot_error`] = isError;
                 localUpdates[`${targetOrderKey}/items/${itemKey}/not_found`] = isError;
+                if (newStatus === 'ordered') {
+                    // Заново заказана — снова ждёт приёмку в приложении.
+                    let nowTs = Date.now();
+                    order.items[itemKey].ordered_ts = nowTs;
+                    delete order.items[itemKey].recv_done; delete order.items[itemKey].missing_reported;
+                    localUpdates[`${targetOrderKey}/items/${itemKey}/ordered_ts`] = nowTs;
+                    localUpdates[`${targetOrderKey}/items/${itemKey}/recv_done`] = null;
+                    localUpdates[`${targetOrderKey}/items/${itemKey}/missing_reported`] = null;
+                }
                 
                 if (isOrdered) {
                     let vRaw = (order.items[itemKey].vendor || 'Лента').toLowerCase();
@@ -3336,7 +3555,9 @@ window.syncStoplistWithMenu = async function() {
                         if (catItem.includes('озон') || catItem.includes('wb')) vKey = 'ozon';
                         else if (catItem.includes('купер')) vKey = 'kuper';
                         
-                        if (o[vKey + '_received'] && (i.status === 'ordered' || i.status === 'pending')) {
+                        // «Принят» — только для заказанных и реально отмеченных позиций;
+                        // pending и недовозы больше не превращаются в «Принят».
+                        if (i.status === 'ordered' && !i.missing_reported && isClosedByVendorFlag(o, i, vKey)) {
                             i.status = 'already_received';
                         }
 
@@ -3645,9 +3866,9 @@ window.syncStoplistWithMenu = async function() {
                         if (vRaw.includes('озон') || vRaw.includes('ozon')) vendor = 'ozon';
                         else if (vRaw.includes('купер') || vRaw.includes('kuper')) vendor = 'kuper';
 
-                        if (vendor === 'lenta' && !o.lenta_received) lentaItems.push(i);
-                        if (vendor === 'ozon' && !o.ozon_received) ozonItems.push(i);
-                        if (vendor === 'kuper' && !o.kuper_received) kuperItems.push(i);
+                        if (vendor === 'lenta' && !isClosedByVendorFlag(o, i, 'lenta')) lentaItems.push(i);
+                        if (vendor === 'ozon' && !isClosedByVendorFlag(o, i, 'ozon')) ozonItems.push(i);
+                        if (vendor === 'kuper' && !isClosedByVendorFlag(o, i, 'kuper')) kuperItems.push(i);
                     }
                 });
 
@@ -3798,6 +4019,8 @@ window.syncStoplistWithMenu = async function() {
                     itemsArr.forEach(i => { 
                         if (i && i.name !== "НЕТ ЗАКАЗА" && (!i.status || i.status === 'pending' || i.status === 'from_stoplist')) { 
                             i.status = 'ordered'; 
+                            i.ordered_ts = Date.now(); // время заказа: позиция ждёт новую приёмку
+                            delete i.recv_done; delete i.missing_reported;
                             changed = true; 
                         } 
                     });
@@ -3894,7 +4117,7 @@ window.syncStoplistWithMenu = async function() {
             </div>
             <div class="graph-action-buttons action-container sticky-action-panel action-panel-dropdown" style="display: ${isActionsOpen ? 'flex' : 'none'}; gap: 10px; flex-wrap: wrap;">
                 <button class="btn-save" onclick="saveGraphsEdits()" id="btn-save-graphs" style="flex: 1 1 auto;">💾 Сохранить график</button>
-                <button class="btn-add" style="background: #E53935; flex: 1 1 auto;" onclick="toggleGraphCompare()">${isGraphCompareMode ? '❌ Скрыть изменения' : ' Сравнить с черновиками'}</button>
+                <button class="btn-add" style="background: #E53935; flex: 1 1 auto;" onclick="toggleGraphCompare()">${isGraphCompareMode ? '❌ Скрыть изменения' : ' Сравнить с отправкой сотрудника'}</button>
                 <button class="btn-save" style="background: linear-gradient(135deg, #0288D1 0%, #01579B 100%); flex: 1 1 auto;" onclick="exportGraphsToExcel()"> Экспорт в Excel</button>
                 <button class="btn-add" style="background: #9b59b6; flex: 1 1 auto;" onclick="addUserToGraph()">➕ Добавить сотрудника</button>
                 <div style="font-size:13px; color:#555; width:100%; margin-top:5px;">💡 Вводите <b>МЭИ_у</b> (утро), <b>НК_в</b> (вечер), <b>В</b> (Вертолетчики). Выходной: <b>ВЫХ</b>, Любая: <b>ЛЮБ</b>.</div>
@@ -3992,8 +4215,9 @@ window.syncStoplistWithMenu = async function() {
                 let cellColor = "#333";
                 let compareMark = "";
 
-                if (isGraphCompareMode && originalGraphDraft && originalGraphDraft[user] && originalGraphDraft[user][d]) {
-                    let origVal = (originalGraphDraft[user][d].text || "").toUpperCase();
+                let gBase = isGraphCompareMode ? getGraphBaseline(user, d) : { has: false };
+                if (isGraphCompareMode && gBase.has) {
+                    let origVal = (gBase.text || "").toUpperCase();
                     if (origVal !== vUpper && !(origVal === "" && vUpper === "")) {
                         compareMark = `<div class="compare-mark" style="position:absolute; top:2px; right:2px; z-index:5; font-size:10px; background:#D32F2F; color:white; border-radius:4px; padding:2px 4px; box-shadow:0 1px 3px rgba(0,0,0,0.3); pointer-events:none;">БЫЛО: ${origVal||'ПУСТО'}</div>`;
                     }
@@ -4171,8 +4395,9 @@ window.syncStoplistWithMenu = async function() {
         let existingMark = tdEl.querySelector('.compare-mark');
         if (existingMark) existingMark.remove();
         
-        if (isGraphCompareMode && originalGraphDraft && originalGraphDraft[user] && originalGraphDraft[user][day]) {
-            let origVal = (originalGraphDraft[user][day].text || "").toUpperCase();
+        let gBase = isGraphCompareMode ? getGraphBaseline(user, day) : { has: false };
+        if (isGraphCompareMode && gBase.has) {
+            let origVal = (gBase.text || "").toUpperCase();
             if (origVal === "OFF") origVal = "ВЫХ";
             if (origVal === "ANY_SHOP") origVal = "ЛЮБ";
             
@@ -7551,6 +7776,7 @@ async function exportGraphsToExcel() {
         Object.keys(ordersObj).forEach(k => { if (ordersObj[k]) ordersObj[k].key = k; });
         cachedData.orders = ordersObj;
         saveToCache('orders', ordersObj); // ⚡ Мгновенно перезаписываем кэш!
+        setDbFreshness('fresh');
         
         if (currentTabType === 'orders' && !isSvodEditMode) renderOrdersSvod();
         if (currentTabType === 'stoplists') renderStoplists();
@@ -7578,6 +7804,8 @@ async function exportGraphsToExcel() {
         saveToCache('catalogs/checklist', cats.checklist || {});
         saveToCache('catalogs/stoplist', cats.stoplist || {});
         saveToCache('catalogs/menu', cats.menu || {});
+        setDbFreshness('fresh');
+        checkHeavyPhotos(cats);
         
         if (currentTabType === 'menu') {
             let isTyping = document.activeElement && ['INPUT','SELECT','TEXTAREA'].includes(document.activeElement.tagName);
@@ -7626,6 +7854,9 @@ async function exportGraphsToExcel() {
     db.ref('schedules').on('value', (snapshot) => {
         cachedData.schedules = snapshot.val() || {};
         saveToCache('schedules', cachedData.schedules); // ⚡ Обновляем кэш
+        if (currentTabType === 'graphs' && (!window.graphDraft || JSON.stringify(window.graphDraft) === JSON.stringify(originalGraphDraft))) {
+            window.graphDraft = null; originalGraphDraft = null; renderGraphsTab();
+        }
     });
 
     // 6. Настройки системы
@@ -8009,3 +8240,5 @@ window.addEventListener('resize', addMobileLabels);
 </script>
 </body>
 </html>
+
+

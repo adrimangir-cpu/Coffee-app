@@ -3532,21 +3532,32 @@ window.syncStoplistWithMenu = async function() {
                 <tbody>
         `;
         
-        const dayNames = ["вс", "пн", "вт", "ср", "чт", "пт", "сб"];
+      const dayNames = ["вс", "пн", "вт", "ср", "чт", "пт", "сб"];
         const expectedShops = ['Б', 'Г', 'В', 'Л', 'НК', 'НК2', 'СП', 'МЭИ', 'ЛЯ'];
+        
+        let weekIndex = 0; // ⚡ Счетчик недель
         
         for (let d = 1; d <= daysInMonth; d++) {
             let dateObj = new Date(target.year, target.month, d);
             let dayOfWeek = dateObj.getDay();
+            
+            // ⚡ При наступлении каждого понедельника (кроме 1 числа) меняем цвет недели
+            if (dayOfWeek === 1 && d > 1) {
+                weekIndex++;
+            }
+            
+            // ⚡ Чередуем бледный коричневый и бледный розовый
+            let weekColor = (weekIndex % 2 === 0) ? '#F6EFE9' : '#FEF0F4';
+            
             let isWeekend = (dayOfWeek === 0 || dayOfWeek === 6);
-            let rowBg = isWeekend ? "background-color:#fff3e0;" : "background-color:#ffffff;"; 
+            let rowBg = isWeekend ? "background-color:#fff3e0;" : `background-color:${weekColor};`; 
             let borderBottom = (dayOfWeek === 0) ? "border-bottom: 3px solid #ffb74d;" : "border-bottom: 1px solid #eee;";
             
-           let dayShifts = [];
-           
+            let dayShifts = [];
+            
             let rowHtml = `<tr class="graph-row" style="${rowBg} ${borderBottom}" onclick="selectGraphRow(this)">
-                <td class="meta-cell stick-left-1" style="border:1px solid #ccc; padding:4px; text-align:center; font-weight:bold; background-color:${isWeekend?'#ffcc80':'#f5f5f5'}; color:${isWeekend?'#d84315':'#333'}; z-index:10; min-width:45px; max-width:45px;">${d}</td>
-                <td class="meta-cell stick-left-2" style="border:1px solid #ccc; padding:4px; text-align:center; font-weight:bold; text-transform:uppercase; background-color:${isWeekend?'#ffcc80':'#f5f5f5'}; color:${isWeekend?'#d84315':'#555'}; z-index:10; min-width:45px; max-width:45px;">${dayNames[dayOfWeek]}</td>`;
+                <td class="meta-cell stick-left-1" style="border:1px solid #ccc; padding:4px; text-align:center; font-weight:bold; background-color:${isWeekend?'#ffcc80':weekColor}; color:${isWeekend?'#d84315':'#333'}; z-index:10; min-width:45px; max-width:45px;">${d}</td>
+                <td class="meta-cell stick-left-2" style="border:1px solid #ccc; padding:4px; text-align:center; font-weight:bold; text-transform:uppercase; background-color:${isWeekend?'#ffcc80':weekColor}; color:${isWeekend?'#d84315':'#555'}; z-index:10; min-width:45px; max-width:45px;">${dayNames[dayOfWeek]}</td>`;
                 
             allUsers.forEach(user => {
                 if(!monthData[user]) monthData[user] = { _pinned: true };
@@ -3556,7 +3567,7 @@ window.syncStoplistWithMenu = async function() {
                 let shiftType = cellData.shift || "CLEAR";
                 let vUpper = val.trim().toUpperCase();
                 
-                let cellBg = "transparent";
+                let cellBg = "transparent"; // ⚡ Прозрачный фон пропустит сквозь себя цвет недели
                 let cellColor = "#333";
                 let compareMark = "";
 
@@ -3568,6 +3579,7 @@ window.syncStoplistWithMenu = async function() {
                     }
                 }
                 
+                // Раскраска активных смен перекрывает фон недели
                 if (shiftType === "OFF") {
                     cellBg = "#bbdefb"; cellColor = "#0d47a1"; 
                 } else if (shiftType === "ANY_SHOP") {
@@ -3589,17 +3601,16 @@ window.syncStoplistWithMenu = async function() {
                     if (normVal.endsWith("УТРО")) normVal = normVal.replace(/\s*УТРО$/, "_У");
                     else if (normVal.endsWith("ВЕЧЕР")) normVal = normVal.replace(/\s*ВЕЧЕР$/, "_В");
 
-                    if (normVal.match(/_У$|\sУ$/) || (normVal.endsWith("У") && normVal !== "У")) {
-                        let shopStr = normVal.replace(/_У$|\sУ$|У$/, "").trim();
+                    if (normVal.match(/_У$\vert{}\sУ$/) || (normVal.endsWith("У") && normVal !== "У")) {
+                        let shopStr = normVal.replace(/_У$|\sУ$\vert{}У$/, "").trim();
                         if(shopStr !== "") normVal = shopStr + "_У";
-                    } else if (normVal.match(/_В$|\sВ$/) || (normVal.endsWith("В") && normVal !== "В")) {
-                        let shopStr = normVal.replace(/_В$|\sВ$|В$/, "").trim();
+                    } else if (normVal.match(/_В$\vert{}\sВ$/) || (normVal.endsWith("В") && normVal !== "В")) {
+                        let shopStr = normVal.replace(/_В$|\sВ$\vert{}В$/, "").trim();
                         if(shopStr !== "") normVal = shopStr + "_В";
                     }
                     dayShifts.push(normVal);
                 }
                 
-                // ⚡ ЗДЕСЬ ДОБАВЛЕН oninput ВМЕСТО onchange ДЛЯ МГНОВЕННОГО ПЕРЕСЧЕТА
                 rowHtml += `<td class="user-data-cell" style="position:relative; border:1px solid #ccc; padding:2px; background-color:${cellBg};">
                     ${compareMark}
                     <textarea class="graph-input" rows="2" style="width: 100%; height: 100%; border: none; text-align: center; font-size: 14px; text-transform: uppercase; background: transparent; font-weight: 900; color: ${cellColor}; outline: none; resize: none; overflow: hidden;" oninput="updateGraphCell(this, '${user}', ${d}, this.value)">${val}</textarea>
@@ -3645,9 +3656,9 @@ window.syncStoplistWithMenu = async function() {
                 if (duplicates.length > 0) statusHtml += `<div style="color:#e65100; font-weight:bold; font-size:12px; line-height:1.2;">⚠️ Повтор: ${duplicates.join(', ')}</div>`;
             }
             
-            rowHtml += `<td class="meta-cell stick-right-3" style="border:1px solid #ccc; padding:4px; text-align:center; font-weight:bold; text-transform:uppercase; background-color:${isWeekend?'#ffcc80':'#f5f5f5'}; color:${isWeekend?'#d84315':'#555'}; z-index:10; min-width:45px; max-width:45px;">${dayNames[dayOfWeek]}</td>
-                        <td class="meta-cell stick-right-2" style="border:1px solid #ccc; padding:4px; text-align:center; font-weight:bold; background-color:${isWeekend?'#ffcc80':'#f5f5f5'}; color:${isWeekend?'#d84315':'#333'}; z-index:10; min-width:45px; max-width:45px;">${d}</td>
-                        <td class="check-cell stick-right-1" style="border:1px solid #ccc; padding:8px; font-size:13px; vertical-align:middle; background-color:${isWeekend?'#ffe0b2':'#ffffff'}; z-index:10; min-width:160px; max-width:160px;">${statusHtml}</td>
+            rowHtml += `<td class="meta-cell stick-right-3" style="border:1px solid #ccc; padding:4px; text-align:center; font-weight:bold; text-transform:uppercase; background-color:${isWeekend?'#ffcc80':weekColor}; color:${isWeekend?'#d84315':'#555'}; z-index:10; min-width:45px; max-width:45px;">${dayNames[dayOfWeek]}</td>
+                        <td class="meta-cell stick-right-2" style="border:1px solid #ccc; padding:4px; text-align:center; font-weight:bold; background-color:${isWeekend?'#ffcc80':weekColor}; color:${isWeekend?'#d84315':'#333'}; z-index:10; min-width:45px; max-width:45px;">${d}</td>
+                        <td class="check-cell stick-right-1" style="border:1px solid #ccc; padding:8px; font-size:13px; vertical-align:middle; background-color:${isWeekend?'#ffe0b2':weekColor}; z-index:10; min-width:160px; max-width:160px;">${statusHtml}</td>
                     </tr>`;
             html += rowHtml;
         }

@@ -1060,12 +1060,29 @@
  return `<div class="fresh-badge" style="display:flex; align-items:center; gap:8px; justify-content:center; font-size:12px; font-weight:700; color:#8F5E20; background:#F7F1E6; border-radius:999px; padding:6px 12px; margin:0 auto 12px; width:max-content;"><span style="width:7px; height:7px; border-radius:50%; background:#D2AC64;"></span>Сохранённые данные · обновляю…</div>`;
  }
 
+ // Позицию закрывает ТОЛЬКО отметка бариста («Принято»/«Недовоз» + отправка).
+ // Флаг «накладная принята» учитываем лишь для старых приёмок (до обновления),
+ // чтобы не всплыла история прошлых недель.
+ const RECV_LEGACY_CUTOFF = 1790197200000; // 24.09.2026 00:00 МСК
+ // Поставщик позиции — так же, как на экране приёмки (по позиции или справочнику).
+ function getVendorKeyOf(i) {
+ let cName = cleanName(i.name);
+ let catItem = {};
+ ['order', 'newshop'].forEach(ck => {
+ Object.values((state.cachedCatalogs && state.cachedCatalogs[ck]) || {}).forEach(c => { if (c && c.name && cleanName(c.name) === cName) catItem = c; });
+ });
+ let vRaw = String(i.vendor || catItem.vendor || 'Лента').toLowerCase();
+ if (vRaw.includes('озон') || vRaw.includes('ozon') || vRaw.includes('wb')) return 'ozon';
+ if (vRaw.includes('купер') || vRaw.includes('kuper')) return 'kuper';
+ return 'lenta';
+ }
  function isClosedByVendorFlag(o, i, vendor) {
- if (i && i.recv_done) return true; // позицию уже отметили при приёмке
+ if (i && (i.recv_done || i.missing_reported)) return true;
  if (!o || !o[vendor + '_received']) return false;
  let recTs = o[vendor + '_received_ts'] || 0;
+ if (!recTs || recTs >= RECV_LEGACY_CUTOFF) return false;
  let ordTs = (i && i.ordered_ts) || 0;
- if (ordTs && recTs && ordTs > recTs) return false;
+ if (ordTs && ordTs > recTs) return false;
  return true;
  }
 
@@ -2965,6 +2982,7 @@
  
  document.body.classList.add('workflow-active');
  state.userBasket = {}; 
+ state.autoStop = {}; state.autoStopDismissed = {};
  state.transitItems = new Set();
  state.unprocessedItems = new Set();
 
@@ -3053,7 +3071,8 @@
  aliasKeys.forEach(kk => { statusMap[kk] = { locked: true, text: 'В пути (Недовоз) ', color: '#16161A' }; seenInOrders.add(kk); });
  } else if (m.status === 'pending') {
  aliasKeys.forEach(kk => { statusMap[kk] = { locked: true, text: 'Проверка админом ', color: '#8F5E20' }; seenInOrders.add(kk); });
- } else if (m.status === 'canceled' && !m.added_to_basket) {
+ } else if (false && m.status === 'canceled' && !m.added_to_basket) {
+ // Отключено: отменённые недовозы больше НЕ кладутся в корзину сами.
  let catItem = Object.values(state.productCatalog).find(c => c && getStatusKey(c.name) === pKey);
  if (catItem && (state.currentMode === 'order' || state.currentMode === 'new_shop')) {
  let qtyNum = parseFloat(m.qty) || 0;
@@ -3115,8 +3134,15 @@
  }
  }
 
- let latestStoplist = state.globalOrders.find(o => o && o.mode === 'stoplist_fill');
+ // Автодобавление из стоп-листа — только по СВЕЖИМ данным с сервера
+ // (кэш телефона мог хранить стоп-лист месячной давности).
+ if (!state.autoStop) state.autoStop = {};
+ if (!state.autoStopDismissed) state.autoStopDismissed = {};
+ let latestStoplist = (state.dataFresh && state.dataFresh.orders)
+ ? state.globalOrders.filter(o => o && o.mode === 'stoplist_fill').sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0))[0]
+ : null;
  if (latestStoplist && latestStoplist.items) {
+ let currentStop = {};
  let itemsArr = Array.isArray(latestStoplist.items) ? latestStoplist.items : Object.values(latestStoplist.items);
  itemsArr.forEach(i => {
  if (i && i.name && i.qty === 'Закончилось' && i.name !== "Всё в наличии") {
@@ -3124,12 +3150,22 @@
  let catItem = Object.values(state.productCatalog).find(c => c && getStatusKey(c.name) === pKey);
  
  if (catItem && (!statusMap[pKey] || !statusMap[pKey].locked)) {
- if (state.userBasket[catItem.name] === undefined) {
+ currentStop[catItem.name] = true;
+ if (state.userBasket[catItem.name] === undefined && !state.autoStopDismissed[catItem.name]) {
  state.userBasket[catItem.name] = 1;
+ state.autoStop[catItem.name] = true;
  if (!state.userBasket["_catinfo"]) state.userBasket["_catinfo"] = {};
  state.userBasket["_catinfo"][catItem.name] = catItem.cat || "Прочее";
  }
  }
+ }
+ });
+ // Позиции, которые сами попали из стоп-листа, но уже не на стопе, — убираем.
+ Object.keys(state.autoStop).forEach(n => {
+ if (!currentStop[n]) {
+ delete state.userBasket[n];
+ if (state.userBasket["_catinfo"]) delete state.userBasket["_catinfo"][n];
+ delete state.autoStop[n];
  }
  });
  }
@@ -3410,6 +3446,7 @@
 
  function adjustQuantity(name, delta, cat, safeId) {
  triggerHaptic();
+ if (state.autoStop) delete state.autoStop[name];
  let current = parseFloat(state.userBasket[name]) || 0;
  let newVal = Math.max(0, current + delta);
  
@@ -3433,6 +3470,7 @@
  }
  
  function registerInputChange(name, val, cat) { 
+ if (state.autoStop) delete state.autoStop[name];
  state.userBasket[name] = val; 
  if(!state.userBasket["_catinfo"]) state.userBasket["_catinfo"] = {};
  state.userBasket["_catinfo"][name] = cat;
@@ -3585,6 +3623,8 @@
 
  function removeFromCart(name, cat) {
  triggerHaptic();
+ // Убрали позицию из стоп-листа вручную — не добавляем её снова.
+ if (state.autoStop && state.autoStop[name]) { delete state.autoStop[name]; (state.autoStopDismissed = state.autoStopDismissed || {})[name] = true; }
  if (state.currentMode === 'checklist') state.userBasket[name] = "-";
  else delete state.userBasket[name];
  
@@ -4206,7 +4246,7 @@ window.viewStopList = async function(silent) {
  if(!latest || !latest.items) {
  let html = `<div class="report-card"><div style="text-align:center; font-weight:700; padding:20px; color:#4F4A42;">Актуальный стоп-лист не найден.</div></div>`;
  document.getElementById('report-content-area').innerHTML = html;
- localStorage.setItem("cache_html_stoplist_" + state.currentShop, html);
+ // (HTML-снимок стоп-листа больше не храним — он нигде не читался и занимал память)
  return;
  }
 
@@ -4279,7 +4319,7 @@ window.viewStopList = async function(silent) {
  
  html += "</div>";
  document.getElementById('report-content-area').innerHTML = html;
- localStorage.setItem("cache_html_stoplist_" + state.currentShop, html); 
+ // (HTML-снимок стоп-листа больше не храним — он нигде не читался и занимал память) 
  } catch (err) { 
  document.getElementById('report-content-area').innerHTML = `<div class="report-card"><div style="text-align:center; color:red; font-weight:700;">Ошибка синхронизации данных</div></div>`;
  }
@@ -4701,9 +4741,12 @@ window.showLastOrder = async function(silent) {
  
  let o = state.globalOrders.find(ord => ord.key === k);
  if (o && o.items) {
- let itemsArr = Array.isArray(o.items) ? o.items : Object.values(o.items);
- itemsArr.forEach((itm, idx) => {
- if (itm && itm.status === 'ordered') {
+ // Настоящие ключи позиций: у листов из свода это item_xxx, а не 0,1,2 —
+ // раньше отметка писалась в несуществующую строку и позиция не закрывалась.
+ let itemKeys = Array.isArray(o.items) ? o.items.map((_, ix) => ix) : Object.keys(o.items);
+ itemKeys.forEach(idx => {
+ let itm = o.items[idx];
+ if (itm && itm.status === 'ordered' && !itm.recv_done && getVendorKeyOf(itm) === vendorKey) {
  if (arrivedItemsToClear.includes(itm.name)) {
  updates[`${k}/items/${idx}/status`] = 'already_received';
  updates[`${k}/items/${idx}/recv_done`] = true;
@@ -4973,8 +5016,20 @@ window.showLastOrder = async function(silent) {
 
  function closeCartOnOverlay(e) { if (e.target.id === 'cart-modal') toggleCartModal(false); }
 
+ const DRAFT_TTL_MS = 12 * 60 * 60 * 1000;
  function persistDraft() { 
- localStorage.setItem("draft_" + state.currentShop + "_" + state.currentMode, JSON.stringify({basket: state.userBasket, time: Date.now()})); 
+ // В черновик идёт только то, что добавил сотрудник; автопозиции стоп-листа
+ // пересчитываются из свежего стоп-листа и в черновике не «залипают».
+ let b = {};
+ for (let k in state.userBasket) {
+ if (k === "_catinfo") continue;
+ if (state.autoStop && state.autoStop[k]) continue;
+ b[k] = state.userBasket[k];
+ }
+ b["_catinfo"] = state.userBasket["_catinfo"] || {};
+ try {
+ localStorage.setItem("draft_" + state.currentShop + "_" + state.currentMode, JSON.stringify({basket: b, time: Date.now(), dismissed: state.autoStopDismissed || {}})); 
+ } catch(e) {}
  }
  
  const DB_NAME = "CoffeeAppDB";
@@ -5114,6 +5169,39 @@ window.showLastOrder = async function(silent) {
  }, 250);
  }
 
+ // ---------- Кэш телефона: только свежий ----------
+ // Раньше кэш заказов со временем переставал записываться (переполнялась
+ // память телефона) и приложение при каждом запуске показывало данные
+ // месячной давности. Теперь храним только последние 3 недели, без
+ // чек-листов, со временем записи; кэш старше 6 часов не показываем.
+ const SHOP_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+ function compactOrdersForCache(arr) {
+ let cutoff = Date.now() - 21 * 86400000;
+ return (arr || []).filter(o => o && (o.timestamp || 0) >= cutoff && o.mode !== 'checklist').slice(0, 80);
+ }
+ function readShopCache(key) {
+ try {
+ let raw = localStorage.getItem(key);
+ if (!raw) return null;
+ let p = JSON.parse(raw);
+ if (!p || Array.isArray(p) || !p.savedAt || Date.now() - p.savedAt > SHOP_CACHE_TTL_MS) { localStorage.removeItem(key); return null; }
+ return p.data || null;
+ } catch(e) { try { localStorage.removeItem(key); } catch(_) {} return null; }
+ }
+ function writeShopCache(key, data) {
+ let payload = JSON.stringify({ savedAt: Date.now(), data: data });
+ try { localStorage.setItem(key, payload); }
+ catch(e) {
+ // Нет места — чистим кэши других кофеен и старые HTML-снимки, пробуем снова.
+ try {
+ Object.keys(localStorage).forEach(k => {
+ if ((k.startsWith('data_orders_') || k.startsWith('data_missing_') || k.startsWith('cache_html_')) && k !== key) localStorage.removeItem(k);
+ });
+ localStorage.setItem(key, payload);
+ } catch(e2) { try { localStorage.removeItem(key); } catch(_) {} }
+ }
+ }
+
  function rescueStuckMissing() {
  // Недовозы, застрявшие в старой папке push_items_missing, переносим
  // в missing_items сами, не дожидаясь открытия дашборда.
@@ -5132,11 +5220,11 @@ window.showLastOrder = async function(silent) {
  if (state.activeOrderRef) state.activeOrderRef.off();
  if (state.activeMissingRef) state.activeMissingRef.off();
 
- let cachedOrders = localStorage.getItem("data_orders_" + state.currentShop);
- let cachedMissing = localStorage.getItem("data_missing_" + state.currentShop);
+ let cachedOrders = readShopCache("data_orders_" + state.currentShop);
+ let cachedMissing = readShopCache("data_missing_" + state.currentShop);
  
  if (cachedOrders) {
- state.globalOrders = JSON.parse(cachedOrders);
+ state.globalOrders = cachedOrders;
  state.ordersLoaded = true; 
  } else {
  state.globalOrders = [];
@@ -5144,7 +5232,7 @@ window.showLastOrder = async function(silent) {
  }
 
  if (cachedMissing) {
- state.globalMissing = JSON.parse(cachedMissing);
+ state.globalMissing = cachedMissing;
  state.missingLoaded = true; 
  } else {
  state.globalMissing = [];
@@ -5160,7 +5248,7 @@ window.showLastOrder = async function(silent) {
  state.globalOrders = shopOrders.sort((a,b) => b.timestamp - a.timestamp);
  state.ordersLoaded = true;
  markDataFresh('orders');
- try { localStorage.setItem("data_orders_" + state.currentShop, JSON.stringify(state.globalOrders)); } catch(e){}
+ writeShopCache("data_orders_" + state.currentShop, compactOrdersForCache(state.globalOrders));
  triggerActiveRender();
  refreshHomeDashboardIfVisible();
  refreshLiveReportScreen();
@@ -5172,7 +5260,7 @@ window.showLastOrder = async function(silent) {
  state.globalMissing = missing;
  state.missingLoaded = true;
  markDataFresh('missing');
- try { localStorage.setItem("data_missing_" + state.currentShop, JSON.stringify(state.globalMissing)); } catch(e){}
+ writeShopCache("data_missing_" + state.currentShop, state.globalMissing.filter(m => m && (m.timestamp || 0) > Date.now() - 30 * 86400000));
  triggerActiveRender();
  refreshHomeDashboardIfVisible();
  refreshLiveReportScreen();
@@ -5180,9 +5268,14 @@ window.showLastOrder = async function(silent) {
  }
  
  function restoreFromDraft() { 
- let d = localStorage.getItem("draft_" + state.currentShop + "_" + state.currentMode); 
+ let dKey = "draft_" + state.currentShop + "_" + state.currentMode;
+ let d = localStorage.getItem(dKey); 
  if(d) { 
- let p = JSON.parse(d); 
+ let p = null;
+ try { p = JSON.parse(d); } catch(e) {}
+ // Черновик старше 12 часов забываем — иначе всплывают позиции прошлых дней.
+ if (!p || !p.time || Date.now() - p.time > DRAFT_TTL_MS) { localStorage.removeItem(dKey); return; }
+ state.autoStopDismissed = p.dismissed || {};
  if (!state.userBasket["_catinfo"]) state.userBasket["_catinfo"] = {};
  for(let k in p.basket) {
  if(k !== "_catinfo" && state.userBasket[k] === undefined) {

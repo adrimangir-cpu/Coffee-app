@@ -3532,7 +3532,7 @@ window.syncStoplistWithMenu = async function() {
                 <tbody>
         `;
         
-      const dayNames = ["вс", "пн", "вт", "ср", "чт", "пт", "сб"];
+     const dayNames = ["вс", "пн", "вт", "ср", "чт", "пт", "сб"];
         const expectedShops = ['Б', 'Г', 'В', 'Л', 'НК', 'НК2', 'СП', 'МЭИ', 'ЛЯ'];
         
         let weekIndex = 0; // ⚡ Счетчик недель
@@ -3541,16 +3541,18 @@ window.syncStoplistWithMenu = async function() {
             let dateObj = new Date(target.year, target.month, d);
             let dayOfWeek = dateObj.getDay();
             
-            // ⚡ При наступлении каждого понедельника (кроме 1 числа) меняем цвет недели
+            // Считаем недели (начинаем новую с каждого понедельника)
             if (dayOfWeek === 1 && d > 1) {
                 weekIndex++;
             }
             
-            // ⚡ Чередуем бледный коричневый и бледный розовый
-            let weekColor = (weekIndex % 2 === 0) ? '#F6EFE9' : '#FEF0F4';
+            // ⚡ Яркие цвета: Розовый (#FDE4EC) и Бежево-коричневый (#EFEBE9)
+            let weekColor = (weekIndex % 2 === 0) ? '#EFEBE9' : '#FDE4EC'; 
             
             let isWeekend = (dayOfWeek === 0 || dayOfWeek === 6);
-            let rowBg = isWeekend ? "background-color:#fff3e0;" : `background-color:${weekColor};`; 
+            let baseBg = isWeekend ? '#fff3e0' : weekColor; // Фон для пустых ячеек
+            
+            let rowBg = `background-color:${baseBg};`; 
             let borderBottom = (dayOfWeek === 0) ? "border-bottom: 3px solid #ffb74d;" : "border-bottom: 1px solid #eee;";
             
             let dayShifts = [];
@@ -3567,7 +3569,7 @@ window.syncStoplistWithMenu = async function() {
                 let shiftType = cellData.shift || "CLEAR";
                 let vUpper = val.trim().toUpperCase();
                 
-                let cellBg = "transparent"; // ⚡ Прозрачный фон пропустит сквозь себя цвет недели
+                let cellBg = baseBg; // ⚡ Красим саму ячейку базовым цветом
                 let cellColor = "#333";
                 let compareMark = "";
 
@@ -3579,7 +3581,6 @@ window.syncStoplistWithMenu = async function() {
                     }
                 }
                 
-                // Раскраска активных смен перекрывает фон недели
                 if (shiftType === "OFF") {
                     cellBg = "#bbdefb"; cellColor = "#0d47a1"; 
                 } else if (shiftType === "ANY_SHOP") {
@@ -3692,7 +3693,7 @@ window.syncStoplistWithMenu = async function() {
         let shift = "CLEAR";
         let formattedVal = vUpper;
         
-        // ⚡ ИГНОРИРУЕМ МУСОР И ОПЕЧАТКИ ПРИ ОПРЕДЕЛЕНИИ ЦВЕТА ФОНА
+        // ИГНОРИРУЕМ МУСОР И ОПЕЧАТКИ
         if (vUpper === "ВЫХ" || vUpper === "OFF" || vUpper === "ВЫХОДНОЙ" || vUpper === "ОТП" || vUpper === "ВЫШ" || vUpper === "БЛН") {
             shift = "OFF";
             formattedVal = "ВЫХ"; 
@@ -3701,13 +3702,13 @@ window.syncStoplistWithMenu = async function() {
             formattedVal = "ЛЮБ"; 
         } else if (vUpper !== "") {
             shift = "FULL";
-            if (vUpper.match(/_У$|\sУ$/) || (vUpper.endsWith("У") && vUpper !== "У")) {
-                let shopStr = vUpper.replace(/_У$|\sУ$|У$/, "").trim();
+            if (vUpper.match(/_У$\vert{}\sУ$/) || (vUpper.endsWith("У") && vUpper !== "У")) {
+                let shopStr = vUpper.replace(/_У$|\sУ$\vert{}У$/, "").trim();
                 if(shopStr !== "") formattedVal = shopStr + "_У";
                 shift = "MORNING";
             } 
-            else if (vUpper.match(/_В$|\sВ$/) || (vUpper.endsWith("В") && vUpper !== "В")) {
-                let shopStr = vUpper.replace(/_В$|\sВ$|В$/, "").trim();
+            else if (vUpper.match(/_В$\vert{}\sВ$/) || (vUpper.endsWith("В") && vUpper !== "В")) {
+                let shopStr = vUpper.replace(/_В$|\sВ$\vert{}В$/, "").trim();
                 if(shopStr !== "") formattedVal = shopStr + "_В";
                 shift = "EVENING";
             }
@@ -3716,21 +3717,36 @@ window.syncStoplistWithMenu = async function() {
         window.graphDraft[user][day].text = formattedVal;
         window.graphDraft[user][day].shift = shift;
         
-        // --- ТОЧЕЧНОЕ ОБНОВЛЕНИЕ ЯЧЕЙКИ В ИНТЕРФЕЙСЕ (БЕЗ ПОТЕРИ КУРСОРА) ---
+        // --- ТОЧЕЧНОЕ ОБНОВЛЕНИЕ ЯЧЕЙКИ В ИНТЕРФЕЙСЕ ---
         let start = el.selectionStart;
         let end = el.selectionEnd;
         let oldValLength = el.value.length;
         
         el.value = formattedVal;
         
-        // Аккуратно восстанавливаем курсор, чтобы он не прыгал в конец при редактировании
         if (el.value.length === oldValLength) {
             el.setSelectionRange(start, end);
         }
         
         let tdEl = el.parentElement;
         
-        let cellBg = "transparent";
+        // ⚡ Вычисляем, какой цвет недели должен быть у этой ячейки
+        let target = getTargetDateLogic(); 
+        let dateObj = new Date(target.year, target.month, day);
+        let dayOfWeek = dateObj.getDay();
+        let isWeekend = (dayOfWeek === 0 || dayOfWeek === 6);
+        
+        let weekIndex = 0;
+        for (let d = 1; d <= day; d++) {
+             let dObj = new Date(target.year, target.month, d);
+             if (dObj.getDay() === 1 && d > 1) {
+                 weekIndex++;
+             }
+        }
+        let weekColor = (weekIndex % 2 === 0) ? '#EFEBE9' : '#FDE4EC'; 
+        let baseBg = isWeekend ? '#fff3e0' : weekColor;
+
+        let cellBg = baseBg;
         let cellColor = "#333";
         
         if (shift === "OFF") {
@@ -3766,7 +3782,7 @@ window.syncStoplistWithMenu = async function() {
             }
         }
 
-        // --- ТОЧНАЯ ПРОВЕРКА 9 СМЕН И ПОВТОРОВ ДЛЯ СТРОКИ ---
+        // --- ТОЧНАЯ ПРОВЕРКА СМЕН ---
         let trEl = tdEl.parentElement;
         let allInputs = trEl.querySelectorAll('.graph-input');
         let dayShifts = [];
@@ -3780,13 +3796,12 @@ window.syncStoplistWithMenu = async function() {
             if (v.endsWith("УТРО")) v = v.replace(/\s*УТРО$/, "_У");
             else if (v.endsWith("ВЕЧЕР")) v = v.replace(/\s*ВЕЧЕР$/, "_В");
 
-            // Игнорируем весь мусор для строки смен
             if (v !== "" && v !== "ВЫХ" && v !== "ЛЮБ" && v !== "ВЫШ" && v !== "ОТП" && v !== "БЛН") {
-                if (v.match(/_У$|\sУ$/) || (v.endsWith("У") && v !== "У")) {
-                    let shopStr = v.replace(/_У$|\sУ$|У$/, "").trim();
+                if (v.match(/_У$\vert{}\sУ$/) || (v.endsWith("У") && v !== "У")) {
+                    let shopStr = v.replace(/_У$|\sУ$\vert{}У$/, "").trim();
                     if (shopStr) v = shopStr + "_У";
-                } else if (v.match(/_В$|\sВ$/) || (v.endsWith("В") && v !== "В")) {
-                    let shopStr = v.replace(/_В$|\sВ$|В$/, "").trim();
+                } else if (v.match(/_В$\vert{}\sВ$/) || (v.endsWith("В") && v !== "В")) {
+                    let shopStr = v.replace(/_В$|\sВ$\vert{}В$/, "").trim();
                     if (shopStr) v = shopStr + "_В";
                 }
                 dayShifts.push(v);
@@ -3837,7 +3852,6 @@ window.syncStoplistWithMenu = async function() {
             checkCell.innerHTML = statusHtml;
         }
 
-        // ⚡ МГНОВЕННЫЙ ПЕРЕСЧЕТ СМЕН ДЛЯ СОТРУДНИКА (ПРЯМО ВО ВРЕМЯ ВВОДА ТЕКСТА)
         let shiftCount = 0;
         for (let d_idx = 1; d_idx <= 31; d_idx++) {
             let cellDataObj = window.graphDraft[user][d_idx] || {};
@@ -3850,8 +3864,8 @@ window.syncStoplistWithMenu = async function() {
                 continue;
             }
             
-            let isHalf = valCheck.match(/_У$|\sУ$/) || (valCheck.endsWith("У") && valCheck !== "У") || 
-                         valCheck.match(/_В$|\sВ$/) || (valCheck.endsWith("В") && valCheck !== "В") ||
+            let isHalf = valCheck.match(/_У$\vert{}\sУ$/) || (valCheck.endsWith("У") && valCheck !== "У") || 
+                         valCheck.match(/_В$\vert{}\sВ$/) || (valCheck.endsWith("В") && valCheck !== "В") ||
                          shiftTypeCheck === "MORNING" || shiftTypeCheck === "EVENING";
                          
             if (isHalf) shiftCount += 0.5;
@@ -3861,7 +3875,6 @@ window.syncStoplistWithMenu = async function() {
         let counterEl = document.getElementById('shift_count_' + getSafeId(user));
         if (counterEl) {
             counterEl.innerHTML = 'Смен: ' + shiftCount;
-            // Делаем легкую "вспышку" цвета, чтобы показать, что пересчет сработал
             counterEl.style.backgroundColor = '#C8E6C9';
             setTimeout(() => { counterEl.style.backgroundColor = '#E8F5E9'; }, 200);
         }

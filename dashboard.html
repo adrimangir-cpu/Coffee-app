@@ -957,39 +957,12 @@ tr[class*="miss_shop_"] > td[colspan] {
 }
 [style*="color:#555" i], [style*="color:#666" i], [style*="color:#777" i] { color: var(--text-muted) !important; }
 
-/* ===== ТЕЛЕФОН: таблицы и график целиком, как на компьютере ===== */
+/* ===== ТЕЛЕФОН: ТОЛЬКО НИЖНЕЕ МЕНЮ И ПРОКРУТКА ТАБЛИЦ ===== */
 @media (max-width: 900px) {
-  /* Таблица строится в «компьютерной» ширине и уменьшается под экран (см. fitTablesToScreen).
-     Увеличить — щипком двумя пальцами. */
-  body.fit-tables .card, body.fit-tables .graphs-wrapper { overflow-x: hidden !important; }
-  body.fit-tables table.fit-desktop:not(#graph-table) { width: 1000px !important; min-width: 1000px !important; }
-  body.fit-tables #graph-table { width: max-content !important; min-width: 0 !important; }
-  body.fit-tables table.fit-desktop td, body.fit-tables table.fit-desktop th { font-size: 14px !important; padding: 10px 12px !important; }
-  body.fit-tables .graphs-wrapper { max-height: none !important; overflow: hidden !important; }
-  /* Компактные колонки графика в режиме «целиком» */
-  body.fit-tables #graph-table { table-layout: fixed; }
-  body.fit-tables #graph-table .user-header-cell,
-  body.fit-tables #graph-table td:not(.meta-cell):not(.check-cell) { width: 84px !important; min-width: 84px !important; max-width: 84px !important; padding: 3px !important; }
-  body.fit-tables #graph-table .meta-cell { width: 40px !important; min-width: 40px !important; max-width: 40px !important; padding: 3px !important; }
-  body.fit-tables #graph-table .check-cell { width: 150px !important; min-width: 150px !important; max-width: 150px !important; }
-  body.fit-tables #graph-table textarea { font-size: 15px !important; width: 100% !important; }
-  body.fit-tables #graph-table .user-header-cell textarea { font-size: 12px !important; }
-
-  /* Режим «крупно»: обычная прокрутка вбок */
-  body:not(.fit-tables) .card, body:not(.fit-tables) .graphs-wrapper { overflow-x: auto !important; -webkit-overflow-scrolling: touch; }
-  body:not(.fit-tables) #content table { width: max-content !important; min-width: 100% !important; }
-  body:not(.fit-tables) #content th { white-space: nowrap !important; }
-  body:not(.fit-tables) .graphs-wrapper { max-height: none !important; }
-
-  /* Закрепления графика на телефоне не нужны */
-  #graph-table .stick-right-1, #graph-table .stick-right-2, #graph-table .stick-right-3,
-  #graph-table .stick-left-1, #graph-table .stick-left-2 { position: static !important; box-shadow: none !important; }
-
-  /* Шапки не прилипают и не закрывают таблицу при прокрутке */
-  #action-bar-wrapper { position: static !important; }
-  .svod-right-col, .svod-right-col * { position: static !important; }
-  #content th, .graphs-wrapper th { position: static !important; }
-  [id="admin-calendar-preview"] { position: static !important; }
+  /* Отключаем любые попытки сжать таблицы. Разрешаем горизонтальный скролл. */
+  .card, .graphs-wrapper { overflow-x: auto !important; -webkit-overflow-scrolling: touch !important; }
+  table { min-width: max-content !important; }
+  th, td { white-space: nowrap !important; }
 
   /* Шапка страницы: ровный текст */
   .top-nav {
@@ -1038,7 +1011,6 @@ tr[class*="miss_shop_"] > td[colspan] {
 </div>
 <nav id="mobile-bottom-bar">
     <button class="mbb-menu" onclick="toggleSidebar()">☰&nbsp; МЕНЮ</button>
-    <button id="mbb-fit" onclick="toggleFitTables()">Крупно</button>
 </nav>
 
 <div id="sidebar" class="sidebar closed">
@@ -1447,53 +1419,7 @@ async function fetchOptimistic(path) {
     if (fresh) { saveToCache(path, fresh); setDbFreshness('fresh'); }
     return fresh || {};
   }
-}
 
-// ---------- Телефон: таблицы целиком ----------
-// Таблица строится в компьютерной ширине и масштабируется под экран, чтобы
-// видеть её полностью; кнопка «Крупно» возвращает прокрутку вбок.
-function isFitTablesOn() { return localStorage.getItem('fitTables') !== '0'; }
-function applyFitMode() {
-  let on = window.innerWidth <= 900 && isFitTablesOn();
-  document.body.classList.toggle('fit-tables', on);
-  let b = document.getElementById('mbb-fit');
-  if (b) b.innerText = isFitTablesOn() ? 'Крупно' : 'Целиком';
-  return on;
-}
-window.toggleFitTables = function() {
-  localStorage.setItem('fitTables', isFitTablesOn() ? '0' : '1');
-  fitTablesToScreen();
-};
-function fitTablesToScreen() {
-  let on = applyFitMode();
-  let content = document.getElementById('content');
-  if (!content) return;
-  content.querySelectorAll('table').forEach(t => {
-    if (t.parentElement && t.parentElement.closest('table')) return; // вложенные не трогаем
-    if (!on) { t.style.zoom = ''; t.classList.remove('fit-desktop'); return; }
-    t.classList.add('fit-desktop');
-    t.style.zoom = '';
-    let wrap = t.closest('.graphs-wrapper') || t.closest('.card') || t.parentElement;
-    let cs = getComputedStyle(wrap);
-    let avail = wrap.clientWidth - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0);
-    let natural = t.scrollWidth || t.offsetWidth;
-    if (!avail || !natural) return;
-    let z = Math.min(1, avail / natural);
-    t.style.zoom = z < 0.999 ? z.toFixed(4) : '';
-  });
-}
-let fitTimer = null;
-function scheduleFitTables() { if (fitTimer) clearTimeout(fitTimer); fitTimer = setTimeout(fitTablesToScreen, 120); }
-document.addEventListener('DOMContentLoaded', () => {
-  let content = document.getElementById('content');
-  if (content) new MutationObserver(muts => {
-    // Перемасштабируем только при смене структуры (перерисовка вкладки / раскрытие строк)
-    if (muts.some(m => m.type === 'childList' || (m.type === 'attributes' && m.attributeName === 'style' && m.target.tagName === 'TR'))) scheduleFitTables();
-  }).observe(content, { childList: true, subtree: true, attributes: true, attributeFilter: ['style'] });
-  window.addEventListener('resize', scheduleFitTables);
-  window.addEventListener('orientationchange', scheduleFitTables);
-  scheduleFitTables();
-});
 
 // ---------- Свежесть данных в плашке статуса ----------
 function setDbFreshness(kind) {
@@ -8298,47 +8224,6 @@ window.onload = () => {
             alert("❌ Ошибка при удалении: " + e.message);
         }
     };
-    
-    // ⚡ АВТО-ЛЕЙБЛЫ ДЛЯ МОБИЛЬНЫХ ТАБЛИЦ
-function addMobileLabels() {
-  if (window.innerWidth > 900) return;
-  document.querySelectorAll('table').forEach(table => {
-    let headers = Array.from(table.querySelectorAll('thead th')).map(th => th.textContent.trim().replace(/\n/g, ' ').replace(/\s+/g, ' '));
-    if (headers.length === 0) return;
-    table.querySelectorAll('tbody tr:not(.cat-group-header)').forEach(row => {
-      row.querySelectorAll('td').forEach((td, i) => {
-        // Пропускаем дублирующиеся заголовки "Товар" по краям
-        if (headers[i] && !headers[i].toLowerCase().includes('товар')) {
-          td.setAttribute('data-label', headers[i]);
-        }
-      });
-    });
-  });
-}
-
-// Перехватываем рендеры, чтобы добавить лейблы после отрисовки
-const origRenderChecks = window.renderChecksTable;
-if (origRenderChecks) {
-  window.renderChecksTable = function() {
-    origRenderChecks.apply(this, arguments);
-    setTimeout(addMobileLabels, 100);
-  };
-}
-const origRenderOrders = window.renderOrdersSvod;
-if (origRenderOrders) {
-  window.renderOrdersSvod = function() {
-    origRenderOrders.apply(this, arguments);
-    setTimeout(addMobileLabels, 100);
-  };
-}
-const origRenderMissing = window.renderMissing;
-if (origRenderMissing) {
-  window.renderMissing = function() {
-    origRenderMissing.apply(this, arguments);
-    setTimeout(addMobileLabels, 100);
-  };
-}
-window.addEventListener('resize', addMobileLabels);
     
 </script>
 </body>

@@ -1265,61 +1265,56 @@ window.sendChecklistPdf = async function() {
         renderGraphsTab();
     };
 
-      // ⚡ НОВЫЙ БЛОК: ИЩЕТ ТОЛЬКО ОРИГИНАЛЫ ОТ СОТРУДНИКОВ
+      
+   // ⚡ ИЩЕМ ОРИГИНАЛЫ ОТ СОТРУДНИКОВ В БАЗЕ БОТА (БЕЗ ПЕРЕЗАПИСИ)
     window.getGraphBaseline = function(user, day) {
+        // Если оригиналы еще не скачаны, ничего не подсвечиваем
         if (!window.graphSubmittedFull) return { has: false, text: "" };
         
         let t = getTargetDateLogic();
-        let m0 = t.month;       // Октябрь = 9 (как считает код)
-        let m1 = t.month + 1;   // Октябрь = 10 (как считают люди)
         let y = t.year;
+        let m0 = t.month;       // Код месяца (Октябрь = 9)
+        let m1 = t.month + 1;   // Человеческий месяц (Октябрь = 10)
         
-        // Генерируем все варианты папок, куда бот мог сложить месяц
-        let possibleKeys = [`${y}_${m0}`, `${y}_${m1}`, `${m0}_${y}`, `${m1}_${y}`, `${y}-${m1 > 9 ? m1 : '0'+m1}`, `${m1 > 9 ? m1 : '0'+m1}.${y}`];
+        // ⚡ 1. Ищем во всех возможных форматах месяца, которые мог создать бот
+        let possibleMonths = [`${y}_${m0}`, `${y}_${m1}`, `${m0}_${y}`, `${m1}_${y}`, `${y}-${m1>9?m1:'0'+m1}`, `${m1>9?m1:'0'+m1}.${y}`];
         
         let cleanUser = String(user).trim().toLowerCase();
-        let foundDrafts = [];
+        let employeeOriginalSchedule = null;
 
-        // Ищем все отправки этого сотрудника в базе бота
-        possibleKeys.forEach(k => {
-            let monthFolder = window.graphSubmittedFull[k];
+        for (let mKey of possibleMonths) {
+            let monthFolder = window.graphSubmittedFull[mKey];
             if (monthFolder) {
-                for (let entryKey in monthFolder) {
-                    let entry = monthFolder[entryKey];
-                    if (!entry) continue;
+                for (let empKey in monthFolder) {
+                    let empData = monthFolder[empKey];
+                    if (!empData) continue;
 
-                    let entryName = "";
-                    if (typeof entry === 'object') {
-                        entryName = String(entry.name || entry.user || entry.employee || "").trim().toLowerCase();
-                    }
-                    let keyName = String(entryKey).trim().toLowerCase();
-
-                    // Совпадение по имени или ключу
                     let isMatch = false;
-                    if (entryName !== "") {
-                        if (entryName.includes(cleanUser) || cleanUser.includes(entryName)) isMatch = true;
-                    } else {
-                        if (keyName.includes(cleanUser) || cleanUser.includes(keyName)) isMatch = true;
+                    // Ищем сотрудника по ключу
+                    if (String(empKey).toLowerCase().includes(cleanUser)) isMatch = true;
+                    
+                    // Ищем сотрудника по скрытому имени внутри
+                    if (typeof empData === 'object') {
+                        let innerName = String(empData.name || empData.user || empData.employee || "").toLowerCase();
+                        if (innerName && (innerName.includes(cleanUser) || cleanUser.includes(innerName))) isMatch = true;
                     }
 
                     if (isMatch) {
-                        let scheduleData = entry.data || entry.schedule || entry.items || entry;
-                        let ts = entry.timestamp || entry.time || entry.date || 0;
-                        foundDrafts.push({ data: scheduleData, ts: ts });
+                        // Нашли оригинал! (Если сотрудник отправил 2 раза, бот перезаписал файл на последний)
+                        employeeOriginalSchedule = empData.data || empData.schedule || empData.items || empData;
+                        break; 
                     }
                 }
             }
-        });
+            if (employeeOriginalSchedule) break;
+        }
 
-        // Если сотрудник отправлял график 2-3 раза, забираем САМЫЙ ПОСЛЕДНИЙ
-        if (foundDrafts.length > 0) {
-            foundDrafts.sort((a, b) => b.ts - a.ts);
-            let latestDraft = foundDrafts[0].data;
-            
-            let dayData = latestDraft[day];
+        // ⚡ 2. Если нашли оригинал, сверяем ячейку
+        if (employeeOriginalSchedule) {
+            let dayData = employeeOriginalSchedule[day];
             let origVal = "";
             
-            if (dayData !== undefined && dayData !== null) {
+            if (dayData) {
                 if (typeof dayData === 'string') origVal = dayData;
                 else if (dayData.text !== undefined) origVal = dayData.text;
                 else if (dayData.shift !== undefined) origVal = dayData.shift;
@@ -1332,26 +1327,30 @@ window.sendChecklistPdf = async function() {
             return { has: true, text: cleanVal };
         }
 
-        // Если бот ничего от этого сотрудника не получал, сравнения не будет
-        return { has: false, text: "" };
+        // ⚡ 3. Если сотрудник оригинал НЕ присылал, мы всё равно возвращаем "ПУСТО".
+        // Тогда все смены, которые ВЫ проставили ему вручную, загорятся красным "БЫЛО: ПУСТО", 
+        // показывая, что это чисто ваши правки.
+        return { has: true, text: "" };
     };
 
     window.toggleGraphCompare = async function() {
-        isGraphCompareMode = !isGraphCompareMode;
-        if (isGraphCompareMode) {
-            showReportOverlay("⏳ Загрузка графиков от сотрудников...");
+        if (!isGraphCompareMode) {
+            showReportOverlay("⏳ Поиск оригиналов в базе...");
             try {
-                // Выкачиваем ВСЮ папку отправленных графиков напрямую из базы бота
-                const rawFetch = typeof originalFetch !== 'undefined' ? originalFetch : fetch;
-                let response = await rawFetch(`${FB_URL}/schedules_submitted.json`);
+                // ⚡ Выкачиваем ВСЮ папку оригиналов напрямую, обходя кэши и локальные сохранения
+                let response = await fetch(`${FB_URL}/schedules_submitted.json`);
                 window.graphSubmittedFull = await response.json() || {};
+                isGraphCompareMode = true;
             } catch(e) {
-                alert("❌ Ошибка загрузки черновиков: " + e.message);
+                alert("❌ Ошибка соединения с базой: " + e.message);
             }
             hideReportOverlay();
+        } else {
+            isGraphCompareMode = false;
         }
         renderGraphsTab();
     };
+
 
 
 

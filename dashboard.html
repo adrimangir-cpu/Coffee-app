@@ -1243,24 +1243,20 @@ window.sendChecklistPdf = async function() {
     }
     
    
-      window.toggleGraphCompare = async function() {
+     window.toggleGraphCompare = async function() {
         if (!isGraphCompareMode) {
-            showReportOverlay("⏳ Загрузка оригиналов от сотрудников...");
+            showReportOverlay("⏳ Поиск оригиналов в базе бота...");
             try {
-                let t = getTargetDateLogic();
-                let ym = `${t.year}_${t.month}`;
-                
-                // ⚡ Прямолинейно скачиваем именно нужный месяц из папки бота
                 const rawFetch = typeof originalFetch !== 'undefined' ? originalFetch : fetch;
-                let response = await rawFetch(`${FB_URL}/schedules_submitted/${ym}.json`);
-                let fresh = await response.json();
                 
-                if (!window.graphSubmitted) window.graphSubmitted = {};
-                window.graphSubmitted[ym] = fresh || {};
+                // ⚡ Качаем ВСЕ отправленные графики, чтобы гарантированно найти нужный
+                // даже если бот назвал папку месяца иначе
+                let response = await rawFetch(`${FB_URL}/schedules_submitted.json`);
+                window.graphSubmittedFull = await response.json() || {};
                 
                 isGraphCompareMode = true;
             } catch(e) {
-                alert("❌ Ошибка загрузки: " + e.message);
+                alert("❌ Ошибка загрузки черновиков: " + e.message);
             }
             hideReportOverlay();
         } else {
@@ -1270,33 +1266,80 @@ window.sendChecklistPdf = async function() {
     };
 
     window.getGraphBaseline = function(user, day) {
+        if (!window.graphSubmittedFull) return { has: false, text: "" };
+        
         let t = getTargetDateLogic();
-        let ym = `${t.year}_${t.month}`;
+        let m1 = t.month;       // Месяц в формате кода (Октябрь = 9)
+        let m2 = t.month + 1;   // Человеческий месяц (Октябрь = 10)
         
-        let monthData = window.graphSubmitted ? window.graphSubmitted[ym] : null;
-        
-        if (monthData) {
-            // Ищем сотрудника, даже если случайно добавился пробел в имени
-            let empKey = Object.keys(monthData).find(k => k.trim() === user.trim());
-            
-            if (empKey) {
-                let empSchedule = monthData[empKey];
-                let origVal = (empSchedule[day] && empSchedule[day].text) ? empSchedule[day].text : "";
-                
-                let cleanVal = origVal.trim().toUpperCase();
-                
-                // Нормализуем статусы бота
-                if (cleanVal === "OFF") cleanVal = "ВЫХ";
-                if (cleanVal === "ANY_SHOP") cleanVal = "ЛЮБ";
-                
-                // ⚡ Возвращаем "has: true" ТОЛЬКО если сотрудник реально прислал график
-                return { has: true, text: cleanVal };
+        // ⚡ Генерируем все возможные названия папок, которые мог создать бот
+        let possibleKeys = [
+            `${t.year}_${m1}`, `${t.year}_${m2}`, 
+            `${m1}_${t.year}`, `${m2}_${t.year}`,
+            `${t.year}-${m2 > 9 ? m2 : '0'+m2}`,
+            `${m2 > 9 ? m2 : '0'+m2}.${t.year}`
+        ];
+
+        let monthData = null;
+        for (let k of possibleKeys) {
+            if (window.graphSubmittedFull[k]) {
+                monthData = window.graphSubmittedFull[k];
+                break;
             }
         }
         
-        // ⚡ Если сотрудник ничего не присылал, полностью отключаем сравнение для его колонки (никаких ярлыков "ПУСТО")
+        // Если бот сложил всё без папки с месяцем, ищем прямо в корне
+        if (!monthData) monthData = window.graphSubmittedFull;
+
+        let cleanUser = String(user).trim().toLowerCase();
+        let empSchedule = null;
+
+        // ⚡ УМНЫЙ ПОИСК (игнорирует регистр, пробелы и вложенные папки)
+        for (let k in monthData) {
+            let node = monthData[k];
+            let kLow = String(k).trim().toLowerCase();
+            
+            // Если бот назвал саму строку именем сотрудника
+            if (kLow === cleanUser || kLow.includes(cleanUser) || cleanUser.includes(kLow)) {
+                empSchedule = node;
+            }
+            
+            // Если бот сохранил график по ID, а имя спрятал внутри объекта
+            if (node && typeof node === 'object') {
+                let innerName = String(node.name || node.user || node.employee || "").trim().toLowerCase();
+                if (innerName === cleanUser || innerName.includes(cleanUser) || (innerName !== "" && cleanUser.includes(innerName))) {
+                    // Достаем сами смены из возможного хранилища
+                    empSchedule = node.data || node.schedule || node.items || node;
+                }
+            }
+            
+            if (empSchedule) break; // График найден!
+        }
+
+        // ⚡ Если мы РЕАЛЬНО нашли график от сотрудника
+        if (empSchedule) {
+            let origVal = "";
+            let dayData = empSchedule[day];
+            
+            if (dayData !== undefined && dayData !== null) {
+                if (typeof dayData === 'string') origVal = dayData;
+                else if (dayData.text !== undefined) origVal = dayData.text;
+                else if (dayData.shift !== undefined) origVal = dayData.shift;
+            }
+            
+            // Нормализуем то, что прислал бот
+            let cleanVal = String(origVal).trim().toUpperCase();
+            if (cleanVal === "OFF") cleanVal = "ВЫХ";
+            if (cleanVal === "ANY_SHOP") cleanVal = "ЛЮБ";
+            
+            return { has: true, text: cleanVal };
+        }
+
+        // ⚡ Если сотрудник график НЕ присылал, полностью отключаем сравнение для его колонки
+        // Никаких красных плашек "БЫЛО: ПУСТО" у него вылезать не будет.
         return { has: false, text: "" };
     };
+
 
 
 

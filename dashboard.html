@@ -1269,57 +1269,54 @@ window.sendChecklistPdf = async function() {
         if (!window.graphSubmittedFull) return { has: false, text: "" };
         
         let t = getTargetDateLogic();
-        let m1 = t.month;       // Месяц в формате кода (Октябрь = 9)
-        let m2 = t.month + 1;   // Человеческий месяц (Октябрь = 10)
+        let m0 = t.month;       // Октябрь = 9 (как считает код)
+        let m1 = t.month + 1;   // Октябрь = 10 (как считают люди)
+        let y = t.year;
         
-        // ⚡ Генерируем все возможные названия папок, которые мог создать бот
-        let possibleKeys = [
-            `${t.year}_${m1}`, `${t.year}_${m2}`, 
-            `${m1}_${t.year}`, `${m2}_${t.year}`,
-            `${t.year}-${m2 > 9 ? m2 : '0'+m2}`,
-            `${m2 > 9 ? m2 : '0'+m2}.${t.year}`
-        ];
-
-        let monthData = null;
-        for (let k of possibleKeys) {
-            if (window.graphSubmittedFull[k]) {
-                monthData = window.graphSubmittedFull[k];
-                break;
-            }
-        }
+        // Генерируем все варианты папок, куда бот мог сложить месяц
+        let possibleKeys = [`${y}_${m0}`, `${y}_${m1}`, `${m0}_${y}`, `${m1}_${y}`, `${y}-${m1 > 9 ? m1 : '0'+m1}`, `${m1 > 9 ? m1 : '0'+m1}.${y}`];
         
-        // Если бот сложил всё без папки с месяцем, ищем прямо в корне
-        if (!monthData) monthData = window.graphSubmittedFull;
-
         let cleanUser = String(user).trim().toLowerCase();
-        let empSchedule = null;
+        let foundDrafts = [];
 
-        // ⚡ УМНЫЙ ПОИСК (игнорирует регистр, пробелы и вложенные папки)
-        for (let k in monthData) {
-            let node = monthData[k];
-            let kLow = String(k).trim().toLowerCase();
-            
-            // Если бот назвал саму строку именем сотрудника
-            if (kLow === cleanUser || kLow.includes(cleanUser) || cleanUser.includes(kLow)) {
-                empSchedule = node;
-            }
-            
-            // Если бот сохранил график по ID, а имя спрятал внутри объекта
-            if (node && typeof node === 'object') {
-                let innerName = String(node.name || node.user || node.employee || "").trim().toLowerCase();
-                if (innerName === cleanUser || innerName.includes(cleanUser) || (innerName !== "" && cleanUser.includes(innerName))) {
-                    // Достаем сами смены из возможного хранилища
-                    empSchedule = node.data || node.schedule || node.items || node;
+        // Ищем все отправки этого сотрудника в базе бота
+        possibleKeys.forEach(k => {
+            let monthFolder = window.graphSubmittedFull[k];
+            if (monthFolder) {
+                for (let entryKey in monthFolder) {
+                    let entry = monthFolder[entryKey];
+                    if (!entry) continue;
+
+                    let entryName = "";
+                    if (typeof entry === 'object') {
+                        entryName = String(entry.name || entry.user || entry.employee || "").trim().toLowerCase();
+                    }
+                    let keyName = String(entryKey).trim().toLowerCase();
+
+                    // Совпадение по имени или ключу
+                    let isMatch = false;
+                    if (entryName !== "") {
+                        if (entryName.includes(cleanUser) || cleanUser.includes(entryName)) isMatch = true;
+                    } else {
+                        if (keyName.includes(cleanUser) || cleanUser.includes(keyName)) isMatch = true;
+                    }
+
+                    if (isMatch) {
+                        let scheduleData = entry.data || entry.schedule || entry.items || entry;
+                        let ts = entry.timestamp || entry.time || entry.date || 0;
+                        foundDrafts.push({ data: scheduleData, ts: ts });
+                    }
                 }
             }
-            
-            if (empSchedule) break; // График найден!
-        }
+        });
 
-        // ⚡ Если мы РЕАЛЬНО нашли график от сотрудника
-        if (empSchedule) {
+        // Если сотрудник отправлял график 2-3 раза, забираем САМЫЙ ПОСЛЕДНИЙ
+        if (foundDrafts.length > 0) {
+            foundDrafts.sort((a, b) => b.ts - a.ts);
+            let latestDraft = foundDrafts[0].data;
+            
+            let dayData = latestDraft[day];
             let origVal = "";
-            let dayData = empSchedule[day];
             
             if (dayData !== undefined && dayData !== null) {
                 if (typeof dayData === 'string') origVal = dayData;
@@ -1327,7 +1324,6 @@ window.sendChecklistPdf = async function() {
                 else if (dayData.shift !== undefined) origVal = dayData.shift;
             }
             
-            // Нормализуем то, что прислал бот
             let cleanVal = String(origVal).trim().toUpperCase();
             if (cleanVal === "OFF") cleanVal = "ВЫХ";
             if (cleanVal === "ANY_SHOP") cleanVal = "ЛЮБ";
@@ -1335,12 +1331,26 @@ window.sendChecklistPdf = async function() {
             return { has: true, text: cleanVal };
         }
 
-        // ⚡ Если сотрудник график НЕ присылал, полностью отключаем сравнение для его колонки
-        // Никаких красных плашек "БЫЛО: ПУСТО" у него вылезать не будет.
+        // Если бот ничего от этого сотрудника не получал, сравнения не будет
         return { has: false, text: "" };
     };
 
-
+    window.toggleGraphCompare = async function() {
+        isGraphCompareMode = !isGraphCompareMode;
+        if (isGraphCompareMode) {
+            showReportOverlay("⏳ Загрузка графиков от сотрудников...");
+            try {
+                // Выкачиваем ВСЮ папку отправленных графиков напрямую из базы бота
+                const rawFetch = typeof originalFetch !== 'undefined' ? originalFetch : fetch;
+                let response = await rawFetch(`${FB_URL}/schedules_submitted.json`);
+                window.graphSubmittedFull = await response.json() || {};
+            } catch(e) {
+                alert("❌ Ошибка загрузки черновиков: " + e.message);
+            }
+            hideReportOverlay();
+        }
+        renderGraphsTab();
+    };
 
 
 

@@ -1241,45 +1241,55 @@ window.sendChecklistPdf = async function() {
     }
     
    
-   function getGraphBaseline(user, day) {
+    window.getGraphBaseline = function(user, day) {
         let t = getTargetDateLogic();
         let ym = `${t.year}_${t.month}`;
         
-        // 1. Смотрим ИСКЛЮЧИТЕЛЬНО в папку отправленных графиков от бота
+        // 1. Берем ИСКЛЮЧИТЕЛЬНО то, что прислал сотрудник в бота
         let sub = (window.graphSubmitted && window.graphSubmitted[ym]) ? window.graphSubmitted[ym][user] : null;
         
-        // 2. Если от сотрудника есть хоть какие-то данные за этот месяц
-        if (sub) {
-            let origVal = (sub[day] && sub[day].text) ? sub[day].text : "";
-            
-            // Нормализуем английские системные статусы бота в русский текст, 
-            // чтобы "OFF" от бота и ваш "ВЫХ" не считались за разницу.
-            let cleanVal = origVal.trim().toUpperCase();
-            if (cleanVal === "OFF") cleanVal = "ВЫХ";
-            if (cleanVal === "ANY_SHOP") cleanVal = "ЛЮБ";
-            
-            return { has: true, text: cleanVal };
-        }
+        // 2. Если данных нет, возвращаем пустую строку. 
+        let origVal = (sub && sub[day] && sub[day].text) ? sub[day].text : "";
+        let cleanVal = origVal.trim().toUpperCase();
         
-        // 3. Если сотрудник вообще ничего не отправлял в боте — ваши сохранения
-        // игнорируются, а плашки сравнения просто не появляются.
-        return { has: false, text: "" };
-    }
+        if (cleanVal === "OFF") cleanVal = "ВЫХ";
+        if (cleanVal === "ANY_SHOP") cleanVal = "ЛЮБ";
+        
+        // ⚡ ВАЖНО: ВСЕГДА возвращаем has: true! 
+        // Теперь, если сотрудник ничего не прислал, а вы заполнили график, 
+        // ВСЕ ваши смены гарантированно загорятся красным ярлыком "БЫЛО: ПУСТО".
+        return { has: true, text: cleanVal };
+    };
 
-
-    async function toggleGraphCompare() {
-        isGraphCompareMode = !isGraphCompareMode;
-        if (isGraphCompareMode) {
+    window.toggleGraphCompare = async function() {
+        // Если мы ВКЛЮЧАЕМ режим сравнения
+        if (!isGraphCompareMode) {
+            showReportOverlay("⏳ Загрузка черновиков из базы бота...");
             try {
                 let t = getTargetDateLogic();
                 let ym = `${t.year}_${t.month}`;
-                let fresh = await fetch(`${FB_URL}/schedules_submitted/${ym}.json`).then(r => r.json());
+                
+                // Делаем прямой запрос в базу (минуя кэш дашборда)
+                const rawFetch = typeof originalFetch !== 'undefined' ? originalFetch : fetch;
+                let response = await rawFetch(`${FB_URL}/schedules_submitted/${ym}.json`);
+                let fresh = await response.json();
+                
                 if (!window.graphSubmitted) window.graphSubmitted = {};
                 window.graphSubmitted[ym] = fresh || {};
-            } catch(e) {}
+                
+                isGraphCompareMode = true;
+            } catch(e) {
+                alert("❌ Ошибка загрузки черновиков: " + e.message);
+            }
+            hideReportOverlay();
+        } else {
+            // Если ВЫКЛЮЧАЕМ режим
+            isGraphCompareMode = false;
         }
+        
         renderGraphsTab();
-    }
+    };
+
 
     // ==========================================
     // ПРАВКА 3: АВТО-СИНХРОНИЗАЦИЯ СТОП-ЛИСТА С ТЕХ. КАРТАМИ

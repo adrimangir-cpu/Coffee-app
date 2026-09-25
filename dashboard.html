@@ -471,15 +471,12 @@ function hasUnsavedMenuChanges() {
     return Object.keys(menuChanges || {}).length > 0;
 }
 
+
 function ensureMenuDirtyBanner() {
-    if (document.getElementById('menu-dirty-banner')) return;
-    document.body.insertAdjacentHTML('beforeend', `
-      <div id="menu-dirty-banner" style="position:fixed; right:24px; bottom:24px; z-index:6000; display:none; align-items:center; gap:14px; background:#101012; color:#FFF; padding:14px 18px; border-radius:18px; box-shadow:0 14px 40px rgba(16,16,18,0.28); font-size:13px; font-weight:600; max-width:420px;">
-        <span>Несохранённые изменения: <b id="menu-dirty-count">0</b><span id="menu-dirty-note" style="display:block; font-weight:500; opacity:0.7; font-size:11.5px; margin-top:3px;"></span></span>
-        <button onclick="saveMenu(this)" style="background:#FFF; color:#101012; border:none; border-radius:12px; padding:10px 16px; font-weight:700; cursor:pointer; white-space:nowrap;">Сохранить</button>
-        <button onclick="discardMenuDraft()" style="background:transparent; color:#FFF; border:1px solid rgba(255,255,255,0.35); border-radius:12px; padding:10px 14px; font-weight:600; cursor:pointer; white-space:nowrap;">Отменить</button>
-      </div>`);
+    // Нижний баннер о несохраненных данных отключен
 }
+
+
 
 window.discardMenuDraft = function() {
     if (!confirm("Отменить все несохранённые правки меню и загрузить данные из базы?")) return;
@@ -723,19 +720,15 @@ async function fetchOptimistic(path) {
   if (path === 'catalogs/stoplist' && typeof cachedData !== 'undefined' && cachedData.catalogStoplist && Object.keys(cachedData.catalogStoplist).length > 0) return cachedData.catalogStoplist;
 
   let cached = await loadFromCache(path);
-  let tabAtStart = typeof currentTabType !== 'undefined' ? currentTabType : null;
   
   if (cached && Object.keys(cached).length > 0) {
-    // Показываем кэш, но честно помечаем его и, как только придут свежие
-    // данные, перерисовываем вкладку (раньше кэш висел до перезагрузки).
     setDbFreshness('cache');
+    // ⚡ ИСПРАВЛЕНИЕ: Мы скачиваем свежие данные в фоне, но БОЛЬШЕ НЕ ВЫЗЫВАЕМ АГРЕССИВНУЮ ПЕРЕЗАГРУЗКУ. 
+    // Этим убита бесконечная петля "Загрузки".
     fetch(`${FB_URL}/${path}.json`).then(r => r.json()).then(data => {
       let finalData = data || {};
       saveToCache(path, finalData);
       setDbFreshness('fresh');
-      if (JSON.stringify(finalData) !== JSON.stringify(cached) && typeof currentTabType !== 'undefined' && currentTabType === tabAtStart) {
-        refreshTabWithFreshData(tabAtStart);
-      }
     }).catch(e => null);
     return cached;
   } else {
@@ -744,6 +737,7 @@ async function fetchOptimistic(path) {
     return fresh || {};
   }
 }
+
 
 // ---------- Свежесть данных в плашке статуса ----------
 function setDbFreshness(kind) {
@@ -754,45 +748,18 @@ function setDbFreshness(kind) {
   else if (kind === 'cache') { el.innerText = 'Сохранённые данные · обновляю…'; el.dataset.fresh = '0'; }
 }
 
-// ⚡ 1. УМНОЕ ОБНОВЛЕНИЕ ВКЛАДКИ БЕЗ СБРОСА ПРОКРУТКИ
-let freshReloadTimer = null;
+
+// ⚡ 1. ОТКЛЮЧАЕМ УВЕДОМЛЕНИЯ И АВТО-СБРОС СТРАНИЦЫ
 window.notifyNewDataAvailable = function(tab) {
-    if (document.getElementById('new-data-refresh-btn')) return;
-    let btn = document.createElement('button');
-    btn.id = 'new-data-refresh-btn';
-    btn.innerHTML = '🔄 База обновилась. Показать новые данные';
-    btn.style.cssText = 'position:fixed; top:25px; left:50%; transform:translateX(-50%); z-index:9999; background:var(--brand-olive); color:#fff; border:none; padding:12px 24px; border-radius:999px; font-weight:bold; cursor:pointer; box-shadow:0 6px 20px rgba(0,0,0,0.3); font-family:var(--font-data); font-size:14px;';
-    btn.onclick = () => {
-        btn.remove();
-        let tabBtn = document.querySelector(`.tab-btn[onclick*="'${tab}'"]`);
-        loadTab(tab, tabBtn);
-    };
-    document.body.appendChild(btn);
+    // Всплывающая кнопка отключена
 };
 
+let freshReloadTimer = null;
 function refreshTabWithFreshData(tab) {
-    if (freshReloadTimer) clearTimeout(freshReloadTimer);
-    freshReloadTimer = setTimeout(() => {
-        if (currentTabType !== tab) return;
-        let busy = (typeof isSvodEditMode !== 'undefined' && isSvodEditMode) ||
-                   (typeof isMissingEditMode !== 'undefined' && isMissingEditMode) ||
-                   (typeof isMpEditMode !== 'undefined' && isMpEditMode) ||
-                   (typeof isChecklistEditMode !== 'undefined' && isChecklistEditMode) ||
-                   (tab === 'menu' && typeof hasUnsavedMenuChanges === 'function' && hasUnsavedMenuChanges()) ||
-                   (tab === 'graphs' && window.graphDraft && typeof originalGraphDraft !== 'undefined' && JSON.stringify(window.graphDraft) !== JSON.stringify(originalGraphDraft)) ||
-                   (document.activeElement && ['INPUT','SELECT','TEXTAREA'].includes(document.activeElement.tagName));
-        if (busy) return;
-
-        // ⚡ Если с момента открытия вкладки прошло больше 3 секунд — НЕ сбрасываем страницу, а показываем кнопку!
-        let timeSinceOpen = Date.now() - (window.tabOpenTime || 0);
-        if (timeSinceOpen > 3000) {
-            notifyNewDataAvailable(tab);
-        } else {
-            let btn = document.querySelector(`.tab-btn[onclick*="'${tab}'"]`);
-            loadTab(tab, btn);
-        }
-    }, 400);
+    // Страница больше не перерисовывается сама и не выдает уведомлений.
+    // Свежие данные из базы тихо оседают в кэше и появятся, когда вы сами обновите вкладку.
 }
+;
 
 function cleanName(str) {
         if (!str) return "";
@@ -1273,17 +1240,20 @@ window.sendChecklistPdf = async function() {
         renderGraphsTab();
     }
     
-    // База для «Сравнить с черновиком» — последнее отправление сотрудника
-    // (schedules_submitted). Если сотрудник ещё не отправлял график после
-    // обновления — берём сохранённый график как раньше.
-    function getGraphBaseline(user, day) {
+   
+   function getGraphBaseline(user, day) {
         let t = getTargetDateLogic();
         let ym = `${t.year}_${t.month}`;
+        
+        // ⚡ Берем ИСКЛЮЧИТЕЛЬНО то, что отправил сам сотрудник из приложения
         let sub = (window.graphSubmitted && window.graphSubmitted[ym]) ? window.graphSubmitted[ym][user] : null;
-        if (sub) return { has: true, text: (sub[day] && sub[day].text) || "" };
-        if (originalGraphDraft && originalGraphDraft[user] && originalGraphDraft[user][day]) {
-            return { has: true, text: originalGraphDraft[user][day].text || "" };
+        
+        if (sub && sub[day]) {
+            return { has: true, text: sub[day].text || "" };
         }
+        
+        // ⚡ Никаких возвратов к вашим собственным сохранениям. 
+        // Если сотрудник ничего не отправлял, плашка сравнения просто не появится.
         return { has: false, text: "" };
     }
 

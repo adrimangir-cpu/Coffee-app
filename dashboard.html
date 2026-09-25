@@ -754,23 +754,44 @@ function setDbFreshness(kind) {
   else if (kind === 'cache') { el.innerText = 'Сохранённые данные · обновляю…'; el.dataset.fresh = '0'; }
 }
 
-// Перерисовать открытую вкладку свежими данными, не сбивая режим правки.
+// ⚡ 1. УМНОЕ ОБНОВЛЕНИЕ ВКЛАДКИ БЕЗ СБРОСА ПРОКРУТКИ
 let freshReloadTimer = null;
+window.notifyNewDataAvailable = function(tab) {
+    if (document.getElementById('new-data-refresh-btn')) return;
+    let btn = document.createElement('button');
+    btn.id = 'new-data-refresh-btn';
+    btn.innerHTML = '🔄 База обновилась. Показать новые данные';
+    btn.style.cssText = 'position:fixed; top:25px; left:50%; transform:translateX(-50%); z-index:9999; background:var(--brand-olive); color:#fff; border:none; padding:12px 24px; border-radius:999px; font-weight:bold; cursor:pointer; box-shadow:0 6px 20px rgba(0,0,0,0.3); font-family:var(--font-data); font-size:14px;';
+    btn.onclick = () => {
+        btn.remove();
+        let tabBtn = document.querySelector(`.tab-btn[onclick*="'${tab}'"]`);
+        loadTab(tab, tabBtn);
+    };
+    document.body.appendChild(btn);
+};
+
 function refreshTabWithFreshData(tab) {
-  if (freshReloadTimer) clearTimeout(freshReloadTimer);
-  freshReloadTimer = setTimeout(() => {
-    if (currentTabType !== tab) return;
-    let busy = (typeof isSvodEditMode !== 'undefined' && isSvodEditMode) ||
-               (typeof isMissingEditMode !== 'undefined' && isMissingEditMode) ||
-               (typeof isMpEditMode !== 'undefined' && isMpEditMode) ||
-               (typeof isChecklistEditMode !== 'undefined' && isChecklistEditMode) ||
-               (tab === 'menu' && typeof hasUnsavedMenuChanges === 'function' && hasUnsavedMenuChanges()) ||
-               (tab === 'graphs' && window.graphDraft && typeof originalGraphDraft !== 'undefined' && JSON.stringify(window.graphDraft) !== JSON.stringify(originalGraphDraft)) ||
-               (document.activeElement && ['INPUT','SELECT','TEXTAREA'].includes(document.activeElement.tagName));
-    if (busy) return;
-    let btn = document.querySelector(`.tab-btn[onclick*="'${tab}'"]`);
-    loadTab(tab, btn);
-  }, 400);
+    if (freshReloadTimer) clearTimeout(freshReloadTimer);
+    freshReloadTimer = setTimeout(() => {
+        if (currentTabType !== tab) return;
+        let busy = (typeof isSvodEditMode !== 'undefined' && isSvodEditMode) ||
+                   (typeof isMissingEditMode !== 'undefined' && isMissingEditMode) ||
+                   (typeof isMpEditMode !== 'undefined' && isMpEditMode) ||
+                   (typeof isChecklistEditMode !== 'undefined' && isChecklistEditMode) ||
+                   (tab === 'menu' && typeof hasUnsavedMenuChanges === 'function' && hasUnsavedMenuChanges()) ||
+                   (tab === 'graphs' && window.graphDraft && typeof originalGraphDraft !== 'undefined' && JSON.stringify(window.graphDraft) !== JSON.stringify(originalGraphDraft)) ||
+                   (document.activeElement && ['INPUT','SELECT','TEXTAREA'].includes(document.activeElement.tagName));
+        if (busy) return;
+
+        // ⚡ Если с момента открытия вкладки прошло больше 3 секунд — НЕ сбрасываем страницу, а показываем кнопку!
+        let timeSinceOpen = Date.now() - (window.tabOpenTime || 0);
+        if (timeSinceOpen > 3000) {
+            notifyNewDataAvailable(tab);
+        } else {
+            let btn = document.querySelector(`.tab-btn[onclick*="'${tab}'"]`);
+            loadTab(tab, btn);
+        }
+    }, 400);
 }
 
 function cleanName(str) {
@@ -1792,7 +1813,8 @@ window.syncStoplistWithMenu = async function() {
         }
         
         currentTabType = type;
-        let fetchId = type; 
+        window.tabOpenTime = Date.now(); // ⚡ Засекаем время открытия вкладки
+        let fetchId = type;
         
         const box = document.getElementById('content');
         setupUniversalActionBar('', false); 
@@ -7146,19 +7168,16 @@ async function exportGraphsToExcel() {
     // ==========================================
     // ⚡ LIVE-ОБНОВЛЕНИЕ ДАШБОРДА В РЕАЛЬНОМ ВРЕМЕНИ (СИНХРОНИЗАЦИЯ КЭША)
     // ==========================================
-
-    // 1. Свод и Заказы
+    
     db.ref('orders').on('value', (snapshot) => {
         let ordersObj = snapshot.val() || {};
         Object.keys(ordersObj).forEach(k => { if (ordersObj[k]) ordersObj[k].key = k; });
         cachedData.orders = ordersObj;
-        saveToCache('orders', ordersObj); // ⚡ Мгновенно перезаписываем кэш!
-        setDbFreshness('fresh');
         
-        if (currentTabType === 'orders' && !isSvodEditMode) renderOrdersSvod();
-        if (currentTabType === 'stoplists') renderStoplists();
-        if (currentTabType === 'checks_table' && !isChecklistEditMode) renderChecksTable();
-        if (currentTabType === 'stats') renderStats();
+        // ⚡ Передаем запрос в умную функцию. Если вы давно на вкладке — появится кнопка обновления.
+        if (currentTabType === 'orders' && !isSvodEditMode) {
+            refreshTabWithFreshData('orders');
+        }
     });
     
 

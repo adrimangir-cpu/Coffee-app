@@ -83,6 +83,7 @@ h1, h2, h3, h4 { font-family: var(--font-fashion); color: var(--text-main) !impo
 }
 
 .sidebar {
+    
   position: fixed; top: 0; left: 58px !important; bottom: 0; width: 296px !important;
   background-color: rgba(255,255,255,0.94) !important;
   backdrop-filter: blur(18px);
@@ -1241,54 +1242,91 @@ window.sendChecklistPdf = async function() {
     }
     
    
-    window.getGraphBaseline = function(user, day) {
+   window.getGraphBaseline = function(user, day) {
         let t = getTargetDateLogic();
-        let ym = `${t.year}_${t.month}`;
         
-        // 1. Берем ИСКЛЮЧИТЕЛЬНО то, что прислал сотрудник в бота
-        let sub = (window.graphSubmitted && window.graphSubmitted[ym]) ? window.graphSubmitted[ym][user] : null;
+        // ⚡ Генерируем все мыслимые форматы месяцев, как их мог сохранить бот
+        let possibleKeys = [
+            `${t.year}_${t.month}`,             
+            `${t.year}_${t.month + 1}`,         
+            `${t.month}_${t.year}`,             
+            `${t.month + 1}_${t.year}`,         
+            `${t.year}-${t.month + 1 > 9 ? t.month + 1 : '0'+(t.month + 1)}`, 
+            `${t.month + 1 > 9 ? t.month + 1 : '0'+(t.month + 1)}.${t.year}`  
+        ];
+
+        let foundSub = null;
+
+        // 1. Ищем ИСКЛЮЧИТЕЛЬНО в папке отправленных графиков от бота
+        if (window.graphSubmittedFull) {
+            for (let k of possibleKeys) {
+                let ymData = window.graphSubmittedFull[k];
+                if (ymData) {
+                    if (ymData[user]) foundSub = ymData[user]; 
+                    
+                    // Если сотрудник отправлял 2-3 раза, бот мог сложить их списком.
+                    // Перебираем все и забираем САМУЮ ПОСЛЕДНЮЮ отправку.
+                    for (let childKey in ymData) {
+                        let child = ymData[childKey];
+                        if (childKey.includes(user) || user.includes(childKey)) foundSub = child;
+                        if (child && (child.user === user || child.name === user || child.employee === user)) {
+                            foundSub = child.data || child.schedule || child.items || child;
+                        }
+                    }
+                    if (foundSub) break; 
+                }
+            }
+            
+            // Если бот почему-то не делит графики по месяцам, ищем вообще везде
+            if (!foundSub) {
+                for (let rootK in window.graphSubmittedFull) {
+                    let rootData = window.graphSubmittedFull[rootK];
+                    if (rootData && typeof rootData === 'object') {
+                        if (rootData[user]) foundSub = rootData[user];
+                    }
+                }
+            }
+        }
+
+        // 2. Если нашли черновик сотрудника — сверяем каждую ячейку
+        if (foundSub && foundSub[day]) {
+            let origVal = foundSub[day].text || "";
+            let cleanVal = origVal.trim().toUpperCase();
+            
+            if (cleanVal === "OFF") cleanVal = "ВЫХ";
+            if (cleanVal === "ANY_SHOP") cleanVal = "ЛЮБ";
+            
+            return { has: true, text: cleanVal };
+        }
         
-        // 2. Если данных нет, возвращаем пустую строку. 
-        let origVal = (sub && sub[day] && sub[day].text) ? sub[day].text : "";
-        let cleanVal = origVal.trim().toUpperCase();
-        
-        if (cleanVal === "OFF") cleanVal = "ВЫХ";
-        if (cleanVal === "ANY_SHOP") cleanVal = "ЛЮБ";
-        
-        // ⚡ ВАЖНО: ВСЕГДА возвращаем has: true! 
-        // Теперь, если сотрудник ничего не прислал, а вы заполнили график, 
-        // ВСЕ ваши смены гарантированно загорятся красным ярлыком "БЫЛО: ПУСТО".
-        return { has: true, text: cleanVal };
+        // 3. Если сотрудник вообще ничего не прислал, мы ВСЕ РАВНО включаем сравнение.
+        // Любая поставленная вами смена загорится красным как "БЫЛО: ПУСТО".
+        return { has: true, text: "" };
     };
 
     window.toggleGraphCompare = async function() {
-        // Если мы ВКЛЮЧАЕМ режим сравнения
         if (!isGraphCompareMode) {
-            showReportOverlay("⏳ Загрузка черновиков из базы бота...");
+            showReportOverlay("⏳ Скачивание исходников от сотрудников...");
             try {
-                let t = getTargetDateLogic();
-                let ym = `${t.year}_${t.month}`;
-                
-                // Делаем прямой запрос в базу (минуя кэш дашборда)
                 const rawFetch = typeof originalFetch !== 'undefined' ? originalFetch : fetch;
-                let response = await rawFetch(`${FB_URL}/schedules_submitted/${ym}.json`);
+                
+                // ⚡ Скачиваем ВООБЩЕ ВСЕ графики, когда-либо отправленные в бота, 
+                // чтобы гарантированно найти нужный месяц и нужного сотрудника
+                let response = await rawFetch(`${FB_URL}/schedules_submitted.json`);
                 let fresh = await response.json();
                 
-                if (!window.graphSubmitted) window.graphSubmitted = {};
-                window.graphSubmitted[ym] = fresh || {};
-                
+                window.graphSubmittedFull = fresh || {};
                 isGraphCompareMode = true;
             } catch(e) {
                 alert("❌ Ошибка загрузки черновиков: " + e.message);
             }
             hideReportOverlay();
         } else {
-            // Если ВЫКЛЮЧАЕМ режим
             isGraphCompareMode = false;
         }
-        
         renderGraphsTab();
     };
+
 
 
     // ==========================================

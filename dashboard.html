@@ -5785,13 +5785,13 @@ async function exportGraphsToExcel() {
         }
     }
     
-   window.updateVal = function(id, field, val) { 
+  window.updateVal = function(id, field, val) { 
         let selectEl = document.activeElement; 
         if (val === "НОВАЯ ГЛОБАЛЬНАЯ" || val === "НОВАЯ КАТЕГОРИЯ") {
             let newCat = prompt("Введите название новой категории:");
             if (newCat) {
                 currentCatalog[id][field] = newCat;
-                catalogChanges[id] = currentCatalog[id]; // ⚡ Исправлено
+                catalogChanges[id] = currentCatalog[id]; 
                 
                 if (selectEl && selectEl.tagName === 'SELECT') {
                     let opt = document.createElement('option');
@@ -5807,7 +5807,44 @@ async function exportGraphsToExcel() {
             }
         } else {
             currentCatalog[id][field] = val; 
-            catalogChanges[id] = currentCatalog[id]; // ⚡ Исправлено
+            
+            // ⚡ АВТОЗАПОЛНЕНИЕ ДАННЫХ ПРИ ВВОДЕ ИМЕНИ ТОВАРА
+            if (field === 'name' && val.trim() !== "") {
+                let existingItem = null;
+                let allSources = [];
+                if (cachedData.catalogOrder) allSources.push(...Object.values(cachedData.catalogOrder));
+                if (cachedData.catalogChecklist) allSources.push(...Object.values(cachedData.catalogChecklist));
+                allSources.push(...Object.values(currentCatalog));
+                
+                for (let i of allSources) {
+                    if (i && i.name && i.name.trim().toLowerCase() === val.trim().toLowerCase()) {
+                        // Ищем ту запись, где уже заполнены цена или ссылки
+                        if (i.price || i.link || i.vendor || i.photo) {
+                            existingItem = i;
+                            break;
+                        }
+                    }
+                }
+                
+                if (existingItem) {
+                    // Подтягиваем данные, если в новой строке они ещё пустые
+                    if ((!currentCatalog[id].price || currentCatalog[id].price == 0) && existingItem.price) currentCatalog[id].price = existingItem.price;
+                    if ((!currentCatalog[id].price2 || currentCatalog[id].price2 == 0) && existingItem.price2) currentCatalog[id].price2 = existingItem.price2;
+                    if (!currentCatalog[id].link && existingItem.link) currentCatalog[id].link = existingItem.link;
+                    if (!currentCatalog[id].link2 && existingItem.link2) currentCatalog[id].link2 = existingItem.link2;
+                    if (existingItem.vendor) currentCatalog[id].vendor = existingItem.vendor;
+                    if (!currentCatalog[id].photo && existingItem.photo) currentCatalog[id].photo = existingItem.photo;
+                    
+                    // Перерисовываем интерфейс, чтобы показать подтянутые данные
+                    setTimeout(() => {
+                        if (currentPath.includes('order') || currentPath.includes('newshop')) renderCatalogOrder();
+                        else if (currentPath.includes('stoplist')) renderCatalogStoplist();
+                        else renderCatalogChecklist();
+                    }, 50);
+                }
+            }
+            
+            catalogChanges[id] = currentCatalog[id]; 
         }
     };
     
@@ -7319,6 +7356,19 @@ async function exportGraphsToExcel() {
         saveToCache('settings', appSettings); // ⚡ Обновляем кэш
     });
 
+    // ⚡ УЛУЧШЕНИЕ UX: Автовыделение текста и защита от случайных нажатий Enter
+    document.addEventListener('focusin', function(e) {
+        if (e.target.tagName === 'INPUT' && (e.target.type === 'text' || e.target.type === 'number')) {
+            e.target.select();
+        }
+    });
+
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter' && e.target.tagName === 'INPUT') {
+            e.preventDefault();
+            e.target.blur(); // Снимаем фокус, имитируя успешный ввод, а не нажатие кнопки "Добавить позицию"
+        }
+    });
    
 // ИНИЦИАЛИЗАЦИЯ ПРИ СТАРТЕ
 // ==========================================
@@ -7416,27 +7466,36 @@ window.onload = () => {
         }
     });
    
-   // ⚡ СВЕРХБЫСТРОЕ И БЕЗОТКАЗНОЕ СОХРАНЕНИЕ СПРАВОЧНИКОВ
+  // ⚡ СВЕРХБЫСТРОЕ И БЕЗОТКАЗНОЕ СОХРАНЕНИЕ СПРАВОЧНИКОВ
    window.saveCatalog = async function(btn) {
+    let origText = btn ? btn.innerHTML : "💾 Сохранить";
+    // ⚡ Мгновенная реакция кнопки на клик!
+    if(btn) { btn.disabled = true; btn.innerHTML = "⏳ СОХРАНЕНИЕ..."; }
+    
     if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
     await new Promise(r => setTimeout(r, 50));
-    let origText = btn.innerHTML;
+    
     if (Object.keys(catalogChanges || {}).length === 0) {
-        btn.innerHTML = "✅ ИЗМЕНЕНИЙ НЕТ";
-        setTimeout(() => { if(btn) btn.innerHTML = origText; }, 1500);
+        if(btn) btn.innerHTML = "✅ ИЗМЕНЕНИЙ НЕТ";
+        setTimeout(() => { if(btn) { btn.innerHTML = origText; btn.disabled = false; } }, 1500);
         return;
     }
-    btn.disabled = true; btn.innerHTML = " СОХРАНЕНИЕ...";
+    
     try {
         let updates = {};
         for (let id in catalogChanges) {
             updates[id] = catalogChanges[id] === null ? null : catalogChanges[id];
         }
         
-        // ⚡ СОХРАНЯЕМ В БАЗУ
-        await db.ref(currentPath).update(updates);
+        const rawFetch = typeof originalFetch !== 'undefined' ? originalFetch : fetch;
+        let savePromise = rawFetch(`${FB_URL}/${currentPath}.json`, {
+            method: 'PATCH',
+            body: JSON.stringify(updates)
+        }).then(res => { if (!res.ok) throw new Error("Ошибка сети"); });
         
-        // ⚡ НЕМЕДЛЕННО ОБНОВЛЯЕМ currentCatalog, чтобы новые товары появились
+        let timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Таймаут соединения")), 10000));
+        await Promise.race([savePromise, timeoutPromise]);
+        
         for (let id in catalogChanges) {
             if (catalogChanges[id] !== null) {
                 currentCatalog[id] = catalogChanges[id];
@@ -7446,9 +7505,8 @@ window.onload = () => {
         }
         
         catalogChanges = {};
-        btn.innerHTML = "✅ СОХРАНЕНО!";
+        if(btn) btn.innerHTML = "✅ СОХРАНЕНО!";
         
-        // ⚡ СРАЗУ ПЕРЕРИСОВЫВАЕМ, чтобы пользователь увидел результат
         setTimeout(() => {
             if(btn) { btn.innerHTML = origText; btn.disabled = false; }
             if (currentPath.includes('order') || currentPath.includes('newshop')) renderCatalogOrder();
@@ -7462,18 +7520,21 @@ window.onload = () => {
     }
 };
 
-    async function saveMenu(btn) {
-        if (document.activeElement) document.activeElement.blur(); // ⚡ Сбрасываем фокус, чтобы зафиксировать ввод
+    window.saveMenu = async function(btn) {
+        if (!btn) btn = document.querySelector('.menu-actions .btn-save') || { innerHTML: '', disabled: false };
+        let origText = btn.innerHTML || "💾 Сохранить меню";
         
-        let origText = btn.innerHTML;
-        if (Object.keys(menuChanges).length === 0) {
-            btn.innerHTML = "✅ ИЗМЕНЕНИЙ НЕТ";
-            setTimeout(() => { if(btn) btn.innerHTML = origText; }, 1500);
+        // ⚡ Мгновенная реакция кнопки на клик!
+        if(btn) { btn.disabled = true; btn.innerHTML = "⏳ СОХРАНЕНИЕ МЕНЮ..."; }
+        
+        if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); 
+        await new Promise(r => setTimeout(r, 50));
+        
+        if (Object.keys(menuChanges || {}).length === 0) {
+            if(btn) btn.innerHTML = "✅ ИЗМЕНЕНИЙ НЕТ";
+            setTimeout(() => { if(btn) { btn.innerHTML = origText; btn.disabled = false; } }, 1500);
             return;
         }
-        
-        btn.disabled = true;
-        btn.innerHTML = "⏳ СОХРАНЕНИЕ МЕНЮ...";
         
         try {
             let updates = {};
@@ -7481,24 +7542,32 @@ window.onload = () => {
                 updates[id] = menuChanges[id] === null ? null : menuChanges[id];
             }
             
-            // ⚡ МГНОВЕННЫЙ ПАКЕТНЫЙ ЗАПРОС
-            await db.ref('catalogs/menu').update(updates);
+            const rawFetch = typeof originalFetch !== 'undefined' ? originalFetch : fetch;
+            let savePromise = rawFetch(`${FB_URL}/catalogs/menu.json`, {
+                method: 'PATCH',
+                body: JSON.stringify(updates)
+            }).then(res => { if (!res.ok) throw new Error("Ошибка сети"); });
+            
+            let timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Таймаут соединения")), 10000));
+            await Promise.race([savePromise, timeoutPromise]);
+
+            for (let id in updates) {
+                if (updates[id] === null) delete currentMenu[id];
+                else currentMenu[id] = updates[id];
+            }
 
             menuChanges = {}; 
             clearMenuDraft();
-            btn.innerHTML = "✅ СОХРАНЕНО!";
+            if(btn) btn.innerHTML = "✅ СОХРАНЕНО!";
             
             setTimeout(() => {
-                if(btn) {
-                    btn.innerHTML = origText;
-                    btn.disabled = false;
-                }
+                if(btn) { btn.innerHTML = origText; btn.disabled = false; }
             }, 1500);
         } catch(e) {
             if(btn) { btn.innerHTML = origText; btn.disabled = false; }
             alert("❌ Ошибка сохранения меню: " + e.message);
         }
-    }
+    };
     
    // ⚡ ФУНКЦИЯ ДЛЯ КНОПОК НЕДОВОЗОВ В КОНТРОЛЕ ПРИЕМОК
     window.updateMissingStatus = async function(key, newStatus) {

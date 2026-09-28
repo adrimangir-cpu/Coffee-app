@@ -5544,17 +5544,74 @@ window.syncStoplistWithMenu = async function() {
     }
 
 
-    async function exportMenuToExcel() {
+   window.exportMenuToExcel = async function() {
+        let existingModal = document.getElementById('export-modal-overlay');
+        if (existingModal) existingModal.remove();
+
+        // ⚡ Собираем все глобальные категории, которые есть в меню
+        let globalCats = ["Основное меню"];
+        Object.values(currentMenu).forEach(i => {
+            if(i && i.globalCat && !globalCats.includes(i.globalCat) && !i.globalCat.includes("!!!")) {
+                globalCats.push(i.globalCat);
+            }
+        });
+
+        // ⚡ Создаем красивое всплывающее окно
+        let modalHtml = `
+        <div id="export-modal-overlay" style="position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:9999; display:flex; align-items:center; justify-content:center; backdrop-filter:blur(4px);">
+            <div style="background:var(--bg-window); padding:30px; border-radius:16px; width:90%; max-width:400px; box-shadow:0 10px 30px rgba(0,0,0,0.5); border:1px solid var(--line-delicate); text-align:center;">
+                <h3 style="margin-top:0; color:var(--brand-maroon); font-size:22px; margin-bottom:20px;">Экспорт Техкарт в Excel</h3>
+                <p style="font-size:14px; color:var(--text-muted); margin-bottom:15px; text-align:left;">Выберите, какую категорию собрать:</p>
+                <select id="export-gcat-select" style="width:100%; padding:12px; border-radius:8px; border:2px solid #FF9800; color:#E65100; margin-bottom:25px; font-size:15px; font-weight:bold; outline:none; background:#FFF3E0;">
+                    <option value="ALL">📦 Все категории сразу</option>
+                    ${globalCats.map(c => `<option value="${c}">${c}</option>`).join('')}
+                </select>
+                <div style="display:flex; gap:10px;">
+                    <button onclick="document.getElementById('export-modal-overlay').remove()" style="flex:1; padding:12px; border-radius:8px; border:none; background:#eee; color:#333; font-weight:bold; font-size:14px; cursor:pointer; transition:0.2s;">Отмена</button>
+                    <button id="btn-confirm-export" style="flex:1; padding:12px; border-radius:8px; border:none; background:var(--brand-olive); color:#fff; font-weight:bold; font-size:14px; cursor:pointer; transition:0.2s;">📥 Скачать</button>
+                </div>
+            </div>
+        </div>`;
+        document.body.insertAdjacentHTML('beforeend', modalHtml);
+
+        document.getElementById('btn-confirm-export').onclick = async function() {
+            let selectedCat = document.getElementById('export-gcat-select').value;
+            document.getElementById('export-modal-overlay').remove();
+            await processMenuExport(selectedCat);
+        };
+    };
+
+    // ⚡ Основной процесс сборки Excel, который фильтрует по выбранной категории
+    async function processMenuExport(selectedCat) {
         showReportOverlay("Генерация Excel...");
         try {
             let catOrderLookup = Object.values(cachedData.catalogOrder || {});
             let catChecklistLookup = Object.values(cachedData.catalogChecklist || {});
             let fullCatalog = [...catOrderLookup, ...catChecklistLookup];
 
+            // ⚡ Фильтруем меню по выбранной категории
+            let menuToExport = {};
+            if (selectedCat === "ALL") {
+                menuToExport = currentMenu;
+            } else {
+                Object.keys(currentMenu).forEach(k => {
+                    let drink = currentMenu[k];
+                    if ((drink.globalCat || "Основное меню") === selectedCat) {
+                        menuToExport[k] = drink;
+                    }
+                });
+            }
+
+            if (Object.keys(menuToExport).length === 0) {
+                hideReportOverlay();
+                alert("В выбранной категории нет напитков для экспорта.");
+                return;
+            }
+
             let usedIngredients = new Set();
             let fullAOA = [];
             
-            Object.values(currentMenu).forEach(drink => {
+            Object.values(menuToExport).forEach(drink => {
                 let blocks = drink.blocks || [drink.recipe || []];
                 blocks.forEach(b => {
                     b.forEach(item => {
@@ -5576,10 +5633,10 @@ window.syncStoplistWithMenu = async function() {
             });
 
             let rIdx = 0; 
-            Object.values(currentMenu).forEach(drink => {
+            Object.values(menuToExport).forEach(drink => {
                 let startRow = rIdx + 2; 
                 
-                // ⚡ ЖЕЛЕЗНАЯ ПРОВЕРКА НА ОСНОВНОЕ МЕНЮ ДЛЯ EXCEL
+                // ⚡ ПРОВЕРКА НА ОСНОВНОЕ МЕНЮ (для вывода 3 колонок: 250, 350, Стандарт)
                 let isMainMenu = (String(drink.globalCat || "Основное меню").trim().toLowerCase() === 'основное меню');
                 
                 let pRowHeader = priceRows[rIdx] || ["","","",""];
@@ -5592,7 +5649,6 @@ window.syncStoplistWithMenu = async function() {
                         let xlRow = rIdx + 1; 
                         let pR = priceRows[rIdx] || ["","","",""];
                         
-                        // Если Основное меню - берем qty_X. Иначе - берем обычный qty и пишем в последнюю колонку
                         let q250 = isMainMenu ? (item.qty_250 !== undefined ? item.qty_250 : (item.qty || 0)) : "";
                         let q350 = isMainMenu ? (item.qty_350 || 0) : "";
                         let q540 = isMainMenu ? (item.qty_540 || 0) : (item.qty || 0);
@@ -5663,15 +5719,22 @@ window.syncStoplistWithMenu = async function() {
             ];
 
             const wb = XLSX.utils.book_new();
-            XLSX.utils.book_append_sheet(wb, ws, "Техкарты");
+            
+            // Название листа для Excel (не больше 30 символов)
+            let sheetName = selectedCat === "ALL" ? "Все_Техкарты" : selectedCat.replace(/[^a-zA-Zа-яА-Я0-9\s]/g, '').trim().substring(0,30);
+            
+            XLSX.utils.book_append_sheet(wb, ws, sheetName);
             const b64 = XLSX.write(wb, { type: "base64", bookType: "xlsx" });
 
             const excelDataUri = "data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64," + b64;
             
-            // ⚡ ФИКС: СКАЧИВАЕМ ФАЙЛ НАПРЯМУЮ, А НЕ ОТПРАВЛЯЕМ В БАЗУ FIREBASE
             let a = document.createElement('a');
             a.href = excelDataUri;
-            a.download = `Техкарты_Себестоимость_${new Date().toLocaleDateString('ru-RU')}.xlsx`;
+            
+            // Имя файла тоже адаптируется под выбранную категорию
+            let dateStr = new Date().toLocaleDateString('ru-RU');
+            a.download = `Техкарты_${selectedCat === "ALL" ? "Все" : selectedCat.replace(/\s/g, '_')}_${dateStr}.xlsx`;
+            
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);

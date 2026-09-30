@@ -345,6 +345,9 @@ tr[class*="svodlvl3_"] > td:nth-child(2), tr[class*="lvl3_"] > td:nth-child(2) {
   #page-title-display { font-size: 18px !important; }
 }
 @media (min-width: 901px) { #mobile-bottom-bar { display: none !important; } }
+
+ /* ⚡ Прячем мобильное меню на компьютере */
+@media (min-width: 901px) { #mobile-bottom-bar { display: none !important; } }
 </style>
     
     
@@ -5360,13 +5363,13 @@ async function exportGraphsToExcel() {
         }
     }
     
-   window.updateVal = function(id, field, val) { 
+  window.updateVal = function(id, field, val) { 
         let selectEl = document.activeElement; 
         if (val === "НОВАЯ ГЛОБАЛЬНАЯ" || val === "НОВАЯ КАТЕГОРИЯ") {
             let newCat = prompt("Введите название новой категории:");
             if (newCat) {
                 currentCatalog[id][field] = newCat;
-                catalogChanges[id] = currentCatalog[id]; // ⚡ Исправлено
+                catalogChanges[id] = currentCatalog[id]; 
                 
                 if (selectEl && selectEl.tagName === 'SELECT') {
                     let opt = document.createElement('option');
@@ -5382,7 +5385,73 @@ async function exportGraphsToExcel() {
             }
         } else {
             currentCatalog[id][field] = val; 
-            catalogChanges[id] = currentCatalog[id]; // ⚡ Исправлено
+            catalogChanges[id] = currentCatalog[id]; 
+            
+            // ⚡ 1. АВТОЗАПОЛНЕНИЕ ДАННЫХ ПРИ ВВОДЕ ИМЕНИ НОВОГО ТОВАРА
+            if (field === 'name' && val.trim() !== "") {
+                let existingItem = null;
+                let allSources = [];
+                if (cachedData.catalogOrder) allSources.push(...Object.values(cachedData.catalogOrder));
+                if (cachedData.catalogChecklist) allSources.push(...Object.values(cachedData.catalogChecklist));
+                allSources.push(...Object.values(currentCatalog));
+                
+                for (let i of allSources) {
+                    if (i && i.name && i.name.trim().toLowerCase() === val.trim().toLowerCase()) {
+                        // Ищем ту запись, где уже заполнены цена или ссылки
+                        if (i.price || i.link || i.vendor || i.photo) {
+                            existingItem = i;
+                            break;
+                        }
+                    }
+                }
+                
+                if (existingItem) {
+                    if ((!currentCatalog[id].price || currentCatalog[id].price == 0) && existingItem.price) currentCatalog[id].price = existingItem.price;
+                    if ((!currentCatalog[id].price2 || currentCatalog[id].price2 == 0) && existingItem.price2) currentCatalog[id].price2 = existingItem.price2;
+                    if (!currentCatalog[id].link && existingItem.link) currentCatalog[id].link = existingItem.link;
+                    if (!currentCatalog[id].link2 && existingItem.link2) currentCatalog[id].link2 = existingItem.link2;
+                    if (existingItem.vendor) currentCatalog[id].vendor = existingItem.vendor;
+                    if (!currentCatalog[id].photo && existingItem.photo) currentCatalog[id].photo = existingItem.photo;
+                    
+                    catalogChanges[id] = currentCatalog[id];
+                    
+                    setTimeout(() => {
+                        if (currentPath.includes('order') || currentPath.includes('newshop')) renderCatalogOrder();
+                        else if (currentPath.includes('stoplist')) renderCatalogStoplist();
+                        else renderCatalogChecklist();
+                    }, 50);
+                }
+            }
+
+            // ⚡ 2. СИНХРОНИЗАЦИЯ ЦЕН, ПОСТАВЩИКА И ССЫЛОК У ВСЕХ ДУБЛИКАТОВ
+            if (field === 'price' || field === 'price2' || field === 'vendor' || field === 'link' || field === 'link2') {
+                let currentName = currentCatalog[id].name;
+                if (currentName && currentName.trim() !== "") {
+                    let targetNameLow = currentName.trim().toLowerCase();
+                    let updatedCount = 0;
+                    
+                    // Пробегаемся по всей текущей категории и ищем клонов
+                    Object.keys(currentCatalog).forEach(k => {
+                        if (k !== id && currentCatalog[k].name && currentCatalog[k].name.trim().toLowerCase() === targetNameLow) {
+                            // Обновляем только если значение реально отличается
+                            if (currentCatalog[k][field] !== val) {
+                                currentCatalog[k][field] = val;
+                                catalogChanges[k] = currentCatalog[k];
+                                updatedCount++;
+                            }
+                        }
+                    });
+
+                    // Если клоны были найдены и обновлены — перерисовываем таблицу, чтобы вы увидели изменения
+                    if (updatedCount > 0) {
+                        setTimeout(() => {
+                            if (currentPath.includes('order') || currentPath.includes('newshop')) renderCatalogOrder();
+                            else if (currentPath.includes('stoplist')) renderCatalogStoplist();
+                            else renderCatalogChecklist();
+                        }, 50);
+                    }
+                }
+            }
         }
     };
     

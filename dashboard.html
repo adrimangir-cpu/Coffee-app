@@ -609,21 +609,26 @@ async function fetchOptimistic(path) {
   if (path === 'marketplace_records' && typeof cachedData !== 'undefined' && cachedData.marketplace && Object.keys(cachedData.marketplace).length > 0) return cachedData.marketplace;
   if (path === 'schedules' && typeof cachedData !== 'undefined' && cachedData.schedules && Object.keys(cachedData.schedules).length > 0) return cachedData.schedules;
   if (path === 'catalogs/checklist' && typeof cachedData !== 'undefined' && cachedData.catalogChecklist && Object.keys(cachedData.catalogChecklist).length > 0) return cachedData.catalogChecklist;
-  if (path === 'catalogs/order' && typeof cachedData !== 'undefined' && cachedData.catalogOrder && Object.keys(cachedData.catalogOrder).length > 0) return cachedData.catalogOrder;
+  
+  // ⚡ ИСПРАВЛЕНИЕ ДУБЛИКАТОВ: Выдаем редактору закупки только ОРИГИНАЛЬНЫЕ ключи базы
+  if (path === 'catalogs/order' && typeof cachedData !== 'undefined' && cachedData.rawOrder && Object.keys(cachedData.rawOrder).length > 0) return cachedData.rawOrder;
+  if (path === 'catalogs/newshop' && typeof cachedData !== 'undefined' && cachedData.rawNewshop && Object.keys(cachedData.rawNewshop).length > 0) return cachedData.rawNewshop;
+  
   if (path === 'catalogs/stoplist' && typeof cachedData !== 'undefined' && cachedData.catalogStoplist && Object.keys(cachedData.catalogStoplist).length > 0) return cachedData.catalogStoplist;
 
   let cached = await loadFromCache(path);
   
-  fetch(`${FB_URL}/${path}.json`).then(r => r.json()).then(data => {
-    let finalData = data || {};
-    saveToCache(path, finalData);
-  }).catch(e => null);
-  
   if (cached && Object.keys(cached).length > 0) {
+    setDbFreshness('cache');
+    fetch(`${FB_URL}/${path}.json`).then(r => r.json()).then(data => {
+      let finalData = data || {};
+      saveToCache(path, finalData);
+      setDbFreshness('fresh');
+    }).catch(e => null);
     return cached;
   } else {
     let fresh = await fetch(`${FB_URL}/${path}.json`).then(r => r.json()).catch(e => null);
-    if (fresh) saveToCache(path, fresh);
+    if (fresh) { saveToCache(path, fresh); setDbFreshness('fresh'); }
     return fresh || {};
   }
 }
@@ -6993,13 +6998,18 @@ async function exportGraphsToExcel() {
     db.ref('catalogs').on('value', (snapshot) => {
         let cats = snapshot.val() || {};
         
-        // ⚡ ФИКС СЛИЯНИЯ БАЗ: Защита от потери цен при объединении
+        // ⚡ ФИКС СЛИЯНИЯ БАЗ: Используется ТОЛЬКО для расчета цен в Своде
         let safeCatalogOrder = {};
         let counter = 0;
         Object.values(cats.order || {}).forEach(v => { if(v) safeCatalogOrder["item_" + (counter++)] = v; });
         Object.values(cats.newshop || {}).forEach(v => { if(v) safeCatalogOrder["item_" + (counter++)] = v; });
         
         cachedData.catalogOrder = safeCatalogOrder;
+        
+        // ⚡ А В РЕДАКТОР ЗАКУПКИ МЫ БУДЕМ ОТПРАВЛЯТЬ НАСТОЯЩИЕ ДАННЫЕ БЕЗ ИСКАЖЕНИЯ КЛЮЧЕЙ!
+        cachedData.rawOrder = cats.order || {};
+        cachedData.rawNewshop = cats.newshop || {};
+        
         cachedData.catalogChecklist = cats.checklist || {};
         cachedData.catalogStoplist = cats.stoplist || {}; 
         
@@ -7008,22 +7018,32 @@ async function exportGraphsToExcel() {
         saveToCache('catalogs/checklist', cats.checklist || {});
         saveToCache('catalogs/stoplist', cats.stoplist || {});
         saveToCache('catalogs/menu', cats.menu || {});
+        setDbFreshness('fresh');
+        if (typeof checkHeavyPhotos === 'function') checkHeavyPhotos(cats);
         
         if (currentTabType === 'menu') {
-            currentMenu = cats.menu || {};
-            renderMenuTab();
+            let isTyping = document.activeElement && ['INPUT','SELECT','TEXTAREA'].includes(document.activeElement.tagName);
+            if ((typeof hasUnsavedMenuChanges === 'function' && hasUnsavedMenuChanges()) || isTyping) {
+                let fresh = cats.menu || {};
+                Object.keys(fresh).forEach(id => { if (!menuChanges[id]) currentMenu[id] = fresh[id]; });
+                menuServerUpdatePending = true;
+                if (typeof updateMenuDirtyBanner === 'function') updateMenuDirtyBanner();
+            } else {
+                currentMenu = cats.menu || {};
+                if (typeof renderMenuTab === 'function') renderMenuTab();
+            }
         }
         else if (currentTabType === 'catalog_order') {
             currentCatalog = isNewShopCatalog ? (cats.newshop || {}) : (cats.order || {});
-            renderCatalogOrder();
+            if (typeof renderCatalogOrder === 'function') renderCatalogOrder();
         }
         else if (currentTabType === 'catalog_checklist') {
             currentCatalog = cats.checklist || {};
-            renderCatalogChecklist();
+            if (typeof renderCatalogChecklist === 'function') renderCatalogChecklist();
         }
         else if (currentTabType === 'catalog_stoplist') {
             currentCatalog = cats.stoplist || {};
-            renderCatalogStoplist();
+            if (typeof renderCatalogStoplist === 'function') renderCatalogStoplist();
         }
     });
 

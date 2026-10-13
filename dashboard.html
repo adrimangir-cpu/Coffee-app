@@ -5651,40 +5651,46 @@ async function exportGraphsToExcel() {
         if (!btn) btn = document.querySelector('.menu-actions .btn-save') || { innerHTML: '', disabled: false };
         let origText = btn.innerHTML || "💾 Сохранить меню";
         
-        // ⚡ Мгновенная реакция кнопки на клик
+        // ⚡ Мгновенная реакция
         if(btn) { btn.disabled = true; btn.innerHTML = "⏳ СОХРАНЕНИЕ МЕНЮ..."; }
         
         if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); 
         await new Promise(r => setTimeout(r, 50));
         
-        if (Object.keys(menuChanges || {}).length === 0) {
-            if(btn) btn.innerHTML = "✅ ИЗМЕНЕНИЙ НЕТ";
-            setTimeout(() => { if(btn) { btn.innerHTML = origText; btn.disabled = false; } }, 1500);
-            return;
-        }
-        
         try {
             let updates = {};
-            for (let id in menuChanges) {
-                updates[id] = menuChanges[id] === null ? null : menuChanges[id];
+            
+            // ⚡ 1. БРОНЕБОЙНЫЙ СБОР: Берем абсолютно все напитки прямо с экрана (из памяти)
+            // Теперь неважно, отметился ли рецепт как "измененный" — мы сохраняем всё текущее состояние
+            for (let id in currentMenu) {
+                updates[id] = currentMenu[id];
+            }
+            
+            // ⚡ 2. ДОБАВЛЯЕМ УДАЛЕНИЯ: Если вы удалили напиток, убеждаемся, что он удалится и из базы
+            for (let id in (window.menuChanges || {})) {
+                if (window.menuChanges[id] === null) {
+                    updates[id] = null;
+                }
+            }
+
+            // Если меню вообще пустое, останавливаемся
+            if (Object.keys(updates).length === 0) {
+                if(btn) btn.innerHTML = "✅ МЕНЮ ПУСТО";
+                setTimeout(() => { if(btn) { btn.innerHTML = origText; btn.disabled = false; } }, 1500);
+                return;
             }
             
             const rawFetch = typeof originalFetch !== 'undefined' ? originalFetch : fetch;
             let savePromise = rawFetch(`${FB_URL}/catalogs/menu.json`, {
-                method: 'PATCH',
+                method: 'PATCH', // PATCH безопасно перезапишет текущие данные новыми
                 body: JSON.stringify(updates)
             }).then(res => { if (!res.ok) throw new Error("Ошибка сети"); });
             
             let timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Таймаут соединения")), 10000));
             await Promise.race([savePromise, timeoutPromise]);
 
-            for (let id in updates) {
-                if (updates[id] === null) delete currentMenu[id];
-                else currentMenu[id] = updates[id];
-            }
-
-            // ⚡ Очищаем изменения (проблемная команда clearMenuDraft отсюда удалена)
-            menuChanges = {}; 
+            // Очищаем старую корзину изменений
+            window.menuChanges = {}; 
             
             if(btn) btn.innerHTML = "✅ СОХРАНЕНО!";
             

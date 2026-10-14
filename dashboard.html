@@ -4551,6 +4551,7 @@ window.syncStoplistWithMenu = async function() {
                 </div>
                 <div style="display:flex; gap:10px; flex-wrap:wrap; width:100%;">
                     <button class="btn-add" style="flex:1 1 auto;" onclick="addItemOrder()">➕ Добавить позицию</button>
+                    <button class="btn-add" style="flex:1 1 auto;" onclick="smartFillVolumes()">🪄 Автозаполнить пустые объемы</button>
                     <button class="btn-save" style="flex:1 1 auto; margin:0;" onclick="saveCatalog(this)">💾 Сохранить в базу</button>
                     <button class="btn-add" style="flex:0 1 auto; padding:10px 15px;" onclick="toggleCatElements('settings-content-div', 'arr_set_ord')">⚙️ Настройки <span id="arr_set_ord">▼</span></button>
                 </div>
@@ -4668,9 +4669,10 @@ window.syncStoplistWithMenu = async function() {
         setupUniversalActionBar(`
             <div class="cat-chk-actions action-container sticky-action-panel action-panel-dropdown" style="display: flex; flex-direction: column; margin-top: 10px;">
                 <div style="display:flex; gap:10px; flex-wrap:wrap; width:100%;">
-                    <button class="btn-add" style="flex:1 1 auto;" onclick="addItemChecklist()">➕ Добавить позицию</button>
+                    <button class="btn-add" style="flex:1 1 auto;" onclick="addItemOrder()">➕ Добавить позицию</button>
+                    <button class="btn-add" style="flex:1 1 auto;" onclick="smartFillVolumes()">🪄 Автозаполнить пустые объемы</button>
                     <button class="btn-save" style="flex:1 1 auto; margin:0;" onclick="saveCatalog(this)">💾 Сохранить в базу</button>
-                    <button class="btn-add" style="flex:0 1 auto; padding:10px 15px;" onclick="toggleCatElements('chk-settings-content', 'arr_chk_set')">⚙️ Настройки <span id="arr_chk_set">▼</span></button>
+                    <button class="btn-add" style="flex:0 1 auto; padding:10px 15px;" onclick="toggleCatElements('settings-content-div', 'arr_set_ord')">⚙️ Настройки <span id="arr_set_ord">▼</span></button>
                 </div>
                 
                 <div class="chk-settings-content action-container" style="display:none; flex-wrap:wrap; gap:15px; width:100%; margin-top:15px; padding-top:15px; border-top:1px solid #eee;">
@@ -5017,7 +5019,19 @@ window.syncStoplistWithMenu = async function() {
                     html += `<tr class="menulvl3_${safeSc}" style="display:${displayStyleL3};">
                         <td><select onchange="updateVal('${k}','globalCat',this.value)">${gcatOptions}</select></td>
                         <td><select onchange="updateVal('${k}','cat',this.value)">${catOptions}</select></td>
-                        <td><input type="text" style="font-weight:bold; font-size:15px; color:#311b92;" value="${item.name || item.title || item.drink || ''}" onchange="updateVal('${k}','name',this.value)"></td>
+                        <td>
+                            <input type="text" style="font-weight:bold; font-size:15px; color:#311b92;" value="${item.name || item.title || item.drink || ''}" onchange="updateVal('${k}','name',this.value)">
+                            ${!isMainMenu ? `
+                            <select onchange="updateVal('${k}','cupSize',this.value)" style="margin-top:8px; font-size:12px; width:100%; border:1px solid #7E57C2; border-radius:6px; padding:4px; color:#311b92; background:#f3e5f5;">
+                                <option value="Стандарт" ${item.cupSize === 'Стандарт' || !item.cupSize ? 'selected' : ''}>Без тары / Стандарт</option>
+                                <option value="250" ${item.cupSize === '250' ? 'selected' : ''}>Стакан 250 мл</option>
+                                <option value="350" ${item.cupSize === '350' ? 'selected' : ''}>Стакан 350 мл</option>
+                                <option value="450" ${item.cupSize === '450' ? 'selected' : ''}>Стакан 450 мл</option>
+                                <option value="500" ${item.cupSize === '500' ? 'selected' : ''}>Стакан 500 мл</option>
+                                <option value="600" ${item.cupSize === '600' ? 'selected' : ''}>Стакан 600 мл</option>
+                            </select>
+                            ` : ''}
+                        </td>
                         <td><input type="number" style="font-weight:bold;" value="${item.price || 0}" onchange="updateVal('${k}','price',this.value)"></td>
                         <td style="padding:15px 10px;">${blocksHtml}<button class="btn-add" style="margin-top:12px; font-size:11px; padding:8px 16px;" onclick="addMenuRecipeBlock('${k}')">+ Добавить новый слой</button></td>
                         <td style="text-align:center;"><button class="btn-del" onclick="deleteItem('${k}')">🗑</button></td>
@@ -5027,6 +5041,7 @@ window.syncStoplistWithMenu = async function() {
         });
         box.innerHTML = html + "</table></div>";
     }
+    
 
     function addMenuItem() {
         let id = "menu_" + Date.now();
@@ -5506,20 +5521,33 @@ async function exportGraphsToExcel() {
   window.updateVal = function(id, field, val) { 
         let selectEl = document.activeElement; 
       
-      // ⚡ АВТОМАТИЧЕСКИЙ ОБЪЕМ ПО КАТЕГОРИЯМ И БРЕНДАМ
-    if (field === 'name' && val.trim() !== "" && (!currentCatalog[id].volume || currentCatalog[id].volume == 0)) {
-        let nameLow = val.toLowerCase();
-        let catLow = (currentCatalog[id].cat || "").toLowerCase();
+ // ⚡ АВТОМАТИЧЕСКИЙ ОБЪЕМ ПО КАТЕГОРИЯМ И БРЕНДАМ (УЛУЧШЕННЫЙ)
+    if ((field === 'name' || field === 'cat' || field === 'globalCat') && (!currentCatalog[id].volume || currentCatalog[id].volume == 0)) {
+        let nLow = (currentCatalog[id].name || "").toLowerCase();
+        let cLow = (currentCatalog[id].cat || "").toLowerCase();
         
-        if (catLow.includes('сироп') || nameLow.includes('гербариста') || nameLow.includes('herbarista') || nameLow.includes('vedrenne')) {
-            currentCatalog[id].volume = 700;
-        } else if (catLow.includes('топпинг') || nameLow.includes('спум') || nameLow.includes('spoom')) {
-            currentCatalog[id].volume = 1000;
-        } else if (catLow.includes('молоко') || nameLow.includes('молоко')) {
-            currentCatalog[id].volume = 1000;
-        } else if (nameLow.includes('джус болл') || nameLow.includes('тапиока')) {
-            currentCatalog[id].volume = 3200;
+        let newVol = 0;
+        if (cLow.includes('сироп') || nLow.includes('гербариста') || nLow.includes('herbarista') || nLow.includes('vedrenne')) {
+            newVol = 700;
+        } else if (cLow.includes('топпинг') || nLow.includes('спум') || nLow.includes('spoom')) {
+            newVol = 1000;
+        } else if (cLow.includes('молоко') || nLow.includes('молоко')) {
+            newVol = 1000;
+        } else if (nLow.includes('джус болл') || nLow.includes('тапиока')) {
+            newVol = 3200;
         }
+        
+        if (newVol > 0) {
+            currentCatalog[id].volume = newVol;
+            catalogChanges[id] = currentCatalog[id];
+            
+            // Если изменили категорию, мгновенно перерисовываем, чтобы цифра появилась на экране
+            if (field === 'cat' || field === 'globalCat') {
+                if (typeof currentPath !== 'undefined' && currentPath.includes('order')) setTimeout(renderCatalogOrder, 50);
+                if (typeof currentPath !== 'undefined' && currentPath.includes('checklist')) setTimeout(renderCatalogChecklist, 50);
+            }
+        }
+    }
         // Синхронизируем изменения
         catalogChanges[id] = currentCatalog[id];
     }
@@ -7515,6 +7543,82 @@ document.addEventListener('focusin', function(e) {
         e.target.select();
     }
 });
+
+    // ==========================================
+// ⚡ УМНОЕ АВТОЗАПОЛНЕНИЕ ОБЪЕМОВ (Анализ по категориям)
+// ==========================================
+window.smartFillVolumes = function() {
+    let changed = 0;
+    let catStats = {};
+
+    // 1. Собираем статистику: какой объем как часто встречается в каждой категории
+    Object.keys(currentCatalog).forEach(k => {
+        let item = currentCatalog[k];
+        let cat = item.cat || "Прочее";
+        let vol = parseFloat(item.volume);
+        
+        if (!catStats[cat]) catStats[cat] = {};
+        if (vol > 0) {
+            catStats[cat][vol] = (catStats[cat][vol] || 0) + 1;
+        }
+    });
+
+    // 2. Определяем самый "стабильный" объем для каждой категории
+    let bestVolumeForCat = {};
+    Object.keys(catStats).forEach(cat => {
+        let maxCount = 0;
+        let bestVol = 0;
+        Object.keys(catStats[cat]).forEach(vol => {
+            if (catStats[cat][vol] > maxCount) {
+                maxCount = catStats[cat][vol];
+                bestVol = parseFloat(vol);
+            }
+        });
+        // Если хотя бы 2 раза ввели один и тот же объем — считаем это правилом
+        if (maxCount >= 2) {
+            bestVolumeForCat[cat] = bestVol;
+        }
+    });
+
+    // 3. Заполняем пустые ячейки
+    Object.keys(currentCatalog).forEach(k => {
+        let item = currentCatalog[k];
+        let cat = item.cat || "Прочее";
+        
+        // Если объем пустой или 0
+        if (!item.volume || item.volume == 0 || item.volume === "") {
+            
+            // Сначала пробуем применить найденную "стабильность" из этой категории
+            if (bestVolumeForCat[cat]) {
+                item.volume = bestVolumeForCat[cat];
+                catalogChanges[k] = item;
+                changed++;
+            } 
+            // Если закономерностей нет, применяем жесткие правила
+            else {
+                let nLow = (item.name || "").toLowerCase();
+                let cLow = cat.toLowerCase();
+                if (cLow.includes('сироп') || nLow.includes('гербариста')) item.volume = 700;
+                else if (cLow.includes('топпинг') || nLow.includes('спум')) item.volume = 1000;
+                else if (cLow.includes('молоко') || nLow.includes('молоко')) item.volume = 1000;
+                else if (nLow.includes('джус болл')) item.volume = 3200;
+                
+                if(item.volume) {
+                    catalogChanges[k] = item;
+                    changed++;
+                }
+            }
+        }
+    });
+
+    if (changed > 0) {
+        alert(`✅ Умное автозаполнение сработало!\nЗаполнено пустых ячеек: ${changed}\n\nНе забудьте нажать "💾 Сохранить в базу"!`);
+        if (typeof currentPath !== 'undefined' && currentPath.includes('order')) renderCatalogOrder();
+        else if (typeof currentPath !== 'undefined' && currentPath.includes('checklist')) renderCatalogChecklist();
+    } else {
+        alert("ℹ️ Пустых ячеек, для которых есть понятная закономерность, не найдено.");
+    }
+};
     
 </script>
 </body>

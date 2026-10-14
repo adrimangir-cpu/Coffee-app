@@ -5146,276 +5146,323 @@ window.syncStoplistWithMenu = async function() {
 
 
    window.exportMenuToExcel = async function() {
-        let existingModal = document.getElementById('export-modal-overlay');
-        if (existingModal) existingModal.remove();
+    let existingModal = document.getElementById('export-modal-overlay');
+    if (existingModal) existingModal.remove();
 
-        // ⚡ Собираем все глобальные категории, которые есть в меню
-        let globalCats = ["Основное меню"];
-        Object.values(currentMenu).forEach(i => {
-            if(i && i.globalCat && !globalCats.includes(i.globalCat) && !i.globalCat.includes("!!!")) {
-                globalCats.push(i.globalCat);
-            }
-        });
+    // ⚡ Собираем все глобальные категории, которые есть в меню
+    let globalCats = ["Основное меню"];
+    Object.values(currentMenu).forEach(i => {
+        if(i && i.globalCat && !globalCats.includes(i.globalCat) && !i.globalCat.includes("!!!")) {
+            globalCats.push(i.globalCat);
+        }
+    });
 
-        // ⚡ Создаем красивое всплывающее окно
-        let modalHtml = `
-        <div id="export-modal-overlay" style="position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:9999; display:flex; align-items:center; justify-content:center; backdrop-filter:blur(4px);">
-            <div style="background:var(--bg-window); padding:30px; border-radius:16px; width:90%; max-width:400px; box-shadow:0 10px 30px rgba(0,0,0,0.5); border:1px solid var(--line-delicate); text-align:center;">
-                <h3 style="margin-top:0; color:var(--brand-maroon); font-size:22px; margin-bottom:20px;">Экспорт Техкарт в Excel</h3>
-                <p style="font-size:14px; color:var(--text-muted); margin-bottom:15px; text-align:left;">Выберите, какую категорию собрать:</p>
-                <select id="export-gcat-select" style="width:100%; padding:12px; border-radius:8px; border:2px solid #FF9800; color:#E65100; margin-bottom:25px; font-size:15px; font-weight:bold; outline:none; background:#FFF3E0;">
-                    <option value="ALL">📦 Все категории сразу</option>
-                    ${globalCats.map(c => `<option value="${c}">${c}</option>`).join('')}
-                </select>
-                <div style="display:flex; gap:10px;">
-                    <button onclick="document.getElementById('export-modal-overlay').remove()" style="flex:1; padding:12px; border-radius:8px; border:none; background:#eee; color:#333; font-weight:bold; font-size:14px; cursor:pointer; transition:0.2s;">Отмена</button>
-                    <button id="btn-confirm-export" style="flex:1; padding:12px; border-radius:8px; border:none; background:var(--brand-olive); color:#fff; font-weight:bold; font-size:14px; cursor:pointer; transition:0.2s;">📥 Скачать</button>
-                </div>
+    // ⚡ Создаем красивое всплывающее окно
+    let modalHtml = `
+    <div id="export-modal-overlay" style="position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:9999; display:flex; align-items:center; justify-content:center; backdrop-filter:blur(4px);">
+        <div style="background:var(--bg-window); padding:30px; border-radius:16px; width:90%; max-width:400px; box-shadow:0 10px 30px rgba(0,0,0,0.5); border:1px solid var(--line-delicate); text-align:center;">
+            <h3 style="margin-top:0; color:var(--brand-maroon); font-size:22px; margin-bottom:20px;">Экспорт Техкарт в Excel</h3>
+            <p style="font-size:14px; color:var(--text-muted); margin-bottom:15px; text-align:left;">Выберите, какую категорию собрать:</p>
+            <select id="export-gcat-select" style="width:100%; padding:12px; border-radius:8px; border:2px solid #FF9800; color:#E65100; margin-bottom:25px; font-size:15px; font-weight:bold; outline:none; background:#FFF3E0;">
+                <option value="ALL">📦 Все категории сразу</option>
+                ${globalCats.map(c => `<option value="${c}">${c}</option>`).join('')}
+            </select>
+            <div style="display:flex; gap:10px;">
+                <button onclick="document.getElementById('export-modal-overlay').remove()" style="flex:1; padding:12px; border-radius:8px; border:none; background:#eee; color:#333; font-weight:bold; font-size:14px; cursor:pointer; transition:0.2s;">Отмена</button>
+                <button id="btn-confirm-export" style="flex:1; padding:12px; border-radius:8px; border:none; background:var(--brand-olive); color:#fff; font-weight:bold; font-size:14px; cursor:pointer; transition:0.2s;">📥 Скачать</button>
             </div>
-        </div>`;
-        document.body.insertAdjacentHTML('beforeend', modalHtml);
+        </div>
+    </div>`;
+    document.body.insertAdjacentHTML('beforeend', modalHtml);
 
-        document.getElementById('btn-confirm-export').onclick = async function() {
-            let selectedCat = document.getElementById('export-gcat-select').value;
-            document.getElementById('export-modal-overlay').remove();
-            await processMenuExport(selectedCat);
-        };
+    document.getElementById('btn-confirm-export').onclick = async function() {
+        let selectedCat = document.getElementById('export-gcat-select').value;
+        document.getElementById('export-modal-overlay').remove();
+        await processMenuExport(selectedCat);
     };
+};
 
-    // ⚡ Основной процесс сборки Excel
-    async function processMenuExport(selectedCat) {
-        showReportOverlay("Генерация Excel...");
-        try {
-            let catOrderLookup = Object.values(cachedData.catalogOrder || {});
-            let catChecklistLookup = Object.values(cachedData.catalogChecklist || {});
-            let fullCatalog = [...catOrderLookup, ...catChecklistLookup];
+// ⚡ Вспомогательная функция для генерации букв колонок Excel (A, B, C ... AA, AB)
+function getExcelColLetter(colIdx) {
+    let letter = '';
+    while (colIdx >= 0) {
+        letter = String.fromCharCode((colIdx % 26) + 65) + letter;
+        colIdx = Math.floor(colIdx / 26) - 1;
+    }
+    return letter;
+}
 
-            // ⚡ Фильтруем меню по выбранной категории
-            let menuToExport = {};
-            if (selectedCat === "ALL") {
-                menuToExport = currentMenu;
-            } else {
-                Object.keys(currentMenu).forEach(k => {
-                    let drink = currentMenu[k];
-                    if ((drink.globalCat || "Основное меню") === selectedCat) {
-                        menuToExport[k] = drink;
+// ⚡ Основной процесс сборки Excel
+async function processMenuExport(selectedCat) {
+    showReportOverlay("Генерация Excel...");
+    try {
+        let catOrderLookup = Object.values(cachedData.catalogOrder || {});
+        let catChecklistLookup = Object.values(cachedData.catalogChecklist || {});
+        let fullCatalog = [...catOrderLookup, ...catChecklistLookup];
+
+        // ⚡ Фильтруем меню по выбранной категории
+        let menuToExport = {};
+        if (selectedCat === "ALL") {
+            menuToExport = currentMenu;
+        } else {
+            Object.keys(currentMenu).forEach(k => {
+                let drink = currentMenu[k];
+                if ((drink.globalCat || "Основное меню") === selectedCat) {
+                    menuToExport[k] = drink;
+                }
+            });
+        }
+
+        if (Object.keys(menuToExport).length === 0) {
+            hideReportOverlay();
+            alert("В выбранной категории нет напитков для экспорта.");
+            return;
+        }
+
+        // ⚡ 1. АНАЛИЗИРУЕМ РЕЦЕПТЫ И ИЩЕМ "АКТИВНЫЕ" ОБЪЕМЫ (УМНЫЕ СТОЛБЦЫ)
+        let usedSizes = { '250': false, '350': false, '450': false, '500': false, '600': false, 'Std': false };
+        let usedIngredients = new Set();
+        let globalUsage = {};
+        
+        Object.values(menuToExport).forEach(drink => {
+            let isMainMenu = (String(drink.globalCat || "Основное меню").trim().toLowerCase() === 'основное меню');
+            let blocks = drink.blocks || [drink.recipe || []];
+            blocks.forEach(b => {
+                b.forEach(item => {
+                    // Проверяем используемые объемы
+                    if (isMainMenu) {
+                        if (item.qty_250 !== undefined || item.qty) usedSizes['250'] = true;
+                        if (item.qty_350) usedSizes['350'] = true;
+                        if (item.qty_450) usedSizes['450'] = true;
+                        if (item.qty_500) usedSizes['500'] = true;
+                        if (item.qty_600) usedSizes['600'] = true;
+                    } else {
+                        if (item.qty) usedSizes['Std'] = true;
+                    }
+
+                    // Считаем расход ингредиентов
+                    let ingName = item.name || "";
+                    if(ingName) {
+                        usedIngredients.add(ingName);
+                        let q = parseFloat(String(item.qty_600 || item.qty_500 || item.qty_450 || item.qty_350 || item.qty_250 || item.qty || 0).replace(',', '.')) || 0;
+                        if (!globalUsage[ingName]) globalUsage[ingName] = 0;
+                        globalUsage[ingName] += q;
                     }
                 });
-            }
+            });
+        });
 
-            if (Object.keys(menuToExport).length === 0) {
-                hideReportOverlay();
-                alert("В выбранной категории нет напитков для экспорта.");
-                return;
+        // ⚡ ФУНКЦИЯ ДЛЯ ВЫЧИСЛЕНИЯ СТОИМОСТИ 1 ШТ/МЛ (Для тары)
+        const getUnitCost = (searchKeywords) => {
+            let cost = 0;
+            let foundItem = null;
+            for (let keyword of searchKeywords) {
+                let match = fullCatalog.find(item => item && item.name && item.name.toLowerCase().includes(keyword.toLowerCase()));
+                if (match) { foundItem = match; break; }
             }
+            if (foundItem && foundItem.price) {
+                let p = parseFloat(String(foundItem.price).replace(/\s/g, '').replace(',', '.')) || 0;
+                let v = parseFloat(String(foundItem.volume || 1).replace(/\s/g, '').replace(',', '.')) || 1;
+                cost = (v > 0) ? p / v : 0;
+            }
+            return cost;
+        };
 
-            // ⚡ СЧИТАЕМ РАСХОД И ИЩЕМ ИНГРЕДИЕНТЫ (По ВСЕМУ меню для точности)
-            let usedIngredients = new Set();
-            let globalUsage = {};
+        // ⚡ ВЫЧИСЛЯЕМ ДОП. РАСХОД: ВСЕ РАСХОДНИКИ СРАЗУ ВМЕСТЕ
+        let baseExtra = getUnitCost(["Крышка", "Крышки"]) + getUnitCost(["Трубочка", "Трубочки"]) + getUnitCost(["Манжет", "Манжеты", "Капхолдер"]);
+
+        // ⚡ 2. ФОРМИРУЕМ НАСТРОЙКИ АКТИВНЫХ КОЛОНОК
+        let activeCols = [];
+        if (usedSizes['250']) activeCols.push({ key: '250', title: '250 мл', totalTitle: 'Итог 250', width: 7, isMain: true, cup: getUnitCost(["Стакан 250", "Стакан бумажный 250"]) + baseExtra, getQ: (item) => item.qty_250 !== undefined ? item.qty_250 : (item.qty || 0) });
+        if (usedSizes['350']) activeCols.push({ key: '350', title: '350 мл', totalTitle: 'Итог 350', width: 7, isMain: true, cup: getUnitCost(["Стакан 350", "Стакан бумажный 350"]) + baseExtra, getQ: (item) => item.qty_350 || 0 });
+        if (usedSizes['450']) activeCols.push({ key: '450', title: '450 мл', totalTitle: 'Итог 450', width: 7, isMain: true, cup: getUnitCost(["Стакан 450", "Стакан бумажный 450"]) + baseExtra, getQ: (item) => item.qty_450 || 0 });
+        if (usedSizes['500']) activeCols.push({ key: '500', title: '500 мл', totalTitle: 'Итог 500', width: 7, isMain: true, cup: getUnitCost(["Стакан 500", "Стакан бумажный 500"]) + baseExtra, getQ: (item) => item.qty_500 || 0 });
+        if (usedSizes['600']) activeCols.push({ key: '600', title: '600 мл', totalTitle: 'Итог 600', width: 7, isMain: true, cup: getUnitCost(["Стакан 600", "Стакан бумажный 600"]) + baseExtra, getQ: (item) => item.qty_600 || 0 });
+        if (usedSizes['Std']) activeCols.push({ key: 'Std', title: 'Стандарт', totalTitle: 'Итог Стд', width: 10, isMain: false, cup: getUnitCost(["Стакан", "Стакан бумажный"]) + baseExtra, getQ: (item) => item.qty || 0 });
+
+        // Рассчитываем индексы колонок для формул
+        let qtyCount = activeCols.length;
+        let priceIdx = 1 + qtyCount;
+        let totalsStartIdx = priceIdx + 1;
+        let dbStartIdx = totalsStartIdx + qtyCount + 1; // +1 на пустой столбец-разделитель
+        
+        let priceLetter = getExcelColLetter(priceIdx);
+        let dbStartLetter = getExcelColLetter(dbStartIdx);
+        let dbEndLetter = getExcelColLetter(dbStartIdx + 3);
+
+        let fullAOA = [];
+        let sortedIngredients = Array.from(usedIngredients).sort((a,b) => a.localeCompare(b));
+        
+        // ⚡ ЗАГОЛОВКИ ДЛЯ ПРАВОЙ БАЗЫ ДАННЫХ
+        let priceRows = [ ["Ингредиенты (Справочник)", "Объем уп.", "Цена уп. (₽)", "За единицу (₽)", "Примерный расход на меню"] ];
+        sortedIngredients.forEach((ing, index) => {
+            let r = index + 2; 
+            let prod = fullCatalog.find(c => c && c.name === ing);
+            let price = prod ? (parseFloat(String(prod.price).replace(/\s/g, '').replace(',', '.')) || 0) : 0;
+            let vol = prod ? (parseFloat(String(prod.volume).replace(/\s/g, '').replace(',', '.')) || 1) : 1;
             
-            Object.values(currentMenu).forEach(drink => {
-                let blocks = drink.blocks || [drink.recipe || []];
-                blocks.forEach(b => {
-                    b.forEach(item => {
-                        let ingName = item.name || "";
-                        if(ingName) {
-                            usedIngredients.add(ingName);
-                            // Суммируем всё, что есть
-                            let q = parseFloat(String(item.qty_600 || item.qty_500 || item.qty_450 || item.qty_350 || item.qty_250 || item.qty || 0).replace(',', '.')) || 0;
-                            if (!globalUsage[ingName]) globalUsage[ingName] = 0;
-                            globalUsage[ingName] += q;
+            // Динамическая формула базы (Цена / Объем)
+            let formulaDb = `IFERROR(${getExcelColLetter(dbStartIdx+2)}${r}/${getExcelColLetter(dbStartIdx+1)}${r},0)`;
+            priceRows.push([ing, vol, price, {t:'n', f:formulaDb}, globalUsage[ing] || 0]);
+        });
+
+        let rIdx = 0; 
+        Object.values(menuToExport).forEach(drink => {
+            let startRow = rIdx + 2; 
+            let isMainMenu = (String(drink.globalCat || "Основное меню").trim().toLowerCase() === 'основное меню');
+            let pRowHeader = priceRows[rIdx] || ["","","","",""];
+            
+            // ⚡ СТРОИМ ШАПКУ НАПИТКА ДИНАМИЧЕСКИ
+            let headerRow = [ `=== ${drink.name ? drink.name.toUpperCase() : "БЕЗ НАЗВАНИЯ"} ===` ];
+            activeCols.forEach(c => headerRow.push(c.title)); // Объемы
+            headerRow.push("Цена за ед.");
+            activeCols.forEach(c => headerRow.push(c.totalTitle)); // Итоги
+            headerRow.push(""); // Разделитель
+            headerRow.push(...pRowHeader); // База
+            
+            fullAOA.push(headerRow);
+            rIdx++;
+
+            let blocks = drink.blocks || [drink.recipe || []];
+            blocks.forEach(b => {
+                b.forEach(item => {
+                    let xlRow = rIdx + 1; 
+                    let pR = priceRows[rIdx] || ["","","","",""];
+                    
+                    let itemRow = [ item.name || "" ];
+                    
+                    // Заполняем объемы
+                    activeCols.forEach(c => {
+                        let val = "";
+                        if ((isMainMenu && c.isMain) || (!isMainMenu && !c.isMain)) {
+                            val = c.getQ(item);
+                        }
+                        itemRow.push(parseFloat(String(val).replace(',','.')) || val);
+                    });
+                    
+                    // Формула VLOOKUP (ищет цену за ед. в базе)
+                    itemRow.push({t:'n', f:`IFERROR(VLOOKUP(A${xlRow},${dbStartLetter}:${dbEndLetter},4,FALSE),0)`});
+                    
+                    // Формулы итогов
+                    activeCols.forEach((c, i) => {
+                        if ((isMainMenu && c.isMain) || (!isMainMenu && !c.isMain)) {
+                            let qtyLetter = getExcelColLetter(1 + i);
+                            itemRow.push({t:'n', f:`${qtyLetter}${xlRow}*${priceLetter}${xlRow}`});
+                        } else {
+                            itemRow.push("");
                         }
                     });
+                    
+                    itemRow.push("");
+                    itemRow.push(...pR);
+                    
+                    fullAOA.push(itemRow);
+                    rIdx++;
                 });
             });
-
-            // ⚡ ФУНКЦИЯ ДЛЯ ВЫЧИСЛЕНИЯ СТОИМОСТИ 1 ШТ/МЛ (Для тары)
-            const getUnitCost = (searchKeywords) => {
-                let cost = 0;
-                let foundItem = null;
-                for (let keyword of searchKeywords) {
-                    let match = fullCatalog.find(item => item && item.name && item.name.toLowerCase().includes(keyword.toLowerCase()));
-                    if (match) { foundItem = match; break; }
+            
+            // ⚡ ДОБАВЛЯЕМ АВТОМАТИЧЕСКИЙ ДОП. РАСХОД (СТАКАН+КРЫШКА+МАНЖЕТ+ТРУБОЧКА)
+            let xlRowExtra = rIdx + 1;
+            let pR1 = priceRows[rIdx] || ["","","","",""];
+            
+            let extraRow = [ "Доп. расход (Стакан + Крышка + Манжет + Трубочка)" ];
+            activeCols.forEach(() => extraRow.push("")); // Пропуск объемов
+            extraRow.push(""); // Пропуск цены за ед.
+            
+            // Проставляем итоги по таре
+            activeCols.forEach(c => {
+                if ((isMainMenu && c.isMain) || (!isMainMenu && !c.isMain)) {
+                    extraRow.push(parseFloat(c.cup.toFixed(2)));
+                } else {
+                    extraRow.push("");
                 }
-                if (foundItem && foundItem.price) {
-                    let p = parseFloat(String(foundItem.price).replace(/\s/g, '').replace(',', '.')) || 0;
-                    let v = parseFloat(String(foundItem.volume || 1).replace(/\s/g, '').replace(',', '.')) || 1;
-                    cost = (v > 0) ? p / v : 0;
+            });
+            
+            extraRow.push("");
+            extraRow.push(...pR1);
+            fullAOA.push(extraRow);
+            rIdx++;
+
+            // ⚡ СУММИРУЕМ ИТОГОВУЮ СЕБЕСТОИМОСТЬ ДИНАМИЧЕСКИ
+            let pR2 = priceRows[rIdx] || ["","","","",""];
+            let sumRow = [ "ИТОГО СЕБЕСТОИМОСТЬ" ];
+            activeCols.forEach(() => sumRow.push(""));
+            sumRow.push("");
+            
+            activeCols.forEach((c, i) => {
+                if ((isMainMenu && c.isMain) || (!isMainMenu && !c.isMain)) {
+                    let colLetter = getExcelColLetter(totalsStartIdx + i);
+                    sumRow.push({t:'n', f:`SUM(${colLetter}${startRow}:${colLetter}${xlRowExtra})`});
+                } else {
+                    sumRow.push("");
                 }
-                return cost;
-            };
-
-            // ⚡ ВЫЧИСЛЯЕМ ДОП. РАСХОД В ЗАВИСИМОСТИ ОТ СТАКАНА
-            let baseExtra = getUnitCost(["Крышка", "Крышки"]) + getUnitCost(["Трубочка", "Трубочки"]) + getUnitCost(["Манжет", "Манжеты", "Капхолдер"]);
-            let cup250 = getUnitCost(["Стакан 250", "Стакан бумажный 250"]) + baseExtra;
-            let cup350 = getUnitCost(["Стакан 350", "Стакан бумажный 350"]) + baseExtra;
-            let cup450 = getUnitCost(["Стакан 450", "Стакан бумажный 450"]) + baseExtra;
-            let cup500 = getUnitCost(["Стакан 500", "Стакан бумажный 500"]) + baseExtra;
-            let cup600 = getUnitCost(["Стакан 600", "Стакан бумажный 600"]) + baseExtra;
-            let cupStd = getUnitCost(["Стакан", "Стакан бумажный"]) + baseExtra;
-
-            let fullAOA = [];
-            let sortedIngredients = Array.from(usedIngredients).sort((a,b) => a.localeCompare(b));
-            
-            // Заголовки для правой базы данных
-            let priceRows = [ ["Ингредиенты (Справочник)", "Объем уп.", "Цена уп. (₽)", "За единицу (₽)", "Примерный расход на меню"] ];
-            
-            sortedIngredients.forEach((ing, index) => {
-                let r = index + 2; 
-                let prod = fullCatalog.find(c => c && c.name === ing);
-                let price = prod ? (parseFloat(String(prod.price).replace(/\s/g, '').replace(',', '.')) || 0) : 0;
-                let vol = prod ? (parseFloat(String(prod.volume).replace(/\s/g, '').replace(',', '.')) || 1) : 1;
-                // Формула для вычисления цены 1 мл/гр/шт
-                priceRows.push([ing, vol, price, {t:'n', f:`IFERROR(R${r}/Q${r},0)`}, globalUsage[ing] || 0]);
             });
-
-            let rIdx = 0; 
-            Object.values(menuToExport).forEach(drink => {
-                let startRow = rIdx + 2; 
-                let isMainMenu = (String(drink.globalCat || "Основное меню").trim().toLowerCase() === 'основное меню');
-                
-                let pRowHeader = priceRows[rIdx] || ["","","","",""];
-                // ⚡ СТРОИМ ШАПКУ НАПИТКА (Слева - Техкарта, Справа - База)
-                fullAOA.push([
-                    `=== ${drink.name ? drink.name.toUpperCase() : "БЕЗ НАЗВАНИЯ"} ===`, 
-                    "250 мл", "350 мл", "450 мл", "500 мл", "600 мл", "Стандарт", "Цена за ед.", 
-                    "Итог 250", "Итог 350", "Итог 450", "Итог 500", "Итог 600", "Итог Стд", 
-                    "", ...pRowHeader
-                ]);
-                rIdx++;
-
-                let blocks = drink.blocks || [drink.recipe || []];
-                blocks.forEach(b => {
-                    b.forEach(item => {
-                        let xlRow = rIdx + 1; 
-                        let pR = priceRows[rIdx] || ["","","","",""];
-                        
-                        let q250 = isMainMenu ? (item.qty_250 !== undefined ? item.qty_250 : (item.qty || 0)) : "";
-                        let q350 = isMainMenu ? (item.qty_350 || 0) : "";
-                        let q450 = isMainMenu ? (item.qty_450 || 0) : "";
-                        let q500 = isMainMenu ? (item.qty_500 || 0) : "";
-                        let q600 = isMainMenu ? (item.qty_600 || 0) : "";
-                        let qStd = !isMainMenu ? (item.qty || 0) : "";
-                        
-                        // Строим строку ингредиента с формулами Excel
-                        fullAOA.push([
-                            item.name || "", 
-                            parseFloat(String(q250).replace(',','.')) || q250, 
-                            parseFloat(String(q350).replace(',','.')) || q350,
-                            parseFloat(String(q450).replace(',','.')) || q450,
-                            parseFloat(String(q500).replace(',','.')) || q500,
-                            parseFloat(String(q600).replace(',','.')) || q600,
-                            parseFloat(String(qStd).replace(',','.')) || qStd,
-                            {t:'n', f:`IFERROR(VLOOKUP(A${xlRow},P:S,4,FALSE),0)`}, 
-                            isMainMenu ? {t:'n', f:`B${xlRow}*H${xlRow}`} : "", 
-                            isMainMenu ? {t:'n', f:`C${xlRow}*H${xlRow}`} : "", 
-                            isMainMenu ? {t:'n', f:`D${xlRow}*H${xlRow}`} : "", 
-                            isMainMenu ? {t:'n', f:`E${xlRow}*H${xlRow}`} : "", 
-                            isMainMenu ? {t:'n', f:`F${xlRow}*H${xlRow}`} : "", 
-                            !isMainMenu ? {t:'n', f:`G${xlRow}*H${xlRow}`} : "", 
-                            "", ...pR
-                        ]);
-                        rIdx++;
-                    });
-                });
-                
-                // ⚡ ДОБАВЛЯЕМ АВТОМАТИЧЕСКИЙ ДОП. РАСХОД ПО ТАРЕ
-                let xlRowExtra = rIdx + 1;
-                let pR1 = priceRows[rIdx] || ["","","","",""];
-                fullAOA.push([
-                    "Доп. расход (Тара + Трубочка + Манжет)", "", "", "", "", "", "", "", 
-                    isMainMenu ? parseFloat(cup250.toFixed(2)) : "", 
-                    isMainMenu ? parseFloat(cup350.toFixed(2)) : "", 
-                    isMainMenu ? parseFloat(cup450.toFixed(2)) : "", 
-                    isMainMenu ? parseFloat(cup500.toFixed(2)) : "", 
-                    isMainMenu ? parseFloat(cup600.toFixed(2)) : "", 
-                    !isMainMenu ? parseFloat(cupStd.toFixed(2)) : "", 
-                    "", ...pR1
-                ]);
-                rIdx++;
-
-                // ⚡ СУММИРУЕМ ИТОГОВУЮ СЕБЕСТОИМОСТЬ (Ингредиенты + Тара)
-                let pR2 = priceRows[rIdx] || ["","","","",""];
-                fullAOA.push([
-                    "ИТОГО СЕБЕСТОИМОСТЬ", "", "", "", "", "", "", "", 
-                    isMainMenu ? {t:'n', f:`SUM(I${startRow}:I${xlRowExtra})`} : "", 
-                    isMainMenu ? {t:'n', f:`SUM(J${startRow}:J${xlRowExtra})`} : "", 
-                    isMainMenu ? {t:'n', f:`SUM(K${startRow}:K${xlRowExtra})`} : "", 
-                    isMainMenu ? {t:'n', f:`SUM(L${startRow}:L${xlRowExtra})`} : "", 
-                    isMainMenu ? {t:'n', f:`SUM(M${startRow}:M${xlRowExtra})`} : "", 
-                    !isMainMenu ? {t:'n', f:`SUM(N${startRow}:N${xlRowExtra})`} : "", 
-                    "", ...pR2
-                ]);
-                rIdx++;
-
-                let pR3 = priceRows[rIdx] || ["","","","",""];
-                fullAOA.push(["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ...pR3]);
-                rIdx++;
-            });
-
-            // Добиваем правую часть таблицы, если ингредиентов оказалось больше, чем строк в рецептах
-            while(rIdx < priceRows.length) {
-                fullAOA.push(["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ...priceRows[rIdx]]);
-                rIdx++;
-            }
-
-            if(fullAOA.length === 0) {
-                hideReportOverlay();
-                alert("Меню пустое, нечего экспортировать!");
-                return;
-            }
-
-            const ws = XLSX.utils.aoa_to_sheet(fullAOA);
             
-            // ⚡ НАСТРОЙКА ШИРИНЫ КОЛОНОК EXCEL
-            ws['!cols'] = [
-                { wch: 35 }, // A: Название ингредиента
-                { wch: 7 },  // B: 250 мл
-                { wch: 7 },  // C: 350 мл
-                { wch: 7 },  // D: 450 мл
-                { wch: 7 },  // E: 500 мл
-                { wch: 7 },  // F: 600 мл
-                { wch: 10 }, // G: Стандарт
-                { wch: 12 }, // H: Цена ед.
-                { wch: 9 },  // I: Итог 250
-                { wch: 9 },  // J: Итог 350
-                { wch: 9 },  // K: Итог 450
-                { wch: 9 },  // L: Итог 500
-                { wch: 9 },  // M: Итог 600
-                { wch: 10 }, // N: Итог Стд
-                { wch: 3 },  // O: Пустая
-                { wch: 35 }, // P: Ингредиенты (Справочник)
-                { wch: 10 }, // Q: Объем
-                { wch: 10 }, // R: Цена
-                { wch: 13 }, // S: За единицу
-                { wch: 25 }  // T: Примерный расход
-            ];
+            sumRow.push("");
+            sumRow.push(...pR2);
+            fullAOA.push(sumRow);
+            rIdx++;
 
-            const wb = XLSX.utils.book_new();
-            
-            let sheetName = selectedCat === "ALL" ? "Все_Техкарты" : selectedCat.replace(/[^a-zA-Zа-яА-Я0-9\s]/g, '').trim().substring(0,30);
-            XLSX.utils.book_append_sheet(wb, ws, sheetName);
-            
-            const b64 = XLSX.write(wb, { type: "base64", bookType: "xlsx" });
-            const excelDataUri = "data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64," + b64;
-            
-            let a = document.createElement('a');
-            a.href = excelDataUri;
-            
-            let dateStr = new Date().toLocaleDateString('ru-RU');
-            a.download = `Техкарты_${selectedCat === "ALL" ? "Все" : selectedCat.replace(/\s/g, '_')}_${dateStr}.xlsx`;
-            
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
+            // Пустая строка для отступа
+            let pR3 = priceRows[rIdx] || ["","","","",""];
+            let emptyRow = [""];
+            for(let i=0; i < dbStartIdx - 1; i++) emptyRow.push("");
+            emptyRow.push(...pR3);
+            fullAOA.push(emptyRow);
+            rIdx++;
+        });
 
-            hideReportOverlay();
-            alert("✅ Файл Excel успешно сохранен на ваше устройство!");
-        } catch(e) {
-            hideReportOverlay();
-            alert("❌ Ошибка при генерации Excel: " + e.message);
+        // Добиваем правую часть таблицы
+        while(rIdx < priceRows.length) {
+            let emptyRow = [""];
+            for(let i=0; i < dbStartIdx - 1; i++) emptyRow.push("");
+            emptyRow.push(...priceRows[rIdx]);
+            fullAOA.push(emptyRow);
+            rIdx++;
         }
+
+        if(fullAOA.length === 0) {
+            hideReportOverlay();
+            alert("Меню пустое, нечего экспортировать!");
+            return;
+        }
+
+        const ws = XLSX.utils.aoa_to_sheet(fullAOA);
+        
+        // ⚡ НАСТРОЙКА ШИРИНЫ КОЛОНОК (Тоже динамическая)
+        let colsConfig = [ { wch: 35 } ]; // Название
+        activeCols.forEach(c => colsConfig.push({ wch: c.width })); // Объемы
+        colsConfig.push({ wch: 12 }); // Цена ед.
+        activeCols.forEach(c => colsConfig.push({ wch: c.width + 2 })); // Итоги (чуть шире)
+        colsConfig.push({ wch: 3 }); // Пустая
+        
+        // База данных
+        colsConfig.push({ wch: 35 }, { wch: 10 }, { wch: 10 }, { wch: 13 }, { wch: 25 });
+        ws['!cols'] = colsConfig;
+
+        const wb = XLSX.utils.book_new();
+        let sheetName = selectedCat === "ALL" ? "Все_Техкарты" : selectedCat.replace(/[^a-zA-Zа-яА-Я0-9\s]/g, '').trim().substring(0,30);
+        XLSX.utils.book_append_sheet(wb, ws, sheetName);
+        
+        const b64 = XLSX.write(wb, { type: "base64", bookType: "xlsx" });
+        const excelDataUri = "data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64," + b64;
+        
+        let a = document.createElement('a');
+        a.href = excelDataUri;
+        let dateStr = new Date().toLocaleDateString('ru-RU');
+        a.download = `Техкарты_${selectedCat === "ALL" ? "Все" : selectedCat.replace(/\s/g, '_')}_${dateStr}.xlsx`;
+        
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+
+        hideReportOverlay();
+        alert("✅ Файл Excel успешно сохранен на ваше устройство!");
+    } catch(e) {
+        hideReportOverlay();
+        alert("❌ Ошибка при генерации Excel: " + e.message);
     }
+}
     
 async function exportGraphsToExcel() {
         showReportOverlay("Генерация Excel для Графика...");

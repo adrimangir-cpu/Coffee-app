@@ -4892,7 +4892,80 @@ window.syncStoplistWithMenu = async function() {
         e.target.style.opacity = "1";
     }
 
-   function renderMenuTab() {
+  // =====================================================================
+// РАСХОДНИКИ ДЛЯ ТЕХКАРТ (стаканы, крышки, манжеты, трубочки, сито)
+// Берутся из ОБОИХ справочников: чек-листа (приоритет) и закупки.
+// Вставьте этот блок ОДИН раз — например, прямо перед function renderMenuTab().
+// =====================================================================
+function getConsumablesCatalog() {
+    let out = [];
+    Object.values(cachedData.catalogChecklist || {}).forEach(i => { if (i && i.name) out.push(Object.assign({}, i, { _src: 'Чек-лист' })); });
+    Object.values(cachedData.catalogOrder || {}).forEach(i => { if (i && i.name) out.push(Object.assign({}, i, { _src: 'Закупка' })); });
+    return out;
+}
+
+// Объём стакана из названия: «0,5» → 500, «350 мл» → 350
+function getCupMl(name) {
+    let s = String(name || '').toLowerCase();
+    let m = s.match(/0[,.](\d+)/);
+    if (m) return Math.round(parseFloat('0.' + m[1]) * 1000);
+    m = s.match(/(\d{3})\s*мл/);
+    if (m) return parseInt(m[1], 10);
+    return 0;
+}
+
+// «Семейство» стакана без объёма: «Прозрачные пикми стаканы 0,5» → «прозрачные пикми стаканы»
+function getCupFamily(name) {
+    return String(name || '').toLowerCase().replace(/0[,.]\d+/g, '').replace(/\d{3}\s*мл/g, '').replace(/\s+/g, ' ').trim();
+}
+
+// Все стаканы из справочников (без подстаканников и манжет «для стаканов»), без дублей
+function getCupList() {
+    let seen = {};
+    return getConsumablesCatalog()
+        .filter(i => /стакан/i.test(i.name) && !/подстакан|манжет|капхолд|крышк|трубоч/i.test(i.name))
+        .filter(i => { if (seen[i.name]) return false; seen[i.name] = true; return true; })
+        .map(i => ({ name: i.name, ml: getCupMl(i.name), src: i._src }))
+        .sort((a, b) => (a.ml || 9999) - (b.ml || 9999) || a.name.localeCompare(b.name));
+}
+
+// Стакан для конкретного объёма напитка.
+// sizeMl: 250/350/450/500/600, или 0 для колонки «Стандарт».
+function pickCupForDrink(drink, sizeMl, cupList) {
+    cupList = cupList || getCupList();
+    let regular = cupList.filter(c => c.ml && !/пикми|эспрессо/i.test(c.name));
+    let chosen = drink.cupItem || '';
+    // Вариант «с ситом» без выбранного стакана — по умолчанию стакан 0,5
+    if (!chosen && drink.cup === 'sito') {
+        let c05 = regular.find(c => c.ml === 500);
+        if (c05) chosen = c05.name;
+    }
+    if (chosen) {
+        if (!sizeMl) return chosen;
+        // Выбран, например, «пикми 0,5», а колонка 600 мл — берём «пикми 0,6» из той же линейки
+        let fam = getCupFamily(chosen);
+        let same = cupList.filter(c => c.ml && getCupFamily(c.name) === fam);
+        let target = Math.floor(sizeMl / 100) * 100;
+        let exact = same.find(c => c.ml === target) || same.find(c => c.ml >= sizeMl);
+        return exact ? exact.name : chosen;
+    }
+    // Авто: 250 → 0,2 · 350 → 0,3 · 450 → 0,4 · 500 → 0,5 · 600 → 0,6
+    let target = sizeMl ? Math.floor(sizeMl / 100) * 100 : 400;
+    let hit = regular.find(c => c.ml === target) || regular.find(c => c.ml >= target) || regular[regular.length - 1];
+    return hit ? hit.name : 'Стакан';
+}
+
+// Поиск расходника по шаблону в справочниках (сначала чек-лист)
+function findConsumableName(include, exclude, fallback) {
+    let hit = getConsumablesCatalog().find(i => include.test(i.name) && !(exclude && exclude.test(i.name)));
+    return hit ? hit.name : fallback;
+}
+
+
+// =====================================================================
+// renderMenuTab — полная функция (замените свою целиком)
+// =====================================================================
+function renderMenuTab() {
         const box = document.getElementById('content');
         let globalCats = ["Основное меню", "Сезонное меню"];
         
@@ -4909,6 +4982,10 @@ window.syncStoplistWithMenu = async function() {
 
         // Отметка изменения + черновик (если функция черновика есть в файле)
         const MC = (k) => `menuChanges['${k}']=currentMenu['${k}']; if(window.persistMenuDraft) persistMenuDraft();`;
+
+        // Стаканы из справочников — для выбора в «Доп. расходе»
+        const cupList = getCupList();
+        const escAttr = (s) => String(s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;');
 
         // ⚡ ЗАКРЕПЛЯЕМ ПАНЕЛЬ ДЕЙСТВИЙ НАВЕРХУ
         setupUniversalActionBar(`
@@ -5019,14 +5096,25 @@ window.syncStoplistWithMenu = async function() {
                         </div>
                     `;
 
-                    // ⚡ ВЫВОДИМ ВЫБОР СТАКАНА (Один раз для напитка)
+                    // ⚡ ДОП. РАСХОД: основа + выбор стакана (стаканы — из справочников)
+                    let cupHint = isMainMenu
+                        ? `Авто: 250 → 0,2 · 350 → 0,3 · 450 → 0,4 · 500 → 0,5 · 600 → 0,6. Если выбрать, например, «пикми 0,5», для 600 мл возьмётся «пикми 0,6».`
+                        : `Авто: стакан 0,4. Для варианта с ситом — стакан 0,5.`;
                     let cupSelectHtml = `
                         <div style="margin-top: 12px; padding: 10px; background: #f5f5f5; border-radius: 8px; border: 1px solid #ddd;">
                             <b style="font-size: 12px; color: #555;">Основа (Доп. расход):</b>
                             <select style="font-size: 13px; padding: 6px; width: 100%; margin-top: 5px; border-radius: 6px; border: 1px solid #ccc;" onchange="currentMenu['${k}'].cup=this.value; ${MC(k)}">
-                                <option value="">Стандарт (Стакан+Крышка+Трубочка+Манжет)</option>
-                                <option value="bubble" ${item.cup === 'bubble' ? 'selected' : ''}>Бабл Ти (Стакан+Крышка Бабл+Трубочка Бабл+Манжет)</option>
+                                <option value="">Стандарт (Стакан + Крышка + Манжет + Трубочка)</option>
+                                <option value="bubble" ${item.cup === 'bubble' ? 'selected' : ''}>Бабл Ти (Стакан + Крышка бабл + Манжет + Трубочка бабл)</option>
+                                <option value="sito" ${item.cup === 'sito' ? 'selected' : ''}>С ситом (Стакан 0,5 + Крышка + Манжет + Сито)</option>
                             </select>
+                            <b style="font-size: 12px; color: #555; display:block; margin-top:10px;">Стакан:</b>
+                            <select style="font-size: 13px; padding: 6px; width: 100%; margin-top: 5px; border-radius: 6px; border: 1px solid #ccc;" onchange="currentMenu['${k}'].cupItem=this.value; ${MC(k)}">
+                                <option value="">Авто — по объёму напитка</option>
+                                ${cupList.map(c => `<option value="${escAttr(c.name)}" ${item.cupItem === c.name ? 'selected' : ''}>${c.name}</option>`).join('')}
+                                ${item.cupItem && !cupList.some(c => c.name === item.cupItem) ? `<option value="${escAttr(item.cupItem)}" selected>${item.cupItem} (нет в справочнике)</option>` : ''}
+                            </select>
+                            <div style="font-size:11px; color:#888; margin-top:6px; line-height:1.35;">${cupHint}</div>
                         </div>
                     `;
 
@@ -5205,9 +5293,13 @@ function getExcelColLetter(colIdx) {
 async function processMenuExport(selectedCat) {
     showReportOverlay("Генерация Excel...");
     try {
-        let catOrderLookup = Object.values(cachedData.catalogOrder || {});
-        let catChecklistLookup = Object.values(cachedData.catalogChecklist || {});
-        let fullCatalog = [...catOrderLookup, ...catChecklistLookup];
+        // Оба справочника: чек-лист (там расходники) + закупка
+        let fullCatalog = getConsumablesCatalog();
+        const priceOf = (c) => c ? (parseFloat(String(c.price || 0).replace(/\s/g, '').replace(',', '.')) || 0) : 0;
+        const volOf = (c) => c ? (parseFloat(String(c.volume || 1).replace(/\s/g, '').replace(',', '.')) || 1) : 1;
+        // Если позиция есть в обоих справочниках — берём ту, где указана цена
+        const findProd = (name) => fullCatalog.find(c => c.name === name && priceOf(c) > 0) || fullCatalog.find(c => c.name === name);
+        const q = (s) => String(s).replace(/"/g, '""'); // кавычки внутри формулы
 
         let menuToExport = {};
         if (selectedCat === "ALL") {
@@ -5249,50 +5341,38 @@ async function processMenuExport(selectedCat) {
                     let ingName = item.name || "";
                     if(ingName) {
                         usedIngredients.add(ingName);
-                        let q = parseFloat(String(item.qty_600 || item.qty_500 || item.qty_450 || item.qty_350 || item.qty_250 || item.qty || 0).replace(',', '.')) || 0;
+                        let qn = parseFloat(String(item.qty_600 || item.qty_500 || item.qty_450 || item.qty_350 || item.qty_250 || item.qty || 0).replace(',', '.')) || 0;
                         if (!globalUsage[ingName]) globalUsage[ingName] = 0;
-                        globalUsage[ingName] += q;
+                        globalUsage[ingName] += qn;
                     }
                 });
             });
         });
 
-        // ⚡ УМНЫЙ ПОИСК РАСХОДНИКОВ В КАТАЛОГЕ (Ищет частичное совпадение слов)
-        const findItemName = (keywords, defaultName) => {
-            for (let kw of keywords) {
-                let match = fullCatalog.find(item => item && item.name && item.name.toLowerCase().includes(kw.toLowerCase()));
-                if (match) return match.name;
-            }
-            return defaultName; // Если не найдено, отдаем дефолтное имя (оно появится в экселе с ценой 0, и ты сможешь его переименовать или задать цену)
-        };
+        // ⚡ РАСХОДНИКИ ИЗ СПРАВОЧНИКОВ (по корню слова: «Крышки», «Трубочки», «Манжеты»…)
+        let nLidBig    = findConsumableName(/крышк/i, /бабл|купол|маленьк/i, "Крышки большие");
+        let nLidSmall  = findConsumableName(/крышк.*маленьк/i, null, nLidBig);
+        let nLidBoba   = findConsumableName(/крышк.*(бабл|купол)|(бабл|купол).*крышк/i, null, "Крышки бабл ти");
+        let nStrawStd  = findConsumableName(/трубоч/i, /бабл/i, "Трубочки");
+        let nStrawBoba = findConsumableName(/трубоч.*бабл|бабл.*трубоч/i, null, "Трубочки бабл ти");
+        let nSleeve    = findConsumableName(/манжет|капхолд/i, null, "Манжеты для стаканов");
+        let nSito      = findConsumableName(/сито/i, null, "Сито для чая");
+        const lidForCup = (cupName) => { let ml = getCupMl(cupName); return (ml && ml <= 200) ? nLidSmall : nLidBig; };
 
-        // Стандартные расходники
-        let nLidStd = findItemName(["Крышка 90", "Крышка 80", "Крышка"], "Крышка (Стандарт)");
-        let nStrawStd = findItemName(["Трубочка в инд", "Трубочка"], "Трубочка (Стандарт)");
-        let nSleeve = findItemName(["Манжет", "Капхолдер"], "Манжет");
-        
-        // Расходники для Бабл Ти
-        let nLidBoba = findItemName(["Крышка купол", "Крышка бабл", "Крышка для бабл", "Крышка баблти"], "Крышка (Бабл Ти)");
-        let nStrawBoba = findItemName(["Трубочка бабл", "Трубочка 12мм", "Трубочка широкая", "Трубочка баблти"], "Трубочка (Бабл Ти)");
+        let cupList = getCupList();
 
-        // Стаканы
-        let nCup250 = findItemName(["Стакан бумажный 250", "Стакан 250"], "Стакан 250");
-        let nCup350 = findItemName(["Стакан бумажный 350", "Стакан 350"], "Стакан 350");
-        let nCup450 = findItemName(["Стакан бумажный 450", "Стакан 450"], "Стакан 450");
-        let nCup500 = findItemName(["Стакан бумажный 500", "Стакан 500", "Стакан пэт 500"], "Стакан 500");
-        let nCup600 = findItemName(["Стакан бумажный 600", "Стакан 600", "Стакан пэт 600"], "Стакан 600");
-        let nCupStd = findItemName(["Стакан бумажный", "Стакан"], "Стакан (Стандарт)");
-
-        // ⚡ ПРИНУДИТЕЛЬНО ДОБАВЛЯЕМ ВСЕ РАСХОДНИКИ В СПРАВОЧНИК EXCEL
-        [nLidStd, nStrawStd, nSleeve, nLidBoba, nStrawBoba, nCup250, nCup350, nCup450, nCup500, nCup600, nCupStd].forEach(n => usedIngredients.add(n));
+        // ⚡ В СПРАВОЧНИК EXCEL — ВСЕ РАСХОДНИКИ И ВСЕ СТАКАНЫ
+        [nLidBig, nLidSmall, nLidBoba, nStrawStd, nStrawBoba, nSleeve, nSito].forEach(n => usedIngredients.add(n));
+        cupList.forEach(c => usedIngredients.add(c.name));
+        Object.values(menuToExport).forEach(d => { if (d.cupItem) usedIngredients.add(d.cupItem); });
 
         let activeCols = [];
-        if (usedSizes['250']) activeCols.push({ key: '250', title: '250 мл', totalTitle: 'Итог 250', width: 7, isMain: true, cupName: nCup250, getQ: (item) => item.qty_250 !== undefined ? item.qty_250 : (item.qty || 0) });
-        if (usedSizes['350']) activeCols.push({ key: '350', title: '350 мл', totalTitle: 'Итог 350', width: 7, isMain: true, cupName: nCup350, getQ: (item) => item.qty_350 || 0 });
-        if (usedSizes['450']) activeCols.push({ key: '450', title: '450 мл', totalTitle: 'Итог 450', width: 7, isMain: true, cupName: nCup450, getQ: (item) => item.qty_450 || 0 });
-        if (usedSizes['500']) activeCols.push({ key: '500', title: '500 мл', totalTitle: 'Итог 500', width: 7, isMain: true, cupName: nCup500, getQ: (item) => item.qty_500 || 0 });
-        if (usedSizes['600']) activeCols.push({ key: '600', title: '600 мл', totalTitle: 'Итог 600', width: 7, isMain: true, cupName: nCup600, getQ: (item) => item.qty_600 || 0 });
-        if (usedSizes['Std']) activeCols.push({ key: 'Std', title: 'Стандарт', totalTitle: 'Итог Стд', width: 10, isMain: false, cupName: nCupStd, getQ: (item) => item.qty || 0 });
+        if (usedSizes['250']) activeCols.push({ key: '250', ml: 250, title: '250 мл', totalTitle: 'Итог 250', width: 7, isMain: true, getQ: (item) => item.qty_250 !== undefined ? item.qty_250 : (item.qty || 0) });
+        if (usedSizes['350']) activeCols.push({ key: '350', ml: 350, title: '350 мл', totalTitle: 'Итог 350', width: 7, isMain: true, getQ: (item) => item.qty_350 || 0 });
+        if (usedSizes['450']) activeCols.push({ key: '450', ml: 450, title: '450 мл', totalTitle: 'Итог 450', width: 7, isMain: true, getQ: (item) => item.qty_450 || 0 });
+        if (usedSizes['500']) activeCols.push({ key: '500', ml: 500, title: '500 мл', totalTitle: 'Итог 500', width: 7, isMain: true, getQ: (item) => item.qty_500 || 0 });
+        if (usedSizes['600']) activeCols.push({ key: '600', ml: 600, title: '600 мл', totalTitle: 'Итог 600', width: 7, isMain: true, getQ: (item) => item.qty_600 || 0 });
+        if (usedSizes['Std']) activeCols.push({ key: 'Std', ml: 0, title: 'Стандарт', totalTitle: 'Итог Стд', width: 10, isMain: false, getQ: (item) => item.qty || 0 });
 
         let qtyCount = activeCols.length;
         let priceIdx = 1 + qtyCount;
@@ -5302,35 +5382,36 @@ async function processMenuExport(selectedCat) {
         let priceLetter = getExcelColLetter(priceIdx);
         let dbStartLetter = getExcelColLetter(dbStartIdx);
         let dbEndLetter = getExcelColLetter(dbStartIdx + 3);
+        const LOOK = (name) => `IFERROR(VLOOKUP("${q(name)}",${dbStartLetter}:${dbEndLetter},4,FALSE),0)`;
 
         let fullAOA = [];
-        let sortedIngredients = Array.from(usedIngredients).sort((a,b) => a.localeCompare(b));
+        let sortedIngredients = Array.from(usedIngredients).filter(Boolean).sort((a,b) => a.localeCompare(b));
+        const EMPTY_DB = ["","","","","",""];
         
-        // ЗАГОЛОВКИ БАЗЫ ДАННЫХ
-        let priceRows = [ ["Ингредиенты (Справочник)", "Объем уп.", "Цена уп. (₽)", "За единицу (₽)", "Примерный расход"] ];
+        // ЗАГОЛОВКИ БАЗЫ ДАННЫХ (справочник справа). Цены здесь можно менять —
+        // все техкарты и доп. расходы пересчитаются сами.
+        let priceRows = [ ["Ингредиенты (Справочник)", "Объем уп.", "Цена уп. (₽)", "За единицу (₽)", "Примерный расход", "Справочник"] ];
         sortedIngredients.forEach((ing, index) => {
             let r = index + 2; 
-            let prod = fullCatalog.find(c => c && c.name === ing);
-            let price = prod ? (parseFloat(String(prod.price).replace(/\s/g, '').replace(',', '.')) || 0) : 0;
-            let vol = prod ? (parseFloat(String(prod.volume).replace(/\s/g, '').replace(',', '.')) || 1) : 1;
+            let prod = findProd(ing);
+            let price = priceOf(prod);
+            let vol = volOf(prod);
             
             let formulaDb = `IFERROR(${getExcelColLetter(dbStartIdx+2)}${r}/${getExcelColLetter(dbStartIdx+1)}${r},0)`;
-            priceRows.push([ing, vol, price, {t:'n', f:formulaDb}, globalUsage[ing] || 0]);
+            priceRows.push([ing, vol, price, {t:'n', f:formulaDb}, globalUsage[ing] || 0, prod ? prod._src : "Нет в справочниках"]);
         });
 
         let rIdx = 0; 
         Object.values(menuToExport).forEach(drink => {
             let startRow = rIdx + 2; 
             let isMainMenu = (String(drink.globalCat || "Основное меню").trim().toLowerCase() === 'основное меню');
-            let pRowHeader = priceRows[rIdx] || ["","","","",""];
+            let pRowHeader = priceRows[rIdx] || EMPTY_DB;
             
-            // ⚡ ОПРЕДЕЛЯЕМ, БАБЛ ТИ ЛИ ЭТО
+            // ⚡ ВАРИАНТ ОСНОВЫ: выбор в техкарте, иначе — по категории (бабл)
             let catName = (drink.cat || "").toLowerCase();
             let gCatName = (drink.globalCat || "").toLowerCase();
-            let isBubbleTea = catName.includes("бабл") || catName.includes("bubble") || gCatName.includes("бабл") || gCatName.includes("bubble");
-
-            let currentLid = isBubbleTea ? nLidBoba : nLidStd;
-            let currentStraw = isBubbleTea ? nStrawBoba : nStrawStd;
+            let isBubbleByCat = catName.includes("бабл") || catName.includes("bubble") || gCatName.includes("бабл") || gCatName.includes("bubble");
+            let baseType = drink.cup === 'sito' ? 'sito' : ((drink.cup === 'bubble' || (!drink.cup && isBubbleByCat)) ? 'bubble' : 'std');
             
             let headerRow = [ `=== ${drink.name ? drink.name.toUpperCase() : "БЕЗ НАЗВАНИЯ"} ===` ];
             activeCols.forEach(c => headerRow.push(c.title)); 
@@ -5346,7 +5427,7 @@ async function processMenuExport(selectedCat) {
             blocks.forEach(b => {
                 b.forEach(item => {
                     let xlRow = rIdx + 1; 
-                    let pR = priceRows[rIdx] || ["","","","",""];
+                    let pR = priceRows[rIdx] || EMPTY_DB;
                     let itemRow = [ item.name || "" ];
                     
                     activeCols.forEach(c => {
@@ -5371,28 +5452,30 @@ async function processMenuExport(selectedCat) {
                 });
             });
             
-            // ⚡ ДОП. РАСХОД (ДИНАМИЧЕСКИЙ В ЗАВИСИМОСТИ ОТ КАТЕГОРИИ)
+            // ⚡ ДОП. РАСХОД — каждая позиция ищется в справочнике справа по названию,
+            // поэтому смена цены (например, трубочки) сразу меняет доп. расход.
             let xlRowExtra = rIdx + 1;
-            let pR1 = priceRows[rIdx] || ["","","","",""];
-            
-            let extraName = isBubbleTea ? "Доп. расход (Стакан + Крышка Бабл + Манжет + Трубочка Бабл)" : "Доп. расход (Стакан + Крышка + Манжет + Трубочка)";
+            let pR1 = priceRows[rIdx] || EMPTY_DB;
+
+            let cupsUsed = [];
+            let extraFormulas = activeCols.map(c => {
+                if (!((isMainMenu && c.isMain) || (!isMainMenu && !c.isMain))) return "";
+                let cup = pickCupForDrink(drink, c.ml, cupList);
+                if (!cupsUsed.includes(cup)) cupsUsed.push(cup);
+                let parts = [cup, baseType === 'bubble' ? nLidBoba : lidForCup(cup), nSleeve];
+                if (baseType === 'sito') parts.push(nSito);
+                else parts.push(baseType === 'bubble' ? nStrawBoba : nStrawStd);
+                return { t: 'n', f: parts.map(LOOK).join('+') };
+            });
+
+            let lidLabel = baseType === 'bubble' ? nLidBoba : (cupsUsed.some(c => lidForCup(c) === nLidSmall) && nLidSmall !== nLidBig ? `${nLidSmall} / ${nLidBig}` : nLidBig);
+            let lastPart = baseType === 'sito' ? nSito : (baseType === 'bubble' ? nStrawBoba : nStrawStd);
+            let extraName = `Доп. расход (${cupsUsed.join(' / ') || 'Стакан'} + ${lidLabel} + ${nSleeve} + ${lastPart})`;
             let extraRow = [ extraName ];
             
             activeCols.forEach(() => extraRow.push("")); 
             extraRow.push(""); 
-            
-            activeCols.forEach(c => {
-                if ((isMainMenu && c.isMain) || (!isMainMenu && !c.isMain)) {
-                    // Формула складывает конкретный стакан + манжет + нужную крышку + нужную трубочку
-                    let formulaExtra = `IFERROR(VLOOKUP("${c.cupName}",${dbStartLetter}:${dbEndLetter},4,FALSE),0)+` +
-                                       `IFERROR(VLOOKUP("${currentLid}",${dbStartLetter}:${dbEndLetter},4,FALSE),0)+` +
-                                       `IFERROR(VLOOKUP("${nSleeve}",${dbStartLetter}:${dbEndLetter},4,FALSE),0)+` +
-                                       `IFERROR(VLOOKUP("${currentStraw}",${dbStartLetter}:${dbEndLetter},4,FALSE),0)`;
-                    extraRow.push({t:'n', f: formulaExtra});
-                } else {
-                    extraRow.push("");
-                }
-            });
+            extraFormulas.forEach(f => extraRow.push(f));
             
             extraRow.push("");
             extraRow.push(...pR1);
@@ -5400,7 +5483,7 @@ async function processMenuExport(selectedCat) {
             rIdx++;
 
             // ⚡ ИТОГОВАЯ СЕБЕСТОИМОСТЬ
-            let pR2 = priceRows[rIdx] || ["","","","",""];
+            let pR2 = priceRows[rIdx] || EMPTY_DB;
             let sumRow = [ "ИТОГО СЕБЕСТОИМОСТЬ" ];
             activeCols.forEach(() => sumRow.push(""));
             sumRow.push("");
@@ -5419,7 +5502,7 @@ async function processMenuExport(selectedCat) {
             fullAOA.push(sumRow);
             rIdx++;
 
-            let pR3 = priceRows[rIdx] || ["","","","",""];
+            let pR3 = priceRows[rIdx] || EMPTY_DB;
             let emptyRow = [""];
             for(let i=0; i < dbStartIdx - 1; i++) emptyRow.push("");
             emptyRow.push(...pR3);
@@ -5437,17 +5520,17 @@ async function processMenuExport(selectedCat) {
 
         const ws = XLSX.utils.aoa_to_sheet(fullAOA);
         
-        let colsConfig = [ { wch: 35 } ]; 
+        let colsConfig = [ { wch: 45 } ]; 
         activeCols.forEach(c => colsConfig.push({ wch: c.width }));
         colsConfig.push({ wch: 12 }); 
         activeCols.forEach(c => colsConfig.push({ wch: c.width + 2 })); 
         colsConfig.push({ wch: 3 }); 
-        colsConfig.push({ wch: 35 }, { wch: 10 }, { wch: 10 }, { wch: 13 }, { wch: 20 });
+        colsConfig.push({ wch: 35 }, { wch: 10 }, { wch: 10 }, { wch: 13 }, { wch: 20 }, { wch: 16 });
         ws['!cols'] = colsConfig;
 
         const wb = XLSX.utils.book_new();
         let sheetName = selectedCat === "ALL" ? "Все_Техкарты" : selectedCat.replace(/[^a-zA-Zа-яА-Я0-9\s]/g, '').trim().substring(0,30);
-        XLSX.utils.book_append_sheet(wb, ws, sheetName);
+        XLSX.utils.book_append_sheet(wb, ws, sheetName || "Техкарты");
         
         const b64 = XLSX.write(wb, { type: "base64", bookType: "xlsx" });
         const excelDataUri = "data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64," + b64;
@@ -5468,6 +5551,7 @@ async function processMenuExport(selectedCat) {
         alert("❌ Ошибка при генерации Excel: " + e.message);
     }
 }
+
     
 async function exportGraphsToExcel() {
         showReportOverlay("Генерация Excel для Графика...");

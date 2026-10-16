@@ -612,35 +612,40 @@ async function loadFromCache(path) {
     });
   } catch (e) { return null; }
 }
+    
 async function fetchOptimistic(path) {
-  // ⚡ Защита: Если живые данные уже есть в памяти Дашборда, не загружаем старый кэш!
+  // ⚡ Защита: Если живые данные уже есть в памяти сессии, отдаем их (быстрая навигация)
   if (path === 'orders' && typeof cachedData !== 'undefined' && cachedData.orders && Object.keys(cachedData.orders).length > 0) return cachedData.orders;
   if (path === 'missing_items' && typeof cachedData !== 'undefined' && cachedData.missing && Object.keys(cachedData.missing).length > 0) return cachedData.missing;
   if (path === 'marketplace_records' && typeof cachedData !== 'undefined' && cachedData.marketplace && Object.keys(cachedData.marketplace).length > 0) return cachedData.marketplace;
   if (path === 'schedules' && typeof cachedData !== 'undefined' && cachedData.schedules && Object.keys(cachedData.schedules).length > 0) return cachedData.schedules;
   if (path === 'catalogs/checklist' && typeof cachedData !== 'undefined' && cachedData.catalogChecklist && Object.keys(cachedData.catalogChecklist).length > 0) return cachedData.catalogChecklist;
-  
-  // ⚡ ИСПРАВЛЕНИЕ ДУБЛИКАТОВ: Выдаем редактору закупки только ОРИГИНАЛЬНЫЕ ключи базы
   if (path === 'catalogs/order' && typeof cachedData !== 'undefined' && cachedData.rawOrder && Object.keys(cachedData.rawOrder).length > 0) return cachedData.rawOrder;
   if (path === 'catalogs/newshop' && typeof cachedData !== 'undefined' && cachedData.rawNewshop && Object.keys(cachedData.rawNewshop).length > 0) return cachedData.rawNewshop;
-  
   if (path === 'catalogs/stoplist' && typeof cachedData !== 'undefined' && cachedData.catalogStoplist && Object.keys(cachedData.catalogStoplist).length > 0) return cachedData.catalogStoplist;
 
+  try {
+    // ⚡ ИСПРАВЛЕНИЕ: ПРИОРИТЕТ СЕТИ. Сначала всегда идем на сервер за самыми свежими данными!
+    const rawFetch = typeof originalFetch !== 'undefined' ? originalFetch : fetch;
+    let response = await rawFetch(`${FB_URL}/${path}.json`);
+    if (response.ok) {
+      let freshData = await response.json() || {};
+      saveToCache(path, freshData); // Сразу обновляем кэш телефона
+      setDbFreshness('fresh');
+      return freshData;
+    }
+  } catch (e) {
+    console.warn(`Network fetch failed for ${path}, falling back to cache.`, e);
+  }
+
+  // ⚡ Только если нет интернета (глухая зона) — достаем старые данные из кэша
   let cached = await loadFromCache(path);
-  
   if (cached && Object.keys(cached).length > 0) {
     setDbFreshness('cache');
-    fetch(`${FB_URL}/${path}.json`).then(r => r.json()).then(data => {
-      let finalData = data || {};
-      saveToCache(path, finalData);
-      setDbFreshness('fresh');
-    }).catch(e => null);
     return cached;
-  } else {
-    let fresh = await fetch(`${FB_URL}/${path}.json`).then(r => r.json()).catch(e => null);
-    if (fresh) { saveToCache(path, fresh); setDbFreshness('fresh'); }
-    return fresh || {};
   }
+
+  return {};
 }
 
 function cleanName(str) {

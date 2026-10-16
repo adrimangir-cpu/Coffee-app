@@ -7755,6 +7755,112 @@ window.smartFillVolumes = function() {
         alert("ℹ️ Пустых ячеек, для которых есть понятная закономерность, не найдено.");
     }
 };
+
+    // ==========================================
+    // ⚡ ИСПРАВЛЕНИЕ 1: СОХРАНЕНИЕ ЧЕК-ЛИСТОВ
+    // ==========================================
+    window.saveChecklistEdits = async function() {
+        let btn = document.getElementById('chk-btn-edit');
+        if (!btn) return;
+        let origText = btn.innerHTML;
+        btn.innerHTML = "⌛ СОХРАНЕНИЕ...";
+        btn.disabled = true;
+
+        try {
+            let updates = {};
+            // Собираем все изменения из инпутов
+            document.querySelectorAll('.edit-chk-input').forEach(inp => {
+                let orderKey = inp.getAttribute('data-order');
+                let itemName = inp.getAttribute('data-item').replace(/&quot;/g, '"');
+                let val = inp.value;
+
+                if (!updates[orderKey]) updates[orderKey] = {};
+                updates[orderKey][itemName] = val;
+            });
+
+            let promises = [];
+            // Проходим по заказам и обновляем нужные позиции
+            for (let orderKey in updates) {
+                let order = cachedData.orders[orderKey];
+                if (order && order.items) {
+                    let itemsArr = Array.isArray(order.items) ? order.items : Object.values(order.items);
+                    let changed = false;
+                    
+                    itemsArr.forEach(i => {
+                        if (i && i.name && updates[orderKey][i.name] !== undefined) {
+                            if (String(i.qty) !== String(updates[orderKey][i.name])) {
+                                i.qty = updates[orderKey][i.name];
+                                changed = true;
+                            }
+                        }
+                    });
+                    
+                    if (changed) {
+                        promises.push(fetch(`${FB_URL}/orders/${orderKey}/items.json`, {
+                            method: 'PUT',
+                            body: JSON.stringify(itemsArr)
+                        }));
+                    }
+                }
+            }
+
+            await Promise.all(promises);
+            isChecklistEditMode = false;
+            btn.innerHTML = "✅ СОХРАНЕНО!";
+            
+            // Обновляем данные на экране
+            cachedData.orders = await fetchOptimistic('orders');
+            renderChecksTable();
+
+            setTimeout(() => { btn.innerHTML = origText; btn.disabled = false; }, 1200);
+        } catch (e) {
+            btn.innerHTML = origText;
+            btn.disabled = false;
+            alert("❌ Ошибка при сохранении чек-листа: " + e.message);
+        }
+    };
+
+    // ==========================================
+    // ⚡ ИСПРАВЛЕНИЕ 2: МГНОВЕННОЕ СОХРАНЕНИЕ НАСТРОЕК КАТЕГОРИЙ
+    // ==========================================
+    window.toggleHiddenCategory = async function(catName, isHidden, type) {
+        if (!appSettings) appSettings = {};
+        let settingKey = 'hidden_categories_' + type;
+        if (!appSettings[settingKey]) appSettings[settingKey] = {};
+        
+        // Меняем статус
+        if (isHidden) {
+            appSettings[settingKey][catName] = true;
+        } else {
+            delete appSettings[settingKey][catName];
+        }
+        
+        // ⚡ Мгновенно отправляем в базу
+        try {
+            await fetch(`${FB_URL}/settings/${settingKey}.json`, {
+                method: 'PUT',
+                body: JSON.stringify(appSettings[settingKey])
+            });
+            console.log(`Категория ${catName} (${type}) успешно обновлена.`);
+        } catch(e) {
+            alert("❌ Ошибка сохранения настроек: " + e.message);
+        }
+    };
+
+    window.toggleSetting = async function(settingName, isEnabled) {
+        if (!appSettings) appSettings = {};
+        appSettings[settingName] = isEnabled;
+        
+        // ⚡ Мгновенно отправляем в базу
+        try {
+            await fetch(`${FB_URL}/settings/${settingName}.json`, {
+                method: 'PUT',
+                body: JSON.stringify(isEnabled)
+            });
+        } catch(e) {
+            alert("❌ Ошибка сохранения настроек: " + e.message);
+        }
+    };
     
 </script>
 </body>

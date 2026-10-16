@@ -1015,7 +1015,10 @@ function toggleSvodDate(safeDate) {
         box.innerHTML = html;
     }
 
-   window.sendChecklistPdf = async function() {
+   // ==========================================
+    // ПРАВКА 1: ЧЕК-ЛИСТЫ АВТО-ОТПРАВКА АДМИНУ И БОССУ (ИСПРАВЛЕНО КАЧЕСТВО PDF)
+    // ==========================================
+    window.sendChecklistPdf = async function() {
         let existingModal = document.getElementById('pdf-modal-overlay');
         if (existingModal) existingModal.remove();
 
@@ -1046,17 +1049,25 @@ function toggleSvodDate(safeDate) {
             showReportOverlay("Подготовка таблицы...");
             await new Promise(r => setTimeout(r, 100));
 
-             document.querySelectorAll('.chk-row').forEach(row => { row.style.display = 'table-row'; });
+            document.querySelectorAll('.chk-row').forEach(row => { row.style.display = 'table-row'; });
             
             let images = document.querySelectorAll('#checks-table-container img');
             images.forEach(img => img.style.display = 'none');
 
             const element = document.getElementById('checks-table-container');
+
+            // ⚡ ФИКС 1: Вытаскиваем таблицу из мобильного скролла на всю ширину
+            let originalOverflow = element.style.overflowX;
+            let originalWidth = element.style.width;
+            element.style.overflowX = 'visible';
+            element.style.width = '1600px';
+
             const opt = {
                 margin:       0.2,
                 filename:     'Checklist_Report.pdf',
                 image:        { type: 'jpeg', quality: 0.8 },
-                html2canvas:  { scale: 1.5, useCORS: true, logging: false },
+                // ⚡ ФИКС 2: Искусственно задаем ширину экрана 1600px, чтобы применились красивые ПК-стили
+                html2canvas:  { scale: 1.2, useCORS: true, logging: false, windowWidth: 1600, width: 1600 },
                 jsPDF:        { unit: 'in', format: 'a3', orientation: 'landscape' } 
             };
 
@@ -1077,8 +1088,6 @@ function toggleSvodDate(safeDate) {
                     timestamp: Date.now() 
                 };
 
-                // ⚡ Используем жесткий HTTP POST (fetch) вместо сокетов Firebase.
-                // Мобильные браузеры могут зависнуть при попытке отправить тяжелый Base64 через сокеты.
                 const rawFetch = typeof originalFetch !== 'undefined' ? originalFetch : fetch;
                 
                 await rawFetch(`${FB_URL}/bot_control/notifications.json`, {
@@ -1086,21 +1095,28 @@ function toggleSvodDate(safeDate) {
                     body: JSON.stringify(payload)
                 });
 
+                // Возвращаем стили на место
+                element.style.overflowX = originalOverflow;
+                element.style.width = originalWidth;
                 images.forEach(img => img.style.display = 'block');
-                hideReportOverlay();
                 
-                // Даем экрану "отвиснуть" перед показом алерта
+                hideReportOverlay();
                 setTimeout(() => {
                     alert(`✅ PDF-отчет успешно отправлен боту в ЛС (${targetName})!`);
                 }, 300);
 
             } catch (e) {
+                // Если ошибка — всё равно возвращаем стили
+                element.style.overflowX = originalOverflow;
+                element.style.width = originalWidth;
                 images.forEach(img => img.style.display = 'block');
+                
                 hideReportOverlay();
                 alert("❌ Ошибка при создании/отправке PDF: " + e.message);
             }
         }
     };
+
 
     
     // ==========================================

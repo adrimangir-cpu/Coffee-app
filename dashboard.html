@@ -1054,6 +1054,7 @@ function toggleSvodDate(safeDate) {
             showReportOverlay("Подготовка таблицы...");
             await new Promise(r => setTimeout(r, 100));
 
+            // Раскрываем все скрытые категории перед скриншотом
             document.querySelectorAll('.chk-row').forEach(row => { row.style.display = 'table-row'; });
             
             let images = document.querySelectorAll('#checks-table-container img');
@@ -1061,23 +1062,41 @@ function toggleSvodDate(safeDate) {
 
             const element = document.getElementById('checks-table-container');
 
-            // ⚡ ФИКС 1: Вытаскиваем таблицу из мобильного скролла на всю ширину
-            let originalOverflow = element.style.overflowX;
+            // ⚡ ФИКС: Снимаем все ограничения по высоте и скроллу, чтобы скрипт увидел весь контент
+            let originalOverflowX = element.style.overflowX;
+            let originalOverflowY = element.style.overflowY;
             let originalWidth = element.style.width;
+            let originalHeight = element.style.height;
+            let originalMaxHeight = element.style.maxHeight;
+
             element.style.overflowX = 'visible';
+            element.style.overflowY = 'visible';
             element.style.width = '1600px';
+            element.style.height = 'auto';
+            element.style.maxHeight = 'none';
+
+            // Также страхуем весь body от обрезки
+            let bodyOverflow = document.body.style.overflow;
+            document.body.style.overflow = 'visible';
 
             const opt = {
                 margin:       0.2,
                 filename:     'Checklist_Report.pdf',
-                image:        { type: 'jpeg', quality: 0.8 },
-                // ⚡ ФИКС 2: Искусственно задаем ширину экрана 1600px, чтобы применились красивые ПК-стили
-                html2canvas:  { scale: 1.2, useCORS: true, logging: false, windowWidth: 1600, width: 1600 },
-                jsPDF:        { unit: 'in', format: 'a3', orientation: 'landscape' } 
+                image:        { type: 'jpeg', quality: 0.9 },
+                html2canvas:  { 
+                    scale: 1.2, 
+                    useCORS: true, 
+                    logging: false, 
+                    windowWidth: 1600, 
+                    width: 1600,
+                    scrollY: 0 // ⚡ Заставляет считывать страницу строго с самого начала до конца
+                },
+                jsPDF:        { unit: 'in', format: 'a3', orientation: 'landscape' },
+                pagebreak:    { mode: ['avoid-all', 'css', 'legacy'] } // ⚡ Ровно разбивает строки на новые страницы
             };
 
             try {
-                showReportOverlay("Создание PDF (около 5 секунд)...");
+                showReportOverlay("Создание PDF (около 5-10 секунд)...");
                 await new Promise(r => setTimeout(r, 100));
 
                 const pdfDataUri = await html2pdf().set(opt).from(element).outputPdf('datauristring');
@@ -1100,20 +1119,30 @@ function toggleSvodDate(safeDate) {
                     body: JSON.stringify(payload)
                 });
 
-                // Возвращаем стили на место
-                element.style.overflowX = originalOverflow;
+                // ⚡ Аккуратно возвращаем стили обратно, чтобы дашборд не сломался
+                element.style.overflowX = originalOverflowX;
+                element.style.overflowY = originalOverflowY;
                 element.style.width = originalWidth;
+                element.style.height = originalHeight;
+                element.style.maxHeight = originalMaxHeight;
+                document.body.style.overflow = bodyOverflow;
+                
                 images.forEach(img => img.style.display = 'block');
                 
                 hideReportOverlay();
                 setTimeout(() => {
-                    alert(`✅ PDF-отчет успешно отправлен боту в ЛС (${targetName})!`);
+                    alert(`✅ PDF-отчет успешно отправлен боту в ЛС (${targetName})! В файле должно быть несколько страниц.`);
                 }, 300);
 
             } catch (e) {
                 // Если ошибка — всё равно возвращаем стили
-                element.style.overflowX = originalOverflow;
+                element.style.overflowX = originalOverflowX;
+                element.style.overflowY = originalOverflowY;
                 element.style.width = originalWidth;
+                element.style.height = originalHeight;
+                element.style.maxHeight = originalMaxHeight;
+                document.body.style.overflow = bodyOverflow;
+                
                 images.forEach(img => img.style.display = 'block');
                 
                 hideReportOverlay();
@@ -1121,6 +1150,7 @@ function toggleSvodDate(safeDate) {
             }
         }
     };
+
 
 
     

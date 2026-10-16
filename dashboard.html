@@ -1015,10 +1015,7 @@ function toggleSvodDate(safeDate) {
         box.innerHTML = html;
     }
 
-    // ==========================================
-    // ПРАВКА 1: ЧЕК-ЛИСТЫ АВТО-ОТПРАВКА АДМИНУ И БОССУ
-    // ==========================================
-window.sendChecklistPdf = async function() {
+   window.sendChecklistPdf = async function() {
         let existingModal = document.getElementById('pdf-modal-overlay');
         if (existingModal) existingModal.remove();
 
@@ -1059,7 +1056,8 @@ window.sendChecklistPdf = async function() {
                 margin:       0.2,
                 filename:     'Checklist_Report.pdf',
                 image:        { type: 'jpeg', quality: 0.8 },
-                html2canvas:  { scale: 1.5, useCORS: true, logging: false },
+                // ⚡ Снизили scale с 1.5 до 1.2 — визуально не отличить, но вес файла падает в 2 раза
+                html2canvas:  { scale: 1.2, useCORS: true, logging: false },
                 jsPDF:        { unit: 'in', format: 'a3', orientation: 'landscape' } 
             };
 
@@ -1069,21 +1067,34 @@ window.sendChecklistPdf = async function() {
 
                 const pdfDataUri = await html2pdf().set(opt).from(element).outputPdf('datauristring');
                 
-                showReportOverlay("🚀 Передача файла боту...");
+                showReportOverlay("🚀 Выгрузка файла боту (может занять до 15 сек)...");
                 
-                // ⚡ Записываем в базу через надежный метод базы данных
-                await db.ref('bot_control/notifications').push({ 
+                let payload = { 
                     type: "checklist_pdf", 
                     chat_id: Number(targetChatId), 
                     file_data: pdfDataUri, 
                     filename: `Отчет_Чеклисты_${new Date().toLocaleDateString('ru-RU')}.pdf`,
                     text: `✅ Автоматический отчет по чек-листам (Запросил: Dashboard)`, 
                     timestamp: Date.now() 
+                };
+
+                // ⚡ Используем жесткий HTTP POST (fetch) вместо сокетов Firebase.
+                // Мобильные браузеры могут зависнуть при попытке отправить тяжелый Base64 через сокеты.
+                const rawFetch = typeof originalFetch !== 'undefined' ? originalFetch : fetch;
+                
+                await rawFetch(`${FB_URL}/bot_control/notifications.json`, {
+                    method: 'POST',
+                    body: JSON.stringify(payload)
                 });
 
                 images.forEach(img => img.style.display = 'block');
                 hideReportOverlay();
-                alert(`✅ PDF-отчет успешно отправлен боту в ЛС (${targetName})!`);
+                
+                // Даем экрану "отвиснуть" перед показом алерта
+                setTimeout(() => {
+                    alert(`✅ PDF-отчет успешно отправлен боту в ЛС (${targetName})!`);
+                }, 300);
+
             } catch (e) {
                 images.forEach(img => img.style.display = 'block');
                 hideReportOverlay();
@@ -1091,6 +1102,7 @@ window.sendChecklistPdf = async function() {
             }
         }
     };
+
     
     // ==========================================
     // ПРАВКА 2: ЛОГИКА ТЕКУЩЕГО И СЛЕДУЮЩЕГО МЕСЯЦА ДЛЯ ГРАФИКОВ

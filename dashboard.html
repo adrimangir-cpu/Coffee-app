@@ -10,6 +10,7 @@
     <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-database-compat.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <script src="https://cdn.ckeditor.com/4.22.1/standard/ckeditor.js"></script>
     
@@ -392,6 +393,7 @@ tr[class*="svodlvl3_"] > td:nth-child(2), tr[class*="lvl3_"] > td:nth-child(2) {
         <button class="tab-btn" onclick="loadTab('catalog_checklist', this)">Справ. Чек-листа</button>
         <button class="tab-btn" onclick="loadTab('catalog_stoplist', this)">Справ. Стоп-листа</button>
         <button class="tab-btn" onclick="loadTab('stats', this)">Статистика</button>
+        <button class="tab-btn" onclick="loadTab('employees', this)">Сотрудники</button>
     </div>
 </div>
 
@@ -426,6 +428,24 @@ tr[class*="svodlvl3_"] > td:nth-child(2), tr[class*="lvl3_"] > td:nth-child(2) {
 const FB_URL = "https://project-lenta22-default-rtdb.firebaseio.com";
 const ADMIN_CHAT_ID = "708179577";
 const BOSS_CHAT_ID = "634812312";
+
+// ⚡ Получаем идентификацию пользователя из Telegram Web App
+let currentTgUser = null;
+let currentUserId = 'admin_dashboard';
+let currentUserName = 'Администратор';
+try {
+    if (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initDataUnsafe) {
+        const u = window.Telegram.WebApp.initDataUnsafe.user;
+        if (u && u.id) {
+            currentTgUser = u;
+            currentUserId = String(u.id);
+            currentUserName = u.first_name || u.username || 'Администратор';
+        }
+    }
+} catch (e) {
+    console.warn('⚠️ Не удалось получить Telegram user:', e.message);
+}
+
 let catalogChanges = {};
 let menuChanges = {};
 const firebaseConfig = {
@@ -1651,12 +1671,19 @@ window.syncStoplistWithMenu = async function() {
             else if (type === 'graphs') {
                 cachedData.schedules = await fetchOptimistic('schedules');
                 if (currentTabType !== fetchId) return;
-                window.graphDraft = null; 
+                window.graphDraft = null;
                 originalGraphDraft = null;
                 isGraphCompareMode = false;
                 renderGraphsTab();
             }
-        
+
+            else if (type === 'employees') {
+                cachedData.employees = await fetchOptimistic('employees');
+                cachedData.schedules = await fetchOptimistic('schedules');
+                if (currentTabType !== fetchId) return;
+                renderEmployeesTab();
+            }
+
             else if (type === 'orders') {
                 isSvodEditMode = false; svodDeletions = []; tempSvodQty = {}; tempSvodStatus = {}; tempSvodVendor = {}; tempSvodShop = {}; tempSvodNewRows = [];
                 let [ordersObj, chkCat] = await Promise.all([
@@ -1951,7 +1978,8 @@ window.syncStoplistWithMenu = async function() {
                         timestamp: Date.now(),
                         svod: false,
                         ordered: false,
-                        userId: "admin_auto"
+                        userId: currentUserId,
+                        author: currentUserName
                     };
                 }
             }
@@ -2346,7 +2374,7 @@ window.syncStoplistWithMenu = async function() {
                                 let pseudoKey = "new_" + dKey + "_" + shopVal;
                                 if (!workingOrders[pseudoKey]) {
                                     let [d, m, y] = dKey.split('.');
-                                    workingOrders[pseudoKey] = { shop: shopVal, mode: 'order', items: [], timestamp: new Date(y, m-1, d).getTime(), svod: false, ordered: false, userId: 'admin_dashboard', _isChanged: true };
+                                    workingOrders[pseudoKey] = { shop: shopVal, mode: 'order', items: [], timestamp: new Date(y, m-1, d).getTime(), svod: false, ordered: false, userId: currentUserId, author: currentUserName, _isChanged: true };
                                 }
                                 workingOrders[pseudoKey].items.push(itm);
                             }
@@ -2375,7 +2403,7 @@ window.syncStoplistWithMenu = async function() {
                     let pseudoKey = "new_" + dateStr + "_" + shop;
                     if (!workingOrders[pseudoKey]) {
                         let [d, m, y] = dateStr.split('.');
-                        workingOrders[pseudoKey] = { shop: shop, mode: 'order', items: [], timestamp: new Date(y, m-1, d).getTime(), svod: false, ordered: false, userId: 'admin_dashboard', _isChanged: true };
+                        workingOrders[pseudoKey] = { shop: shop, mode: 'order', items: [], timestamp: new Date(y, m-1, d).getTime(), svod: false, ordered: false, userId: currentUserId, author: currentUserName, _isChanged: true };
                     }
                     workingOrders[pseudoKey].items.push(itemObj);
                 }
@@ -3243,6 +3271,7 @@ window.syncStoplistWithMenu = async function() {
                 <button class="btn-add" style="background: #E53935; flex: 1 1 auto;" onclick="toggleGraphCompare()">${isGraphCompareMode ? '❌ Скрыть изменения' : ' Сравнить с черновиками'}</button>
                 <button class="btn-save" style="background: linear-gradient(135deg, #0288D1 0%, #01579B 100%); flex: 1 1 auto;" onclick="exportGraphsToExcel()"> Экспорт в Excel</button>
                 <button class="btn-add" style="background: #9b59b6; flex: 1 1 auto;" onclick="addUserToGraph()">➕ Добавить сотрудника</button>
+                <button class="btn-add" style="background: linear-gradient(135deg, #E64A19 0%, #BF360C 100%); flex: 1 1 auto; color:white;" onclick="openSendGraphsDialog()">📤 Отправить графики</button>
                 <div style="font-size:13px; color:#555; width:100%; margin-top:5px;">💡 Вводите <b>МЭИ_у</b> (утро), <b>НК_в</b> (вечер), <b>В</b> (Вертолетчики). Выходной: <b>ВЫХ</b>, Любая: <b>ЛЮБ</b>.</div>
             </div>
         `, isActionsOpen, 'arrow_graph_actions');
@@ -3300,6 +3329,7 @@ window.syncStoplistWithMenu = async function() {
                         <div id="shift_count_${getSafeId(user)}" style="font-size:12px; color:#2E7D32; font-weight:900; margin-bottom:6px; background:#E8F5E9; border:1px solid #C8E6C9; border-radius:6px; padding:2px; transition:0.2s;">Смен: ${shiftCount}</div>
                         <textarea rows="2" data-old-name="${user}" onchange="updateGraphUserName('${user}', this.value)" style="width:100%; text-align:center; font-weight:bold; font-size:14px; background:transparent; border:none; border-bottom:1px solid #7E57C2; resize:none;">${user}</textarea>
                         <br><button onclick="removeUserFromGraph('${user}')" style="font-size:11px; margin-top:5px; background:#ffebee; border:none; border-radius:4px; color:#c62828; padding:3px 8px; cursor:pointer;">Удалить</button>
+                        ${formatSentDateHtml(monthData[user])}
                      </th>`;
         });
         html += `       <th class="meta-cell stick-right-3" style="border:1px solid #ccc; padding:8px; text-align:center; min-width:45px; max-width:45px;">День</th>
@@ -3676,6 +3706,23 @@ window.syncStoplistWithMenu = async function() {
             
             // ⚡ Защита графика от удаленных смен (undefined)
             let safeGraphDraft = JSON.parse(JSON.stringify(window.graphDraft));
+
+            // 📅 Фиксируем дату отправки графика для каждого сотрудника
+            if (safeGraphDraft && typeof safeGraphDraft === 'object') {
+                Object.keys(safeGraphDraft).forEach(k => {
+                    if (k === 'comment' || k === '_pinned' || k === '_meta') return;
+                    if (typeof safeGraphDraft[k] === 'object' && safeGraphDraft[k] !== null) {
+                        safeGraphDraft[k].submittedAt = Date.now();
+                        safeGraphDraft[k].submittedBy = currentUserId;
+                        safeGraphDraft[k].submittedName = currentUserName;
+                    }
+                });
+                safeGraphDraft._meta = {
+                    lastSubmittedAt: Date.now(),
+                    lastSubmittedBy: currentUserId,
+                    lastSubmittedName: currentUserName
+                };
+            }
             cachedData.schedules[currentYearMonth] = safeGraphDraft;
             
             await fetch(`${FB_URL}/schedules/${currentYearMonth}.json`, { 
@@ -4029,7 +4076,7 @@ window.syncStoplistWithMenu = async function() {
                                 newOrdersToCreate[pseudoKey] = {
                                     shop: missingItem.shop, mode: 'order', items: [],
                                     comment: "Перезаказ (Админ)", timestamp: Date.now(),
-                                    svod: false, ordered: false, userId: 'admin_dashboard'
+                                    svod: false, ordered: false, userId: currentUserId, author: currentUserName
                                 };
                             }
                             let existing = newOrdersToCreate[pseudoKey].items.find(i => cleanName(i.name) === cleanName(missingItem.name));
@@ -7381,6 +7428,12 @@ async function exportGraphsToExcel() {
         saveToCache('schedules', cachedData.schedules); // ⚡ Обновляем кэш
     });
 
+    // 6. Сотрудники (БД сотрудников)
+    db.ref('employees').on('value', (snapshot) => {
+        cachedData.employees = snapshot.val() || {};
+        saveToCache('employees', cachedData.employees); // ⚡ Обновляем кэш
+    });
+
     // 6. Настройки системы
     db.ref('settings').on('value', (snapshot) => {
         let s = snapshot.val() || {};
@@ -7910,7 +7963,7 @@ window.smartFillVolumes = function() {
     window.toggleSetting = async function(settingName, isEnabled) {
         if (!appSettings) appSettings = {};
         appSettings[settingName] = isEnabled;
-        
+
         // ⚡ Мгновенно отправляем в базу
         try {
             await fetch(`${FB_URL}/settings/${settingName}.json`, {
@@ -7921,7 +7974,344 @@ window.smartFillVolumes = function() {
             alert("❌ Ошибка сохранения настроек: " + e.message);
         }
     };
-    
+
+    // ==========================================
+    // ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ СОТРУДНИКОВ И ГРАФИКОВ
+    // ==========================================
+
+    function formatSentDateHtml(monthData) {
+        if (!monthData) return '';
+        let ts = monthData.submittedAt || (monthData._meta && monthData._meta.lastSubmittedAt);
+        if (!ts) return '<div style="font-size:10px; color:#aaa; margin-top:3px;">Не отправлено</div>';
+        let d = new Date(ts);
+        let dateStr = d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' });
+        let timeStr = d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+        return `<div style="font-size:10px; color:#2E7D32; margin-top:3px; white-space:nowrap;">📅 ${dateStr} ${timeStr}</div>`;
+    }
+
+    function formatDateRu(dateStr) {
+        if (!dateStr) return '';
+        let d = new Date(dateStr);
+        if (isNaN(d.getTime())) return dateStr;
+        return d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' });
+    }
+
+    function calculateCurrentRates(emp) {
+        if (!emp) return { hourly: 0, percent: 0, history: [] };
+        let hourly = Number(emp.hourlyRate) || 0;
+        let percent = Number(emp.percentRate) || 0;
+        let history = [];
+        let rules = Array.isArray(emp.rateRules) ? emp.rateRules : [];
+        let now = new Date();
+        rules.forEach(rule => {
+            if (!rule || !rule.amount) return;
+            let interval = rule.interval || 'yearly';
+            let lastApplied = rule.lastAppliedDate ? new Date(rule.lastAppliedDate) : (emp.firstWorkDay ? new Date(emp.firstWorkDay) : null);
+            if (!lastApplied) return;
+            let yearsPassed = (now - lastApplied) / (365.25 * 24 * 60 * 60 * 1000);
+            let periods = Math.floor(yearsPassed);
+            if (interval === 'monthly') {
+                periods = Math.floor((now - lastApplied) / (30.44 * 24 * 60 * 60 * 1000));
+            }
+            if (periods > 0) {
+                let amount = Number(rule.amount) || 0;
+                if (rule.type === 'hourly') {
+                    let add = amount * periods;
+                    hourly += add;
+                    history.push({ type: 'hourly', amount: add, rule: rule, periods: periods });
+                } else if (rule.type === 'percent') {
+                    let add = (percent * (Number(rule.amount) / 100)) * periods;
+                    percent += add;
+                    history.push({ type: 'percent', amount: add, rule: rule, periods: periods });
+                }
+            }
+        });
+        return { hourly: Math.round(hourly * 100) / 100, percent: Math.round(percent * 100) / 100, history: history };
+    }
+
+    function isBirthdayToday(emp) {
+        if (!emp || !emp.birthday) return false;
+        let d = new Date(emp.birthday);
+        if (isNaN(d.getTime())) return false;
+        let today = new Date();
+        return d.getMonth() === today.getMonth() && d.getDate() === today.getDate();
+    }
+
+    // ==========================================
+    // ВКЛАДКА «СОТРУДНИКИ» — БД СОТРУДНИКОВ
+    // ==========================================
+
+    function renderEmployeesTab() {
+        const box = document.getElementById('content');
+        let employees = cachedData.employees || {};
+        let empList = Object.keys(employees).filter(k => k !== '_meta').map(k => ({ id: k, ...employees[k] }));
+        empList.sort((a, b) => (a.lastName || '').localeCompare(b.lastName || ''));
+
+        let html = `
+            <h3 style="color:#1a237e; font-size:24px; margin-top:0; margin-bottom:15px;">👥 База данных сотрудников</h3>
+            <div style="display:flex; gap:10px; margin-bottom: 15px;">
+                <button class="btn-add" onclick="addEmployee()" style="padding:10px 20px; border-radius:10px; font-weight:bold; cursor:pointer; background:#4caf50; color:white; border:none;">➕ Добавить сотрудника</button>
+            </div>
+            <div style="overflow-x:auto;">
+            <table style="min-width:100%; border-collapse:collapse; font-size:14px;" id="employees-table">
+                <thead>
+                    <tr style="background:#f5f5f5;">
+                        <th style="border:1px solid #ccc; padding:8px; text-align:left;">Фамилия</th>
+                        <th style="border:1px solid #ccc; padding:8px; text-align:left;">Имя</th>
+                        <th style="border:1px solid #ccc; padding:8px; text-align:center;">День рождения</th>
+                        <th style="border:1px solid #ccc; padding:8px; text-align:center;">Первый день</th>
+                        <th style="border:1px solid #ccc; padding:8px; text-align:right;">Ставка (₽/час)</th>
+                        <th style="border:1px solid #ccc; padding:8px; text-align:right;">Ставка (%)</th>
+                        <th style="border:1px solid #ccc; padding:8px; text-align:left;">Правила изменения</th>
+                        <th style="border:1px solid #ccc; padding:8px; text-align:center;">Действия</th>
+                    </tr>
+                </thead>
+                <tbody>
+        `;
+
+        if (empList.length === 0) {
+            html += `<tr><td colspan="8" style="padding:20px; text-align:center; color:#888;">Сотрудников пока нет. Нажмите «Добавить сотрудника».</td></tr>`;
+        } else {
+            empList.forEach(emp => {
+                let rates = calculateCurrentRates(emp);
+                let rulesText = (emp.rateRules || []).map(r => {
+                    let t = r.type === 'hourly' ? '₽/ч' : '%';
+                    let sign = r.type === 'hourly' ? '+' : '×';
+                    return `${r.interval === 'monthly' ? 'Каждый месяц' : 'Каждый год'} ${sign}${r.amount} ${t}`;
+                }).join('; ') || '—';
+                let bdayMark = isBirthdayToday(emp) ? ' 🎂' : '';
+                html += `
+                    <tr style="${isBirthdayToday(emp) ? 'background:#fff3e0;' : ''}">
+                        <td style="border:1px solid #ccc; padding:8px; font-weight:bold;">${emp.lastName || ''}</td>
+                        <td style="border:1px solid #ccc; padding:8px;">${emp.firstName || ''}</td>
+                        <td style="border:1px solid #ccc; padding:8px; text-align:center;">${formatDateRu(emp.birthday) || '—'}${bdayMark}</td>
+                        <td style="border:1px solid #ccc; padding:8px; text-align:center;">${formatDateRu(emp.firstWorkDay) || '—'}</td>
+                        <td style="border:1px solid #ccc; padding:8px; text-align:right; font-weight:bold; color:#2E7D32;">${rates.hourly.toFixed(2)}</td>
+                        <td style="border:1px solid #ccc; padding:8px; text-align:right; font-weight:bold; color:#2E7D32;">${rates.percent.toFixed(2)}%</td>
+                        <td style="border:1px solid #ccc; padding:8px; font-size:12px; color:#555;">${rulesText}</td>
+                        <td style="border:1px solid #ccc; padding:8px; text-align:center;">
+                            <button onclick="editEmployee('${emp.id}')" style="background:#FF9800; color:white; border:none; border-radius:4px; padding:4px 10px; cursor:pointer; font-size:12px;">✏️</button>
+                            <button onclick="deleteEmployee('${emp.id}')" style="background:#e53935; color:white; border:none; border-radius:4px; padding:4px 10px; cursor:pointer; font-size:12px;">🗑</button>
+                        </td>
+                    </tr>`;
+            });
+        }
+        html += `</tbody></table></div>`;
+        box.innerHTML = html;
+    }
+
+    async function addEmployee() {
+        let name = prompt("Введите ФИО сотрудника (Иванов Иван Иванович):", "");
+        if (!name) return;
+        let parts = name.trim().split(/\s+/);
+        let firstName = parts[1] || '';
+        let lastName = parts[0] || '';
+        let middleName = parts[2] || '';
+
+        let birthday = prompt("Дата рождения (гггг-мм-дд):", "");
+        let firstWorkDay = prompt("Дата первого рабочего дня (гггг-мм-дд):", "");
+        let hourlyRate = parseFloat(prompt("Ставка за час (₽):", "0")) || 0;
+        let percentRate = parseFloat(prompt("Ставка в %:", "0")) || 0;
+
+        let emp = {
+            firstName: firstName,
+            lastName: lastName,
+            middleName: middleName,
+            birthday: birthday,
+            firstWorkDay: firstWorkDay,
+            hourlyRate: hourlyRate,
+            percentRate: percentRate,
+            rateRules: []
+        };
+
+        let id = 'emp_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
+        emp.id = id;
+        cachedData.employees = cachedData.employees || {};
+        cachedData.employees[id] = emp;
+        await fetch(`${FB_URL}/employees/${id}.json`, { method: 'PUT', body: JSON.stringify(emp) });
+        renderEmployeesTab();
+    }
+
+    async function editEmployee(id) {
+        let emp = cachedData.employees[id];
+        if (!emp) return;
+        let name = (emp.lastName || '') + ' ' + (emp.firstName || '') + ' ' + (emp.middleName || '');
+        let newName = prompt("ФИО сотрудника:", name.trim());
+        if (newName) {
+            let parts = newName.trim().split(/\s+/);
+            emp.firstName = parts[1] || '';
+            emp.lastName = parts[0] || '';
+            emp.middleName = parts[2] || '';
+        }
+        let bday = prompt("Дата рождения (гггг-мм-дд):", emp.birthday || "");
+        if (bday) emp.birthday = bday;
+        let fwd = prompt("Дата первого рабочего дня (гггг-мм-дд):", emp.firstWorkDay || "");
+        if (fwd) emp.firstWorkDay = fwd;
+        let hr = parseFloat(prompt("Ставка за час (₽):", emp.hourlyRate || 0));
+        if (!isNaN(hr)) emp.hourlyRate = hr;
+        let pr = parseFloat(prompt("Ставка в %:", emp.percentRate || 0));
+        if (!isNaN(pr)) emp.percentRate = pr;
+
+        let addRule = confirm("Добавить правило изменения ставки?\n\n(ОК — добавить, Отмена — нет)");
+        if (addRule) {
+            let ruleType = prompt("Тип изменения: 1 — ₽/час, 2 — %", "1");
+            let ruleAmount = parseFloat(prompt("На сколько изменяется (например +5 или +0.5):", "5")) || 0;
+            let ruleInterval = prompt("Периодичность: 1 — каждый год, 2 — каждый месяц", "1");
+            emp.rateRules = emp.rateRules || [];
+            emp.rateRules.push({
+                type: ruleType === '2' ? 'percent' : 'hourly',
+                amount: ruleAmount,
+                interval: ruleInterval === '2' ? 'monthly' : 'yearly',
+                lastAppliedDate: emp.firstWorkDay || new Date().toISOString().slice(0, 10)
+            });
+        }
+
+        await fetch(`${FB_URL}/employees/${id}.json`, { method: 'PUT', body: JSON.stringify(emp) });
+        renderEmployeesTab();
+    }
+
+    async function deleteEmployee(id) {
+        if (!confirm("Удалить сотрудника из базы? Это не удаляет его из графиков.")) return;
+        await fetch(`${FB_URL}/employees/${id}.json`, { method: 'DELETE' });
+        if (cachedData.employees) delete cachedData.employees[id];
+        renderEmployeesTab();
+    }
+
+    // ==========================================
+    // ОТПРАВКА ГРАФИКОВ (PNG → БОТ → АДМИН)
+    // ==========================================
+
+    function openSendGraphsDialog() {
+        let target = getTargetDateLogic();
+        let monthNames = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
+        let html = `
+            <div id="send-graphs-overlay" style="position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:9999; display:flex; align-items:center; justify-content:center; padding:20px;">
+                <div style="background:white; border-radius:16px; padding:24px; max-width:420px; width:100%; box-shadow:0 8px 32px rgba(0,0,0,0.3);">
+                    <h3 style="margin-top:0; color:#1a237e;">📤 Отправить графики</h3>
+                    <p style="color:#555; font-size:14px; margin-bottom:16px;">Месяц: <b>${monthNames[target.month]} ${target.year}</b></p>
+                    <label style="display:block; margin-bottom:12px; font-weight:bold; font-size:14px;">Получатель:</label>
+                    <button onclick="sendGraphsToRecipient('admin')" style="width:100%; padding:12px; margin-bottom:8px; border:none; border-radius:10px; font-weight:bold; cursor:pointer; background:linear-gradient(135deg,#4A148C,#311B92); color:white; font-size:16px;">👤 Администратору</button>
+                    <button onclick="sendGraphsToRecipient('employees')" style="width:100%; padding:12px; margin-bottom:8px; border:none; border-radius:10px; font-weight:bold; cursor:pointer; background:#f5f5f5; color:#888; font-size:16px; border:1px solid #ddd;">👥 Сотрудникам (скоро)</button>
+                    <div style="text-align:right; margin-top:16px;">
+                        <button onclick="document.getElementById('send-graphs-overlay').remove()" style="padding:10px 20px; border-radius:10px; font-weight:bold; cursor:pointer; background:#f5f5f5; border:none;">Отмена</button>
+                    </div>
+                </div>
+            </div>
+        `;
+        let existing = document.getElementById('send-graphs-overlay');
+        if (existing) existing.remove();
+        document.body.insertAdjacentHTML('beforeend', html);
+    }
+
+    async function sendGraphsToRecipient(recipient) {
+        let overlay = document.getElementById('send-graphs-overlay');
+        if (overlay) overlay.remove();
+
+        if (recipient !== 'admin') {
+            alert("Отправка сотрудникам будет реализована на следующем этапе.");
+            return;
+        }
+
+        let target = getTargetDateLogic();
+        let monthData = window.graphDraft || (cachedData.schedules && cachedData.schedules[`${target.year}_${target.month}`]) || {};
+        let users = Object.keys(monthData).filter(k => k !== 'comment' && k !== '_pinned' && k !== '_meta');
+        if (users.length === 0) {
+            alert("В графике нет сотрудников.");
+            return;
+        }
+
+        showReportOverlay("Генерация PNG-графиков...");
+
+        try {
+            let pngFiles = [];
+            for (let user of users) {
+                let pngDataUri = await renderUserSchedulePng(user, monthData, target);
+                if (pngDataUri) pngFiles.push({ user: user, dataUri: pngDataUri });
+            }
+
+            if (pngFiles.length === 0) {
+                hideReportOverlay();
+                alert("Не удалось сгенерировать PNG.");
+                return;
+            }
+
+            let summary = `📊 **Графики сотрудников (${target.year}-${String(target.month + 1).padStart(2, '0')})**\n\n`;
+            pngFiles.forEach(f => {
+                let cellData = monthData[f.user];
+                let sentDate = cellData && cellData.submittedAt ? new Date(cellData.submittedAt).toLocaleString('ru-RU') : 'неизвестно';
+                summary += `• **${f.user}** — отправлено: ${sentDate}\n`;
+            });
+
+            let payload = {
+                type: "schedule_png",
+                chat_id: Number(ADMIN_CHAT_ID),
+                text: summary,
+                files: pngFiles.map(f => ({ filename: `График_${f.user.replace(/\s+/g, '_')}.png`, file_data: f.dataUri })),
+                timestamp: Date.now()
+            };
+
+            await fetch(`${FB_URL}/bot_control/notifications.json`, { method: 'POST', body: JSON.stringify(payload) });
+            hideReportOverlay();
+            alert("✅ Графики отправлены администратору!");
+        } catch (e) {
+            hideReportOverlay();
+            alert("❌ Ошибка отправки графиков: " + e.message);
+        }
+    }
+
+    async function renderUserSchedulePng(user, monthData, target) {
+        let daysInMonth = new Date(target.year, target.month + 1, 0).getDate();
+        let rows = '';
+        let dayNames = ["вс", "пн", "вт", "ср", "чт", "пт", "сб"];
+
+        let header = document.createElement('div');
+        header.style.cssText = 'position:absolute; left:-9999px; top:0; background:white; padding:20px; border-radius:12px; font-family:Arial,sans-serif; min-width:600px;';
+        header.innerHTML = `
+            <div style="font-size:18px; font-weight:bold; color:#1a237e; margin-bottom:4px;">График: ${user}</div>
+            <div style="font-size:13px; color:#555; margin-bottom:12px;">Месяц: ${["Январь","Февраль","Март","Апрель","Май","Июнь","Июль","Август","Сентябрь","Октябрь","Ноябрь","Декабрь"][target.month]} ${target.year}</div>
+            <table style="border-collapse:collapse; font-size:12px; width:100%;">
+                <thead>
+                    <tr style="background:#f0f0f0;">
+                        <th style="border:1px solid #ccc; padding:4px;">День</th>
+                        <th style="border:1px solid #ccc; padding:4px;">Дата</th>
+                        <th style="border:1px solid #ccc; padding:4px;">Смена</th>
+                    </tr>
+                </thead>
+                <tbody>`;
+
+        for (let d = 1; d <= daysInMonth; d++) {
+            let dateObj = new Date(target.year, target.month, d);
+            let dayOfWeek = dateObj.getDay();
+            let cellData = monthData[user] && monthData[user][d] ? monthData[user][d] : { text: '', shift: 'CLEAR' };
+            let text = cellData.text || '';
+            let shift = cellData.shift || 'CLEAR';
+            let bg = '#ffffff';
+            if (shift === 'OFF' || text.toUpperCase().includes('ВЫХ')) bg = '#bbdefb';
+            else if (shift === 'ANY_SHOP' || text.toUpperCase().includes('ЛЮБ')) bg = '#c8e6c9';
+            else if (shift === 'MORNING') bg = '#e1bee7';
+            else if (shift === 'EVENING') bg = '#fff9c4';
+            else if (shift === 'FULL') bg = '#ffccbc';
+
+            rows += `<tr style="background:${bg};">
+                <td style="border:1px solid #ccc; padding:3px; text-align:center;">${d}</td>
+                <td style="border:1px solid #ccc; padding:3px; text-align:center;">${dayNames[dayOfWeek]}</td>
+                <td style="border:1px solid #ccc; padding:3px; text-align:center; font-weight:bold;">${text || '—'}</td>
+            </tr>`;
+        }
+        header.innerHTML += rows + `</tbody></table>`;
+        document.body.appendChild(header);
+
+        let html2canvas = window.html2canvas || (window.html2canvas_lib && window.html2canvas_lib);
+        if (!html2canvas) {
+            document.body.removeChild(header);
+            return null;
+        }
+
+        let canvasEl = await html2canvas(header, { scale: 2, backgroundColor: '#ffffff' });
+        document.body.removeChild(header);
+        return canvasEl.toDataURL('image/png');
+    }
 </script>
 </body>
 </html>
+

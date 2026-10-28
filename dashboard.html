@@ -3212,23 +3212,47 @@ window.syncStoplistWithMenu = async function() {
         
         if (!window.graphDraft) {
             let draft = schedules[currentYearMonth] ? JSON.parse(JSON.stringify(schedules[currentYearMonth])) : {};
-            let allU = Object.keys(draft).filter(k => k !== 'comment' && k !== '_pinned');
+            let allU = Object.keys(draft).filter(k => k !== 'comment' && k !== '_pinned' && k !== '_originalSubmitted' && k !== '_meta');
             if (allU.length === 0) {
                 let pM = target.month - 1; let pY = target.year;
                 if (pM < 0) { pM = 11; pY--; }
                 let prevMonthKey = `${pY}_${pM}`;
                 if (schedules[prevMonthKey]) {
-                    Object.keys(schedules[prevMonthKey]).filter(k => k !== 'comment').forEach(u => draft[u] = { _pinned: true });
+                    Object.keys(schedules[prevMonthKey]).filter(k => k !== 'comment' && k !== '_pinned' && k !== '_meta' && k !== '_originalSubmitted').forEach(u => draft[u] = { _pinned: true });
                 } else {
                     draft["Сотрудник 1"] = { _pinned: true };
                 }
             }
             window.graphDraft = draft;
-            originalGraphDraft = JSON.parse(JSON.stringify(draft)); 
+
+            // 🔒 Черновик сотрудника (неприкосновенный запас) — берём из Firebase, если есть,
+            // иначе делаем копию текущего черновика. Он НИКОГДА не меняется при моих правках.
+            let origSubmitted = draft._originalSubmitted || JSON.parse(JSON.stringify(draft));
+            originalGraphDraft = JSON.parse(JSON.stringify(origSubmitted));
+            if (originalGraphDraft._originalSubmitted) delete originalGraphDraft._originalSubmitted;
+            if (originalGraphDraft._meta) delete originalGraphDraft._meta;
+        } else {
+            // 🔄 При перерисовке (например, после сохранения) обновляем черновик,
+            // но НЕ перезаписываем его, если он уже есть — он должен остаться неизменным.
+            let draft = schedules[currentYearMonth] ? JSON.parse(JSON.stringify(schedules[currentYearMonth])) : {};
+            if (draft._originalSubmitted) {
+                originalGraphDraft = JSON.parse(JSON.stringify(draft._originalSubmitted));
+                delete originalGraphDraft._originalSubmitted;
+                delete originalGraphDraft._meta;
+            }
         }
         let monthData = window.graphDraft;
-        
-        let rawUsers = Object.keys(monthData).filter(k => k !== 'comment' && k !== '_pinned').sort();
+
+        // 🐛 ОТЛАДКА: проверяем, что черновик загрузился и содержит данные
+        console.log("[DEBUG] originalGraphDraft loaded:", !!originalGraphDraft, "users:", Object.keys(originalGraphDraft || {}).filter(k => k !== '_meta' && k !== '_originalSubmitted').length);
+        if (originalGraphDraft) {
+            let testUser = Object.keys(originalGraphDraft).find(k => k !== '_meta' && k !== '_originalSubmitted');
+            if (testUser && originalGraphDraft[testUser][1]) {
+                console.log("[DEBUG] example cell:", testUser, "day 1:", originalGraphDraft[testUser][1]);
+            }
+        }
+
+        let rawUsers = Object.keys(monthData).filter(k => k !== 'comment' && k !== '_pinned' && k !== '_meta' && k !== '_originalSubmitted').sort();
         if(rawUsers.length === 0) rawUsers = ["Сотрудник 1"]; 
         
         let allUsers = [];
@@ -3328,7 +3352,12 @@ window.syncStoplistWithMenu = async function() {
             html += `<th class="user-header-cell" style="border:1px solid #ccc; padding:8px; text-align:center;">
                         <div id="shift_count_${getSafeId(user)}" style="font-size:12px; color:#2E7D32; font-weight:900; margin-bottom:6px; background:#E8F5E9; border:1px solid #C8E6C9; border-radius:6px; padding:2px; transition:0.2s;">Смен: ${shiftCount}</div>
                         <textarea rows="2" data-old-name="${user}" onchange="updateGraphUserName('${user}', this.value)" style="width:100%; text-align:center; font-weight:bold; font-size:14px; background:transparent; border:none; border-bottom:1px solid #7E57C2; resize:none;">${user}</textarea>
-                        <br><button onclick="removeUserFromGraph('${user}')" style="font-size:11px; margin-top:5px; background:#ffebee; border:none; border-radius:4px; color:#c62828; padding:3px 8px; cursor:pointer;">Удалить</button>
+                        <br>
+                        <div style="display:flex; gap:4px; justify-content:center; margin-top:4px; flex-wrap:wrap;">
+                            <button onclick="removeUserFromGraph('${user}')" style="font-size:10px; background:#ffebee; border:none; border-radius:4px; color:#c62828; padding:2px 6px; cursor:pointer;">Удалить</button>
+                            <button onclick="resetUserSubmitted('${user}'); renderGraphsTab()" style="font-size:10px; background:#fff3e0; border:1px solid #ffcc80; border-radius:4px; color:#e65100; padding:2px 6px; cursor:pointer;" title="Сбросить дату отправки">↺ Дата</button>
+                            <button onclick="acceptUserSubmission('${user}')" style="font-size:10px; background:#e8f5e9; border:1px solid #81c784; border-radius:4px; color:#2e7d32; padding:2px 6px; cursor:pointer;" title="Принять график от сотрудника (поставить дату и зафиксировать черновик)">✅ Принять</button>
+                        </div>
                         ${formatSentDateHtml(monthData[user])}
                      </th>`;
         });
@@ -3340,18 +3369,19 @@ window.syncStoplistWithMenu = async function() {
                 <tbody>
         `;
         
-        const dayNames = ["вс", "пн", "вт", "ср", "чт", "пт", "сб"];
+        const dayNames = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"];
         const expectedShops = ['Б', 'Г', 'В', 'Л', 'НК', 'НК2', 'СП', 'МЭИ', 'ЛЯ'];
-        
+
         for (let d = 1; d <= daysInMonth; d++) {
             let dateObj = new Date(target.year, target.month, d);
-            let dayOfWeek = dateObj.getDay();
-            let isWeekend = (dayOfWeek === 0 || dayOfWeek === 6);
-            let rowBg = isWeekend ? "background-color:#fff3e0;" : "background-color:#ffffff;"; 
-            let borderBottom = (dayOfWeek === 0) ? "border-bottom: 3px solid #ffb74d;" : "border-bottom: 1px solid #eee;";
-            
+            let dayOfWeekRaw = dateObj.getDay(); // 0 = вс
+            let dayOfWeek = (dayOfWeekRaw + 6) % 7; // преобразуем: пн=0, вс=6
+            let isWeekend = (dayOfWeek === 5 || dayOfWeek === 6); // сб=5, вс=6
+            let rowBg = isWeekend ? "background-color:#fff3e0;" : "background-color:#ffffff;";
+            let borderBottom = (dayOfWeek === 6) ? "border-bottom: 3px solid #ffb74d;" : "border-bottom: 1px solid #eee;"; // вс = 6
+
            let dayShifts = [];
-           
+
             let rowHtml = `<tr class="graph-row" style="${rowBg} ${borderBottom}" onclick="selectGraphRow(this)">
                 <td class="meta-cell stick-left-1" style="border:1px solid #ccc; padding:4px; text-align:center; font-weight:bold; background-color:${isWeekend?'#ffcc80':'#f5f5f5'}; color:${isWeekend?'#d84315':'#333'}; z-index:10; min-width:45px; max-width:45px;">${d}</td>
                 <td class="meta-cell stick-left-2" style="border:1px solid #ccc; padding:4px; text-align:center; font-weight:bold; text-transform:uppercase; background-color:${isWeekend?'#ffcc80':'#f5f5f5'}; color:${isWeekend?'#d84315':'#555'}; z-index:10; min-width:45px; max-width:45px;">${dayNames[dayOfWeek]}</td>`;
@@ -3707,20 +3737,28 @@ window.syncStoplistWithMenu = async function() {
             // ⚡ Защита графика от удаленных смен (undefined)
             let safeGraphDraft = JSON.parse(JSON.stringify(window.graphDraft));
 
-            // 📅 Фиксируем дату отправки графика для каждого сотрудника
+            // 🔒 Неприкственный черновик сотрудника (чтобы "Сравнить с черновиками" работало).
+            // Берём из Firebase, если есть — иначе делаем копию текущего черновика.
+            // ВАЖНО: не перезаписываем, если уже сохранён.
+            if (!safeGraphDraft._originalSubmitted) {
+                safeGraphDraft._originalSubmitted = JSON.parse(JSON.stringify(window.graphDraft));
+                delete safeGraphDraft._originalSubmitted._originalSubmitted;
+                delete safeGraphDraft._originalSubmitted._meta;
+            }
+
+            // 📅 Дата отправки графика СОТРУДНИКОМ. Не меняем, если уже стоит — она фиксируется в мини-апе
+            // (или вручную через acceptUserSubmission). При моих правках она не переписывается.
             if (safeGraphDraft && typeof safeGraphDraft === 'object') {
                 Object.keys(safeGraphDraft).forEach(k => {
-                    if (k === 'comment' || k === '_pinned' || k === '_meta') return;
+                    if (k === 'comment' || k === '_pinned' || k === '_meta' || k === '_originalSubmitted') return;
                     if (typeof safeGraphDraft[k] === 'object' && safeGraphDraft[k] !== null) {
-                        safeGraphDraft[k].submittedAt = Date.now();
-                        safeGraphDraft[k].submittedBy = currentUserId;
-                        safeGraphDraft[k].submittedName = currentUserName;
+                        // Оставляем то, что пришло от сотрудника (мини-апп), не переписываем自己的 правками
                     }
                 });
                 safeGraphDraft._meta = {
-                    lastSubmittedAt: Date.now(),
-                    lastSubmittedBy: currentUserId,
-                    lastSubmittedName: currentUserName
+                    lastSavedAt: Date.now(),
+                    lastSavedBy: currentUserId,
+                    lastSavedName: currentUserName
                 };
             }
             cachedData.schedules[currentYearMonth] = safeGraphDraft;
@@ -5666,11 +5704,11 @@ async function exportGraphsToExcel() {
             let target = getTargetDateLogic();
             let monthNames = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
             let daysInMonth = new Date(target.year, target.month + 1, 0).getDate();
-            const dayNames = ["вс", "пн", "вт", "ср", "чт", "пт", "сб"];
+            const dayNames = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"];
             const expectedShops = ['Б', 'Г', 'В', 'Л', 'НК', 'НК2', 'СП', 'МЭИ', 'ЛЯ'];
 
             let monthData = window.graphDraft || {};
-            let allUsers = Object.keys(monthData).filter(k => k !== 'comment' && k !== '_pinned').sort();
+            let allUsers = Object.keys(monthData).filter(k => k !== 'comment' && k !== '_pinned' && k !== '_meta' && k !== '_originalSubmitted').sort();
 
             let aoa = [];
             // Формируем шапку таблицы
@@ -5680,7 +5718,8 @@ async function exportGraphsToExcel() {
             // Формируем строки по дням
             for (let d = 1; d <= daysInMonth; d++) {
                 let dateObj = new Date(target.year, target.month, d);
-                let dayOfWeek = dateObj.getDay();
+                let dayOfWeekRaw = dateObj.getDay(); // 0 = вс
+                let dayOfWeek = (dayOfWeekRaw + 6) % 7; // преобразуем: пн=0, вс=6
                 let dayName = dayNames[dayOfWeek];
                 
                 let row = [d, dayName];
@@ -7989,6 +8028,61 @@ window.smartFillVolumes = function() {
         return `<div style="font-size:10px; color:#2E7D32; margin-top:3px; white-space:nowrap;">📅 ${dateStr} ${timeStr}</div>`;
     }
 
+    // 📅 Фиксирует дату отправки графика КОНКРЕТНОГО сотрудника.
+    // Вызывается при отправке графиков — тогда под именем появляется время, когда график ушёл.
+    function markUserSubmitted(user) {
+        if (!window.graphDraft[user]) window.graphDraft[user] = { _pinned: true };
+        window.graphDraft[user].submittedAt = Date.now();
+        window.graphDraft[user].submittedBy = currentUserId;
+        window.graphDraft[user].submittedName = currentUserName;
+    }
+
+    // 🔄 Сбрасывает дату отправки для сотрудника (если она была поставлена ошибочно).
+    function resetUserSubmitted(user) {
+        if (window.graphDraft[user]) {
+            window.graphDraft[user].submittedAt = null;
+            window.graphDraft[user].submittedBy = null;
+            window.graphDraft[user].submittedName = null;
+        }
+    }
+
+    // ✅ Принять график от сотрудника: ставит дату отправки (сейчас) и фиксирует
+    // неприкственный черновик (чтобы "Сравнить с черновиками" показывало, что отправил сотрудник).
+    async function acceptUserSubmission(user) {
+        if (!window.graphDraft[user]) {
+            alert("Сотрудник не найден в графике.");
+            return;
+        }
+
+        // 📅 Дата, когда сотрудник отправил свой график — текущее время.
+        window.graphDraft[user].submittedAt = Date.now();
+        window.graphDraft[user].submittedBy = currentUserId;
+        window.graphDraft[user].submittedName = currentUserName;
+
+        // 🔒 Фиксируем неприкственный черновик сотрудника — копию ТЕКУЩЕГО состояния,
+        // чтобы в режиме сравнения видеть, что именно отправил сотрудник.
+        if (!window.graphDraft._originalSubmitted) {
+            window.graphDraft._originalSubmitted = JSON.parse(JSON.stringify(window.graphDraft));
+            delete window.graphDraft._originalSubmitted._originalSubmitted;
+            delete window.graphDraft._originalSubmitted._meta;
+        }
+
+        console.log("[DEBUG] acceptUserSubmission: user=", user, "originalSubmitted users=", Object.keys(window.graphDraft._originalSubmitted || {}).filter(k=>k!=='_meta' && k!=='_originalSubmitted').length);
+
+        // 💾 Сохраняем в Firebase, чтобы дата и черновик не пропали.
+        try {
+            let target = getTargetDateLogic();
+            let targetKey = `${target.year}_${target.month}`;
+            let saveData = JSON.parse(JSON.stringify(window.graphDraft));
+            await fetch(`${FB_URL}/schedules/${targetKey}.json`, { method: 'PUT', body: JSON.stringify(saveData) });
+        } catch (e) {
+            console.warn("⚠️ Не удалось сохранить принятие графика:", e);
+        }
+
+        renderGraphsTab();
+        alert(`✅ График сотрудника ${user} принят. Дата отправки зафиксирована.`);
+    }
+
     function formatDateRu(dateStr) {
         if (!dateStr) return '';
         let d = new Date(dateStr);
@@ -8213,12 +8307,19 @@ window.smartFillVolumes = function() {
         }
 
         let target = getTargetDateLogic();
-        let monthData = window.graphDraft || (cachedData.schedules && cachedData.schedules[`${target.year}_${target.month}`]) || {};
-        let users = Object.keys(monthData).filter(k => k !== 'comment' && k !== '_pinned' && k !== '_meta');
+        // ⚡ Используем ТОЛЬКО window.graphDraft — это те данные, которые мы редактируем.
+        // Если его нет (редкий случай), делаем пустой черновик.
+        if (!window.graphDraft) {
+            window.graphDraft = (cachedData.schedules && cachedData.schedules[`${target.year}_${target.month}`]) || {};
+        }
+        let monthData = window.graphDraft;
+        let users = Object.keys(monthData).filter(k => k !== 'comment' && k !== '_pinned' && k !== '_meta' && k !== '_originalSubmitted');
         if (users.length === 0) {
             alert("В графике нет сотрудников.");
             return;
         }
+
+        console.log("[DEBUG] sendGraphsToRecipient: users=", users, "monthData keys (filtered)=", Object.keys(monthData).filter(k => k !== 'comment' && k !== '_pinned' && k !== '_meta' && k !== '_originalSubmitted'));
 
         showReportOverlay("Генерация PNG-графиков...");
 
@@ -8237,10 +8338,28 @@ window.smartFillVolumes = function() {
 
             let summary = `📊 **Графики сотрудников (${target.year}-${String(target.month + 1).padStart(2, '0')})**\n\n`;
             pngFiles.forEach(f => {
+                // 📅 Ставим дату отправки КОНКРЕТНОому сотруднику — только сейчас, только при отправке.
+                markUserSubmitted(f.user);
                 let cellData = monthData[f.user];
                 let sentDate = cellData && cellData.submittedAt ? new Date(cellData.submittedAt).toLocaleString('ru-RU') : 'неизвестно';
                 summary += `• **${f.user}** — отправлено: ${sentDate}\n`;
             });
+
+            // 🔒 Фиксируем неприкственный черновик сотрудника (для сравнения) — только один раз.
+            if (!monthData._originalSubmitted) {
+                monthData._originalSubmitted = JSON.parse(JSON.stringify(window.graphDraft));
+                delete monthData._originalSubmitted._originalSubmitted;
+                delete monthData._originalSubmitted._meta;
+            }
+
+            // 💾 Сохраняем даты отправки и черновик в Firebase.
+            try {
+                let targetKey = `${target.year}_${target.month}`;
+                let saveData = JSON.parse(JSON.stringify(window.graphDraft));
+                await fetch(`${FB_URL}/schedules/${targetKey}.json`, { method: 'PUT', body: JSON.stringify(saveData) });
+            } catch (e) {
+                console.warn("⚠️ Не удалось сохранить даты отправки:", e);
+            }
 
             let payload = {
                 type: "schedule_png",
@@ -8260,45 +8379,84 @@ window.smartFillVolumes = function() {
     }
 
     async function renderUserSchedulePng(user, monthData, target) {
+        let monthNames = ["Январь","Февраль","Март","Апрель","Май","Июнь","Июль","Август","Сентябрь","Октябрь","Ноябрь","Декабрь"];
+        let dayNamesShort = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"];
         let daysInMonth = new Date(target.year, target.month + 1, 0).getDate();
-        let rows = '';
-        let dayNames = ["вс", "пн", "вт", "ср", "чт", "пт", "сб"];
+        let firstDayRaw = new Date(target.year, target.month, 1).getDay(); // 0 = вс
+        let firstDay = (firstDayRaw + 6) % 7; // преобразуем: пн=0, вс=6
+
+        // Собираем календарную сетку: массив недель, каждая — массив из 7 ячеек (день или null)
+        let weeks = [];
+        let week = [];
+        for (let i = 0; i < firstDay; i++) week.push(null);
+        for (let d = 1; d <= daysInMonth; d++) {
+            week.push(d);
+            if (week.length === 7) { weeks.push(week); week = []; }
+        }
+        if (week.length) { while (week.length < 7) week.push(null); weeks.push(week); }
+
+        // Цвет фона — ТА ЖЕ ЛОГИКА, ЧТО И В ДАШБОРДЕ (по shift и по тексту)
+        function getBg(cellData) {
+            if (!cellData) return '#fafafa';
+            let val = (cellData.text || '').trim().toUpperCase();
+            let shift = cellData.shift || 'CLEAR';
+
+            // Нормализация, как в дашборде
+            val = val.replace(/B/g, 'В').replace(/Y/g, 'У').replace(/E/g, 'Е').replace(/C/g, 'С')
+                     .replace(/K/g, 'К').replace(/M/g, 'М').replace(/H/g, 'Н').replace(/O/g, 'О')
+                     .replace(/P/g, 'Р').replace(/A/g, 'А').replace(/T/g, 'Т').replace(/X/g, 'Х');
+
+            if (shift === 'OFF' || val.includes('ВЫХ')) return '#bbdefb';        // выходной — голубой
+            if (shift === 'ANY_SHOP' || val.includes('ЛЮБ')) return '#c8e6c9';  // любой магазин — светло-зелёный
+            if (shift === 'MORNING' || val.endsWith('_У') || val.endsWith(' У')) return '#e1bee7'; // утро — светло-фиолетовый
+            if (shift === 'EVENING' || val.endsWith('_В') || val.endsWith(' В')) return '#fff9c4'; // вечер — светло-жёлтый
+            return '#ffffff'; // полный день / обычный текст — белый
+        }
+
+        let weeksHtml = '';
+        for (let w = 0; w < weeks.length; w++) {
+            weeksHtml += '<tr>';
+            for (let c = 0; c < 7; c++) {
+                let d = weeks[w][c];
+                if (d === null) {
+                    weeksHtml += '<td style="border:1px solid #eee; background:#fafafa; height:64px; width:10%;"></td>';
+                } else {
+                    let cellData = monthData[user] && monthData[user][d] ? monthData[user][d] : { text: '', shift: 'CLEAR' };
+                    // ТЕКСТ БЕРЁТСЯ ТОЧНО ТАК ЖЕ, КАК В ДАШБОРДЕ — исходный ввод сотрудника
+                    let displayText = (cellData.text || '').trim().toUpperCase();
+                    let bg = getBg(cellData);
+                    weeksHtml += `<td style="border:1px solid #ccc; background:${bg}; height:64px; width:10%; padding:3px; text-align:center; vertical-align:middle;">
+                        <div style="font-weight:bold; font-size:13px; color:#555; line-height:1.1;">${d}</div>
+                        <div style="font-size:11px; font-weight:bold; color:#333; margin-top:2px; line-height:1.1;">${displayText || '—'}</div>
+                    </td>`;
+                }
+            }
+            weeksHtml += '</tr>';
+        }
 
         let header = document.createElement('div');
-        header.style.cssText = 'position:absolute; left:-9999px; top:0; background:white; padding:20px; border-radius:12px; font-family:Arial,sans-serif; min-width:600px;';
+        header.style.cssText = 'position:absolute; left:-9999px; top:0; background:white; padding:20px; border-radius:12px; font-family:Arial,sans-serif; min-width:760px;';
         header.innerHTML = `
-            <div style="font-size:18px; font-weight:bold; color:#1a237e; margin-bottom:4px;">График: ${user}</div>
-            <div style="font-size:13px; color:#555; margin-bottom:12px;">Месяц: ${["Январь","Февраль","Март","Апрель","Май","Июнь","Июль","Август","Сентябрь","Октябрь","Ноябрь","Декабрь"][target.month]} ${target.year}</div>
-            <table style="border-collapse:collapse; font-size:12px; width:100%;">
+            <div style="font-size:20px; font-weight:bold; color:#1a237e; margin-bottom:2px;">График: ${user}</div>
+            <div style="font-size:14px; color:#555; margin-bottom:14px;">Месяц: ${monthNames[target.month]} ${target.year}</div>
+            <table style="border-collapse:collapse; font-size:12px; width:100%; table-layout:fixed;">
                 <thead>
-                    <tr style="background:#f0f0f0;">
-                        <th style="border:1px solid #ccc; padding:4px;">День</th>
-                        <th style="border:1px solid #ccc; padding:4px;">Дата</th>
-                        <th style="border:1px solid #ccc; padding:4px;">Смена</th>
+                    <tr style="background:#e0e0e0;">
+                        ${dayNamesShort.map(n => `<th style="border:1px solid #ccc; padding:6px; text-align:center; font-weight:bold; font-size:13px;">${n}</th>`).join('')}
                     </tr>
                 </thead>
-                <tbody>`;
-
-        for (let d = 1; d <= daysInMonth; d++) {
-            let dateObj = new Date(target.year, target.month, d);
-            let dayOfWeek = dateObj.getDay();
-            let cellData = monthData[user] && monthData[user][d] ? monthData[user][d] : { text: '', shift: 'CLEAR' };
-            let text = cellData.text || '';
-            let shift = cellData.shift || 'CLEAR';
-            let bg = '#ffffff';
-            if (shift === 'OFF' || text.toUpperCase().includes('ВЫХ')) bg = '#bbdefb';
-            else if (shift === 'ANY_SHOP' || text.toUpperCase().includes('ЛЮБ')) bg = '#c8e6c9';
-            else if (shift === 'MORNING') bg = '#e1bee7';
-            else if (shift === 'EVENING') bg = '#fff9c4';
-            else if (shift === 'FULL') bg = '#ffccbc';
-
-            rows += `<tr style="background:${bg};">
-                <td style="border:1px solid #ccc; padding:3px; text-align:center;">${d}</td>
-                <td style="border:1px solid #ccc; padding:3px; text-align:center;">${dayNames[dayOfWeek]}</td>
-                <td style="border:1px solid #ccc; padding:3px; text-align:center; font-weight:bold;">${text || '—'}</td>
-            </tr>`;
-        }
-        header.innerHTML += rows + `</tbody></table>`;
+                <tbody>
+                    ${weeksHtml}
+                </tbody>
+            </table>
+            <div style="margin-top:14px; font-size:11px; color:#777; display:flex; gap:14px; flex-wrap:wrap;">
+                <span>⬜ Полный день</span>
+                <span>🟪 Утро (_У)</span>
+                <span>🟨 Вечер (_В)</span>
+                <span>🟩 Любой магазин (ЛЮБ)</span>
+                <span>🟦 Выходной (ВЫХ)</span>
+            </div>
+        `;
         document.body.appendChild(header);
 
         let html2canvas = window.html2canvas || (window.html2canvas_lib && window.html2canvas_lib);
@@ -8307,7 +8465,7 @@ window.smartFillVolumes = function() {
             return null;
         }
 
-        let canvasEl = await html2canvas(header, { scale: 2, backgroundColor: '#ffffff' });
+        let canvasEl = await html2canvas(header, { scale: 2, backgroundColor: '#ffffff', windowWidth: 800, scrollY: 0 });
         document.body.removeChild(header);
         return canvasEl.toDataURL('image/png');
     }

@@ -8553,6 +8553,7 @@ window.smartFillVolumes = function() {
         ['revenue2','Выручка сотрудника 2','number'],
         ['start1','Начало смены 1','time'], ['end1','Конец смены 1','time'],
         ['start2','Начало смены 2','time'], ['end2','Конец смены 2','time'],
+        ['hours1','Отработано часов 1','number'], ['hours2','Отработано часов 2','number'],
         ['cashReceived','Наличные за день из чека','number'], ['expenses','Расходы','number'],
         ['taken1','ЗП взял сотрудник 1','number'], ['taken2','ЗП взял сотрудник 2','number'],
         ['coupons','Купоны','number'], ['cashClosing','Наличные в кассе (остаток)','number'],
@@ -8586,29 +8587,56 @@ window.smartFillVolumes = function() {
         const diff = (minutes(end) - minutes(start) + 1440) % 1440;
         return diff ? diff / 60 : null;
     }
-    function calculate(r) {
-        const morning = Boolean(String(r.employee2 || '').trim() || r.start2 || r.end2) || zero(r.revenue2) !== 0 || zero(r.taken2) !== 0;
+    const nameKey = value => String(value || '').toLowerCase().replace(/ё/g,'е').trim().split(/\s+/).filter(Boolean).sort().join('|');
+    function matchEmployee(name, employees) {
+        const key=nameKey(name);
+        if(!key)return null;
+        const matches=Object.entries(employees || {}).filter(([id,e])=>id!=='_meta' && e && typeof e==='object' && [e.name,e.fullName,
+            [e.firstName,e.lastName].filter(Boolean).join(' '),
+            [e.firstName,e.lastName,e.middleName].filter(Boolean).join(' ')
+        ].some(n=>n && nameKey(n)===key));
+        if(matches.length!==1)return null;
+        const [id,employee]=matches[0];
+        return {...employee,employeeId:id,userId:employee.userId ?? employee.user_id ?? employee.telegramId ?? employee.telegram_id ?? employee.telegramUserId ?? employee.tgUserId ?? employee.tgId ?? employee.tg_id ?? (/^\d+$/.test(id)?id:'')};
+    }
+    const splitShift = r => Boolean(String(r.employee2 || '').trim() || r.start2 || r.end2 || number(r.hours2)!=null) || zero(r.revenue2)!==0 || zero(r.taken2)!==0;
+    function shiftHours(r, index, split) {
+        const explicit=number(r['hours'+index]);
+        if(explicit!=null)return explicit>0 && explicit<=24?explicit:null;
+        if(r['start'+index] || r['end'+index])return hours(r['start'+index],r['end'+index]);
+        if(index===1 && !split)return norm(r.address).includes('староепавлино')?13:12;
+        return null;
+    }
+    function calculate(r, employees=state.employees) {
+        const morning = splitShift(r);
         const revenue1 = round(zero(r.revenue) - zero(r.revenue2));
-        const people = [{name:r.employee1, revenue:revenue1, hours:hours(r.start1,r.end1), hourly:number(r.hourly1), percent:number(r.percent1), fine:zero(r.fine1), taken:zero(r.taken1)}];
-        if (morning) people.push({name:r.employee2, revenue:zero(r.revenue2), hours:hours(r.start2,r.end2), hourly:number(r.hourly2), percent:number(r.percent2), fine:0, taken:zero(r.taken2)});
+        const person = index => {
+            const employee=matchEmployee(r['employee'+index],employees);
+            const rates=employee && typeof root.calculateCurrentRates==='function'?root.calculateCurrentRates(employee):null;
+            return {name:employee?[employee.lastName,employee.firstName].filter(Boolean).join(' ') || employee.name || employee.fullName:r['employee'+index],
+                employeeId:employee?.employeeId || '',userId:employee?.userId ?? '',matched:Boolean(employee),
+                revenue:index===1?revenue1:zero(r.revenue2),hours:shiftHours(r,index,morning),
+                hourly:employee && number(employee.hourlyRate)!=null?number(rates?rates.hourly:employee.hourlyRate):null,
+                percent:employee?number(rates?rates.percent:employee.percentRate) ?? 0:null,
+                fine:index===1?zero(r.fine1):0,taken:zero(r['taken'+index])};
+        };
+        const people = [person(1)];
+        if (morning) people.push(person(2));
         people.forEach(p => {
-            p.complete = Boolean(p.name && p.hours != null && p.hourly != null && p.percent != null);
-            p.salary = p.complete ? round(p.hours * p.hourly + p.revenue * p.percent / 100 - p.fine) : null;
+            p.complete = Boolean(p.matched && p.name && p.hours != null && p.hourly != null && p.percent != null);
+            p.gross = p.complete ? round(p.hours * p.hourly + p.revenue * p.percent / 100) : null;
+            p.salary = p.gross==null ? null : round(p.gross-p.fine);
             p.balance = p.salary == null ? null : round(p.salary - p.taken);
         });
-        return {people, revenue1};
+        return {people, revenue1, split:morning, needsHours:morning && people.some(p=>p.hours==null)};
     }
     let state = {records:{}, employees:{}, settings:{}, payments:{}, db:null, tab:'journal', from:'', to:'', address:'', status:'', timer:null, syncing:false, draft:null, initialized:false};
     const record = raw => ({...(raw.source || {}), ...(raw.overrides || {}), id:raw.id, imported:Boolean(raw.source)});
     const all = () => Object.entries(state.records).filter(([,r])=>!r.sourceUnavailable).map(([id,r]) => record({...r,id})).sort((a,b) => (a.workDate || date(a.submittedAt)).localeCompare(b.workDate || date(b.submittedAt)) || a.id.localeCompare(b.id));
     const filtered = () => all().filter(r => (!state.from || (r.workDate || date(r.submittedAt)) >= state.from) && (!state.to || (r.workDate || date(r.submittedAt)) <= state.to) && (!state.address || r.address === state.address));
-    const table = (heads, rows) => `<div class="fin-scroll"><table><thead><tr>${heads.map(h=>`<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${rows.length ? rows.map(row=>`<tr>${row.map(v=>`<td>${v}</td>`).join('')}</tr>`).join('') : `<tr><td colspan="${heads.length}">Нет данных за выбранный период</td></tr>`}</tbody></table></div>`;
+    const table = (heads, rows) => `<div class="fin-scroll"><table><thead><tr>${heads.map(h=>`<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${rows.length ? rows.map(row=>`<tr class="${row.pink?'fin-split':''}">${row.map(v=>`<td>${v}</td>`).join('')}</tr>`).join('') : `<tr><td colspan="${heads.length}">Нет данных за выбранный период</td></tr>`}</tbody></table></div>`;
     function ratesFor(name) {
-        const matches = Object.values(state.employees).filter(e => {
-            const names = [e.name, [e.lastName,e.firstName,e.middleName].filter(Boolean).join(' '), [e.firstName,e.lastName].filter(Boolean).join(' ')];
-            return names.some(n => n && norm(n) === norm(name));
-        });
-        return matches.length === 1 ? matches[0] : null;
+        return matchEmployee(name,state.employees);
     }
     function render() {
         if (typeof currentTabType !== 'undefined' && currentTabType !== 'finance') return;
@@ -8619,7 +8647,7 @@ window.smartFillVolumes = function() {
         const repeatedDays=[...dayCounts.values()].filter(count=>count>1).length;
         const tabs = [['journal','Отчёты смен'],['revenue','Итоги выручки'],['payments','Выплата сотрудникам'],['salary','ЗП сотрудников'],['settings','Google-таблица']];
         box.innerHTML = `<style>
-            .fin-tools{display:flex;gap:10px;flex-wrap:wrap;align-items:end;margin:14px 0}.fin-tools label{min-width:150px}.fin-scroll{overflow:auto;max-height:65vh}.fin-scroll table{white-space:nowrap;width:100%}.fin-scroll th{position:sticky;top:0;background:#eeede9;z-index:1}.fin-scroll td,.fin-scroll th{padding:10px}.fin-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px}.fin-grid label{display:block}.fin-note{padding:12px;background:#f4f2ed;border-radius:10px;margin:12px 0}.fin-error{color:#a32121}.fin-cards{display:flex;flex-wrap:wrap;gap:20px;margin:16px 0}.fin-cards b{font-size:22px;display:block}.fin-dialog{position:fixed;inset:0;z-index:10000;background:#0008;display:flex;align-items:center;justify-content:center;padding:16px}.fin-dialog>div{background:white;border-radius:16px;padding:24px;max-height:90vh;overflow:auto;width:min(1100px,100%)}
+            .fin-tools{display:flex;gap:10px;flex-wrap:wrap;align-items:end;margin:14px 0}.fin-tools label{min-width:150px}.fin-scroll{overflow:auto;max-height:65vh}.fin-scroll table{white-space:nowrap;width:100%}.fin-scroll th{position:sticky;top:0;background:#eeede9;z-index:1}.fin-scroll td,.fin-scroll th{padding:10px}.fin-scroll tr.fin-split > td{background:#fce1ec!important}.fin-scroll tr.fin-split:hover > td{background:#f8d0e1!important}.fin-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px}.fin-grid label{display:block}.fin-note{padding:12px;background:#f4f2ed;border-radius:10px;margin:12px 0}.fin-error{color:#a32121}.fin-cards{display:flex;flex-wrap:wrap;gap:20px;margin:16px 0}.fin-cards b{font-size:22px;display:block}.fin-dialog{position:fixed;inset:0;z-index:10000;background:#0008;display:flex;align-items:center;justify-content:center;padding:16px}.fin-dialog>div{background:white;border-radius:16px;padding:24px;max-height:90vh;overflow:auto;width:min(1100px,100%)}
         </style><h3>Финансы</h3><div class="fin-tools">${tabs.map(([id,label])=>`<button class="btn-add" data-fin-tab="${id}" style="${state.tab === id ? 'border:2px solid black!important' : ''}">${label}</button>`).join('')}</div>
         <div class="fin-note" id="fin-status">${esc(state.status || 'Настройте источник Google-таблицы. Записи сохраняются в CRM отдельно от исходной таблицы.')}</div>
         ${repeatedDays?`<div class="fin-note fin-error">Для ${repeatedDays} сочетаний даты и адреса найдено несколько отчётов. Проверьте их перед выплатой: итоги учитывают каждый отчёт.</div>`:''}
@@ -8641,9 +8669,13 @@ window.smartFillVolumes = function() {
         <p>Поддерживаются новые столбцы: «Сотрудник 1», «Сотрудник 2», «Начало смены 1», «Конец смены 1», «Начало смены 2», «Конец смены 2», «ЗП взяли 2», «Остаток денег в запасе». Существующие заголовки исходного листа также распознаются.</p>`;
     }
     function view(rows) {
-        if (state.tab === 'journal') return table(['Действия',...fields.slice(0,24).map(f=>f[1]),'Личная выручка 1','Начислено 1','Начислено 2'], rows.map(r=>{
+        const journalFields=fields.filter(([key])=>!/^hourly|^percent/.test(key));
+        if (state.tab === 'journal') return `<div class="fin-note">Розовым выделены отчёты с двумя сменами. Откройте отчёт, прочитайте комментарии и укажите часы каждого сотрудника. Одиночная смена: 12 часов, Старое Павлино: 13 часов. Ставки подставляются из базы сотрудников.</div>`+table(['Действия','Проверка',...journalFields.map(f=>f[1]),'ID сотрудника 1','User ID 1','ID сотрудника 2','User ID 2','Личная выручка 1','Часы 1 (расчёт)','Часы 2 (расчёт)','Начислено 1 до штрафа','Перевести 1','Начислено 2','Перевести 2'], rows.map(r=>{
             const c=calculate(r);
-            return [`<button class="btn-add" data-fin-edit="${esc(r.id)}">Открыть</button>`,...fields.slice(0,24).map(([k,,t])=>esc(t==='number'? (number(r[k])==null?'—':money(number(r[k]))) : r[k])),esc(money(c.revenue1)),esc(money(c.people[0].salary)),esc(c.people[1]?money(c.people[1].salary):'—')];
+            const issues=c.people.map((p,i)=>!p.matched?`Сотрудник ${i+1} не найден однозначно в базе`:p.hourly==null?`Нет ставки сотрудника ${i+1}`:'').filter(Boolean);
+            if(c.needsHours)issues.push('Укажите часы обеих смен');
+            const values=[`<button class="btn-add" data-fin-edit="${esc(r.id)}">Открыть</button>`,esc(issues.join('; ') || (c.split?'Часы заполнены':'Автоматический расчёт')),...journalFields.map(([k,,t])=>esc(t==='number'? (number(r[k])==null?'—':money(number(r[k]))) : r[k])),...c.people.map(p=>[esc(p.employeeId),esc(p.userId)]).flat(),...(c.people.length===1?['—','—']:[]),esc(money(c.revenue1)),esc(money(c.people[0].hours)),esc(c.people[1]?money(c.people[1].hours):'—'),esc(money(c.people[0].gross)),esc(money(c.people[0].balance)),esc(c.people[1]?money(c.people[1].gross):'—'),esc(c.people[1]?money(c.people[1].balance):'—')];
+            values.pink=c.split;return values;
         }));
         if (state.tab === 'revenue') {
             const groups=new Map();
@@ -8654,18 +8686,19 @@ window.smartFillVolumes = function() {
         rows.forEach(r=>calculate(r).people.forEach(p=>{
             const name=p.name || 'Не указан сотрудник 2';
             const period=state.tab==='salary'?(r.workDate || date(r.submittedAt)).slice(0,7):'Выбранный период';
-            const key=JSON.stringify([period,norm(name)]);
-            if(!people.has(key))people.set(key,{period,name,hours:0,revenue:0,salary:0,taken:0,fine:0,missing:0,bank:0});
-            const g=people.get(key);g.hours+=p.hours || 0;g.revenue+=p.revenue;g.salary+=p.salary || 0;g.taken+=p.taken;g.fine+=p.fine;g.missing+=p.complete?0:1;
+            const key=JSON.stringify([period,p.employeeId || nameKey(name)]);
+            if(!people.has(key))people.set(key,{period,name,employeeId:p.employeeId,userId:p.userId,hours:0,revenue:0,salary:0,gross:0,taken:0,fine:0,missing:0,bank:0});
+            const g=people.get(key);g.hours+=p.hours || 0;g.revenue+=p.revenue;g.salary+=p.salary || 0;g.gross+=p.gross || 0;g.taken+=p.taken;g.fine+=p.fine;g.missing+=p.complete?0:1;
         }));
         Object.values(state.payments).forEach(p=>{
             if((state.from && p.date<state.from)||(state.to && p.date>state.to)||(state.address && p.address!==state.address))return;
             const period=state.tab==='salary'?p.date.slice(0,7):'Выбранный период';
-            const key=JSON.stringify([period,norm(p.name)]);
-            if(!people.has(key))people.set(key,{period,name:p.name,hours:0,revenue:0,salary:0,taken:0,fine:0,missing:0,bank:0});
+            const employee=ratesFor(p.name);
+            const key=JSON.stringify([period,p.employeeId || employee?.employeeId || nameKey(p.name)]);
+            if(!people.has(key))people.set(key,{period,name:p.name,employeeId:p.employeeId || employee?.employeeId,userId:p.userId ?? employee?.userId,hours:0,revenue:0,salary:0,gross:0,taken:0,fine:0,missing:0,bank:0});
             people.get(key).bank+=zero(p.amount);
         });
-        return `<div class="fin-note">ЗП = часы × ставка + личная выручка × процент / 100 − штраф. Осталось выплатить = начислено − взято из кассы − переводы. Отрицательный остаток — переплата. Если есть неполные смены, итог зарплаты и остаток не рассчитываются. Выберите понедельник и воскресенье в фильтре для выплаты за неделю. Переводы относятся к периоду по дате выплаты.</div><button class="btn-add" data-fin-action="payment">Записать перевод сотруднику</button>${table(['Период','Сотрудник','Часы','Личная выручка','Начислено после штрафов','Штрафы','Взято из кассы','Переводы','Осталось выплатить','Неполных смен'],[...people.values()].map(g=>[esc(g.period),esc(g.name),money(g.hours),money(g.revenue),g.missing?'Не рассчитано':money(g.salary),money(g.fine),money(g.taken),money(g.bank),g.missing?'Не рассчитано':money(round(g.salary-g.taken-g.bank)),g.missing]))}`;
+        return `<div class="fin-note">Начислено = часы × ставка из базы + личная выручка × процент / 100. Перевести = начислено − взято наличными − штраф − уже записанные переводы. Штраф вычитается один раз. Отрицательный остаток — переплата. Неполные смены и неоднозначные совпадения сотрудников требуют проверки. Выберите границы недели для недельной выплаты. Переводы относятся к периоду по дате выплаты.</div><button class="btn-add" data-fin-action="payment">Записать перевод сотруднику</button>${table(['Период','Сотрудник','ID сотрудника','User ID','Часы','Личная выручка','Начислено до штрафов','Штрафы','Взято из кассы','Переводы','Осталось перевести','Неполных смен'],[...people.values()].map(g=>[esc(g.period),esc(g.name),esc(g.employeeId),esc(g.userId),money(g.hours),money(g.revenue),g.missing?'Не рассчитано':money(g.gross),money(g.fine),money(g.taken),money(g.bank),g.missing?'Не рассчитано':money(round(g.gross-g.fine-g.taken-g.bank)),g.missing]))}`;
     }
     function cashView(rows) {
         const previous=new Map(), reserve=new Map();
@@ -8684,27 +8717,31 @@ window.smartFillVolumes = function() {
     }
     function editRecord(id) {
         const r=id?record({...state.records[id],id}):{submittedAt:new Date().toLocaleString('ru-RU'),workDate:new Intl.DateTimeFormat('sv-SE',{timeZone:'Europe/Moscow'}).format(new Date())};
+        const initial=calculate(r);
+        initial.people.forEach((p,index)=>{r['hourly'+(index+1)]=p.hourly;r['percent'+(index+1)]=p.percent;});
         state.draft=r;
         const modal=document.createElement('div');modal.className='fin-dialog';modal.id='fin-editor';
-        modal.innerHTML=`<div><h3>${id?'Отчёт смены':'Новый отчёт'}</h3><p>Сотрудник 1 — вечерний или работающий весь день. Сотрудник 2 — утренний. Укажите начало и конец смены, ставки и проценты; ноль процентов допустим.</p><form id="fin-form"><div class="fin-grid">${fields.map(([k,label,t])=>`<label>${esc(label)}<input name="${k}" type="${t}" ${t==='number'?'step="0.01"':''} value="${esc(r[k])}" ${['employee1','address','workDate'].includes(k)?'required':''} ${k.startsWith('employee')?'list="fin-employees"':''}></label>`).join('')}</div><datalist id="fin-employees">${Object.values(state.employees).map(e=>`<option value="${esc([e.lastName,e.firstName,e.middleName].filter(Boolean).join(' '))}"></option>`).join('')}</datalist><p id="fin-editor-error" class="fin-error"></p><div class="fin-tools"><button type="submit" class="btn-save">Сохранить отчёт</button><button type="button" class="btn-add" id="fin-cancel">Отмена</button></div></form></div>`;
+        modal.innerHTML=`<div><h3>${id?'Отчёт смены':'Новый отчёт'}</h3><p>Одиночная смена — 12 часов; Старое Павлино — 13 часов. Для двух смен заполните «Отработано часов» или начало и конец каждой смены по комментариям. Явное количество часов имеет приоритет над временем начала и конца. Ставки берутся из базы сотрудников.</p><div class="fin-note" id="fin-employee-info"></div><form id="fin-form"><div class="fin-grid">${fields.map(([k,label,t])=>`<label>${esc(label)}<input name="${k}" type="${t}" ${t==='number'?'step="0.01"':''} value="${esc(r[k])}" ${['employee1','address','workDate'].includes(k)?'required':''} ${k.startsWith('employee')?'list="fin-employees"':''} ${/^hourly|^percent/.test(k)?'readonly':''}></label>`).join('')}</div><datalist id="fin-employees">${Object.values(state.employees).filter(e=>e && typeof e==='object').map(e=>`<option value="${esc([e.lastName,e.firstName,e.middleName].filter(Boolean).join(' ') || e.name || e.fullName)}"></option>`).join('')}</datalist><p id="fin-editor-error" class="fin-error"></p><div class="fin-tools"><button type="submit" class="btn-save">Сохранить отчёт</button><button type="button" class="btn-add" id="fin-cancel">Отмена</button></div></form></div>`;
         document.body.appendChild(modal);
         modal.querySelector('#fin-cancel').onclick=()=>{modal.remove();state.draft=null;};
         const form=modal.querySelector('form');
-        form.onchange=e=>{
-            if(/^employee[12]$/.test(e.target.name)) {
-                const i=e.target.name.slice(-1), emp=ratesFor(e.target.value);
-                if(emp) {form.elements['hourly'+i].value=emp.hourlyRate ?? '';form.elements['percent'+i].value=emp.percentRate ?? '';}
-            }
+        const refresh=()=>{
+            const c=calculate(Object.fromEntries(new FormData(form)));
+            for(const i of [1,2]){const p=c.people[i-1];form.elements['hourly'+i].value=p?.hourly ?? '';form.elements['percent'+i].value=p?.percent ?? '';}
+            modal.querySelector('#fin-employee-info').textContent=c.people.map((p,i)=>`Сотрудник ${i+1}: ${p.matched?'связан с базой, ID '+p.employeeId+', User ID '+(p.userId || 'не указан'):'нет однозначного совпадения имени и фамилии в базе'}; часы: ${p.hours ?? 'укажите вручную'}; перевести: ${money(p.balance)}`).join(' | ');
         };
+        form.onchange=refresh;refresh();
         form.onsubmit=async e=>{
             e.preventDefault();const error=modal.querySelector('#fin-editor-error'),button=form.querySelector('[type=submit]');
             try {
                 const data=Object.fromEntries(new FormData(form));
                 fields.filter(f=>f[2]==='number').forEach(([k])=>{if(data[k]!=='' && number(data[k])==null)throw new Error('Некорректное число: '+k);data[k]=number(data[k]);});
                 if(zero(data.revenue2)>zero(data.revenue) || zero(data.revenue)<0 || zero(data.revenue2)<0)throw new Error('Утренняя выручка должна быть от нуля до общей выручки.');
-                if(!data.employee2 && (zero(data.revenue2)||zero(data.taken2)||data.start2||data.end2))throw new Error('Укажите имя сотрудника 2.');
-                if(data.employee2 && norm(data.employee1)===norm(data.employee2))throw new Error('Один сотрудник не может занимать обе смены в отчёте.');
+                if(!data.employee2 && (zero(data.revenue2)||zero(data.taken2)||data.start2||data.end2||data.hours2!=null))throw new Error('Укажите имя сотрудника 2.');
+                if(data.employee2 && nameKey(data.employee1)===nameKey(data.employee2))throw new Error('Один сотрудник не может занимать обе смены в отчёте.');
                 for(const i of [1,2])if((data['start'+i]||data['end'+i]) && hours(data['start'+i],data['end'+i])==null)throw new Error('Проверьте начало и конец смены '+i);
+                for(const i of [1,2])if(data['hours'+i]!=null && !(data['hours'+i]>0 && data['hours'+i]<=24))throw new Error('Часы смены '+i+' должны быть больше нуля и не больше 24.');
+                for(const i of [1,2]){const employee=ratesFor(data['employee'+i]);data['employeeId'+i]=employee?.employeeId || '';data['userId'+i]=employee?.userId ?? '';delete data['hourly'+i];delete data['percent'+i];}
                 button.disabled=true;
                 const ref=id?state.db.ref('finance_records/'+id):state.db.ref('finance_records').push();
                 const source=id && state.records[id]?.source;
@@ -8730,6 +8767,7 @@ window.smartFillVolumes = function() {
             try {
                 const payment=Object.fromEntries(new FormData(form));payment.name=payment.name.trim();payment.address=payment.address.trim();payment.amount=number(payment.amount);
                 if(!payment.name || !payment.address || !(payment.amount>0))throw new Error('Проверьте имя, адрес и сумму.');
+                const employee=ratesFor(payment.name);payment.employeeId=employee?.employeeId || '';payment.userId=employee?.userId ?? '';
                 payment.createdAt=Date.now();const ref=state.db.ref('finance_payments').push();await ref.set(payment);state.payments[ref.key]=payment;
                 modal.remove();state.draft=null;render();
             }catch(err){modal.querySelector('.fin-error').textContent=err.message;button.disabled=false;}
@@ -8738,6 +8776,8 @@ window.smartFillVolumes = function() {
     const aliases = {
         submittedAt:['Дата отправки','Отметка времени'],workDate:['Дата смены','Дата работы'],employee1:['Сотрудник 1','Сотрудник'],employee2:['Сотрудник 2','Имя 2','Имя сотрудника 2'],address:['Адрес кофейни','Адрес'],revenue:['Выручка за день'],revenue2:['Выручка сотрудника 2','Выручка помощника/сменщика'],cashReceived:['Наличные за день (из чека)','Наличные за день из чека'],expenses:['Расходы'],taken1:['ЗП СКОЛЬКО ВЗЯЛИ ИЗ КАССЫ','Зп взяли','Зп взяли 1','ЗП взял сотрудник 1'],taken2:['Зп взяли 2','Зп2 взял','ЗП взял сотрудник 2'],coupons:['КУПОНЫ (только число)','Купоны'],cashClosing:['Наличные в кассе (с мелочью)','Наличные в кассе'],salaryComment:['Комментарии к зп'],expenseComment:['Комментарии к расходам'],fine1:['Штраф сумма','Штраф','Штраф сотрудника 1'],fineComment:['Комментарии по штрафу (за что и за какое число)','Комментарий к штрафу'],reserveBalance:['Остаток денег в запасе','Остаток запаса'],fromReserve:['Сколько взяли из запаса','Из запаса в кассу'],toReserve:['Сколько положили в запас','Из кассы в запас'],start1:['Начало смены 1'],end1:['Конец смены 1'],start2:['Начало смены 2'],end2:['Конец смены 2'],hourly1:['Ставка сотрудника 1, ₽/час'],percent1:['Процент сотрудника 1'],hourly2:['Ставка сотрудника 2, ₽/час'],percent2:['Процент сотрудника 2']
     };
+    aliases.hours1=['Отработано часов 1','Часы смены 1','Часы 1'];
+    aliases.hours2=['Отработано часов 2','Часы смены 2','Часы 2'];
     function parseTable(t,settings) {
         const headers=t.cols.map(c=>norm(c.label));const mapping={};
         for(const [key,names] of Object.entries(aliases)) {
@@ -8831,12 +8871,16 @@ window.smartFillVolumes = function() {
     }
     root.Finance={
         open(data) {
+            if(typeof state.employeeRef?.off==='function' && state.employeeListener)state.employeeRef.off('value',state.employeeListener);
             clearInterval(state.timer);Object.assign(state,data);state.records=data.records || {};state.employees=data.employees || {};state.settings=data.settings || {};state.payments=data.payments || {};
+            state.employeeRef=state.db.ref('employees');
+            state.employeeListener=snapshot=>{state.employees=snapshot.val() || {};if(!state.draft)render();};
+            if(typeof state.employeeRef.on==='function')state.employeeRef.on('value',state.employeeListener,error=>setStatus('Не удалось обновить базу сотрудников: '+error.message));
             if(!state.initialized){const today=new Intl.DateTimeFormat('sv-SE',{timeZone:'Europe/Moscow'}).format(new Date());state.from=today.slice(0,7)+'-01';state.to=today;state.initialized=true;}
             render();if(state.settings.enabled)sync();
-            state.timer=setInterval(()=>{if(typeof currentTabType!=='undefined' && currentTabType!=='finance'){clearInterval(state.timer);return;}if(!document.hidden)sync();},60000);
+            state.timer=setInterval(()=>{if(typeof currentTabType!=='undefined' && currentTabType!=='finance'){clearInterval(state.timer);if(typeof state.employeeRef?.off==='function')state.employeeRef.off('value',state.employeeListener);return;}if(!document.hidden)sync();},60000);
         },
-        calculate, hours, parseTable
+        calculate, hours, parseTable, matchEmployee
     };
     if(typeof module!=='undefined')module.exports=root.Finance;
 })(typeof window==='undefined'?globalThis:window);

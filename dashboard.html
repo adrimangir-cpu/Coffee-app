@@ -8331,9 +8331,20 @@ window.smartFillVolumes = function() {
 
         try {
             let pngFiles = [];
+            let renderedUsers = new Set(); // защита от дублей сотрудников в pngFiles
             for (let user of users) {
+                if (renderedUsers.has(user)) {
+                    console.warn(`⚠️ Пропуск дубля пользователя: ${user}`);
+                    continue;
+                }
+                showReportOverlay(`Генерация календарей: ${pngFiles.length + 1} из ${users.length} — ${user}`);
+                await new Promise(resolve => setTimeout(resolve, 0));
                 let pngDataUri = await renderUserSchedulePng(user, monthData, target);
-                if (pngDataUri) pngFiles.push({ user: user, dataUri: pngDataUri });
+                if (!pngDataUri) throw new Error(`Не удалось создать календарь: ${user}. Отправка отменена.`);
+                if (pngDataUri) {
+                    pngFiles.push({ user: user, dataUri: pngDataUri });
+                    renderedUsers.add(user);
+                }
             }
 
             if (pngFiles.length === 0) {
@@ -8341,6 +8352,8 @@ window.smartFillVolumes = function() {
                 alert("Не удалось сгенерировать PNG.");
                 return;
             }
+
+            console.log("[DEBUG] sendGraphsToRecipient: generated PNGs for", pngFiles.map(f => f.user));
 
             let summary = `📊 **Графики сотрудников (${target.year}-${String(target.month + 1).padStart(2, '0')})**\n\n`;
             pngFiles.forEach(f => {
@@ -8375,13 +8388,17 @@ window.smartFillVolumes = function() {
                 timestamp: Date.now()
             };
 
-            await fetch(`${FB_URL}/bot_control/notifications.json`, { method: 'POST', body: JSON.stringify(payload) });
+            console.log("[DEBUG] sendGraphsToRecipient: payload files count =", payload.files.length, "users =", payload.files.map(f => f.filename));
+            showReportOverlay(`Передача ${payload.files.length} календарей в очередь отправки...`);
+            const response = await fetch(`${FB_URL}/bot_control/notifications.json`, { method: 'POST', body: JSON.stringify(payload) });
+            if (!response.ok) throw new Error("Не удалось записать графики в очередь отправки");
             hideReportOverlay();
-            alert("✅ Графики отправлены администратору!");
+            alert(`✅ ${payload.files.length} календарей переданы в очередь отправки. Доставка в Telegram выполняется отдельно.`);
         } catch (e) {
             hideReportOverlay();
             alert("❌ Ошибка отправки графиков: " + e.message);
         } finally {
+            hideReportOverlay();
             window.isSendingGraphs = false;
         }
     }
@@ -8443,20 +8460,23 @@ window.smartFillVolumes = function() {
         }
 
         let header = document.createElement('div');
-        header.style.cssText = 'position:absolute; left:-9999px; top:0; background:white; padding:20px; border-radius:12px; font-family:Arial,sans-serif; min-width:760px;';
+        // 🛡 Фиксируем ширину контейнера и таблицы, чтобы html2canvas захватил полный календарь, а не схлопывал в полоску
+        header.style.cssText = 'position:absolute; left:-9999px; top:0; background:white; padding:20px; border-radius:12px; font-family:Arial,sans-serif; width:800px; min-width:800px;';
         header.innerHTML = `
             <div style="font-size:20px; font-weight:bold; color:#1a237e; margin-bottom:2px;">График: ${user}</div>
             <div style="font-size:14px; color:#555; margin-bottom:14px;">Месяц: ${monthNames[target.month]} ${target.year}</div>
-            <table style="border-collapse:collapse; font-size:12px; width:100%; table-layout:fixed;">
-                <thead>
-                    <tr style="background:#e0e0e0;">
-                        ${dayNamesShort.map(n => `<th style="border:1px solid #ccc; padding:6px; text-align:center; font-weight:bold; font-size:13px;">${n}</th>`).join('')}
-                    </tr>
-                </thead>
-                <tbody>
-                    ${weeksHtml}
-                </tbody>
-            </table>
+            <div style="overflow:visible;">
+                <table style="border-collapse:collapse; font-size:12px; width:100%; table-layout:fixed; min-width:760px;">
+                    <thead>
+                        <tr style="background:#e0e0e0;">
+                            ${dayNamesShort.map(n => `<th style="border:1px solid #ccc; padding:6px; text-align:center; font-weight:bold; font-size:13px;">${n}</th>`).join('')}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${weeksHtml}
+                    </tbody>
+                </table>
+            </div>
             <div style="margin-top:14px; font-size:11px; color:#777; display:flex; gap:14px; flex-wrap:wrap;">
                 <span>⬜ Полный день</span>
                 <span>🟪 Утро (_У)</span>
@@ -8467,15 +8487,48 @@ window.smartFillVolumes = function() {
         `;
         document.body.appendChild(header);
 
+        // 🛡 Принудительный reflow перед рендером — гарантирует, что браузер посчитал layout таблицы
+        header.offsetWidth; // force layout
+
         let html2canvas = window.html2canvas || (window.html2canvas_lib && window.html2canvas_lib);
         if (!html2canvas) {
             document.body.removeChild(header);
+            console.error("❌ html2canvas не загружен");
             return null;
         }
 
-        let canvasEl = await html2canvas(header, { scale: 2, backgroundColor: '#ffffff', windowWidth: 800, scrollY: 0 });
-        document.body.removeChild(header);
-        return canvasEl.toDataURL('image/png');
+        // 🛡 Таймаут 15 сек на рендер одного графика — защита от зависания html2canvas
+        const RENDER_TIMEOUT_MS = 15000;
+        let renderTimer;
+        try {
+            const captureHeight = Math.ceil(header.getBoundingClientRect().height);
+            if (captureHeight < 350) throw new Error(`Календарь схлопнулся: высота ${captureHeight}px`);
+            let canvasEl = await Promise.race([
+                html2canvas(header, {
+                    scale: 2,
+                    width: Math.ceil(header.getBoundingClientRect().width),
+                    height: captureHeight,
+                    backgroundColor: '#ffffff',
+                    windowWidth: 1200,
+                    windowHeight: header.scrollHeight + 40,
+                    scrollY: 0,
+                    scrollX: 0,
+                    logging: false,
+                    useCORS: false
+                }),
+                new Promise((_, reject) => { renderTimer = setTimeout(() => reject(new Error("html2canvas timeout")), RENDER_TIMEOUT_MS); })
+            ]);
+            if (canvasEl.width < 1500 || canvasEl.height < 700) throw new Error(`Некорректный размер PNG: ${canvasEl.width} × ${canvasEl.height}`);
+            document.body.removeChild(header);
+            return canvasEl.toDataURL('image/png');
+        } catch (e) {
+            console.error(`❌ Ошибка рендера PNG для ${user}:`, e);
+            if (header && header.parentNode) document.body.removeChild(header);
+            throw new Error(`${user}: ${e.message}`);
+        } finally {
+            clearTimeout(renderTimer);
+            header.remove();
+        }
     }
 </script>
 </body>

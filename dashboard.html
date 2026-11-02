@@ -1607,6 +1607,7 @@ window.syncStoplistWithMenu = async function() {
     }
     
     async function loadTab(type, btn) {
+        if(currentTabType==='finance' && type!=='finance' && typeof Finance!=='undefined')Finance.close();
         localStorage.setItem('activeTab', type); 
 
         document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
@@ -1639,6 +1640,10 @@ window.syncStoplistWithMenu = async function() {
         box.innerHTML = "<div class='loading-pulse' style='font-size:20px; color:#7E57C2;'>⌛ Загрузка...</div>";
 
         try {
+            if(type==='finance') {
+                Finance.open({db,adminChatId:ADMIN_CHAT_ID,shops:shopListAll});
+                return;
+            }
             // 🔥 МГНОВЕННАЯ ЗАГРУЗКА БАЗ ЧЕРЕЗ КЭШ
             let catOrd = await fetchOptimistic('catalogs/order');
             let catNew = await fetchOptimistic('catalogs/newshop');
@@ -1678,15 +1683,6 @@ window.syncStoplistWithMenu = async function() {
                 renderGraphsTab();
             }
 
-            else if (type === 'finance') {
-                const [records, employees, settings, payments] = await Promise.all([
-                    fetchOptimistic('finance_records'), fetchOptimistic('employees'),
-                    fetchOptimistic('finance_settings'), fetchOptimistic('finance_payments')
-                ]);
-                if (currentTabType !== fetchId) return;
-                cachedData.employees = employees || {};
-                Finance.open({ records, employees, settings, payments, db });
-            }
             else if (type === 'employees') {
                 cachedData.employees = await fetchOptimistic('employees');
                 cachedData.schedules = await fetchOptimistic('schedules');
@@ -3795,19 +3791,30 @@ window.syncStoplistWithMenu = async function() {
         }
     }
 
+    function getMpPeriod(selection = mpViewMonth, now = new Date()) {
+        const offset = { current: 0, prev: 1, prev2: 2 }[selection];
+        const date = new Date(now.getFullYear(), now.getMonth() - (offset ?? 0), 1);
+        return {
+            month: date.getMonth(), year: date.getFullYear(),
+            label: date.toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' })
+        };
+    }
+
+    async function selectMpMonth(selection) {
+        if (!['current', 'prev', 'prev2'].includes(selection) || selection === mpViewMonth) return;
+        if (isMpEditMode && !(await saveMpEdits())) return;
+        mpViewMonth = selection;
+        renderMarketplaceTab();
+    }
+
   function renderMarketplaceTab() {
         const box = document.getElementById('content');
         let records = cachedData.marketplace || {};
         let shops = ["Бояринова", "Гагарина", "Вертолетчиков", "Липчанского", "Новокосино", "Новокосино 2", "Старое Павлино", "Красноказарменная", "Ухтомского ополчения"];
         
         let now = new Date(); 
-        let filterMonth, filterYear;
-        if (mpViewMonth === 'current') {
-            filterMonth = now.getMonth(); filterYear = now.getFullYear();
-        } else {
-            let prevDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-            filterMonth = prevDate.getMonth(); filterYear = prevDate.getFullYear();
-        }
+        const period = getMpPeriod();
+        let filterMonth = period.month, filterYear = period.year;
 
         let todayStr = now.toLocaleDateString('ru-RU');
         let currentData = {}; let currentTotals = {}; let dailyTotal = 0;
@@ -3835,7 +3842,7 @@ window.syncStoplistWithMenu = async function() {
 
         let btnEditColor = isMpEditMode ? "var(--brand-danger)" : "var(--brand-olive)";
         let btnEditText = isMpEditMode ? "💾 Сохранить изменения" : "Редактировать";
-        let headerLabel = mpViewMonth === 'current' ? "Текущий месяц" : "Прошлый месяц";
+        let headerLabel = period.label;
         
         setupUniversalActionBar(`
             <div class="mp-action-buttons action-container sticky-action-panel action-panel-dropdown" style="display: flex; flex-direction:column; gap: 10px; margin-top: 10px;">
@@ -3843,15 +3850,16 @@ window.syncStoplistWithMenu = async function() {
             </div>
         `, expandedDivs.has('main_action_bar_state'), 'arrow_mp_actions');
         
-        let btnStyleCurr = mpViewMonth === 'current' ? 'background:var(--brand-maroon); color:white; border:none;' : 'background:transparent; color:var(--text-muted); border:1px solid var(--line-delicate);';
-        let btnStylePrev = mpViewMonth === 'prev' ? 'background:var(--brand-maroon); color:white; border:none;' : 'background:transparent; color:var(--text-muted); border:1px solid var(--line-delicate);';
+        const monthButtons = ['current', 'prev', 'prev2'].map(selection => {
+            const style = mpViewMonth === selection ? 'background:var(--brand-maroon); color:white; border:none;' : 'background:transparent; color:var(--text-muted); border:1px solid var(--line-delicate);';
+            return `<button style="padding:10px 20px; border-radius:10px; font-weight:bold; cursor:pointer; ${style}" onclick="selectMpMonth('${selection}')">${getMpPeriod(selection).label}</button>`;
+        }).join('');
 
         // ⚡ ВЫНЕСЛИ ЗАГОЛОВОК И КНОПКИ ВЫШЕ СЕТКИ ДЛЯ ИДЕАЛЬНОГО ВЫРАВНИВАНИЯ
         let html = `
         <h3 style="margin-top:0; margin-bottom:15px;">Маркетплейсы (${headerLabel})</h3>
-        <div style="display:flex; gap:10px; margin-bottom: 20px;">
-            <button style="padding:10px 20px; border-radius:10px; font-weight:bold; cursor:pointer; transition:0.2s; ${btnStyleCurr}" onclick="mpViewMonth='current'; renderMarketplaceTab()">Текущий месяц</button>
-            <button style="padding:10px 20px; border-radius:10px; font-weight:bold; cursor:pointer; transition:0.2s; ${btnStylePrev}" onclick="mpViewMonth='prev'; renderMarketplaceTab()">Прошлый месяц</button>
+        <div style="display:flex; flex-wrap:wrap; gap:10px; margin-bottom: 20px;">
+            ${monthButtons}
         </div>
         <div class="svod-dashboard-layout">
             <div class="svod-left-col">`;
@@ -3959,14 +3967,14 @@ window.syncStoplistWithMenu = async function() {
     async function saveMpEdits() {
         if (document.activeElement) document.activeElement.blur(); // ⚡ Защита ввода
         let btn = document.getElementById('mp-btn-edit'); 
-        let origText = btn.innerHTML;
-        if(btn) btn.innerHTML = "⌛ СОХРАНЕНИЕ...";
+        let origText = btn ? btn.innerHTML : '';
+        if (btn && btn.disabled) return false;
+        if(btn) { btn.innerHTML = "⌛ СОХРАНЕНИЕ..."; btn.disabled = true; }
         try {
             let dbUpdates = {}; // ⚡ Собираем все изменения в один объект
             
             mpDeletions.forEach(key => {
                 dbUpdates[key] = null;
-                if (cachedData.marketplace && cachedData.marketplace[key]) delete cachedData.marketplace[key]; 
             });
             
             document.querySelectorAll('input[id^="mp_inp_"]').forEach(inp => {
@@ -3977,8 +3985,6 @@ window.syncStoplistWithMenu = async function() {
                         if (parseFloat(cachedData.marketplace[key].amount) !== val) {
                             dbUpdates[`${key}/amount`] = val;
                             dbUpdates[`${key}/is_edited`] = true;
-                            cachedData.marketplace[key].amount = val;
-                            cachedData.marketplace[key].is_edited = true;
                         }
                     }
                 }
@@ -3988,52 +3994,52 @@ window.syncStoplistWithMenu = async function() {
             if (Object.keys(dbUpdates).length > 0) {
                 await db.ref('marketplace_records').update(dbUpdates);
             }
+            Object.entries(dbUpdates).forEach(([path, value]) => {
+                const [key, field] = path.split('/');
+                if (!field) delete cachedData.marketplace[key];
+                else if (cachedData.marketplace[key]) cachedData.marketplace[key][field] = value;
+            });
             
             isMpEditMode = false; 
             mpDeletions.clear();
             if(btn) btn.innerHTML = "✅ СОХРАНЕНО!";
             renderMarketplaceTab(); 
-            setTimeout(() => { if(btn) btn.innerHTML = origText; }, 1000);
+            return true;
         } catch(e) { 
-            if(btn) btn.innerHTML = origText; alert("❌ Ошибка: " + e.message); 
+            if(btn) { btn.innerHTML = origText; btn.disabled = false; }
+            alert("❌ Ошибка: " + e.message);
+            return false;
         }
     }
 
     // 1. Сводка по маркетплейсам (с гарантированной записью в базу)
     window.sendMpSummaryToBot = async function() {
-        let confirmText = mpViewMonth === 'current' ? "Отправить итоговую сводку за ТЕКУЩИЙ месяц Администратору?" : "Отправить итоговую сводку за ПРОШЛЫЙ месяц Администратору?";
+        const period = getMpPeriod();
+        let confirmText = `Отправить итоговую сводку за ${period.label} Администратору?`;
         if(!confirm(confirmText)) return;
+        if (isMpEditMode && !(await saveMpEdits())) return;
         
         let shops = ["Бояринова", "Гагарина", "Вертолетчиков", "Липчанского", "Новокосино", "Новокосино 2", "Старое Павлино", "Красноказарменная", "Ухтомского ополчения"];
-        let now = new Date(); 
-        
-        let filterMonth, filterYear;
-        if (mpViewMonth === 'current') {
-            filterMonth = now.getMonth();
-            filterYear = now.getFullYear();
-        } else {
-            let prevDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-            filterMonth = prevDate.getMonth();
-            filterYear = prevDate.getFullYear();
-        }
+        let filterMonth = period.month, filterYear = period.year;
         
         let totals = {}; 
         let grandTotal = 0; 
         shops.forEach(s => totals[s] = 0);
         
-        for(let key in cachedData.marketplace) {
+        for(let key in (cachedData.marketplace || {})) {
             let r = cachedData.marketplace[key]; 
             let d = new Date(r.timestamp);
             if(d.getMonth() === filterMonth && d.getFullYear() === filterYear && totals[r.address] !== undefined) {
-                totals[r.address] += parseFloat(r.amount); 
-                grandTotal += parseFloat(r.amount);
+                const amount = parseFloat(r.amount) || 0;
+                totals[r.address] += amount;
+                grandTotal += amount;
             }
         }
         
         let targetDate = new Date(filterYear, filterMonth, 1);
         let monthName = targetDate.toLocaleString('ru', { month: 'long' }).toUpperCase();
         
-        let text = `📊 *СВОДКА ПО МАРКЕТПЛЕЙСАМ ЗА ${monthName}*\n\n`;
+        let text = `📊 *СВОДКА ПО МАРКЕТПЛЕЙСАМ ЗА ${monthName} ${filterYear}*\n\n`;
         shops.forEach(s => {
             if (totals[s] !== 0) {
                 let sName = s === 'Красноказарменная' ? 'МЭИ' : s;
@@ -8162,6 +8168,7 @@ window.smartFillVolumes = function() {
                     <tr style="background:#f5f5f5;">
                         <th style="border:1px solid #ccc; padding:8px; text-align:left;">Фамилия</th>
                         <th style="border:1px solid #ccc; padding:8px; text-align:left;">Имя</th>
+                        <th style="border:1px solid #ccc; padding:8px; text-align:center;">Telegram ID</th>
                         <th style="border:1px solid #ccc; padding:8px; text-align:center;">День рождения</th>
                         <th style="border:1px solid #ccc; padding:8px; text-align:center;">Первый день</th>
                         <th style="border:1px solid #ccc; padding:8px; text-align:right;">Ставка (₽/час)</th>
@@ -8174,7 +8181,7 @@ window.smartFillVolumes = function() {
         `;
 
         if (empList.length === 0) {
-            html += `<tr><td colspan="8" style="padding:20px; text-align:center; color:#888;">Сотрудников пока нет. Нажмите «Добавить сотрудника».</td></tr>`;
+            html += `<tr><td colspan="9" style="padding:20px; text-align:center; color:#888;">Сотрудников пока нет. Нажмите «Добавить сотрудника».</td></tr>`;
         } else {
             empList.forEach(emp => {
                 let rates = calculateCurrentRates(emp);
@@ -8188,6 +8195,7 @@ window.smartFillVolumes = function() {
                     <tr style="${isBirthdayToday(emp) ? 'background:#fff3e0;' : ''}">
                         <td style="border:1px solid #ccc; padding:8px; font-weight:bold;">${emp.lastName || ''}</td>
                         <td style="border:1px solid #ccc; padding:8px;">${emp.firstName || ''}</td>
+                        <td style="border:1px solid #ccc; padding:8px;"><button type="button" onclick="editEmployeeTelegramId('${emp.id}')" style="padding:6px;cursor:pointer;">${/^\d+$/.test(String(emp.userId ?? emp.telegramId ?? emp.telegram_id ?? emp.tgId ?? '')) ? String(emp.userId ?? emp.telegramId ?? emp.telegram_id ?? emp.tgId) : 'Указать ID'}</button></td>
                         <td style="border:1px solid #ccc; padding:8px; text-align:center;">${formatDateRu(emp.birthday) || '—'}${bdayMark}</td>
                         <td style="border:1px solid #ccc; padding:8px; text-align:center;">${formatDateRu(emp.firstWorkDay) || '—'}</td>
                         <td style="border:1px solid #ccc; padding:8px; text-align:right; font-weight:bold; color:#2E7D32;">${rates.hourly.toFixed(2)}</td>
@@ -8202,6 +8210,15 @@ window.smartFillVolumes = function() {
         }
         html += `</tbody></table></div>`;
         box.innerHTML = html;
+    }
+
+    async function editEmployeeTelegramId(id) {
+        const emp=cachedData.employees?.[id];if(!emp)return;
+        const old=emp.userId ?? emp.telegramId ?? emp.telegram_id ?? emp.tgId ?? '';
+        const entered=prompt('Telegram User ID сотрудника (число). Пустое поле — убрать ID:',String(old));if(entered===null)return;
+        const value=entered.trim();if(value && !/^\d+$/.test(value)){alert('ID должен состоять только из цифр.');return;}
+        try{await db.ref('employees/'+id+'/userId').set(value);emp.userId=value;renderEmployeesTab();}
+        catch(error){alert('Не удалось сохранить ID: '+error.message);}
     }
 
     async function addEmployee() {
@@ -8554,11 +8571,15 @@ window.smartFillVolumes = function() {
         ['start1','Начало смены 1','time'], ['end1','Конец смены 1','time'],
         ['start2','Начало смены 2','time'], ['end2','Конец смены 2','time'],
         ['hours1','Отработано часов 1','number'], ['hours2','Отработано часов 2','number'],
+        ['urgent1','Срочный выход 1','checkbox'], ['bonus1','Надбавка за срочный выход 1, ₽','number'],
+        ['urgent2','Срочный выход 2','checkbox'], ['bonus2','Надбавка за срочный выход 2, ₽','number'],
         ['cashReceived','Наличные за день из чека','number'], ['expenses','Расходы','number'],
+        ['cashOpening','Наличные на начало дня (если нет предыдущего отчёта)','number'],
         ['taken1','ЗП взял сотрудник 1','number'], ['taken2','ЗП взял сотрудник 2','number'],
         ['coupons','Купоны','number'], ['cashClosing','Наличные в кассе (остаток)','number'],
         ['salaryComment','Комментарии к ЗП','text'], ['expenseComment','Комментарии к расходам','text'],
         ['fine1','Штраф сотрудника 1','number'], ['fineComment','Комментарий к штрафу','text'],
+        ['fine2','Штраф сотрудника 2','number'], ['fineComment2','Комментарий к штрафу сотрудника 2','text'],
         ['reserveBalance','Остаток денег в запасе','number'], ['fromReserve','Из запаса в кассу','number'],
         ['toReserve','Из кассы в запас','number'],
         ['hourly1','Ставка сотрудника 1, ₽/час','number'], ['percent1','Процент сотрудника 1','number'],
@@ -8571,13 +8592,16 @@ window.smartFillVolumes = function() {
         return Number.isFinite(n) ? n : null;
     };
     const zero = v => number(v) || 0;
-    const money = v => v == null ? 'Не рассчитано' : new Intl.NumberFormat('ru-RU', {maximumFractionDigits:2}).format(v);
+    const moneyFormat=new Intl.NumberFormat('ru-RU',{maximumFractionDigits:2});
+    const money = v => v == null ? 'Не рассчитано' : moneyFormat.format(v);
     const round = n => Math.round((n + Number.EPSILON) * 100) / 100;
     const norm = s => String(s || '').toLowerCase().replace(/ё/g,'е').replace(/[^a-zа-я0-9]/g,'');
     function date(v) {
         const s = String(v || '');
         const ru = s.match(/^(\d{2})\.(\d{2})\.(\d{4})/);
         if (ru) return `${ru[3]}-${ru[2]}-${ru[1]}`;
+        const google=s.match(/^Date\((\d{4}),(\d{1,2}),(\d{1,2})/);
+        if(google)return `${google[1]}-${String(Number(google[2])+1).padStart(2,'0')}-${google[3].padStart(2,'0')}`;
         if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0,10);
         return '';
     }
@@ -8588,18 +8612,24 @@ window.smartFillVolumes = function() {
         return diff ? diff / 60 : null;
     }
     const nameKey = value => String(value || '').toLowerCase().replace(/ё/g,'е').trim().split(/\s+/).filter(Boolean).sort().join('|');
+    const employeeIndexes=new WeakMap(), rateCache=new WeakMap();
+    const checked=value=>value===true || ['true','1','да'].includes(String(value).toLowerCase());
     function matchEmployee(name, employees) {
         const key=nameKey(name);
         if(!key)return null;
-        const matches=Object.entries(employees || {}).filter(([id,e])=>id!=='_meta' && e && typeof e==='object' && [e.name,e.fullName,
-            [e.firstName,e.lastName].filter(Boolean).join(' '),
-            [e.firstName,e.lastName,e.middleName].filter(Boolean).join(' ')
-        ].some(n=>n && nameKey(n)===key));
-        if(matches.length!==1)return null;
-        const [id,employee]=matches[0];
-        return {...employee,employeeId:id,userId:employee.userId ?? employee.user_id ?? employee.telegramId ?? employee.telegram_id ?? employee.telegramUserId ?? employee.tgUserId ?? employee.tgId ?? employee.tg_id ?? (/^\d+$/.test(id)?id:'')};
+        if(!employees || typeof employees!=='object')return null;
+        if(!employeeIndexes.has(employees)){
+            const index=new Map();
+            Object.entries(employees).forEach(([id,e])=>{
+                if(id==='_meta'||!e||typeof e!=='object')return;
+                const person={...e,employeeId:id,userId:e.userId ?? e.user_id ?? e.telegramId ?? e.telegram_id ?? e.telegramUserId ?? e.tgUserId ?? e.tgId ?? e.tg_id ?? (/^\d+$/.test(id)?id:'')};
+                for(const alias of new Set([e.name,e.fullName,[e.firstName,e.lastName].filter(Boolean).join(' '),[e.firstName,e.lastName,e.middleName].filter(Boolean).join(' ')].filter(Boolean).map(nameKey))){if(!index.has(alias))index.set(alias,[]);index.get(alias).push(person);}
+            });employeeIndexes.set(employees,index);
+        }
+        const matches=employeeIndexes.get(employees).get(key) || [];
+        return matches.length===1?matches[0]:null;
     }
-    const splitShift = r => Boolean(String(r.employee2 || '').trim() || r.start2 || r.end2 || number(r.hours2)!=null) || zero(r.revenue2)!==0 || zero(r.taken2)!==0;
+    const splitShift = r => Boolean(String(r.employee2 || '').trim() || r.start2 || r.end2 || number(r.hours2)!=null) || zero(r.revenue2)!==0 || zero(r.taken2)!==0 || zero(r.fine2)!==0;
     function shiftHours(r, index, split) {
         const explicit=number(r['hours'+index]);
         if(explicit!=null)return explicit>0 && explicit<=24?explicit:null;
@@ -8612,143 +8642,485 @@ window.smartFillVolumes = function() {
         const revenue1 = round(zero(r.revenue) - zero(r.revenue2));
         const person = index => {
             const employee=matchEmployee(r['employee'+index],employees);
-            const rates=employee && typeof root.calculateCurrentRates==='function'?root.calculateCurrentRates(employee):null;
+            const rateMinute=Math.floor(Date.now()/60000);
+            if(employee && rateCache.get(employee)?.minute!==rateMinute)rateCache.set(employee,{minute:rateMinute,value:typeof root.calculateCurrentRates==='function'?root.calculateCurrentRates(employee):null});
+            const rates=employee?rateCache.get(employee).value:null;
             return {name:employee?[employee.lastName,employee.firstName].filter(Boolean).join(' ') || employee.name || employee.fullName:r['employee'+index],
                 employeeId:employee?.employeeId || '',userId:employee?.userId ?? '',matched:Boolean(employee),
                 revenue:index===1?revenue1:zero(r.revenue2),hours:shiftHours(r,index,morning),
                 hourly:employee && number(employee.hourlyRate)!=null?number(rates?rates.hourly:employee.hourlyRate):null,
                 percent:employee?number(rates?rates.percent:employee.percentRate) ?? 0:null,
-                fine:index===1?zero(r.fine1):0,taken:zero(r['taken'+index])};
+                bonus:checked(r['urgent'+index])?zero(r['bonus'+index]):0,
+                fine:zero(r['fine'+index]),taken:zero(r['taken'+index])};
         };
         const people = [person(1)];
         if (morning) people.push(person(2));
         people.forEach(p => {
             p.complete = Boolean(p.matched && p.name && p.hours != null && p.hourly != null && p.percent != null);
-            p.gross = p.complete ? round(p.hours * p.hourly + p.revenue * p.percent / 100) : null;
+            p.gross = p.complete ? round(p.hours * p.hourly + p.revenue * p.percent / 100 + p.bonus) : null;
             p.salary = p.gross==null ? null : round(p.gross-p.fine);
             p.balance = p.salary == null ? null : round(p.salary - p.taken);
         });
         return {people, revenue1, split:morning, needsHours:morning && people.some(p=>p.hours==null)};
     }
-    let state = {records:{}, employees:{}, settings:{}, payments:{}, db:null, tab:'journal', from:'', to:'', address:'', status:'', timer:null, syncing:false, draft:null, initialized:false};
-    const record = raw => ({...(raw.source || {}), ...(raw.overrides || {}), id:raw.id, imported:Boolean(raw.source)});
+    let state = {records:{}, employees:{}, settings:{}, payments:{}, timesheets:{}, db:null, tab:'journal', from:'', to:'', address:'', status:'', timer:null, syncing:false, draft:null, initialized:false};
+    function payrollLedger(records, employees, payments) {
+        const groups=new Map();
+        const get=(key,p)=>{if(!groups.has(key))groups.set(key,{key,name:p.name,employeeId:p.employeeId || '',userId:p.userId || '',shifts:[],payments:[],unallocatedPayments:[],gross:0,taken:0,fine:0,bank:0,missing:0});return groups.get(key);};
+        [...records].sort((a,b)=>(a.workDate || date(a.submittedAt)).localeCompare(b.workDate || date(b.submittedAt)) || String(a.id).localeCompare(String(b.id))).forEach(r=>calculate(r,employees).people.forEach((p,index)=>{
+            const key=p.employeeId || nameKey(p.name) || 'unknown_'+r.id+'_'+index;
+            const g=get(key,p);g.gross+=p.gross || 0;g.taken+=p.taken;g.fine+=p.fine;g.missing+=p.complete?0:1;
+            g.shifts.push({...p,id:r.id+'_'+index,reportId:r.id,date:r.workDate || date(r.submittedAt),address:r.address,comment:[r.salaryComment,index===0?r.fineComment:r.fineComment2,p.bonus?'Срочный выход: +'+money(p.bonus)+' ₽':''].filter(Boolean).join(' · '),remaining:Math.max(0,p.balance || 0)});
+        }));
+        Object.values(payments || {}).filter(p=>!p.voided).forEach(p=>{
+            const employee=matchEmployee(p.name,employees),key=p.employeeId || employee?.employeeId || nameKey(p.name);
+            const g=get(key,{name:p.name,employeeId:p.employeeId || employee?.employeeId,userId:p.userId ?? employee?.userId});g.bank+=zero(p.amount);g.payments.push(p);
+        });
+        groups.forEach(g=>{
+            const apply=(amount,shifts,kind)=>{for(const s of shifts){const paid=Math.min(amount,s.remaining);s.remaining=round(s.remaining-paid);s[kind]=round((s[kind] || 0)+paid);amount=round(amount-paid);if(amount<=0)break;}return amount;};
+            const cashCredit=g.shifts.reduce((sum,s)=>sum+Math.max(0,-(s.balance || 0)),0);
+            apply(round(cashCredit),g.shifts,'cashOffset');
+            for(const p of g.payments.sort((a,b)=>String(a.date).localeCompare(String(b.date)))) {
+                let left=zero(p.amount);
+                if(p.periodFrom && p.periodTo)left=apply(left,g.shifts.filter(s=>s.date>=p.periodFrom && s.date<=p.periodTo && (!p.address || s.address===p.address)),'bankPaid');
+                if(left>0)left=apply(left,g.shifts,'bankPaid');
+                if(left>0)g.unallocatedPayments.push({payment:p,amount:left});
+            }
+            g.debt=g.missing?null:round(g.gross-g.fine-g.taken-g.bank);
+            g.cashDebt=g.missing?null:Math.max(0,round(g.taken-Math.max(0,g.gross-g.fine)));
+            g.bankOverpayment=g.missing?null:Math.max(0,round(g.bank-Math.max(0,g.gross-g.fine-g.taken)));
+        });
+        return [...groups.values()];
+    }
+    function selectedPayroll(rows) {
+        const selected=new Set(rows.map(r=>r.id));
+        const today=new Intl.DateTimeFormat('sv-SE',{timeZone:'Europe/Moscow'}).format(new Date());
+        return payrollLedger(all().filter(r=>(r.workDate || date(r.submittedAt))<=today),state.employees,Object.fromEntries(Object.entries(state.payments).filter(([,p])=>p.date<=today))).map(g=>{
+            const shifts=g.shifts.filter(s=>selected.has(s.id.slice(0,s.id.lastIndexOf('_'))));
+            return {...g,selected:shifts,pending:g.missing?null:round(shifts.reduce((sum,s)=>sum+s.remaining,0))};
+        }).filter(g=>g.selected.length || (state.tab==='salary' && g.payments.some(p=>(!state.from || p.date>=state.from)&&(!state.to || p.date<=state.to)&&(!state.address || p.address===state.address))));
+    }
+    const record = raw => {const value={...(raw.source || {}),...(raw.overrides || {}),id:raw.id,imported:Boolean(raw.source)};value.workDate=date(value.workDate)||date(value.submittedAt);return value;};
     const all = () => Object.entries(state.records).filter(([,r])=>!r.sourceUnavailable).map(([id,r]) => record({...r,id})).sort((a,b) => (a.workDate || date(a.submittedAt)).localeCompare(b.workDate || date(b.submittedAt)) || a.id.localeCompare(b.id));
-    const filtered = () => all().filter(r => (!state.from || (r.workDate || date(r.submittedAt)) >= state.from) && (!state.to || (r.workDate || date(r.submittedAt)) <= state.to) && (!state.address || r.address === state.address));
-    const table = (heads, rows) => `<div class="fin-scroll"><table><thead><tr>${heads.map(h=>`<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${rows.length ? rows.map(row=>`<tr class="${row.pink?'fin-split':''}">${row.map(v=>`<td>${v}</td>`).join('')}</tr>`).join('') : `<tr><td colspan="${heads.length}">Нет данных за выбранный период</td></tr>`}</tbody></table></div>`;
+    const todayMoscow=()=>new Intl.DateTimeFormat('sv-SE',{timeZone:'Europe/Moscow'}).format(new Date());
+    function latestReportDay(records,today=todayMoscow()){return records.map(r=>date(r.workDate) || date(r.submittedAt)).filter(day=>day && day<=today).sort().at(-1) || today;}
+    function useLatestPeriod(){if(!state.autoPeriod)return;const day=latestReportDay(all().filter(r=>!['journal','revenue'].includes(state.tab) || !state.address || r.address===state.address));state.from=day;state.to=day;}
+    function readCache(key){try{return JSON.parse(localStorage.getItem(key) || 'null');}catch{return null;}}
+    function writeCache(key,value){try{localStorage.setItem(key,JSON.stringify(value));}catch{}}
+    function cacheLatestReports(){
+        const records=all(),day=latestReportDay(records),kept={};
+        const previous=new Map();
+        for(const r of records){const d=r.workDate || date(r.submittedAt);if(d<day){const prev=previous.get(r.address);if(!prev || d>prev.day)previous.set(r.address,{day:d,ids:[r.id]});else if(d===prev.day)prev.ids.push(r.id);}if(d===day)kept[r.id]=state.records[r.id];}
+        for(const entry of previous.values())for(const id of entry.ids)kept[id]=state.records[id];
+        writeCache('crm_finance_latest_v1',{records:kept,savedAt:Date.now()});
+    }
+    function cashAudit(records){
+        const days=new Map(),result=new Map(),previous=new Map();
+        for(const r of records){const day=r.workDate || date(r.submittedAt);if(!day || !r.address)continue;const key=JSON.stringify([day,r.address]);if(!days.has(key))days.set(key,{day,address:r.address,records:[]});days.get(key).records.push(r);}
+        for(const group of [...days.values()].sort((a,b)=>a.day.localeCompare(b.day)||a.address.localeCompare(b.address))){
+            const prev=previous.get(group.address),before=new Date(group.day+'T12:00:00Z');before.setUTCDate(before.getUTCDate()-1);
+            for(const r of group.records){
+                const manual=number(r.cashOpening),opening=manual!=null?manual:prev?.day===before.toISOString().slice(0,10)?prev.amount:null;
+                const received=number(r.cashReceived),actual=number(r.cashClosing);
+                const expected=opening!=null && received!=null?round(opening+received-zero(r.expenses)-zero(r.taken1)-zero(r.taken2)+zero(r.fromReserve)-zero(r.toReserve)):null;
+                result.set(r.id,{opening,actual,expected,difference:actual!=null && expected!=null?round(actual-expected):null,reason:opening==null?'Нет остатка за предыдущий день':received==null?'Не указаны наличные из чека':actual==null?'Не указан фактический остаток':''});
+            }
+            const amounts=[...new Set(group.records.map(r=>number(r.cashClosing)).filter(v=>v!=null))];
+            previous.set(group.address,{day:group.day,amount:amounts.length===1?amounts[0]:null});
+        }
+        return result;
+    }
+    const filtered = () => all().filter(r => (!state.from || (r.workDate || date(r.submittedAt)) >= state.from) && (!state.to || (r.workDate || date(r.submittedAt)) <= state.to) && (!['journal','revenue'].includes(state.tab) || !state.address || r.address === state.address));
+    const table = (heads, rows, groups=[],tableClass='') => {const widths=tableClass==='fin-timesheet'?[115,220,170,115,150,90,95,100,100,180,230]:groups.length?[140,280,190,130,180,150,220,100,160,120,140,150,220,100,160,120,140,150,160,150,100,160,170,160,300,300,300,180,180,180]:tableClass==='fin-boss-summary'?[220,170,170,170,190,170,260]:null;const tableWidth=widths?widths.reduce((sum,width)=>sum+width,0):heads.length*155;return `<div class="fin-scroll" data-fin-scroll="${esc(tableClass || (groups.length?'journal':state.tab))}"><table style="--fin-cols:${heads.length};--fin-table-width:${tableWidth}px" class="${groups.length?'fin-grouped':''} ${esc(tableClass)}">${widths?'<colgroup>'+widths.map(w=>`<col style="width:${w}px">`).join('')+'</colgroup>':''}<thead>${groups.length?`<tr>${groups.map(([label,count])=>`<th colspan="${count}">${esc(label)}</th>`).join('')}</tr>`:''}<tr>${heads.map(h=>`<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${rows.length ? rows.map((row,index)=>`<tr data-fin-row="${esc(row.key ?? index)}" class="${row.pink?'fin-split':''}">${row.map(v=>`<td>${v}</td>`).join('')}</tr>`).join('') : `<tr><td colspan="${heads.length}">Нет данных за выбранный период</td></tr>`}</tbody></table></div>`};
     function ratesFor(name) {
         return matchEmployee(name,state.employees);
     }
+    const bossKey=item=>item.employeeId || nameKey(item.name);
+    function employeeChoices() {
+        const choices=new Map(Object.entries(state.employees).filter(([key,e])=>key!=='_meta' && e && typeof e==='object').map(([key,e])=>[key,{key,name:[e.lastName,e.firstName,e.middleName].filter(Boolean).join(' ') || e.name || e.fullName || key}]));
+        for(const sheet of Object.values(state.timesheets))for(const item of sheet.items || [])if(!choices.has(bossKey(item)))choices.set(bossKey(item),{key:bossKey(item),name:item.name});
+        return [...choices.values()].sort((a,b)=>a.name.localeCompare(b.name,'ru'));
+    }
+    function scheduleRender(){if(state.closed || state.renderQueued || state.draft)return;state.renderQueued=true;(root.requestAnimationFrame || (cb=>setTimeout(cb,0)))(()=>{state.renderQueued=false;if(!state.draft && !state.closed)render();});}
+    function shortStatus(){return state.syncError?'Не удалось обновить':state.syncing?'Обновляем…':state.recordsFromCache?'Сохранённые данные · обновляем':state.settings.enabled?(state.lastSyncAt?'Обновлено '+new Date(state.lastSyncAt).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'}):'Автообновление'):!state.loaded?.has('settings')?'Подключаем источник…':'Источник не подключён';}
+    function patchFinance(container,html) {
+        const tpl=document.createElement('template');tpl.innerHTML=html;
+        const key=node=>node.nodeType===1?(node.id?'id:'+node.id:['data-fin-scroll','data-fin-row','data-fin-filter','data-fin-tab','data-fin-panel'].map(attr=>node.hasAttribute(attr)?attr+':'+node.getAttribute(attr):'').find(Boolean) || ''):'';
+        const scrolls=[...container.querySelectorAll('.fin-scroll')].map(el=>{
+            const anchor=[...el.querySelectorAll('tbody tr[data-fin-row]')].find(row=>row.getBoundingClientRect().bottom>el.getBoundingClientRect().top+45);
+            return {el,left:el.scrollLeft,top:el.scrollTop,anchor:anchor?.getAttribute('data-fin-row'),offset:anchor?anchor.getBoundingClientRect().top-el.getBoundingClientRect().top:0};
+        });
+        const pageScroll={x:window.scrollX,y:window.scrollY};
+        function children(oldParent,newParent){
+            const keyed=new Map([...oldParent.childNodes].filter(n=>key(n)).map(n=>[key(n),n]));let cursor=oldParent.firstChild;
+            for(const wanted of [...newParent.childNodes]){
+                const id=key(wanted);let actual=id?keyed.get(id):cursor && !key(cursor) && cursor.nodeType===wanted.nodeType && cursor.nodeName===wanted.nodeName?cursor:null;
+                if(!actual){actual=wanted.cloneNode(true);oldParent.insertBefore(actual,cursor);}else{
+                    if(actual!==cursor)oldParent.insertBefore(actual,cursor);
+                    if(actual.nodeType===3){if(actual.nodeValue!==wanted.nodeValue)actual.nodeValue=wanted.nodeValue;}
+                    else if(actual.nodeType===1){
+                        const active=actual===document.activeElement || actual._finDirty || (actual.matches('[data-fin-partial]') && actual.value!=='');
+                        const detailsOpen=actual.tagName==='DETAILS'?actual.open:null;
+                        for(const attr of [...actual.attributes])if(!wanted.hasAttribute(attr.name) && !(active && attr.name==='value'))actual.removeAttribute(attr.name);
+                        for(const attr of [...wanted.attributes])if(actual.getAttribute(attr.name)!==attr.value && !(active && attr.name==='value'))actual.setAttribute(attr.name,attr.value);
+                        if(!active)children(actual,wanted);
+                        if(!active && actual.tagName==='INPUT' && actual.value!==wanted.value)actual.value=wanted.value;
+                        if(!active && actual.tagName==='INPUT' && actual.type==='checkbox')actual.checked=wanted.checked;
+                        if(!active && actual.tagName==='SELECT' && actual.value!==wanted.value)actual.value=wanted.value;
+                        if(detailsOpen!=null)actual.open=detailsOpen;
+                    }
+                }
+                cursor=actual.nextSibling;
+            }
+            while(cursor){const next=cursor.nextSibling;cursor.remove();cursor=next;}
+        }
+        if(container.dataset.finView!==state.tab){container.innerHTML=html;container.dataset.finView=state.tab;return;}
+        children(container,tpl.content);
+        for(const saved of scrolls)if(saved.el.isConnected){saved.el.scrollLeft=saved.left;saved.el.scrollTop=saved.top;const anchor=[...saved.el.querySelectorAll('tbody tr[data-fin-row]')].find(row=>row.getAttribute('data-fin-row')===saved.anchor);if(anchor)saved.el.scrollTop+=anchor.getBoundingClientRect().top-saved.el.getBoundingClientRect().top-saved.offset;}
+        if(window.scrollX!==pageScroll.x || window.scrollY!==pageScroll.y)window.scrollTo(pageScroll.x,pageScroll.y);
+    }
     function render() {
-        if (typeof currentTabType !== 'undefined' && currentTabType !== 'finance') return;
+        if (state.closed || (typeof currentTabType !== 'undefined' && currentTabType !== 'finance')) return;
+        useLatestPeriod();
         const box = document.getElementById('content');
         const rows = filtered();
         const dayCounts=new Map();
         rows.forEach(r=>{const key=JSON.stringify([r.workDate || date(r.submittedAt),r.address]);dayCounts.set(key,(dayCounts.get(key)||0)+1);});
         const repeatedDays=[...dayCounts.values()].filter(count=>count>1).length;
-        const tabs = [['journal','Отчёты смен'],['revenue','Итоги выручки'],['payments','Выплата сотрудникам'],['salary','ЗП сотрудников'],['settings','Google-таблица']];
-        box.innerHTML = `<style>
+        if(state.tab==='boss')state.tab='salary';
+        const missingNotice=state.loaded?.has('records')?missingState():null;
+        const tabs = [['journal','Отчёты смен'],['revenue','Итоги выручки'],['payments','Выплата сотрудникам'],['salary','ЗП сотрудников'],['settings','Настройки']];
+        const markup = `<style>
             .fin-tools{display:flex;gap:10px;flex-wrap:wrap;align-items:end;margin:14px 0}.fin-tools label{min-width:150px}.fin-scroll{overflow:auto;max-height:65vh}.fin-scroll table{white-space:nowrap;width:100%}.fin-scroll th{position:sticky;top:0;background:#eeede9;z-index:1}.fin-scroll td,.fin-scroll th{padding:10px}.fin-scroll tr.fin-split > td{background:#fce1ec!important}.fin-scroll tr.fin-split:hover > td{background:#f8d0e1!important}.fin-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px}.fin-grid label{display:block}.fin-note{padding:12px;background:#f4f2ed;border-radius:10px;margin:12px 0}.fin-error{color:#a32121}.fin-cards{display:flex;flex-wrap:wrap;gap:20px;margin:16px 0}.fin-cards b{font-size:22px;display:block}.fin-dialog{position:fixed;inset:0;z-index:10000;background:#0008;display:flex;align-items:center;justify-content:center;padding:16px}.fin-dialog>div{background:white;border-radius:16px;padding:24px;max-height:90vh;overflow:auto;width:min(1100px,100%)}
-        </style><h3>Финансы</h3><div class="fin-tools">${tabs.map(([id,label])=>`<button class="btn-add" data-fin-tab="${id}" style="${state.tab === id ? 'border:2px solid black!important' : ''}">${label}</button>`).join('')}</div>
-        <div class="fin-note" id="fin-status">${esc(state.status || 'Настройте источник Google-таблицы. Записи сохраняются в CRM отдельно от исходной таблицы.')}</div>
-        ${repeatedDays?`<div class="fin-note fin-error">Для ${repeatedDays} сочетаний даты и адреса найдено несколько отчётов. Проверьте их перед выплатой: итоги учитывают каждый отчёт.</div>`:''}
-        ${state.tab === 'settings' ? settingsView() : `<div class="fin-tools"><label>С даты<input type="date" data-fin-filter="from" value="${esc(state.from)}"></label><label>По дату<input type="date" data-fin-filter="to" value="${esc(state.to)}"></label><label>Адрес<select data-fin-filter="address"><option value="">Все адреса</option>${[...new Set(all().map(r=>r.address).filter(Boolean))].sort().map(a=>`<option ${state.address===a?'selected':''}>${esc(a)}</option>`).join('')}</select></label><button class="btn-add" data-fin-action="sync">Обновить из Google</button><button class="btn-add" data-fin-action="new">Добавить отчёт</button></div>${view(rows)}`}`;
+            .fin-grouped thead tr:first-child th{height:40px;box-sizing:border-box;z-index:3;background:#e8e5e1}.fin-grouped thead tr:nth-child(2) th{top:40px}
+            .fin-scroll table{table-layout:fixed;width:max(100%,calc(var(--fin-cols)*140px));font-variant-numeric:tabular-nums}.fin-scroll td{overflow-wrap:anywhere;white-space:normal}#fin-status{height:46px;box-sizing:border-box;overflow:auto;overflow-anchor:none}.fin-timesheet{width:1565px!important;min-width:1565px;border-collapse:collapse!important;background:#f8f9fb}.fin-timesheet td,.fin-timesheet th{border:1px solid #242424!important;padding:16px 10px!important;vertical-align:middle;text-align:center;font-size:15px!important;height:64px;box-sizing:border-box}.fin-timesheet th{background:#d4d4d4!important;color:#111!important;font-weight:800!important;text-transform:none!important}.fin-timesheet td:nth-child(2),.fin-timesheet td:nth-child(3),.fin-timesheet td:last-child{text-align:left}.fin-timesheet tr[data-fin-row="timesheet-total"] td{font-weight:bold;background:#eceef1}.fin-date-edit{border:0;background:none;padding:0;font:inherit;text-decoration:underline;cursor:pointer;color:inherit}
+            .fin-scroll td button{box-sizing:border-box;max-width:100%;white-space:normal;padding:8px!important;font-size:12px!important}.fin-scroll th{white-space:normal;overflow-wrap:anywhere}
+            .fin-scroll{max-width:100%;width:100%;min-width:0;overscroll-behavior-x:contain}.fin-scroll table{width:var(--fin-table-width)!important;min-width:100%!important;max-width:none!important;table-layout:fixed!important}.fin-scroll td,.fin-scroll th{word-break:normal!important;overflow-wrap:normal!important;white-space:normal!important}.fin-scroll td{line-height:1.45}.fin-scroll th{overflow:visible!important;text-overflow:clip!important}.fin-scroll td button{word-break:normal!important;white-space:nowrap!important}.fin-timesheet{width:1565px!important;--fin-table-width:1565px}.fin-grouped td:nth-child(2){white-space:normal!important}.fin-grouped td:nth-child(3),.fin-grouped td:nth-child(4){white-space:nowrap!important}.fin-scroll td input[type=number]{width:110px!important;max-width:100%;box-sizing:border-box}.fin-partial{display:flex;gap:6px;align-items:center}
+            .fin-people{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:20px}.fin-person-card{min-width:0;border:1px solid #dedbd8;border-radius:14px;padding:18px;margin:0 0 18px}.fin-person-card legend{padding:0 8px;font-weight:bold}.fin-person-card:nth-child(2){background:#fff8fb}.fin-subgrid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px;margin-top:12px}.fin-field{display:flex;flex-direction:column;gap:7px;position:relative;min-width:0}.fin-dialog .fin-field input,.fin-dialog .fin-field textarea{width:100%!important;max-width:100%!important;box-sizing:border-box;min-height:42px}.fin-toggle{display:flex;align-items:center;gap:8px}.fin-toggle input{width:auto!important}.fin-suggestions{position:absolute;top:100%;left:0;right:0;max-height:230px;overflow:auto;background:#fff;border:1px solid #ccc;border-radius:8px;box-shadow:0 8px 20px #0002;z-index:20}.fin-suggestions[hidden]{display:none}.fin-suggestions button{display:block;width:100%;padding:10px;text-align:left;border:0;background:white;cursor:pointer}.fin-suggestions button:hover,.fin-suggestions button[aria-selected=true]{background:#eee9f6}.fin-suggestions span{display:block;padding:10px}.fin-pagination{display:flex;gap:14px;align-items:center;margin:12px 0}@media(max-width:760px){.fin-people,.fin-subgrid{grid-template-columns:1fr}.fin-dialog{padding:6px}.fin-dialog>div{padding:14px}}
+            .fin-topline{display:flex;align-items:center;justify-content:space-between;gap:16px}.fin-sync{font-size:13px;max-width:65%}.fin-sync>summary{cursor:pointer;color:#666}.fin-sync[open]{max-width:100%}.fin-sync #fin-status{height:auto;max-height:140px;overflow:auto;margin:8px 0;font-size:13px}.fin-compact-details{padding:10px 12px;border:1px solid #e0dedb;border-radius:10px;margin:8px 0}.fin-compact-details>summary{cursor:pointer;font-weight:600}.fin-badge{display:inline-block;border-radius:20px;background:#a92545;color:#fff;padding:2px 7px;margin-left:6px;font-size:12px}.fin-action-message:empty{display:none}.fin-action-message{padding:8px 0;color:#a32121}
+        </style><div class="fin-topline"><h3>Финансы</h3><details class="fin-sync" data-fin-panel="sync-status"><summary id="fin-sync-label">${esc(shortStatus())}</summary><div class="fin-note" id="fin-status">${esc(state.status || 'Подключение к таблице сохраняется в настройках и используется автоматически.')}</div></details></div><div class="fin-tools">${tabs.map(([id,label])=>`<button class="btn-add" data-fin-tab="${id}" style="${state.tab === id ? 'border:2px solid black!important' : ''}">${label}${id==='journal' && missingNotice?.missing.length?`<span class="fin-badge">${missingNotice.missing.length}</span>`:''}</button>`).join('')}</div>
+        <div id="fin-action-message" class="fin-action-message" role="status">${esc(state.notice || '')}</div>
+        ${repeatedDays && state.tab==='journal'?`<details class="fin-compact-details" data-fin-panel="duplicates"><summary>Повторные отчёты: ${repeatedDays}</summary><p>За один день по одной точке есть несколько отчётов. Проверьте их перед выплатой.</p></details>`:''}
+        ${state.tab === 'settings' ? settingsView() : `<div class="fin-tools"><label>С даты<input type="date" data-fin-filter="from" value="${esc(state.from)}"></label><label>По дату<input type="date" data-fin-filter="to" value="${esc(state.to)}"></label>${['salary','payments'].includes(state.tab)?`<label>Сотрудник<select data-fin-filter="bossEmployee"><option value="">Все сотрудники</option>${employeeChoices().map(e=>`<option value="${esc(e.key)}" ${state.bossEmployee===e.key?'selected':''}>${esc(e.name)}</option>`).join('')}</select></label>`:`<label>Адрес<select data-fin-filter="address"><option value="">Все адреса</option>${[...new Set(all().map(r=>r.address).filter(Boolean))].sort().map(a=>`<option ${state.address===a?'selected':''}>${esc(a)}</option>`).join('')}</select></label>`}<button class="btn-add" data-fin-action="latest-day">Последний день</button>${state.tab==='journal'?'<button class="btn-add" data-fin-action="new">Добавить отчёт</button>':''}</div>${view(rows)}`}`;
+        patchFinance(box,markup);
         box.onclick = e => {
             const tab = e.target.closest('[data-fin-tab]');
             const action = e.target.closest('[data-fin-action]');
-            const edit = e.target.closest('[data-fin-edit]');
-            if (tab) { state.tab=tab.dataset.finTab; render(); }
-            if (edit) editRecord(edit.dataset.finEdit);
+            const edit = e.target.closest('[data-fin-edit],[data-fin-cash-edit]');
+            const partial=e.target.closest('[data-fin-record-part]');
+            if(partial){const input=[...box.querySelectorAll('[data-fin-partial]')].find(el=>el.dataset.finPartial===partial.dataset.finRecordPart);const amount=number(input?.value);if(amount==null)setStatus('Введите сумму частичного перевода.');else recordPayrollTransfer(partial.dataset.finRecordPart,amount);}
+            const missing=e.target.closest('[data-fin-missing-date]');if(missing){state.newReportDefaults={workDate:missing.dataset.finMissingDate,address:missing.dataset.finMissingAddress};editRecord();}
+            if (tab) { state.tab=tab.dataset.finTab;state.page=0;state.notice='';render(); }
+            if (edit) editRecord(edit.dataset.finEdit || edit.dataset.finCashEdit);
             if (action) dispatch(action.dataset.finAction);
         };
-        box.onchange = e => { if(e.target.dataset.finFilter) {state[e.target.dataset.finFilter]=e.target.value;render();} };
+        box.onchange = e => { if(e.target.dataset.finFull && e.target.checked){const key=e.target.dataset.finFull;e.target.checked=false;recordPayrollTransfer(key,null);}if(e.target.dataset.finFilter) {if(['from','to'].includes(e.target.dataset.finFilter))state.autoPeriod=false;state[e.target.dataset.finFilter]=e.target.value;state.page=0;state.salaryPage=0;state.missingPage=0;state.cashPage=0;state.notice='';render();} };
+        box.oninput=event=>{if(event.target.closest('#fin-report-controls'))event.target.closest('#fin-report-controls')._finDirty=true;if(['fin-url','fin-sheet','fin-header'].includes(event.target.id))event.target._finDirty=true;};
+        box.onsubmit=async event=>{
+            if(event.target.id!=='fin-report-controls')return;event.preventDefault();
+            try{const controls=[...event.target.querySelectorAll('[data-fin-rule]')].map(row=>{const dates=row.querySelectorAll('[type=date]');return {address:row.dataset.finRule,enabled:row.querySelector('[type=checkbox]').checked,start:dates[0].value,end:dates[1].value};});
+                if(controls.some(c=>c.start && c.end && c.start>c.end))throw new Error('Последний рабочий день не может быть раньше начала работы.');
+                await state.db.ref('finance_settings').update({reportControls:controls});state.settings.reportControls=controls;event.target._finDirty=false;render();
+            }catch(error){document.getElementById('fin-rule-error').textContent=error.message;}
+        };
     }
     function settingsView() {
-        return `<div class="fin-note">Ответы поступают в Google-таблицу, CRM проверяет новые строки раз в минуту, пока открыта вкладка «Финансы». Для чтения по ссылке таблица должна быть доступна без входа в Google. Запись обратно в Google не выполняется.</div>
-        <div class="fin-grid"><label>Ссылка на таблицу<input id="fin-url" type="url" value="${esc(state.settings.url || DEFAULT_URL)}"></label><label>Лист с ответами<input id="fin-sheet" value="${esc(state.settings.sheet || 'Ответы на форму (1)')}"></label><label>Строка заголовков<input id="fin-header" type="number" min="1" value="${state.settings.headerRow || 1}"></label></div><div class="fin-tools"><button class="btn-save" data-fin-action="connect">Сохранить и подключить</button><button class="btn-add" data-fin-action="preview">Проверить данные</button></div>
-        <p>Три итоговых раздела рассчитываются из отчётов смен. Для зарплаты нужны имя, время смены и ставки каждого сотрудника. В старой таблице этих данных для утренней смены нет — заполните их в отчёте CRM или добавьте соответствующие столбцы в Google-таблицу.</p>
-        <p>Поддерживаются новые столбцы: «Сотрудник 1», «Сотрудник 2», «Начало смены 1», «Конец смены 1», «Начало смены 2», «Конец смены 2», «ЗП взяли 2», «Остаток денег в запасе». Существующие заголовки исходного листа также распознаются.</p>`;
+        return `<p>${state.settings.enabled?'Таблица подключена. Отчёты и история выручки обновляются автоматически.':'Подключите таблицу один раз — повторно вводить ссылку не потребуется.'}</p><details class="fin-compact-details" data-fin-panel="connection-settings" ${state.settings.enabled?'':'open'}><summary>${state.settings.enabled?'Изменить подключение':'Подключение Google-таблицы'}</summary><div class="fin-grid"><label>Ссылка<input id="fin-url" type="url" value="${esc(state.settings.url || DEFAULT_URL)}"></label><label>Лист с ответами<input id="fin-sheet" value="${esc(state.settings.sheet || 'Ответы на форму (1)')}"></label><label>Строка заголовков<input id="fin-header" type="number" min="1" value="${state.settings.headerRow || 1}"></label></div><div class="fin-tools"><button class="btn-save" data-fin-action="connect">Сохранить подключение</button><button class="btn-add" data-fin-action="preview">Проверить</button></div></details><button class="btn-add" data-fin-action="sync">Обновить сейчас</button>`;
     }
     function view(rows) {
-        const journalFields=fields.filter(([key])=>!/^hourly|^percent/.test(key));
-        if (state.tab === 'journal') return `<div class="fin-note">Розовым выделены отчёты с двумя сменами. Откройте отчёт, прочитайте комментарии и укажите часы каждого сотрудника. Одиночная смена: 12 часов, Старое Павлино: 13 часов. Ставки подставляются из базы сотрудников.</div>`+table(['Действия','Проверка',...journalFields.map(f=>f[1]),'ID сотрудника 1','User ID 1','ID сотрудника 2','User ID 2','Личная выручка 1','Часы 1 (расчёт)','Часы 2 (расчёт)','Начислено 1 до штрафа','Перевести 1','Начислено 2','Перевести 2'], rows.map(r=>{
+        if(state.tab==='revenue' && !state.loaded?.has('records'))return '<p>Загружаем выручку…</p>';
+        if(['salary','payments'].includes(state.tab) && !['records','employees','payments'].every(key=>state.loaded?.has(key)))return '<div class="fin-note">Загружаем актуальные отчёты, сотрудников и переводы…</div>';
+        const journalFields=fields.filter(([key])=>['cashReceived','expenses','coupons','cashClosing','salaryComment','expenseComment','fineComment','reserveBalance','fromReserve','toReserve'].includes(key));
+        const personHeaders=['Имя и фамилия','Часы','Взял наличными','Штраф','Срочный выход','Надбавка'];
+        const pages=Math.max(1,Math.ceil(rows.length/50));state.page=Math.min(state.page || 0,pages-1);
+        const pager=`<div class="fin-pagination"><button class="btn-add" data-fin-action="prev-page" ${state.page===0?'disabled':''}>Назад</button><span>Страница ${state.page+1} из ${pages} · Отчётов: ${rows.length}</span><button class="btn-add" data-fin-action="next-page" ${state.page>=pages-1?'disabled':''}>Далее</button></div>`;
+        const checks=state.tab==='journal'?cashAudit(all()):null;
+        if (state.tab === 'journal') return `${missingReportsView()}${cashAuditView(rows,checks)}${pager}`+table(['Действия','Проверка','Дата отправки','Дата смены','Адрес','Выручка за день',...personHeaders,...personHeaders,...journalFields.flatMap(([key,label])=>key==='cashClosing'?['В кассе: факт','Должно быть','Разница']:label)], [...rows].reverse().slice(state.page*50,state.page*50+50).map(r=>{
             const c=calculate(r);
             const issues=c.people.map((p,i)=>!p.matched?`Сотрудник ${i+1} не найден однозначно в базе`:p.hourly==null?`Нет ставки сотрудника ${i+1}`:'').filter(Boolean);
             if(c.needsHours)issues.push('Укажите часы обеих смен');
-            const values=[`<button class="btn-add" data-fin-edit="${esc(r.id)}">Открыть</button>`,esc(issues.join('; ') || (c.split?'Часы заполнены':'Автоматический расчёт')),...journalFields.map(([k,,t])=>esc(t==='number'? (number(r[k])==null?'—':money(number(r[k]))) : r[k])),...c.people.map(p=>[esc(p.employeeId),esc(p.userId)]).flat(),...(c.people.length===1?['—','—']:[]),esc(money(c.revenue1)),esc(money(c.people[0].hours)),esc(c.people[1]?money(c.people[1].hours):'—'),esc(money(c.people[0].gross)),esc(money(c.people[0].balance)),esc(c.people[1]?money(c.people[1].gross):'—'),esc(c.people[1]?money(c.people[1].balance):'—')];
-            values.pink=c.split;return values;
-        }));
+            const personCells=(p,index)=>p?[`<span title="${esc('ID: '+p.employeeId+'; User ID: '+p.userId)}">${esc(p.name || 'Укажите имя')}</span>`,money(p.hours),money(p.taken),money(p.fine),checked(r['urgent'+index])?'Да':'Нет',money(p.bonus)]:Array(6).fill('—');
+            const audit=checks.get(r.id);
+            const values=[`<button class="btn-add" data-fin-edit="${esc(r.id)}">Открыть</button>`,esc(issues.join('; ') || (c.split?'Часы заполнены':'Автоматический расчёт')),esc(r.submittedAt),esc(r.workDate),esc(r.address),money(number(r.revenue)),...personCells(c.people[0],1),...personCells(c.people[1],2),...journalFields.flatMap(([k,,t])=>k==='cashClosing'?[(audit?.actual==null?'Не указан':money(audit.actual)),audit?.expected==null?`<button class="btn-add" data-fin-cash-edit="${esc(r.id)}" title="${esc(audit?.reason)}">Указать остаток</button>`:money(audit.expected),audit?.difference==null?'—':`<span class="${audit.difference?'fin-error':''}">${money(audit.difference)}</span>`]:esc(t==='number'? (number(r[k])==null?'—':money(number(r[k]))) : r[k]))];
+            values.pink=c.split;values.key=r.id;return values;
+        }),[['Отчёт',6],['Сотрудник 1 — вечер / полный день',6],['Сотрудник 2 — утро',6],['Касса и комментарии',journalFields.length+2]]);
         if (state.tab === 'revenue') {
             const groups=new Map();
-            rows.forEach(r=>{const month=(r.workDate || date(r.submittedAt)).slice(0,7);const key=JSON.stringify([month,r.address]);if(!groups.has(key))groups.set(key,{month,address:r.address,revenue:0,cash:0,expenses:0,taken:0,from:0,to:0,count:0});const g=groups.get(key);g.revenue+=zero(r.revenue);g.cash+=zero(r.cashReceived);g.expenses+=zero(r.expenses);g.taken+=zero(r.taken1)+zero(r.taken2);g.from+=zero(r.fromReserve);g.to+=zero(r.toReserve);g.count++;});
-            return `<div class="fin-cards"><div>Выручка<b>${money(rows.reduce((s,r)=>s+zero(r.revenue),0))} ₽</b></div><div>Отчётов<b>${rows.length}</b></div></div>${table(['Месяц','Адрес','Отчётов','Выручка','Наличные из чека','Расходы','ЗП из кассы','Из запаса','В запас'],[...groups.values()].map(g=>[esc(g.month),esc(g.address),g.count,...[g.revenue,g.cash,g.expenses,g.taken,g.from,g.to].map(v=>money(v))]))}<div class="fin-note">Общая выручка учитывается один раз за отчёт. Остатки кассы и запаса не суммируются по дням.</div>${cashView(rows)}`;
+            rows.forEach(r=>{if(!groups.has(r.address))groups.set(r.address,{address:r.address,revenue:0,cash:0,expenses:0});const g=groups.get(r.address);g.revenue+=zero(r.revenue);g.cash+=zero(r.cashReceived);g.expenses+=zero(r.expenses);});
+            return `<div class="fin-cards"><div>Выручка за период<b>${money(rows.reduce((s,r)=>s+zero(r.revenue),0))} ₽</b></div></div>${table(['Кофейня','Выручка','Наличными','Расходы'],[...groups.values()].sort((a,b)=>a.address.localeCompare(b.address,'ru')).map(g=>{const row=[esc(g.address),money(g.revenue),money(g.cash),money(g.expenses)];row.key=g.address;return row;}),[],'fin-revenue-summary')}${revenueHistoryView()}`;
         }
-        const people=new Map();
-        rows.forEach(r=>calculate(r).people.forEach(p=>{
-            const name=p.name || 'Не указан сотрудник 2';
-            const period=state.tab==='salary'?(r.workDate || date(r.submittedAt)).slice(0,7):'Выбранный период';
-            const key=JSON.stringify([period,p.employeeId || nameKey(name)]);
-            if(!people.has(key))people.set(key,{period,name,employeeId:p.employeeId,userId:p.userId,hours:0,revenue:0,salary:0,gross:0,taken:0,fine:0,missing:0,bank:0});
-            const g=people.get(key);g.hours+=p.hours || 0;g.revenue+=p.revenue;g.salary+=p.salary || 0;g.gross+=p.gross || 0;g.taken+=p.taken;g.fine+=p.fine;g.missing+=p.complete?0:1;
-        }));
-        Object.values(state.payments).forEach(p=>{
-            if((state.from && p.date<state.from)||(state.to && p.date>state.to)||(state.address && p.address!==state.address))return;
-            const period=state.tab==='salary'?p.date.slice(0,7):'Выбранный период';
-            const employee=ratesFor(p.name);
-            const key=JSON.stringify([period,p.employeeId || employee?.employeeId || nameKey(p.name)]);
-            if(!people.has(key))people.set(key,{period,name:p.name,employeeId:p.employeeId || employee?.employeeId,userId:p.userId ?? employee?.userId,hours:0,revenue:0,salary:0,gross:0,taken:0,fine:0,missing:0,bank:0});
-            people.get(key).bank+=zero(p.amount);
-        });
-        return `<div class="fin-note">Начислено = часы × ставка из базы + личная выручка × процент / 100. Перевести = начислено − взято наличными − штраф − уже записанные переводы. Штраф вычитается один раз. Отрицательный остаток — переплата. Неполные смены и неоднозначные совпадения сотрудников требуют проверки. Выберите границы недели для недельной выплаты. Переводы относятся к периоду по дате выплаты.</div><button class="btn-add" data-fin-action="payment">Записать перевод сотруднику</button>${table(['Период','Сотрудник','ID сотрудника','User ID','Часы','Личная выручка','Начислено до штрафов','Штрафы','Взято из кассы','Переводы','Осталось перевести','Неполных смен'],[...people.values()].map(g=>[esc(g.period),esc(g.name),esc(g.employeeId),esc(g.userId),money(g.hours),money(g.revenue),g.missing?'Не рассчитано':money(g.gross),money(g.fine),money(g.taken),money(g.bank),g.missing?'Не рассчитано':money(round(g.gross-g.fine-g.taken-g.bank)),g.missing]))}`;
+        const people=selectedPayroll(rows).filter(g=>!state.bossEmployee || g.key===state.bossEmployee);
+        if(state.tab==='payments')return paymentView(people.filter(g=>g.selected.length));
+        return salaryStatsView(people);
     }
-    function cashView(rows) {
-        const previous=new Map(), reserve=new Map();
-        // Include earlier rows for opening cash, regardless of selected date range.
-        const checks=new Map();
-        all().forEach(r=>{
-            const prev=previous.get(r.address);
-            const expected=prev && number(prev.cashClosing)!=null ? round(number(prev.cashClosing)+zero(r.cashReceived)-zero(r.expenses)-zero(r.taken1)-zero(r.taken2)+zero(r.fromReserve)-zero(r.toReserve)) : null;
-            const expectedReserve=reserve.has(r.address)?round(reserve.get(r.address)+zero(r.toReserve)-zero(r.fromReserve)):null;
-            checks.set(r.id,{expected,expectedReserve,diff:expected!=null && number(r.cashClosing)!=null?round(number(r.cashClosing)-expected):null});
-            if(number(r.reserveBalance)!=null)reserve.set(r.address,number(r.reserveBalance));
-            else if(expectedReserve!=null)reserve.set(r.address,expectedReserve);
-            previous.set(r.address,r);
+    const totalSelected=(g,key)=>round(g.selected.reduce((sum,p)=>sum+zero(p[key]),0));
+    function periodNumbers(g){
+        const salary=g.selected.some(p=>!p.complete)?null:round(totalSelected(g,'gross')-totalSelected(g,'fine'));
+        const cash=totalSelected(g,'taken'),allocated=totalSelected(g,'bankPaid');
+        const extra=(g.unallocatedPayments || []).filter(({payment:p})=>p.periodFrom && p.periodTo?(!state.from || p.periodFrom>=state.from)&&(!state.to || p.periodTo<=state.to):(!state.from || p.date>=state.from)&&(!state.to || p.date<=state.to)).reduce((sum,p)=>sum+p.amount,0);
+        const bank=round(allocated+extra);
+        return {salary,cash,bank,due:g.pending==null?null:round(g.pending+allocated),left:g.pending,cashDebt:salary==null || g.cashDebt==null?null:Math.min(g.cashDebt,Math.max(0,round(cash-Math.max(0,salary))))};
+    }
+    function paymentView(people){
+        const values=people.map(g=>({g,n:periodNumbers(g)})),sum=key=>values.every(x=>x.n[key]!=null)?round(values.reduce((s,x)=>s+x.n[key],0)):null;
+        return `<div class="fin-note">ЗП = часы × ставка + процент от личной выручки + срочный выход − штраф. Из неё вычитается взятое наличными. Ниже — табель и сводная босса только по сотрудникам со сменами в выбранном периоде. Штраф учитывается один раз.</div><div class="fin-tools"><button class="btn-add" data-fin-action="fortnight">Последние 14 дней</button><button class="btn-add" data-fin-action="download-current">Скачать табель</button><button class="btn-save" data-fin-action="send-timesheets">Отправить табели</button></div><section data-fin-panel="current-timesheet"><h3>Табель · ${esc(formatDay(state.from))} — ${esc(formatDay(state.to))}</h3>${timesheetView(people)}</section><section data-fin-panel="boss-summary"><h3>Сводная босса</h3><div class="fin-cards"><div>Осталось перевести<b>${money(sum('left'))} ₽</b></div><div>Долг сотрудников из-за наличных<b>${money(sum('cashDebt'))} ₽</b></div></div>${table(['Сотрудник','Всего к переводу','Уже переведено','Наш остаток','Долг сотрудника (наличные)','Полностью перевёл','Частичный перевод'],values.map(({g,n})=>{
+            const row=[esc(g.name),money(n.due),money(n.bank),money(n.left),money(n.cashDebt),`<input type="checkbox" aria-label="Полностью перевёл ${esc(g.name)}" data-fin-full="${esc(g.key)}" ${n.left===0 && n.bank>0?'checked disabled':n.left==null || n.left<=0?'disabled':''}>`,`<div class="fin-partial"><input type="number" step="0.01" min="0.01" max="${n.left || 0}" placeholder="Сумма" aria-label="Частичный перевод ${esc(g.name)}" data-fin-partial="${esc(g.key)}" ${n.left==null || n.left<=0?'disabled':''}><button class="btn-add" data-fin-record-part="${esc(g.key)}" ${n.left==null || n.left<=0?'disabled':''}>Записать</button></div>`];row.key=g.key;return row;
+        }),[],'fin-boss-summary')}<p>Отмечайте только фактические переводы. Дата и сумма сохраняются в выплатах и личной статистике сотрудника. Частичная оплата уменьшает остаток; переплата переводом не считается долгом сотрудника из-за кассы.</p></section>`;
+    }
+    function salaryStatsView(people){
+        return `<div class="fin-note">Личная выручка, ЗП и премии — за выбранные смены. Выплаченные переводы относятся к этим сменам, даже если босс оплатил их позже. Долги рассчитаны по всей загруженной истории; долг сотрудника возникает только из-за излишне взятых наличных.</div>${table(['Сотрудник','Личная выручка','Его ЗП','Премии / срочный выход','Взял наличными','Переведено по этим сменам','Всего получил из этой ЗП','Наш долг','Его долг (наличные)','Переплата переводами'],people.map(g=>{
+            const n=periodNumbers(g),bank=n.bank;
+            const row=[esc(g.name),money(totalSelected(g,'revenue')),money(n.salary),money(totalSelected(g,'bonus')),money(n.cash),money(bank),money(round(n.cash+bank)),g.debt==null?'Уточните смены':money(Math.max(0,g.debt)),money(g.cashDebt),money(g.bankOverpayment)];row.key=g.key;return row;
+        }),[],'fin-salary-summary')}`;
+    }
+    const monthNames=['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+    function parseRevenueHistory(tableData){
+        const rows=tableData.rows || [],cellValue=cell=>cell?(cell.v ?? cell.f):null;
+        const header=rows.findIndex(row=>(row.c || []).filter(c=>/^20\d{2}$/.test(String(cellValue(c)))).length>=2);
+        if(header<0)throw new Error('Не найдены годы в историческом листе выручки.');
+        const years=(rows[header].c || []).map((c,index)=>({year:number(cellValue(c)),index})).filter(c=>c.year>=1900 && c.year<=2200);
+        const prefixes=['янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек'],entries={};
+        for(const row of rows.slice(header+1)){
+            const label=norm(cellValue(row.c?.[0]));if(!/^[а-я]+$/.test(label))continue;
+            const month=prefixes.findIndex(prefix=>label.startsWith(prefix));if(month<0)continue;
+            for(const y of years){const value=number(cellValue(row.c?.[y.index]));if(value!=null)entries[y.year+'-'+String(month+1).padStart(2,'0')]=value;}
+        }
+        return entries;
+    }
+    function revenueMatrix(historyEntries,records,currentYear){
+        const monthly={},deltas={};
+        for(const r of records){const month=(r.workDate || date(r.submittedAt)).slice(0,7);if(!month)continue;monthly[month]=round((monthly[month] || 0)+zero(r.revenue));deltas[month]=round((deltas[month] || 0)+(r.imported?zero(r.revenue)-zero(r.sourceRevenue):zero(r.revenue)));}
+        const values={...monthly};for(const [month,value] of Object.entries(historyEntries || {}))values[month]=round(value+(deltas[month] || 0));
+        const years=[...new Set([...Object.keys(values).map(m=>m.slice(0,4)),String(currentYear)])].sort();return {years,values};
+    }
+    function revenueHistoryView(){
+        const history=state.revenueHistory || {},records=all().map(r=>({...r,sourceRevenue:state.records[r.id]?.source?.revenue}));
+        const data=revenueMatrix(history.entries || {},records,new Date().getFullYear());
+        const rows=monthNames.map((name,index)=>{const row=[name,...data.years.map(year=>{const v=data.values[year+'-'+String(index+1).padStart(2,'0')];return v==null?'—':money(v);})];row.key='month-'+index;return row;});
+        rows.push(['ИТОГО за год',...data.years.map(year=>money(round(Object.entries(data.values).filter(([key])=>key.startsWith(year+'-')).reduce((sum,[,v])=>sum+v,0))))]);
+        return `<details data-fin-panel="revenue-history"><summary><b>Выручка по месяцам и годам</b> · быстрый доступ</summary><small>Вся сеть · история и новые отчёты</small><p>${history.updatedAt?'История обновлена '+esc(new Date(history.updatedAt).toLocaleString('ru-RU')):'Исторический лист ещё не загружен.'}</p>${table(['Месяц',...data.years],rows,[],'fin-revenue-years')}</details>`;
+    }
+    function missingReports(records,rules,from,to,today){
+        const first={},reported=new Set();for(const r of records){const day=r.workDate || date(r.submittedAt);if(!day || !r.address)continue;reported.add(JSON.stringify([day,r.address]));if(!first[r.address] || day<first[r.address])first[r.address]=day;}
+        const result=[];if(!from || !to || from>to)return result;
+        const last=new Date(today+'T12:00:00Z');last.setUTCDate(last.getUTCDate()-1);const end=to<last.toISOString().slice(0,10)?to:last.toISOString().slice(0,10);
+        for(const [address,rule] of Object.entries(rules)){
+            if(rule.enabled===false)continue;const start=rule.start || first[address];if(!start)continue;
+            const left=from>start?from:start,right=rule.end && rule.end<end?rule.end:end;if(left>right)continue;
+            for(let day=left;day<=right;){if(!reported.has(JSON.stringify([day,address])))result.push({date:day,address});const next=new Date(day+'T12:00:00Z');next.setUTCDate(next.getUTCDate()+1);day=next.toISOString().slice(0,10);}
+        }
+        return result.sort((a,b)=>b.date.localeCompare(a.date)||a.address.localeCompare(b.address,'ru'));
+    }
+    function reportRules(){
+        const addresses=[...new Set([...(state.shops || []),...all().map(r=>r.address)].filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ru'));
+        return Object.fromEntries(addresses.map(address=>[address,{enabled:true,...(Array.isArray(state.settings.reportControls)?state.settings.reportControls.find(c=>c.address===address):state.settings.reportControls?.[address])}]));
+    }
+    function missingState(){
+        const today=todayMoscow(),recent=new Date(today+'T12:00:00Z');recent.setUTCDate(recent.getUTCDate()-13);
+        const from=state.autoPeriod?recent.toISOString().slice(0,10):state.from,to=state.autoPeriod?today:state.to;
+        const rules=Object.fromEntries(Object.entries(reportRules()).filter(([address])=>state.tab!=='journal' || !state.address || address===state.address));
+        return {today,from,to,rules,missing:state.loaded?.has('records')?missingReports(all(),rules,from,to,today):[]};
+    }
+    function cashAuditView(rows,checks){
+        if(!rows.length)return '';
+        const values=[...rows].reverse().map(r=>({r,c:checks.get(r.id)})),different=values.filter(({c})=>c?.difference!=null && c.difference!==0).length,unknown=values.filter(({c})=>c?.difference==null).length;
+        const pages=Math.max(1,Math.ceil(values.length/50));state.cashPage=Math.min(state.cashPage || 0,pages-1);
+        const pager=pages>1?`<div class="fin-pagination"><button class="btn-add" data-fin-action="cash-prev" ${state.cashPage===0?'disabled':''}>Назад</button><span>${state.cashPage+1} / ${pages}</span><button class="btn-add" data-fin-action="cash-next" ${state.cashPage>=pages-1?'disabled':''}>Далее</button></div>`:'';
+        return `<details class="fin-compact-details" data-fin-panel="cash-check"><summary>Касса · ${[different?'расхождений: '+different:'',unknown?'уточнить: '+unknown:''].filter(Boolean).join(' · ') || 'остатки сходятся'}</summary>${pager}${table(['Дата','Точка','Факт в кассе','Должно быть','Разница','Проверка'],values.slice(state.cashPage*50,state.cashPage*50+50).map(({r,c})=>{const row=[esc(formatDay(r.workDate || date(r.submittedAt))),esc(r.address),(c?.actual==null?'Не указан':money(c.actual)),c?.expected==null?'Нет исходных данных':money(c.expected),c?.difference==null?'—':`<span class="${c.difference?'fin-error':''}">${money(c.difference)}</span>`,`<button class="btn-add" data-fin-cash-edit="${esc(r.id)}" title="${esc(c?.reason)}">Открыть отчёт</button>`];row.key=r.id;return row;}),[],'fin-cash-check')}<small>Начальный остаток + наличные из чека − расходы − ЗП из кассы + из запаса − в запас. Если вчерашнего отчёта нет, укажите начальный остаток в отчёте.</small></details>`;
+    }
+    function missingReportsView(){
+        if(!state.loaded?.has('records'))return '<small>Проверяем поступление отчётов…</small>';
+        const {rules,missing,from,to}=missingState(),pages=Math.max(1,Math.ceil(missing.length/50));state.missingPage=Math.min(state.missingPage || 0,pages-1);
+        return `<details class="fin-compact-details" data-fin-panel="missing-reports"><summary>${missing.length?'Не пришли отчёты: '+missing.length:'Пропуски отчётов не найдены'}</summary><small>${esc(formatDay(from))} — ${esc(formatDay(to))}. Сегодня ещё не считается пропуском.</small><details data-fin-panel="report-controls"><summary>Какие точки и даты проверять</summary><form id="fin-report-controls">${Object.entries(rules).map(([address,rule],index)=>`<div class="fin-tools" data-fin-rule="${esc(address)}"><label><input type="checkbox" name="enabled${index}" ${rule.enabled!==false?'checked':''}>${esc(address)}</label><label>Начало работы<input name="start${index}" type="date" value="${esc(rule.start)}"></label><label>Последний рабочий день<input name="end${index}" type="date" value="${esc(rule.end)}"></label></div>`).join('')}<button type="submit" class="btn-save">Сохранить контроль точек</button><p class="fin-error" id="fin-rule-error"></p></form></details>${missing.length?`<div class="fin-pagination"><button class="btn-add" data-fin-action="missing-prev" ${state.missingPage===0?'disabled':''}>Назад</button><span>${state.missingPage+1} / ${pages}</span><button class="btn-add" data-fin-action="missing-next" ${state.missingPage>=pages-1?'disabled':''}>Далее</button></div>${table(['Дата','Точка','Действие'],missing.slice(state.missingPage*50,state.missingPage*50+50).map(item=>{const row=[esc(formatDay(item.date)),esc(item.address),`<button class="btn-add" data-fin-missing-date="${item.date}" data-fin-missing-address="${esc(item.address)}">Заполнить отчёт</button>`];row.key=item.date+'|'+item.address;return row;}),[],'fin-missing-reports')}`:''}</details>`;
+    }
+    const timesheetHeaders=['Дата','Имя','Точка','Выручка','Взяли из кассы','Ставка','Процент','ЗП','Штраф','Сколько перевести','Комментарии'];
+    function formatDay(value){return /^\d{4}-\d{2}-\d{2}$/.test(value || '')?value.slice(8,10)+'.'+value.slice(5,7)+'.'+value.slice(0,4):value || '';}
+    function timesheetData(groups) {
+        return groups.flatMap(g=>g.selected.map(p=>({key:p.id,reportId:p.reportId,values:[formatDay(p.date),p.name,p.address,p.revenue,p.taken,p.hourly,p.percent,p.gross,p.fine,p.balance,p.comment]})));
+    }
+    function timesheetView(groups){
+        const data=timesheetData(groups),pages=Math.max(1,Math.ceil(data.length/50));state.salaryPage=Math.min(state.salaryPage || 0,pages-1);
+        const visible=data.slice(state.salaryPage*50,state.salaryPage*50+50).map(item=>{
+            const row=item.values.map((value,index)=>index>=3 && index<=9?money(value):esc(value));
+            row[0]=`<button type="button" class="fin-date-edit" data-fin-edit="${esc(item.reportId)}">${esc(item.values[0])}</button>`;row.key=item.key;return row;
         });
-        return table(['Дата','Адрес','Остаток кассы','Расчётный остаток кассы','Расхождение','Остаток запаса (указан)','Расчётный остаток запаса'],rows.map(r=>{const c=checks.get(r.id);return [esc(r.workDate || date(r.submittedAt)),esc(r.address),money(number(r.cashClosing)),c.expected==null?'Нет предыдущего остатка':money(c.expected),c.diff==null?'—':`<span class="${c.diff?'fin-error':''}">${money(c.diff)}</span>`,number(r.reserveBalance)==null?'Не указан':money(number(r.reserveBalance)),c.expectedReserve==null?'Нет начального остатка':money(c.expectedReserve)];}));
+        const sum=groups.every(g=>!g.selected.some(p=>!p.complete))?round(groups.reduce((s,g)=>s+Math.max(0,totalSelected(g,'gross')-totalSelected(g,'fine')-totalSelected(g,'taken')),0)):null;
+        const total=['','','','','','','','','ИТОГО',sum==null?'Уточните смены':money(sum),''];total.key='timesheet-total';visible.push(total);
+        return `<div class="fin-pagination"><button class="btn-add" data-fin-action="salary-prev" ${state.salaryPage===0?'disabled':''}>Назад</button><span>Страница ${state.salaryPage+1} из ${pages} · Смен: ${data.length}. Итого — за весь выбранный период.</span><button class="btn-add" data-fin-action="salary-next" ${state.salaryPage>=pages-1?'disabled':''}>Далее</button></div>${table(timesheetHeaders,visible,[],'fin-timesheet')}`;
+    }
+    function downloadTimesheet(groups,from,to){
+        const data=timesheetData(groups),sum=groups.every(g=>!g.selected.some(p=>!p.complete))?round(groups.reduce((s,g)=>s+Math.max(0,totalSelected(g,'gross')-totalSelected(g,'fine')-totalSelected(g,'taken')),0)):null;
+        const rows=[timesheetHeaders,...data.map(row=>row.values),['','','','','','','','','ИТОГО',sum==null?'Уточните смены':sum,'']];
+        const csv=rows.map(row=>row.map(value=>{
+            const text=typeof value==='number'?String(value).replace('.',','):String(value ?? '');
+            return '"'+(/^[=+@-]/.test(text)?"'":'')+text.replace(/"/g,'""')+'"';
+        }).join(';')).join('\r\n');
+        const url=URL.createObjectURL(new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'}));const link=document.createElement('a');link.href=url;link.download='Табель_'+from+'_'+to+'.csv';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+    }
+    async function makeTimesheetPdf(group,from,to){
+        if(typeof root.html2pdf!=='function')throw new Error('Модуль PDF ещё не загружен. Обновите страницу и попробуйте снова.');
+        const n=periodNumbers(group),data=timesheetData([group]);
+        const wrapper=document.createElement('div');wrapper.id='finance-payroll-export';
+        const staging=document.createElement('div');staging.style.cssText='position:absolute;left:-20000px;top:0;width:1500px;';
+        wrapper.style.cssText='width:1500px;background:#fff;color:#111;padding:24px;font:14px Arial,sans-serif;box-sizing:border-box;';
+        wrapper.innerHTML=`<style>#finance-payroll-export *{box-sizing:border-box;font-family:Arial,sans-serif!important}#finance-payroll-export table{width:1550px!important;min-width:1550px!important;max-width:none!important;table-layout:fixed!important;border-collapse:collapse!important;background:#fff!important}#finance-payroll-export td,#finance-payroll-export th{padding:10px!important;border:1px solid #333!important;white-space:normal!important;word-break:normal!important;overflow-wrap:break-word!important;color:#111!important;font-size:12px!important}#finance-payroll-export th{background:#dedede!important;text-transform:none!important}#finance-payroll-export tr{break-inside:avoid!important}</style><h2>Табель: ${esc(group.name)}</h2><p>${esc(formatDay(from))} — ${esc(formatDay(to))}</p><table><thead><tr>${timesheetHeaders.map(h=>`<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${data.map(row=>`<tr>${row.values.map((value,index)=>`<td>${esc(index>=3 && index<=9?money(value):value)}</td>`).join('')}</tr>`).join('')}<tr>${Array(8).fill('<td></td>').join('')}<td><b>ИТОГО</b></td><td><b>${money(Math.max(0,n.salary-n.cash))}</b></td><td></td></tr></tbody></table><p>ЗП после штрафов и с надбавками: ${money(n.salary)} ₽. Взято наличными: ${money(n.cash)} ₽. Переведено: ${money(n.bank)} ₽.</p><p>Осталось перевести: ${money(n.left)} ₽. Долг сотрудника из-за наличных: ${money(n.cashDebt)} ₽.</p><p>Сформировано ${esc(new Date().toLocaleString('ru-RU'))}. Учитываются зарегистрированные выплаты.</p>`;
+        wrapper.innerHTML=wrapper.innerHTML.replaceAll('1550px','1450px');staging.appendChild(wrapper);document.body.appendChild(staging);let timer;
+        try{
+            const worker=root.html2pdf().set({margin:8,filename:'Табель.pdf',image:{type:'jpeg',quality:0.95},html2canvas:{scale:1.5,width:1600,windowWidth:1800,scrollX:0,scrollY:0,logging:false,imageTimeout:2000},jsPDF:{unit:'mm',format:'a3',orientation:'landscape'},pagebreak:{avoid:['tr']}}).from(wrapper);
+            const uri=await Promise.race([worker.outputPdf('datauristring'),new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('Превышено время создания PDF')),45000);})]);
+            if(typeof uri!=='string' || !/^data:application\/pdf[;,]/.test(uri))throw new Error('Не удалось сформировать PDF табеля.');
+            return uri;
+        }finally{clearTimeout(timer);staging.remove();}
+    }
+    function sendTimesheetsDialog(){
+        const available=selectedPayroll(filtered()).filter(g=>g.selected.length);
+        if(!available.length){setStatus('За выбранный период нет сотрудников со сменами.');return;}
+        const from=state.from,to=state.to,modal=document.createElement('div');modal.className='fin-dialog';state.draft={sending:true};
+        modal.innerHTML=`<div><h3>Отправка персональных табелей</h3><p>${esc(formatDay(from))} — ${esc(formatDay(to))}. Для каждого человека создаётся отдельная таблица PDF.</p><form><label>Получатель<select name="recipient"><option value="employees">Сотрудникам в личные сообщения</option><option value="admin">Администратору</option></select></label><div class="fin-tools"><button type="button" data-send-all="yes" class="btn-add">Выбрать всех</button><button type="button" data-send-all="no" class="btn-add">Снять выбор</button></div>${available.map((g,index)=>`<label style="display:block;padding:8px"><input type="checkbox" name="person" value="${index}" ${g.missing?'disabled':'checked'}>${esc(g.name)}${g.missing?' — сначала уточните смены':!g.userId?' — Telegram ID не указан':''}</label>`).join('')}<p class="fin-error" id="fin-send-status"></p><div class="fin-tools"><button type="submit" class="btn-save">Передать выбранные табели на отправку</button><button type="button" id="fin-send-cancel" class="btn-add">Закрыть</button></div></form></div>`;
+        document.body.appendChild(modal);const form=modal.querySelector('form'),sent=new Set();
+        const status=modal.querySelector('#fin-send-status'),cancel=modal.querySelector('#fin-send-cancel');
+        cancel.onclick=()=>{if(state.sendingPayroll)return;modal.remove();state.draft=null;render();};
+        form.onclick=event=>{const toggle=event.target.closest('[data-send-all]');if(toggle)for(const input of form.querySelectorAll('[name=person]:not(:disabled)'))input.checked=toggle.dataset.sendAll==='yes';};
+        form.onsubmit=async event=>{
+            event.preventDefault();if(state.sendingPayroll)return;
+            const chosen=[...form.querySelectorAll('[name=person]:checked')].map(input=>available[Number(input.value)]).filter(g=>!sent.has(g.key));
+            if(!chosen.length){status.textContent='Выберите хотя бы одного ещё не отправленного сотрудника.';return;}
+            const recipient=form.elements.recipient.value;
+            const missingId=chosen.filter(g=>recipient==='employees' && !/^\d+$/.test(String(g.userId)));
+            if(missingId.length){status.textContent='Нет Telegram ID: '+missingId.map(g=>g.name).join(', ')+'. Заполните ID в базе или снимите выбор.';return;}
+            if(recipient==='admin' && !/^\d+$/.test(String(state.adminChatId))){status.textContent='ID администратора не настроен.';return;}
+            const button=form.querySelector('[type=submit]');button.disabled=true;cancel.disabled=true;state.sendingPayroll=true;const errors=[];
+            try{
+                const current=selectedPayroll(filtered());
+                for(let index=0;index<chosen.length;index++){
+                    const group=current.find(g=>g.key===chosen[index].key);
+                    try{
+                        if(!group || group.missing)throw new Error('Есть неполные смены');
+                        status.textContent=`Создание и передача табеля ${index+1} из ${chosen.length}: ${group.name}`;
+                        const file=await makeTimesheetPdf(group,from,to),chatId=Number(recipient==='admin'?state.adminChatId:group.userId);
+                        const ref=state.db.ref('bot_control/notifications').push();
+                        const payload={type:'checklist_pdf',report_type:'payroll_timesheet',chat_id:chatId,file_data:file,filename:`Табель_${group.name.replace(/\s+/g,'_')}_${from}_${to}.pdf`,text:`Табель: ${group.name}\n${formatDay(from)} — ${formatDay(to)}`,timestamp:Date.now(),employee_id:group.employeeId};
+                        await ref.set(payload);sent.add(group.key);
+                        for(const input of form.querySelectorAll('[name=person]'))if(available[Number(input.value)].key===group.key){input.checked=false;input.disabled=true;}
+                    }catch(error){errors.push((group?.name || chosen[index].name)+': '+error.message);}
+                }
+                status.textContent=`В очередь бота передано ${sent.size} табелей. Доставка в Telegram выполняется ботом.${errors.length?' Ошибки: '+errors.join('; '):''}`;
+            }finally{button.disabled=false;cancel.disabled=false;state.sendingPayroll=false;}
+        };
+    }
+    function recordPayrollTransfer(employeeKey,requestedAmount){
+        const group=selectedPayroll(filtered()).find(g=>g.key===employeeKey && g.selected.length);
+        const amount=requestedAmount==null?group?.pending:requestedAmount;
+        if(!group || group.pending==null || !(amount>0) || amount>group.pending){setStatus('Укажите сумму больше нуля и не больше остатка к переводу.');render();return;}
+        const from=state.from,to=state.to,address='';
+        const ref=state.db.ref('finance_payments').push();
+        const modal=document.createElement('div');modal.className='fin-dialog';state.draft={payment:true};
+        const today=new Intl.DateTimeFormat('sv-SE',{timeZone:'Europe/Moscow'}).format(new Date());
+        modal.innerHTML=`<div><h3>Зафиксировать перевод</h3><p>${esc(group.name)} · ${money(amount)} ₽ · ${esc(formatDay(from))} — ${esc(formatDay(to))}</p><form><label>Дата фактического перевода<input type="date" name="date" value="${today}" max="${today}" required></label><label>Комментарий<input name="comment"></label><p class="fin-error"></p><div class="fin-tools"><button type="submit" class="btn-save">Подтвердить перевод</button><button type="button" class="btn-add">Отмена</button></div></form></div>`;
+        document.body.appendChild(modal);const form=modal.querySelector('form');form.querySelector('[type=button]').onclick=()=>{modal.remove();state.draft=null;render();};
+        form.onsubmit=async event=>{
+            event.preventDefault();const button=form.querySelector('[type=submit]');button.disabled=true;
+            try{
+                const snap=await state.db.ref('finance_payments').once('value');state.payments=snap.val() || {};
+                const rows=all().filter(r=>(r.workDate || date(r.submittedAt))>=from && (r.workDate || date(r.submittedAt))<=to && (!address || r.address===address));
+                const latest=selectedPayroll(rows).find(g=>g.key===employeeKey);
+                if(!latest || latest.pending==null || amount>latest.pending)throw new Error('Остаток изменился. Закройте окно и проверьте актуальную сумму.');
+                const payment={...Object.fromEntries(new FormData(form)),name:group.name,employeeId:group.employeeId,userId:group.userId,amount,address,periodFrom:from,periodTo:to,payroll:true,full:amount===latest.pending,createdAt:Date.now()};
+                const selectedIds=new Set(rows.map(r=>r.id));
+                const result=await state.db.ref('finance_payments').transaction(current=>{
+                    if(current?.[ref.key])return undefined;
+                    const account=payrollLedger(all().filter(r=>(r.workDate || date(r.submittedAt))<=today),state.employees,Object.fromEntries(Object.entries(current || {}).filter(([,p])=>p.date<=today))).find(g=>g.key===employeeKey);
+                    const remaining=account && !account.missing?round(account.shifts.filter(p=>selectedIds.has(p.reportId)).reduce((s,p)=>s+p.remaining,0)):null;
+                    if(remaining==null || amount>remaining)return undefined;
+                    return {...(current || {}),[ref.key]:payment};
+                });
+                if(!result.committed)throw new Error('Перевод уже записан либо остаток изменился. Проверьте сводную перед повтором.');
+                state.payments[ref.key]=payment;for(const input of document.querySelectorAll('[data-fin-partial]'))input.value='';modal.remove();state.draft=null;render();
+            }catch(error){modal.querySelector('.fin-error').textContent=error.message;button.disabled=false;}
+        };
+    }
+    function editorField(key,r) {
+        const [,label,type]=fields.find(f=>f[0]===key);
+        const name=/^employee[12]$/.test(key);
+        if(type==='checkbox')return `<label class="fin-toggle"><input name="${key}" type="checkbox" value="true" ${checked(r[key])?'checked':''}>${esc(label)}</label>`;
+        const large=['salaryComment','expenseComment','fineComment'].includes(key);
+        return `<label class="fin-field">${esc(label)}${large?`<textarea name="${key}" rows="3">${esc(r[key])}</textarea>`:`<input name="${key}" type="${type}" ${type==='number'?'step="0.01"':''} value="${esc(r[key])}" ${['employee1','address','workDate'].includes(key)?'required':''} ${/^hourly|^percent/.test(key)?'readonly':''} ${name?'autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="fin-options-'+key+'"':''}>`}${name?`<div class="fin-suggestions" role="listbox" id="fin-options-${key}" hidden></div>`:''}</label>`;
     }
     function editRecord(id) {
-        const r=id?record({...state.records[id],id}):{submittedAt:new Date().toLocaleString('ru-RU'),workDate:new Intl.DateTimeFormat('sv-SE',{timeZone:'Europe/Moscow'}).format(new Date())};
+        const r=id?record({...state.records[id],id}):{submittedAt:new Date().toLocaleString('ru-RU'),workDate:new Intl.DateTimeFormat('sv-SE',{timeZone:'Europe/Moscow'}).format(new Date()),...(state.newReportDefaults || {})};state.newReportDefaults=null;
         const initial=calculate(r);
         initial.people.forEach((p,index)=>{r['hourly'+(index+1)]=p.hourly;r['percent'+(index+1)]=p.percent;});
         state.draft=r;
         const modal=document.createElement('div');modal.className='fin-dialog';modal.id='fin-editor';
-        modal.innerHTML=`<div><h3>${id?'Отчёт смены':'Новый отчёт'}</h3><p>Одиночная смена — 12 часов; Старое Павлино — 13 часов. Для двух смен заполните «Отработано часов» или начало и конец каждой смены по комментариям. Явное количество часов имеет приоритет над временем начала и конца. Ставки берутся из базы сотрудников.</p><div class="fin-note" id="fin-employee-info"></div><form id="fin-form"><div class="fin-grid">${fields.map(([k,label,t])=>`<label>${esc(label)}<input name="${k}" type="${t}" ${t==='number'?'step="0.01"':''} value="${esc(r[k])}" ${['employee1','address','workDate'].includes(k)?'required':''} ${k.startsWith('employee')?'list="fin-employees"':''} ${/^hourly|^percent/.test(k)?'readonly':''}></label>`).join('')}</div><datalist id="fin-employees">${Object.values(state.employees).filter(e=>e && typeof e==='object').map(e=>`<option value="${esc([e.lastName,e.firstName,e.middleName].filter(Boolean).join(' ') || e.name || e.fullName)}"></option>`).join('')}</datalist><p id="fin-editor-error" class="fin-error"></p><div class="fin-tools"><button type="submit" class="btn-save">Сохранить отчёт</button><button type="button" class="btn-add" id="fin-cancel">Отмена</button></div></form></div>`;
+        const section=keys=>keys.map(key=>editorField(key,r)).join('');
+        const person=index=>`<fieldset class="fin-person-card"><legend>Сотрудник ${index} · ${index===1?'вечер / полный день':'утро'}</legend>${editorField('employee'+index,r)}<div class="fin-subgrid">${section(['start'+index,'end'+index,'hours'+index,'taken'+index])}${editorField('fine'+index,r)}${index===2?editorField('revenue2',r)+editorField('fineComment2',r):''}</div><div class="fin-subgrid">${section(['urgent'+index,'bonus'+index])}</div><details><summary>Ставка из базы сотрудников</summary><div class="fin-subgrid">${section(['hourly'+index,'percent'+index])}</div></details></fieldset>`;
+        modal.innerHTML=`<div><h3>${id?'Отчёт смены':'Новый отчёт'}</h3><p>Одиночная смена — 12 часов; Старое Павлино — 13. Для двух смен укажите часы по комментариям. Имя выберите из подсказок базы сотрудников.</p><form id="fin-form"><fieldset class="fin-person-card"><legend>Общие данные смены</legend><div class="fin-subgrid">${section(['submittedAt','workDate','address','revenue'])}</div></fieldset><div class="fin-people">${person(1)}${person(2)}</div><div class="fin-note" id="fin-employee-info"></div><fieldset class="fin-person-card"><legend>Комментарии</legend><div class="fin-subgrid">${section(['salaryComment','fineComment'])}</div></fieldset><fieldset class="fin-person-card"><legend>Касса и запас</legend><div class="fin-subgrid">${section(['cashOpening','cashReceived','expenses','coupons','cashClosing','reserveBalance','fromReserve','toReserve','expenseComment'])}</div></fieldset><p id="fin-editor-error" class="fin-error"></p><div class="fin-tools"><button type="submit" class="btn-save">Сохранить отчёт</button><button type="button" class="btn-add" id="fin-cancel">Отмена</button></div></form></div>`;
         document.body.appendChild(modal);
-        modal.querySelector('#fin-cancel').onclick=()=>{modal.remove();state.draft=null;};
+        modal.querySelector('#fin-cancel').onclick=()=>{modal.remove();state.draft=null;render();};
         const form=modal.querySelector('form');
         const refresh=()=>{
-            const c=calculate(Object.fromEntries(new FormData(form)));
+            const values=Object.fromEntries(new FormData(form));
+            for(const i of [1,2])if(form.elements['hours'+i].dataset.auto==='true')values['hours'+i]='';
+            const c=calculate(values);
+            for(const i of [1,2]){
+                const input=form.elements['hours'+i];
+                if(input.dataset.auto==='true' || number(values['hours'+i])==null){input.value=c.people[i-1]?.hours ?? '';input.dataset.auto='true';}
+            }
             for(const i of [1,2]){const p=c.people[i-1];form.elements['hourly'+i].value=p?.hourly ?? '';form.elements['percent'+i].value=p?.percent ?? '';}
-            modal.querySelector('#fin-employee-info').textContent=c.people.map((p,i)=>`Сотрудник ${i+1}: ${p.matched?'связан с базой, ID '+p.employeeId+', User ID '+(p.userId || 'не указан'):'нет однозначного совпадения имени и фамилии в базе'}; часы: ${p.hours ?? 'укажите вручную'}; перевести: ${money(p.balance)}`).join(' | ');
+            modal.querySelector('#fin-employee-info').textContent=c.people.map((p,i)=>`Сотрудник ${i+1}: ${p.matched?'связан с базой, ID '+p.employeeId+', User ID '+(p.userId || 'не указан'):'нет однозначного совпадения имени и фамилии в базе'}; часы: ${p.hours ?? 'укажите вручную'}`).join(' | ');
         };
+        const suggest=input=>{
+            const list=modal.querySelector('#fin-options-'+input.name),query=input.value.toLowerCase().replace(/ё/g,'е').trim().split(/\s+/).filter(Boolean);
+            const matches=Object.entries(state.employees).filter(([key,e])=>key!=='_meta' && e && typeof e==='object').map(([key,e])=>({key,name:[e.lastName,e.firstName,e.middleName].filter(Boolean).join(' ') || e.name || e.fullName || ''})).filter(e=>query.every(part=>e.name.toLowerCase().replace(/ё/g,'е').includes(part))).slice(0,12);
+            list.innerHTML=matches.length?matches.map(e=>`<button type="button" role="option" data-fin-pick="${esc(e.key)}" data-fin-input="${input.name}">${esc(e.name)}</button>`).join(''):'<span>Совпадений в базе нет</span>';
+            list.dataset.active='-1';list.hidden=!query.length;input.setAttribute('aria-expanded',String(!list.hidden));
+        };
+        form.oninput=event=>{if(/^hours[12]$/.test(event.target.name))event.target.dataset.auto='false';if(/^employee[12]$/.test(event.target.name))suggest(event.target);};
+        form.onfocusin=event=>{if(/^employee[12]$/.test(event.target.name))suggest(event.target);};
+        form.addEventListener('focusout',event=>{if(/^employee[12]$/.test(event.target.name))setTimeout(()=>{const list=modal.querySelector('#fin-options-'+event.target.name);if(list){list.hidden=true;event.target.setAttribute('aria-expanded','false');}},150);});
+        form.addEventListener('click',event=>{
+            const option=event.target.closest('[data-fin-pick]');if(!option)return;
+            const e=state.employees[option.dataset.finPick],input=form.elements[option.dataset.finInput];
+            input.value=[e.lastName,e.firstName,e.middleName].filter(Boolean).join(' ') || e.name || e.fullName;
+            modal.querySelector('#fin-options-'+input.name).hidden=true;input.setAttribute('aria-expanded','false');refresh();
+        });
+        form.addEventListener('keydown',event=>{
+            if(!/^employee[12]$/.test(event.target.name))return;
+            const list=modal.querySelector('#fin-options-'+event.target.name);if(list.hidden)return;
+            const options=[...list.querySelectorAll('button')];let active=Number(list.dataset.active ?? -1);
+            if((event.key==='ArrowDown'||event.key==='ArrowUp') && options.length){event.preventDefault();active=(active+(event.key==='ArrowDown'?1:-1)+options.length)%options.length;list.dataset.active=active;options.forEach((el,index)=>el.setAttribute('aria-selected',String(index===active)));}
+            if(event.key==='Enter' && options.length){event.preventDefault();(options[active] || options[0]).click();}
+            if(event.key==='Escape'){list.hidden=true;event.target.setAttribute('aria-expanded','false');}
+        });
         form.onchange=refresh;refresh();
         form.onsubmit=async e=>{
             e.preventDefault();const error=modal.querySelector('#fin-editor-error'),button=form.querySelector('[type=submit]');
             try {
                 const data=Object.fromEntries(new FormData(form));
+                for(const i of [1,2])data['urgent'+i]=form.elements['urgent'+i].checked;
                 fields.filter(f=>f[2]==='number').forEach(([k])=>{if(data[k]!=='' && number(data[k])==null)throw new Error('Некорректное число: '+k);data[k]=number(data[k]);});
+                for(const i of [1,2])if(form.elements['hours'+i].dataset.auto==='true')data['hours'+i]=null;
                 if(zero(data.revenue2)>zero(data.revenue) || zero(data.revenue)<0 || zero(data.revenue2)<0)throw new Error('Утренняя выручка должна быть от нуля до общей выручки.');
-                if(!data.employee2 && (zero(data.revenue2)||zero(data.taken2)||data.start2||data.end2||data.hours2!=null))throw new Error('Укажите имя сотрудника 2.');
+                if(!data.employee2 && (zero(data.revenue2)||zero(data.taken2)||data.start2||data.end2||data.hours2!=null||zero(data.fine2)))throw new Error('Укажите имя сотрудника 2.');
                 if(data.employee2 && nameKey(data.employee1)===nameKey(data.employee2))throw new Error('Один сотрудник не может занимать обе смены в отчёте.');
                 for(const i of [1,2])if((data['start'+i]||data['end'+i]) && hours(data['start'+i],data['end'+i])==null)throw new Error('Проверьте начало и конец смены '+i);
                 for(const i of [1,2])if(data['hours'+i]!=null && !(data['hours'+i]>0 && data['hours'+i]<=24))throw new Error('Часы смены '+i+' должны быть больше нуля и не больше 24.');
+                for(const i of [1,2]){
+                    if(data['employee'+i] && !ratesFor(data['employee'+i]))throw new Error('Выберите сотрудника '+i+' из базы: имя не найдено однозначно.');
+                    if(data['urgent'+i] && !(data['bonus'+i]>0))throw new Error('Укажите положительную сумму надбавки за срочный выход '+i+'.');
+                    if(!data['urgent'+i])data['bonus'+i]=0;
+                    if(i===2 && data.urgent2 && !data.employee2)throw new Error('Для надбавки укажите сотрудника 2.');
+                }
                 for(const i of [1,2]){const employee=ratesFor(data['employee'+i]);data['employeeId'+i]=employee?.employeeId || '';data['userId'+i]=employee?.userId ?? '';delete data['hourly'+i];delete data['percent'+i];}
                 button.disabled=true;
                 const ref=id?state.db.ref('finance_records/'+id):state.db.ref('finance_records').push();
                 const source=id && state.records[id]?.source;
-                const overrides=source ? Object.fromEntries(Object.entries(data).filter(([key,value])=>{
-                    const numeric=fields.find(f=>f[0]===key)?.[2]==='number';
-                    return numeric ? number(source[key])!==value : String(source[key] ?? '')!==String(value ?? '');
-                })) : data;
+                const overrides=source ? {...state.records[id].overrides} : data;
+                if(source)for(const [key,value] of Object.entries(data)){
+                    const type=fields.find(f=>f[0]===key)?.[2],normalize=value=>type==='number'?number(value):type==='checkbox'?checked(value):String(value ?? '');
+                    if(normalize(r[key])===normalize(value))continue;
+                    if(normalize(source[key])===normalize(value))delete overrides[key];else overrides[key]=value;
+                }
                 const raw={...(id?state.records[id]:{}),overrides,updatedAt:Date.now()};
                 if(id)await ref.update({overrides,updatedAt:raw.updatedAt});else await ref.set(raw);
                 state.records[ref.key]=raw;
@@ -8758,15 +9130,16 @@ window.smartFillVolumes = function() {
     }
     function editPayment() {
         const modal=document.createElement('div');modal.className='fin-dialog';
-        modal.innerHTML=`<div><h3>Перевод сотруднику</h3><form><div class="fin-grid"><label>Дата выплаты<input type="date" name="date" required></label><label>Сотрудник<input name="name" required></label><label>Адрес<input name="address" required></label><label>Сумма перевода<input type="number" name="amount" min="0.01" step="0.01" required></label><label>Комментарий<input name="comment"></label></div><p class="fin-error"></p><div class="fin-tools"><button type="submit" class="btn-save">Записать выплату</button><button type="button" class="btn-add">Отмена</button></div></form></div>`;
+        modal.innerHTML=`<div><h3>Перевод сотруднику</h3><form><div class="fin-grid"><label>Дата выплаты<input type="date" name="date" required></label><label>Сотрудник<input name="name" required></label><label>Адрес<input name="address" required></label><label>Сумма перевода<input type="number" name="amount" min="0.01" step="0.01" required></label><label>За смены с даты<input type="date" name="periodFrom" value="${esc(state.from)}"></label><label>За смены по дату<input type="date" name="periodTo" value="${esc(state.to)}"></label><label>Комментарий<input name="comment"></label></div><p class="fin-error"></p><div class="fin-tools"><button type="submit" class="btn-save">Записать выплату</button><button type="button" class="btn-add">Отмена</button></div></form></div>`;
         document.body.appendChild(modal);const form=modal.querySelector('form');
         form.elements.date.value=new Intl.DateTimeFormat('sv-SE',{timeZone:'Europe/Moscow'}).format(new Date());
-        form.querySelector('[type=button]').onclick=()=>{modal.remove();state.draft=null;};state.draft={payment:true};
+        form.querySelector('[type=button]').onclick=()=>{modal.remove();state.draft=null;render();};state.draft={payment:true};
         form.onsubmit=async e=>{
             e.preventDefault();const button=form.querySelector('[type=submit]');button.disabled=true;
             try {
                 const payment=Object.fromEntries(new FormData(form));payment.name=payment.name.trim();payment.address=payment.address.trim();payment.amount=number(payment.amount);
                 if(!payment.name || !payment.address || !(payment.amount>0))throw new Error('Проверьте имя, адрес и сумму.');
+                if(Boolean(payment.periodFrom)!==Boolean(payment.periodTo) || (payment.periodFrom && payment.periodFrom>payment.periodTo))throw new Error('Проверьте период оплачиваемых смен.');
                 const employee=ratesFor(payment.name);payment.employeeId=employee?.employeeId || '';payment.userId=employee?.userId ?? '';
                 payment.createdAt=Date.now();const ref=state.db.ref('finance_payments').push();await ref.set(payment);state.payments[ref.key]=payment;
                 modal.remove();state.draft=null;render();
@@ -8778,6 +9151,10 @@ window.smartFillVolumes = function() {
     };
     aliases.hours1=['Отработано часов 1','Часы смены 1','Часы 1'];
     aliases.hours2=['Отработано часов 2','Часы смены 2','Часы 2'];
+    aliases.cashOpening=['Наличные на начало дня','Касса на начало дня','Остаток на начало смены'];
+    aliases.urgent1=['Срочный выход 1'];aliases.urgent2=['Срочный выход 2'];
+    aliases.bonus1=['Надбавка за срочный выход 1, ₽','Надбавка 1'];aliases.bonus2=['Надбавка за срочный выход 2, ₽','Надбавка 2'];
+    aliases.fine2=['Штраф сотрудника 2','Штраф 2'];aliases.fineComment2=['Комментарий к штрафу сотрудника 2'];
     function parseTable(t,settings) {
         const headers=t.cols.map(c=>norm(c.label));const mapping={};
         for(const [key,names] of Object.entries(aliases)) {
@@ -8796,7 +9173,7 @@ window.smartFillVolumes = function() {
             if(norm(r.employee1)===headers[mapping.employee1] && norm(r.address)===headers[mapping.address])return;
             if(!r.employee1 || !r.address || !date(r.submittedAt)){issues.push(`Строка ${index+Number(settings.headerRow || 1)+1}: нет имени, адреса или даты.`);return;}
             if(r.revenue==null || r.revenue<0 || zero(r.revenue2)<0 || zero(r.revenue2)>r.revenue){issues.push(`Строка ${index+Number(settings.headerRow || 1)+1}: проверьте общую и утреннюю выручку.`);return;}
-            r.workDate=r.workDate || date(r.submittedAt);rows.push({row:index+Number(settings.headerRow || 1)+1,data:r});
+            r.workDate=date(r.workDate) || date(r.submittedAt);rows.push({row:index+Number(settings.headerRow || 1)+1,data:r});
         });
         return {rows,mapping,issues};
     }
@@ -8806,23 +9183,30 @@ window.smartFillVolumes = function() {
         if(parsed.hostname!=='docs.google.com' || !match)throw new Error('Укажите ссылку Google-таблицы.');
         return match[1];
     }
-    function readSheet(settings) {
+    function readSheet(settings,raw=false) {
         const id=sheetId(settings.url);
         return new Promise((resolve,reject)=>{
             const callback='finSheets_'+Date.now()+'_'+Math.random().toString(36).slice(2);
             const script=document.createElement('script');let timer;
             const cleanup=()=>{clearTimeout(timer);script.remove();delete root[callback];};
-            root[callback]=result=>{cleanup();try{if(result.status==='error')reject(new Error(result.errors?.[0]?.detailed_message || 'Google не отдал данные. Проверьте доступ по ссылке.'));else resolve(parseTable(result.table,settings));}catch(error){reject(error);}};
+            root[callback]=result=>{cleanup();try{if(result.status==='error')reject(new Error(result.errors?.[0]?.detailed_message || 'Google не отдал данные. Проверьте доступ по ссылке.'));else resolve(raw?result.table:parseTable(result.table,settings));}catch(error){reject(error);}};
             script.onerror=()=>{cleanup();reject(new Error('Не удалось прочитать таблицу. Проверьте доступ без входа в Google.'));};
-            const params=new URLSearchParams({tqx:'out:json;responseHandler:'+callback,sheet:settings.sheet,headers:'1',range:`A${settings.headerRow || 1}:AZ`});
+            const params=new URLSearchParams({tqx:'out:json;responseHandler:'+callback,sheet:settings.sheet,headers:raw?'0':'1',range:raw?'A1:AZ100':`A${settings.headerRow || 1}:AZ`});
             script.src=`https://docs.google.com/spreadsheets/d/${id}/gviz/tq?${params}`;
             timer=setTimeout(()=>{cleanup();reject(new Error('Google-таблица не ответила за 25 секунд.'));},25000);
             document.head.appendChild(script);
         });
     }
+    async function syncRevenueHistory(){
+        if(state.historySyncing)return;
+        if(!state.settings.enabled)throw new Error('Сначала подключите Google-таблицу.');
+        state.historySyncing=true;
+        try{const raw=await readSheet({...state.settings,sheet:'Итоги выручки по месяцам'},true);const history={entries:parseRevenueHistory(raw),tableId:sheetId(state.settings.url),updatedAt:Date.now()};await state.db.ref('finance_revenue_history').set(history);state.revenueHistory=history;scheduleRender();}
+        finally{state.historySyncing=false;}
+    }
     async function sync(preview=false) {
         if(state.syncing || state.draft || !state.settings.enabled)return;
-        state.syncing=true;setStatus('Чтение Google-таблицы...');
+        state.syncing=true;state.syncError='';setStatus('Чтение Google-таблицы...',true);
         try {
             const result=await readSheet(state.settings);
             if(preview) {setStatus(`Проверка: ${result.rows.length} отчётов, распознано ${Object.keys(result.mapping).length} столбцов. Записи не изменены.`);return;}
@@ -8844,43 +9228,68 @@ window.smartFillVolumes = function() {
             }
             for(const [key,value] of Object.entries(existing))if(value.sourceGroup===sourceId && !activeKeys.has(key))updates[key+'/sourceUnavailable']=true;
             if(Object.keys(updates).length)await state.db.ref('finance_records').update(updates);
-            const [fresh,payments]=await Promise.all([state.db.ref('finance_records').once('value'),state.db.ref('finance_payments').once('value')]);state.records=fresh.val() || {};state.payments=payments.val() || {};
+            const [fresh,payments,timesheets]=await Promise.all([state.db.ref('finance_records').once('value'),state.db.ref('finance_payments').once('value'),state.db.ref('finance_timesheets').once('value')]);state.records=fresh.val() || {};state.payments=payments.val() || {};state.timesheets=timesheets.val() || {};
+            state.recordsFromCache=false;state.loaded.add('records');state.loaded.add('payments');
             state.status=`Обновлено ${new Date().toLocaleTimeString('ru-RU')}. Корректных отчётов: ${result.rows.length}; новых или изменённых: ${count}. Следующая проверка через минуту.`;
             if(result.issues.length)state.status+=` Не включены в расчёты ${result.issues.length} строк с ошибками: ${result.issues.slice(0,8).join(' ')}${result.issues.length>8?' Остальные ошибки можно увидеть при проверке исходного листа.':''}`;
+            if(!state.revenueHistory?.updatedAt || Date.now()-state.revenueHistory.updatedAt>3600000)try{await syncRevenueHistory();}catch(error){state.status+=' История выручки не обновлена: '+error.message;}
+            state.lastSyncAt=Date.now();state.syncError='';cacheLatestReports();
             render();
-        }catch(err){setStatus('Ошибка обновления: '+err.message);}finally{state.syncing=false;}
+        }catch(err){state.syncError=err.message;setStatus('Ошибка обновления: '+err.message,true);}finally{state.syncing=false;scheduleRender();}
     }
-    function setStatus(message) {state.status=message;const el=document.getElementById('fin-status');if(el)el.textContent=message;}
+    function setStatus(message,quiet=false) {state.status=message;const el=document.getElementById('fin-status');if(el)el.textContent=message;if(!quiet){state.notice=message;const notice=document.getElementById('fin-action-message');if(notice)notice.textContent=message;}const label=document.getElementById('fin-sync-label');if(label)label.textContent=shortStatus();}
     async function dispatch(action) {
         try {
+            if(action==='cash-prev'){state.cashPage=Math.max(0,(state.cashPage || 0)-1);render();return;}
+            if(action==='cash-next'){state.cashPage=(state.cashPage || 0)+1;render();return;}
+            if(action==='latest-day'){state.autoPeriod=true;state.page=0;state.salaryPage=0;state.cashPage=0;state.notice='';render();return;}
+            if(action==='missing-prev'){state.missingPage=Math.max(0,(state.missingPage || 0)-1);render();return;}
+            if(action==='missing-next'){state.missingPage=(state.missingPage || 0)+1;render();return;}
+            if(action==='history-sync'){await syncRevenueHistory();setStatus('История выручки обновлена.');return;}
+            if(action==='send-timesheets')return sendTimesheetsDialog();
+            if(action==='salary-prev'){state.salaryPage=Math.max(0,(state.salaryPage || 0)-1);render();return;}
+            if(action==='salary-next'){state.salaryPage=(state.salaryPage || 0)+1;render();return;}
+            if(action==='download-current'){downloadTimesheet(selectedPayroll(filtered()).filter(g=>!state.bossEmployee || g.key===state.bossEmployee),state.from,state.to);return;}
+            if(action==='prev-page'){state.page=Math.max(0,(state.page || 0)-1);render();return;}
+            if(action==='next-page'){state.page=(state.page || 0)+1;render();return;}
+            if(action==='fortnight'){state.autoPeriod=false;const today=new Date();const end=new Intl.DateTimeFormat('sv-SE',{timeZone:'Europe/Moscow'}).format(today);const from=new Date(end+'T12:00:00Z');from.setUTCDate(from.getUTCDate()-13);state.from=from.toISOString().slice(0,10);state.to=end;render();return;}
             if(action==='new')return editRecord();
             if(action==='payment')return editPayment();
             if(action==='sync') {if(!state.settings.enabled){state.tab='settings';render();return;}return sync();}
             if(action==='connect' || action==='preview') {
-                const settings={url:document.getElementById('fin-url').value.trim(),sheet:document.getElementById('fin-sheet').value.trim(),headerRow:Number(document.getElementById('fin-header').value),enabled:true};
+                const settings={...state.settings,url:document.getElementById('fin-url').value.trim(),sheet:document.getElementById('fin-sheet').value.trim(),headerRow:Number(document.getElementById('fin-header').value),enabled:true};
                 sheetId(settings.url);
                 if(!settings.sheet || !Number.isInteger(settings.headerRow) || settings.headerRow<1)throw new Error('Укажите лист и номер строки заголовков.');
                 if(action==='preview') {
                     setStatus('Проверка таблицы...');const r=await readSheet(settings);setStatus(`Найдено ${r.rows.length} корректных отчётов. Распознано ${Object.keys(r.mapping).length} столбцов. Ошибок: ${r.issues.length}. ${r.issues.slice(0,8).join(' ')} Записи не изменены.`);return;
                 }
                 await readSheet(settings);
-                await state.db.ref('finance_settings').set(settings);state.settings=settings;
+                await state.db.ref('finance_settings').set(settings);state.settings=settings;writeCache('crm_finance_connection_v1',{settings});for(const id of ['fin-url','fin-sheet','fin-header']){const input=document.getElementById(id);if(input)input._finDirty=false;}
                 await sync();
             }
         }catch(err){setStatus(err.message);}
     }
     root.Finance={
         open(data) {
-            if(typeof state.employeeRef?.off==='function' && state.employeeListener)state.employeeRef.off('value',state.employeeListener);
-            clearInterval(state.timer);Object.assign(state,data);state.records=data.records || {};state.employees=data.employees || {};state.settings=data.settings || {};state.payments=data.payments || {};
-            state.employeeRef=state.db.ref('employees');
-            state.employeeListener=snapshot=>{state.employees=snapshot.val() || {};if(!state.draft)render();};
-            if(typeof state.employeeRef.on==='function')state.employeeRef.on('value',state.employeeListener,error=>setStatus('Не удалось обновить базу сотрудников: '+error.message));
-            if(!state.initialized){const today=new Intl.DateTimeFormat('sv-SE',{timeZone:'Europe/Moscow'}).format(new Date());state.from=today.slice(0,7)+'-01';state.to=today;state.initialized=true;}
+            for(const [ref,listener] of state.listeners || [])ref.off('value',listener);
+            clearInterval(state.timer);Object.assign(state,data);state.closed=false;
+            for(const key of ['records','employees','settings','payments','timesheets'])state[key]=state[key] || {};
+            state.loaded=state.loaded || new Set();for(const key of ['records','employees','payments','settings'])if(Object.hasOwn(data,key))state.loaded.add(key);
+            const cachedConnection=readCache('crm_finance_connection_v1');
+            if(!state.settings.url && !state.loaded.has('settings') && cachedConnection?.settings?.enabled)state.settings=cachedConnection.settings;
+            if(!state.loaded.has('records')){const cached=readCache('crm_finance_latest_v1');if(cached?.records){state.records=cached.records;state.recordsFromCache=true;}}
+            state.autoPeriod=true;state.tab='journal';state.page=0;state.salaryPage=0;state.cashPage=0;state.address='';state.bossEmployee='';state.notice='';state.from=todayMoscow();state.to=state.from;
+            state.listeners=[];
+            for(const [path,key] of [['employees','employees'],['finance_records','records'],['finance_payments','payments'],['finance_timesheets','timesheets'],['finance_settings','settings'],['finance_revenue_history','revenueHistory']]){
+                const ref=state.db.ref(path),listener=snapshot=>{state[key]=snapshot.val() || {};state.loaded.add(key);if(key==='records'){state.recordsFromCache=false;cacheLatestReports();}if(key==='settings' && state.settings.enabled)writeCache('crm_finance_connection_v1',{settings:state.settings});scheduleRender();if(key==='settings' && state.settings.enabled)sync();};
+                if(typeof ref.on==='function'){ref.on('value',listener,error=>{state.syncError=error.message;setStatus('Не удалось обновить данные финансов: '+error.message,true);scheduleRender();});state.listeners.push([ref,listener]);}
+            }
+            state.initialized=true;
             render();if(state.settings.enabled)sync();
-            state.timer=setInterval(()=>{if(typeof currentTabType!=='undefined' && currentTabType!=='finance'){clearInterval(state.timer);if(typeof state.employeeRef?.off==='function')state.employeeRef.off('value',state.employeeListener);return;}if(!document.hidden)sync();},60000);
+            state.timer=setInterval(()=>{if(typeof currentTabType!=='undefined' && currentTabType!=='finance'){clearInterval(state.timer);for(const [ref,listener] of state.listeners)ref.off('value',listener);state.listeners=[];return;}if(!document.hidden)sync();},60000);
         },
-        calculate, hours, parseTable, matchEmployee
+        close(){clearInterval(state.timer);for(const [ref,listener] of state.listeners || [])ref.off('value',listener);state.listeners=[];state.closed=true;},
+        calculate, hours, parseTable, matchEmployee, payrollLedger, parseRevenueHistory, revenueMatrix, missingReports, latestReportDay, cashAudit
     };
     if(typeof module!=='undefined')module.exports=root.Finance;
 })(typeof window==='undefined'?globalThis:window);

@@ -710,6 +710,24 @@ body.crew-live .crew-live-hero>.flower-three{animation-duration:23s;animation-de
 /* Match the revised PNG canvas to the black banner, flush on the left. */
 body.crew-live .hero-wordmark{left:0;bottom:0;width:100%!important}
 @media(max-width:360px){body.crew-live .hero-wordmark{left:0;bottom:0;width:100%!important}}
+
+/* Brighter moving accents, clean accordion shells and compact schedule mode. */
+body.crew-live .crew-page-flowers .crew-flower{opacity:.55;animation-duration:12s}
+body.crew-live .crew-page-flowers .crew-flower g{fill:#dc8da4}
+body.crew-live .crew-page-flowers .page-flower-a{animation-duration:10s;opacity:.62}
+body.crew-live .crew-page-flowers .page-flower-b{animation-duration:13s;opacity:.46}
+body.crew-live .crew-page-flowers .page-flower-c{animation-duration:16s;opacity:.38}
+body.crew-live .crew-page-flowers .page-flower-d{animation-duration:11s;opacity:.54}
+body.crew-live .crew-live-hero>.crew-flower{animation-duration:11s}
+@keyframes teiku-flower-drift{0%,100%{transform:translate3d(0,0,0) rotate(-12deg)}50%{transform:translate3d(9px,-14px,0) rotate(18deg)}}
+body.crew-live #knowledge-container .report-card,body.crew-live #report-content-area .report-card.crew-unframed-card{border:0!important;box-shadow:none!important;background:transparent!important;padding:0!important}
+body.crew-live :is(.search-input,#crew-menu-search){touch-action:manipulation!important}
+body.crew-live .crew-schedule-tool-label{font-size:11px!important}
+body.crew-live .crew-select-trigger[data-picker-for="crew-schedule-tool"]{font:400 12px/1.5 var(--crew-font-ui)!important}
+body.crew-live #crew-picker[data-source="crew-schedule-tool"] .crew-picker-list [role="option"]:not(#studio-scale-exception):not(#studio-scale-exception){font-size:12px!important}
+body.crew-live .hero-copy{left:24px!important}
+body.crew-live .hero-copy .hero-date{left:0!important;text-align:left!important}
+@supports(-webkit-touch-callout:none){body.crew-live :is(#product-search-input,#invoice-search-input,#knowledge-search-input,#crew-menu-search){font-size:16px!important}}
 </style></head>
 <body class="crew-live" onclick="if(event.target === document.body || event.target.id === 'main-wrapper') { document.activeElement.blur(); }">
 
@@ -3233,7 +3251,7 @@ body.crew-live .hero-wordmark{left:0;bottom:0;width:100%!important}
  if (i.status === 'error' || i.bot_error === true || i.status === 'not_needed') {
  // Ошибка или отмена — доступен заново
  } else if (isOrderedByAdmin && !isReceived) {
- statusMap[pKey] = { locked: true, text: 'Оформлено (В пути) ', color: '#3F8A4C' };
+ statusMap[pKey] = { locked: true, text: 'В пути', color: '#3F8A4C' };
  } else if (!isOrderedByAdmin && !isReceived) {
  statusMap[pKey] = { locked: true, text: 'Ожидает оформления ', color: '#A9762E' };
  }
@@ -4134,7 +4152,7 @@ window.viewStopList = async function(silent) {
  if (i.status === 'error' || i.bot_error === true || i.status === 'not_needed') {
  // ничего
  } else if (isOrderedByAdmin && !isReceived) {
- statusMap[pKey] = { locked: true, text: 'Оформлено (В пути) ', color: '#3F8A4C' };
+ statusMap[pKey] = { locked: true, text: 'В пути', color: '#3F8A4C' };
  } else if (!isOrderedByAdmin && !isReceived) {
  statusMap[pKey] = { locked: true, text: 'Ожидает оформления ', color: '#A9762E' };
  }
@@ -5824,7 +5842,7 @@ window.CrewLive=(()=>{
    dialog.addEventListener('close',()=>{if(activePickerTrigger){activePickerTrigger.setAttribute('aria-expanded','false');if(activePickerTrigger.isConnected)activePickerTrigger.focus({preventScroll:true})}});
    dialog.addEventListener('click',event=>{if(event.target===dialog){const rect=dialog.getBoundingClientRect();if(event.clientY<rect.top||event.clientX<rect.left||event.clientX>rect.right)dialog.close()}});
   }
-  dialog.replaceChildren();activePickerTrigger=trigger;trigger.setAttribute('aria-expanded','true');
+  dialog.replaceChildren();dialog.dataset.source=select.id;activePickerTrigger=trigger;trigger.setAttribute('aria-expanded','true');
   const title=document.createElement('div');title.className='crew-picker-title';title.textContent=trigger.getAttribute('aria-label');
   const close=document.createElement('button');close.type='button';close.className='crew-picker-close';close.textContent='Закрыть';close.onclick=()=>dialog.close();
   const list=document.createElement('div');list.className='crew-picker-list';list.setAttribute('role','listbox');list.setAttribute('aria-label',title.textContent);
@@ -5949,6 +5967,7 @@ window.CrewLive=(()=>{
   for(const offset of [0,1])document.getElementById('btn-month-'+offset)?.classList.toggle('active',(state.scheduleMonthOffset||0)===offset);
   document.querySelectorAll('.container div[onclick^="toggleElements"],#report-content-area div[onclick^="toggleElements"]').forEach(el=>{
    el.classList.add('crew-fold-heading');el.nextElementSibling?.classList.add('crew-fold-content');
+   if(el.parentElement.classList.contains('report-card'))el.parentElement.classList.add('crew-unframed-card');
   });
   document.querySelectorAll('[data-crew-new-shop]').forEach(el=>{el.hidden=state.appSettings.new_shop_hidden!==false});
   const tools=document.getElementById('tool_MORNING')?.parentElement;
@@ -5979,6 +5998,24 @@ window.CrewLive=(()=>{
  const observer=new MutationObserver(()=>{
   if(pending)return;pending=true;requestAnimationFrame(()=>{pending=false;refresh()});
  });
+ // Prevent double-tap search zoom while preserving page pinch and image zoom.
+ const searchSelector='.search-input,#crew-menu-search';
+ document.addEventListener('dblclick',event=>{if(event.target.closest(searchSelector))event.preventDefault()},true);
+ let searchTouch=null,lastSearchTap=null;
+ document.addEventListener('touchstart',event=>{
+  if(event.touches.length!==1||!event.target.closest(searchSelector)){searchTouch=null;lastSearchTap=null;return}
+  const touch=event.touches[0];searchTouch={target:event.target,x:touch.clientX,y:touch.clientY,moved:false};
+ },{passive:true});
+ document.addEventListener('touchmove',event=>{
+  if(!searchTouch)return;if(event.touches.length!==1){searchTouch=null;lastSearchTap=null;return}
+  const touch=event.touches[0];if(Math.hypot(touch.clientX-searchTouch.x,touch.clientY-searchTouch.y)>8)searchTouch.moved=true;
+ },{passive:true});
+ document.addEventListener('touchend',event=>{
+  if(!searchTouch||searchTouch.moved||event.touches.length){searchTouch=null;lastSearchTap=null;return}
+  const now=Date.now();
+  if(lastSearchTap&&lastSearchTap.target===searchTouch.target&&now-lastSearchTap.time<320&&Math.hypot(lastSearchTap.x-searchTouch.x,lastSearchTap.y-searchTouch.y)<24){if(event.cancelable)event.preventDefault();lastSearchTap=null}
+  else lastSearchTap={...searchTouch,time:now};searchTouch=null;
+ },{passive:false});
  // Only structure changes matter. Avoid observing our own class/style updates.
  for(const root of document.querySelectorAll('.container,#report-overlay,#cart-modal,#address-confirm-modal,#validation-banner'))observer.observe(root,{childList:true,subtree:true});
  const tabs=document.getElementById('bottom-tabs');

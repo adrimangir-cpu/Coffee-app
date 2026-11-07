@@ -12098,6 +12098,8 @@ window.TeikuWorkbench=(()=>{
   else if(s.type==='stages'){
    if(!Array.isArray(s.stages)||s.stages.length!==4)return 'Нужно заполнить четыре ступени.';
    let previous=-1;for(const [i,v] of s.stages.entries()){if(!numeric(v.months)||!Number.isInteger(Number(v.months))||Number(v.months)<=previous||(i===0&&Number(v.months)!==0)||!numeric(v.hourly)||!numeric(v.percent)||Number(v.percent)>100)return 'Первая ступень — с 0 месяцев. Укажите возрастающий стаж в полных месяцах, ставку и процент каждой ступени.';previous=Number(v.months)}
+   if(s.annualPoints!=null&&!numeric(s.annualPoints))return 'Укажите неотрицательный ежегодный шаг процента.';
+   if(s.stageLayout==='durations'&&s.stages.slice(0,3).some((v,i)=>!Number.isInteger(Number(v.durationMonths))||Number(v.durationMonths)<1||Number(s.stages[i+1].months)!==Number(v.months)+Number(v.durationMonths)))return 'Длительность первых трёх ступеней — целое число месяцев, не меньше одного.';
   }else return 'Неизвестный тип системы.';
   return '';
  }
@@ -12106,15 +12108,25 @@ window.TeikuWorkbench=(()=>{
   if(on<employee.firstWorkDay)return {hourly:null,percent:null,history:[],error:'Дата смены раньше начала работы сотрудника.'};
   const tenure=months(employee.firstWorkDay,on);let hourly,percent,stage=null;
   if(system.type==='annual'){hourly=Number(system.hourly);percent=Number(system.percent)+Math.floor(tenure/12)*Number(system.annualPoints)}
-  else {stage=system.stages.reduce((chosen,s,i)=>Number(s.months)<=tenure?i:chosen,0);hourly=Number(system.stages[stage].hourly);percent=Number(system.stages[stage].percent)}
+  else {stage=system.stages.reduce((chosen,s,i)=>Number(s.months)<=tenure?i:chosen,0);hourly=Number(system.stages[stage].hourly);percent=Number(system.stages[stage].percent)+(stage===3?Math.floor(tenure/12)*Number(system.annualPoints||0):0)}
   return {hourly,percent:Math.round(percent*100)/100,stage,tenure,history:[]};
  }
- const api={months,validate,compute,today,validDate,revision:0,systems:{},loaded:false};root.EmployeeSalary=api;
+ function individual(employee,on=today()){
+  if(!employee)return {hourly:0,percent:0,history:[]};
+  let hourly=Number(employee.hourlyRate)||0,percent=Number(employee.percentRate)||0;const history=[];
+  for(const rule of Array.isArray(employee.rateRules)?employee.rateRules:[]){
+   if(!rule||!Number.isFinite(Number(rule.amount)))continue;
+   const start=rule.lastAppliedDate||employee.firstWorkDay;if(!validDate(start)||!validDate(on)||on<start)continue;
+   const fullMonths=months(start,on),periods=rule.interval==='monthly'?fullMonths:Math.floor(fullMonths/12),amount=Number(rule.amount)*periods;
+   if(periods>0&&(rule.type==='hourly'||rule.type==='percent')){if(rule.type==='hourly')hourly+=amount;else percent+=amount;history.push({type:rule.type,amount,rule,periods})}
+  }
+  return {hourly:Math.round(hourly*100)/100,percent:Math.round(percent*100)/100,history};
+ }
+ const api={months,validate,compute,individual,today,validDate,revision:0,systems:{},loaded:false};root.EmployeeSalary=api;
  if(typeof module!=='undefined'&&module.exports)module.exports=api;
  if(typeof window==='undefined')return;
- const legacy=root.calculateCurrentRates;
  root.calculateCurrentRates=function(employee,on){
-  if(!employee?.salarySystemId)return legacy(employee);
+  if(!employee?.salarySystemId)return individual(employee,on||today());
   const result=compute(employee,api.systems[employee.salarySystemId],on||today());
   return result;
  };
@@ -12182,22 +12194,21 @@ window.TeikuWorkbench=(()=>{
 (()=>{
  const W=TeikuWorkbench,S=EmployeeSalary,content=document.getElementById('content');let saving=false;
  const stable=value=>JSON.stringify(value&&typeof value==='object'?Array.isArray(value)?value.map(v=>JSON.parse(stable(v))):Object.fromEntries(Object.keys(value).sort().map(k=>[k,JSON.parse(stable(value[k]))])):value);
- const templates={old:{name:'Старая',type:'annual',hourly:250,percent:'',annualPoints:1},new:{name:'Новая',type:'stages',stages:Array.from({length:4},(_,i)=>({months:i===0?0:'',hourly:'',percent:''}))}};
- const input=(label,key,value,extra='')=>`<label class="ws-field">${W.esc(label)}<input name="${key}" type="number" min="0" step="0.01" required value="${W.esc(value??'')}" ${extra}></label>`;
+ const templates={old:{name:'Старая',type:'annual',hourly:250,percent:'',annualPoints:1},new:{name:'Новая',type:'stages',stageLayout:'durations',annualPoints:1,stages:Array.from({length:4},(_,i)=>({months:i,durationMonths:i<3?1:null,hourly:'',percent:''}))}};
+ const input=(label,key,value,extra='')=>`<label class="ws-field">${W.esc(label)}<input name="${key}" type="number" ${extra.includes('min=')?'':'min="0"'} ${extra.includes('step=')?'':'step="0.01"'} required value="${W.esc(value??'')}" ${extra}></label>`;
+ function readSystem(data,type){const value={name:String(data.get('name')||'').trim(),type};if(type==='annual'){for(const k of ['hourly','percent','annualPoints'])value[k]=data.get(k)===''?'':Number(data.get(k));}else{value.stageLayout='durations';value.annualPoints=data.get('annualPoints')===''?'':Number(data.get('annualPoints'));let months=0;value.stages=Array.from({length:4},(_,i)=>{const duration=i<3?(data.get('duration'+i)===''?'':Number(data.get('duration'+i))):null;const v={months,hourly:data.get('hourly'+i)===''?'':Number(data.get('hourly'+i)),percent:data.get('percent'+i)===''?'':Number(data.get('percent'+i)),durationMonths:duration};months+=Number(duration);return v})}return value;}
  function open(){if(saving)return;WorkbenchEmployees.suspend();const systems={...templates,...S.systems};
-  content.innerHTML=`<section class="ws-app ws-employees ws-salary-settings"><button type="button" class="ws-text-button" data-salary-back>${W.icon('back')}К сотрудникам</button><div class="ws-head"><div><h2>Системы зарплаты</h2><p>Автоматический расчёт по стажу от первого рабочего дня.</p></div></div>${Object.entries(systems).map(([id,s])=>`<form data-salary-form="${W.esc(id)}" class="ws-employee-card"><h3>${W.esc(s.name)}</h3><label class="ws-field">Название<input name="name" required value="${W.esc(s.name)}"></label>${s.type==='annual'?`<div class="ws-form-grid">${input('Постоянная ставка, ₽/ч','hourly',s.hourly)}${input('Начальный процент от выручки','percent',s.percent,'max="100"')}${input('Прибавка за каждый полный год, п. п.','annualPoints',s.annualPoints)}</div><p class="ws-muted">Например: 5% + 1 п. п. = 6% после первой годовщины. Часовая ставка остаётся постоянной.</p>`:`<div class="ws-salary-stages">${s.stages.map((v,i)=>`<fieldset><legend>Ступень ${i+1}</legend>${input('Стаж от, месяцев',`months${i}`,v.months,'step="1"')}${input('Ставка, ₽/ч',`hourly${i}`,v.hourly)}${input('Процент от выручки',`percent${i}`,v.percent,'max="100"')}</fieldset>`).join('')}</div><p class="ws-muted">Укажите начало каждой ступени в полных месяцах. Первая — с 0 месяцев, четвёртая действует далее без ограничения.</p>`}<p class="ws-muted">Изменение системы пересчитает связанные отчёты по дате каждой смены. Уже отмеченные выплаты сохранятся.</p><div class="ws-person-actions"><span role="status" class="ws-feedback"></span><button type="submit" class="ws-primary">Сохранить систему</button></div></form>`).join('')}</section>`;
+  content.innerHTML=`<section class="ws-app ws-employees ws-salary-settings"><button type="button" class="ws-text-button" data-salary-back>${W.icon('back')}К сотрудникам</button><div class="ws-head"><div><h2>Системы зарплаты</h2><p>Автоматический расчёт по стажу от первого рабочего дня.</p></div></div>${Object.entries(systems).map(([id,s])=>`<form data-salary-form="${W.esc(id)}" class="ws-employee-card"><h3>${W.esc(s.name)}</h3><label class="ws-field">Название<input name="name" required value="${W.esc(s.name)}"></label>${s.type==='annual'?`<div class="ws-form-grid">${input('Постоянная ставка, ₽/ч','hourly',s.hourly)}${input('Начальный процент от выручки','percent',s.percent,'max="100"')}${input('Прибавка за каждый полный год, п. п.','annualPoints',s.annualPoints)}</div><p class="ws-muted">Например: 5% + 1 п. п. = 6% после первой годовщины. Часовая ставка остаётся постоянной.</p>`:`<div class="ws-salary-stages">${s.stages.map((v,i)=>`<fieldset><legend>Ступень ${i+1}</legend>${input('Ставка, ₽/ч',`hourly${i}`,v.hourly)}${input('Процент от выручки',`percent${i}`,v.percent,'max="100"')}${i<3?input('Длительность, месяцев',`duration${i}`,s.stageLayout==='durations'?v.durationMonths:1,'min="1" step="1"'):'<p class="ws-muted">После первых трёх ступеней — постоянно. Процент повышается только в годовщину начала работы.</p>'}</fieldset>`).join('')}</div><div class="ws-form-grid">${input('Ежегодная прибавка на 4-й ступени, п. п.','annualPoints',s.annualPoints??1)}</div><p class="ws-muted">При длительности 1 месяц: ступени 1–3 занимают первые три месяца, затем действует ступень 4. В первую годовщину к проценту ступени 4 добавляется годовой шаг, далее — только раз в год. Ставка внутри года не растёт.</p>`}<p class="ws-muted">Изменение системы пересчитает связанные отчёты по дате каждой смены. Уже отмеченные выплаты сохранятся.</p><div class="ws-person-actions"><span role="status" class="ws-feedback"></span><button type="submit" class="ws-primary">Сохранить систему</button></div></form>`).join('')}</section>`;
   for(const f of content.querySelectorAll('[data-salary-form]')){f._salaryBase=structuredClone(S.systems[f.dataset.salaryForm]||null);f._salaryType=systems[f.dataset.salaryForm].type;
    const preview=document.createElement('section');preview.className='u-save-preview';const label=document.createElement('label');label.textContent='Пример: первый рабочий день';const start=document.createElement('input');start.type='date';start.value=S.today();label.append(start);const result=document.createElement('p');preview.append(label,result);f.querySelector('.ws-person-actions').before(preview);
-   const show=()=>{const data=new FormData(f),system={name:data.get('name'),type:f._salaryType};if(system.type==='annual')for(const k of ['hourly','percent','annualPoints'])system[k]=data.get(k);else system.stages=Array.from({length:4},(_,i)=>Object.fromEntries(['months','hourly','percent'].map(k=>[k,data.get(k+i)])));const rates=S.compute({firstWorkDay:start.value},system);result.textContent=rates.error||`${rates.hourly} ₽/ч + ${rates.percent}%${rates.stage!=null?' · Ступень '+(rates.stage+1):''} · стаж ${rates.tenure} мес.`};f.addEventListener('input',()=>{f._confirmValue=null;f.querySelector('[type=submit]').textContent='Сохранить систему';show()});start.addEventListener('change',show);show();
+   const show=()=>{const data=new FormData(f),system=readSystem(data,f._salaryType);const rates=S.compute({firstWorkDay:start.value},system);result.textContent=rates.error||`${rates.hourly} ₽/ч + ${rates.percent}%${rates.stage!=null?' · Ступень '+(rates.stage+1):''} · стаж ${rates.tenure} мес.`};f.addEventListener('input',()=>{f._confirmValue=null;f.querySelector('[type=submit]').textContent='Сохранить систему';show()});start.addEventListener('change',show);show();
   }
  }
  content.addEventListener('click',event=>{if(event.target.closest('[data-salary-settings]'))open();if(event.target.closest('[data-salary-back]')&&!saving)WorkbenchEmployees.resume()});
  content.addEventListener('submit',async event=>{
   const f=event.target.closest('[data-salary-form]');if(!f)return;event.preventDefault();if(saving)return;
   const data=new FormData(f),id=f.dataset.salaryForm,msg=f.querySelector('.ws-feedback'),button=f.querySelector('[type=submit]');
-  const value={...(f._salaryBase||{}),name:String(data.get('name')).trim(),type:f._salaryType};
-  if(value.type==='annual')for(const key of ['hourly','percent','annualPoints'])value[key]=data.get(key)===''?'':Number(data.get(key));
-  else value.stages=Array.from({length:4},(_,i)=>Object.fromEntries(['months','hourly','percent'].map(k=>[k,data.get(k+i)===''?'':Number(data.get(k+i))])));
+  const value={...(f._salaryBase||{}),...readSystem(data,f._salaryType)};
   const error=S.validate(value);if(error){msg.textContent=error;msg.classList.add('ws-error');return}
   if(f._salaryBase&&stable(value)!==stable(f._salaryBase)&&f._confirmValue!==stable(value)){f._confirmValue=stable(value);const count=Object.values(cachedData.employees||{}).filter(e=>e?.salarySystemId===id).length;msg.textContent=`Изменение общей системы: сотрудников ${count}. Связанные отчёты будут пересчитаны. Подтвердите сохранение.`;button.textContent='Подтвердить изменения';return}
   saving=true;button.disabled=true;msg.textContent='Сохраняем…';msg.classList.remove('ws-error');

@@ -1383,6 +1383,13 @@ body.crew-live.ws-live .crew-page-flowers .page-flower-c{opacity:.32!important}
  }
 }
 
+/* Checklist: original quantity controls sit next to the product name. */
+body.crew-live.ws-live #dynamic-list-container .ws-quick-checklist>.ws-product-summary{display:grid!important;grid-template-columns:32px minmax(0,1fr) auto!important;gap:10px!important;align-items:center!important}
+body.crew-live.ws-live #dynamic-list-container .ws-quick-checklist .ws-thumb{width:32px!important;height:40px!important}
+body.crew-live.ws-live #dynamic-list-container .ws-quick-checklist .controls{display:flex!important;gap:3px!important;max-width:130px!important;flex:none!important}
+body.crew-live.ws-live #dynamic-list-container .ws-quick-checklist .controls .qty-btn{display:none!important}
+body.crew-live.ws-live #dynamic-list-container .ws-quick-checklist .qty-input{width:68px!important;min-width:0!important;font-size:16px!important;min-height:42px!important;padding:6px!important}
+body.crew-live.ws-live #dynamic-list-container .ws-quick-checklist .vol-select{width:130px!important;min-width:0!important;font-size:14px!important;min-height:42px!important;padding:6px!important}
 </style>
 </head>
 <body class="crew-live ws-live" onclick="if(event.target === document.body || event.target.id === 'main-wrapper') { document.activeElement.blur(); }">
@@ -3662,6 +3669,15 @@ body.crew-live.ws-live .crew-page-flowers .page-flower-c{opacity:.32!important}
  }
  }
 
+ function checklistEntries() {
+ return Object.values(state.productCatalog||{}).filter(item=>item&&typeof item==='object'&&String(item.name||'').trim()&&!['Товар','Дата заполнения'].includes(String(item.name).trim()));
+ }
+ function checklistValue(name) {
+ const key=String(name||'').trim(),basket=state.userBasket||{};
+ if(Object.prototype.hasOwnProperty.call(basket,key))return basket[key];
+ const old=Object.keys(basket).find(k=>k.trim()===key);return old===undefined?undefined:basket[old];
+ }
+ function checklistAnswered(value) {return value!==undefined&&value!==null&&!['','-','--'].includes(String(value).trim());}
  function rebuildProductCatalog(sourceCatalog) {
  state.productCatalog = {};
  let hiddenList = {};
@@ -3673,6 +3689,7 @@ body.crew-live.ws-live .crew-page-flowers .page-flower-c{opacity:.32!important}
  for(let k in sourceCatalog) {
  let item = sourceCatalog[k];
  if (!item || !item.name) continue;
+ if(state.currentMode==='checklist'&&['Товар','Дата заполнения'].includes(String(item.name).trim()))continue;
 
  let exactCat = item.globalCat || "Основное меню";
  if (exactCat.includes("!!! НОВОЕ") || (item.cat && item.cat.includes("!!! НОВОЕ"))) continue;
@@ -3684,7 +3701,7 @@ body.crew-live.ws-live .crew-page-flowers .page-flower-c{opacity:.32!important}
  
  if (!uniqueProducts.has(exactNameRaw)) {
  uniqueProducts.add(exactNameRaw);
- state.productCatalog[k] = item;
+ state.productCatalog[k] = state.currentMode==='checklist'?{...item,name:String(item.name).trim(),cat:String(item.cat||'Прочее').trim()||'Прочее'}:item;
  }
  }
  }
@@ -4061,7 +4078,7 @@ body.crew-live.ws-live .crew-page-flowers .page-flower-c{opacity:.32!important}
  if (sVal === undefined || sVal === null) sVal = "-";
 
  if(sVal !== "-" && sVal !== "Полная" && sVal !== "Половина" && sVal !== "Меньше половины" && String(sVal) !== "0" && sVal !== "CUSTOM") {
- html += `<input type="text" class="qty-input" style="width:80px; border-bottom:2px solid #16161A;" value="${sVal}" onchange="registerInputChange('${escName}', this.value, '${cat}')" onfocus="handleInputFocus(this)" onblur="handleInputBlur()">
+ html += `<input type="text" class="qty-input" style="width:80px; border-bottom:2px solid #16161A;" value="${sVal}" oninput="registerInputChange('${escName}', this.value, '${cat}')" onchange="registerInputChange('${escName}', this.value, '${cat}')" onfocus="handleInputFocus(this)" onblur="handleInputBlur()">
  <button class="reset-btn" onclick="registerInputChange('${escName}', '-', '${cat}'); renderProductList();"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round"><path d="M5 5l14 14M19 5L5 19"/></svg></button>`;
  } else {
  html += `<select class="vol-select" onchange="handleVolumeSelection(this, '${escName}', '${cat}', '${safeId}')">
@@ -4079,7 +4096,7 @@ body.crew-live.ws-live .crew-page-flowers .page-flower-c{opacity:.32!important}
  if (val === undefined || val === null || val === "-") val = (state.currentMode === 'checklist' ? "-" : "0");
 
  html += `<button class="qty-btn" onclick="adjustQuantity('${escName}', -1, '${cat}', '${safeId}')">−</button>
- <input type="text" class="qty-input" id="input-${safeId}" value="${val}" onchange="registerInputChange('${escName}', this.value, '${cat}')" onfocus="handleInputFocus(this)" onblur="handleInputBlur()">
+ <input type="text" class="qty-input" id="input-${safeId}" value="${val}" oninput="registerInputChange('${escName}', this.value, '${cat}')" onchange="registerInputChange('${escName}', this.value, '${cat}')" onfocus="handleInputFocus(this)" onblur="handleInputBlur()">
  <button class="qty-btn" onclick="adjustQuantity('${escName}', 1, '${cat}', '${safeId}')">+</button>`;
  }
  html += `</div></div>`;
@@ -4137,7 +4154,7 @@ body.crew-live.ws-live .crew-page-flowers .page-flower-c{opacity:.32!important}
  if (select.value === 'CUSTOM') {
  let container = document.getElementById('controls-' + safeId);
  let escName = escapeName(name);
- container.innerHTML = `<input type="text" class="qty-input" style="width:80px; border-bottom:2px solid #16161A;" value="" onchange="registerInputChange('${escName}', this.value, '${cat}')" onfocus="handleInputFocus(this)">
+ container.innerHTML = `<input type="text" class="qty-input" style="width:80px; border-bottom:2px solid #16161A;" value="" oninput="registerInputChange('${escName}', this.value, '${cat}')" onchange="registerInputChange('${escName}', this.value, '${cat}')" onfocus="handleInputFocus(this)">
  <button class="reset-btn" onclick="registerInputChange('${escName}', '-', '${cat}'); renderProductList();"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round"><path d="M5 5l14 14M19 5L5 19"/></svg></button>`;
  setTimeout(() => { 
  let inp = container.querySelector('input');
@@ -4335,7 +4352,7 @@ body.crew-live.ws-live .crew-page-flowers .page-flower-c{opacity:.32!important}
  <span style="font-size:14.4px; color:#98979E; font-weight:bold;">${catItem.vendor || 'Лента'}</span>
  <div class="controls" id="cart-controls-${safeId}">
  <button class="qty-btn" style="width:30px; height:30px;" onclick="adjustQuantity('${escName}', -1, '${cat}', '${safeId}')">−</button>
- <input type="text" class="qty-input" id="cart-input-${safeId}" value="${v}" style="width:30px; font-size:18px;" onchange="registerInputChange('${escName}', this.value, '${cat}')" onfocus="handleInputFocus(this)" onblur="handleInputBlur()">
+ <input type="text" class="qty-input" id="cart-input-${safeId}" value="${v}" style="width:30px; font-size:18px;" oninput="registerInputChange('${escName}', this.value, '${cat}')" onchange="registerInputChange('${escName}', this.value, '${cat}')" onfocus="handleInputFocus(this)" onblur="handleInputBlur()">
  <button class="qty-btn" style="width:30px; height:30px;" onclick="adjustQuantity('${escName}', 1, '${cat}', '${safeId}')">+</button>
  </div>
  </div>
@@ -6031,8 +6048,8 @@ window.showLastOrder = async function(silent) {
  let totalMissing = 0;
  for (let key in state.productCatalog) {
  let item = state.productCatalog[key];
- if (item && item.cat && item.name !== "Товар" && item.name !== "Дата заполнения") {
- let val = state.userBasket[item.name];
+ if (item && String(item.name||" ").trim() && !["Товар","Дата заполнения"].includes(String(item.name).trim())) {
+ let val = checklistValue(item.name);
  if (val === undefined || val === null || String(val).trim() === "" || String(val).trim() === "-" || String(val).trim() === "--") { 
  missingCategories.add(item.cat); 
  totalMissing++; 
@@ -6579,10 +6596,8 @@ window.CrewLive=(()=>{
  updateCategoryHighlight=function(category){originalHighlight(category);highlight(category)};
  function highlight(category){
   const block=document.getElementById('block-'+getSafeId(category));if(!block)return;
-  const items=Object.values(state.productCatalog||{}).filter(d=>d&&String(d.cat||'Прочее').trim()===category);
-  const complete=state.currentMode==='checklist'&&items.length>0&&items.every(d=>{
-   const v=state.userBasket[d.name];return v!==undefined&&v!==null&&!['','-','--'].includes(String(v).trim());
-  });
+  const items=checklistEntries().filter(d=>String(d.cat||'Прочее').trim()===category);
+  const complete=state.currentMode==='checklist'&&items.length>0&&items.every(d=>checklistAnswered(checklistValue(d.name)));
   block.classList.toggle('crew-complete',complete);
  }
  const originalProducts=renderProductList;
@@ -6591,10 +6606,8 @@ window.CrewLive=(()=>{
  updateBadgeUI=function(){originalBadge();syncActions()};
  function syncActions(){
   const filling=screen()==='step-3'&&['order','new_shop'].includes(state.currentMode)&&report.style.display!=='flex';
-  const items=screen()==='step-3'&&state.currentMode==='checklist'?Object.values(state.productCatalog||{}).filter(d=>d&&d.name&&!['Товар','Дата заполнения'].includes(d.name)):[];
-  const complete=items.length>0&&items.every(d=>{
-   const value=state.userBasket[d.name];return value!==undefined&&value!==null&&!['','-','--'].includes(String(value).trim());
-  });
+  const items=screen()==='step-3'&&state.currentMode==='checklist'?checklistEntries():[];
+  const complete=items.length>0&&items.every(d=>checklistAnswered(checklistValue(d.name)));
   const submitting=screen()==='step-3'&&(state.currentMode==='stoplist_fill'||(state.currentMode==='checklist'&&complete));
   document.body.classList.toggle('crew-checklist-ready',state.currentMode==='checklist'&&complete);
   document.body.classList.toggle('crew-submit-panel',submitting);
@@ -6878,8 +6891,8 @@ window.TeikuWorkbench=(()=>{
    row.dataset.wsGlobal=record.globalCat||'Основное меню';row.dataset.wsSub=record.cat||'Прочее';
    let details=row.querySelector(':scope > .ws-product');
    if(!details){
-    const quick=orderMode||stockMode;
-    details=W.el(quick?'section':'details','ws-product'+(quick?' ws-quick-order':'')+(stockMode?' ws-quick-stock':''));const summary=W.el(quick?'div':'summary','ws-product-summary'),thumb=W.el(quick?'button':'span','ws-thumb'),copy=W.el(orderMode?'button':'span',orderMode?'ws-order-pick':''),title=W.el('b','ws-product-name',name),meta=W.el('small','ws-product-meta',[record.vendor,record.volume].filter(Boolean).join(' · ')),qty=W.el('span','ws-price'),arrow=W.el('span','ws-chevron','⌄');
+    const quick=orderMode||stockMode||state.currentMode==='checklist';
+    details=W.el(quick?'section':'details','ws-product'+(quick?' ws-quick-order':'')+(stockMode?' ws-quick-stock':'')+(state.currentMode==='checklist'?' ws-quick-checklist':''));const summary=W.el(quick?'div':'summary','ws-product-summary'),thumb=W.el(quick?'button':'span','ws-thumb'),copy=W.el(orderMode?'button':'span',orderMode?'ws-order-pick':''),title=W.el('b','ws-product-name',name),meta=W.el('small','ws-product-meta',[record.vendor,record.volume].filter(Boolean).join(' · ')),qty=W.el('span','ws-price'),arrow=W.el('span','ws-chevron','⌄');
     const photo=row.querySelector('.crew-order-photo img')?.src||record.photo;if(photo){const img=W.el('img');img.src=photo;img.alt=name;img.loading='lazy';thumb.append(img)}else thumb.innerHTML=W.icon('box');copy.append(title,meta);summary.append(thumb,copy,qty,arrow);const body=W.el('div','ws-product-body');while(row.firstChild)body.append(row.firstChild);details.append(summary,body);row.append(details);row.classList.add('ws-mini-item');details.open=open.get(key)===name;
     if(quick){
      const controls=body.querySelector('.controls');if(controls)summary.append(controls);qty.hidden=true;arrow.remove();body.hidden=true;details.removeAttribute('open');

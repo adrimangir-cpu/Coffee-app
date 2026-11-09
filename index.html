@@ -1387,9 +1387,12 @@ body.crew-live.ws-live .crew-page-flowers .page-flower-c{opacity:.32!important}
 body.crew-live.ws-live #dynamic-list-container .ws-quick-checklist>.ws-product-summary{display:grid!important;grid-template-columns:32px minmax(0,1fr) auto!important;gap:10px!important;align-items:center!important}
 body.crew-live.ws-live #dynamic-list-container .ws-quick-checklist .ws-thumb{width:32px!important;height:40px!important}
 body.crew-live.ws-live #dynamic-list-container .ws-quick-checklist .controls{display:flex!important;gap:3px!important;max-width:130px!important;flex:none!important}
-body.crew-live.ws-live #dynamic-list-container .ws-quick-checklist .controls .qty-btn{display:none!important}
-body.crew-live.ws-live #dynamic-list-container .ws-quick-checklist .qty-input{width:68px!important;min-width:0!important;font-size:16px!important;min-height:42px!important;padding:6px!important}
-body.crew-live.ws-live #dynamic-list-container .ws-quick-checklist .vol-select{width:130px!important;min-width:0!important;font-size:14px!important;min-height:42px!important;padding:6px!important}
+body.crew-live.ws-live #dynamic-list-container .ws-quick-checklist .controls .qty-btn{display:inline-flex!important;align-items:center!important;justify-content:center!important;width:34px!important;min-width:34px!important;height:42px!important;padding:0!important;font-size:18px!important;flex:none!important}
+body.crew-live.ws-live #dynamic-list-container .ws-quick-checklist .qty-input{width:48px!important;min-width:0!important;font-size:16px!important;min-height:42px!important;padding:6px!important}
+body.crew-live.ws-live #dynamic-list-container .ws-quick-checklist.ws-filled>.ws-product-summary{background:#e7f2e8!important;box-shadow:inset 3px 0 #73a77a!important;border-radius:10px!important}
+body.crew-live.ws-live #dynamic-list-container .ws-quick-checklist .vol-select{width:92px!important;min-width:0!important;font-size:14px!important;min-height:42px!important;padding:6px!important}
+body.crew-live.ws-live #dynamic-list-container .ws-quick-checklist .controls:has(.vol-select){max-width:168px!important}
+body.crew-live.ws-live #dynamic-list-container .ws-quick-checklist .controls .crew-select-trigger{width:92px!important;min-width:0!important;font-size:12px!important;padding:4px!important;white-space:normal!important}
 </style>
 </head>
 <body class="crew-live ws-live" onclick="if(event.target === document.body || event.target.id === 'main-wrapper') { document.activeElement.blur(); }">
@@ -4081,14 +4084,14 @@ body.crew-live.ws-live #dynamic-list-container .ws-quick-checklist .vol-select{w
  html += `<input type="text" class="qty-input" style="width:80px; border-bottom:2px solid #16161A;" value="${sVal}" oninput="registerInputChange('${escName}', this.value, '${cat}')" onchange="registerInputChange('${escName}', this.value, '${cat}')" onfocus="handleInputFocus(this)" onblur="handleInputBlur()">
  <button class="reset-btn" onclick="registerInputChange('${escName}', '-', '${cat}'); renderProductList();"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round"><path d="M5 5l14 14M19 5L5 19"/></svg></button>`;
  } else {
- html += `<select class="vol-select" onchange="handleVolumeSelection(this, '${escName}', '${cat}', '${safeId}')">
+ html += `<button type="button" class="qty-btn" aria-label="Уменьшить остаток" onclick="adjustChecklistVolume('${escName}', -1, '${cat}', '${safeId}')">−</button><select class="vol-select" onchange="handleVolumeSelection(this, '${escName}', '${cat}', '${safeId}')">
  <option value="-" ${sVal==='-'?'selected':''}>--</option>
  <option value="Полная" ${sVal==='Полная'?'selected':''}>Полная</option>
  <option value="Половина" ${sVal==='Половина'?'selected':''}>Половина</option>
  <option value="Меньше половины" ${sVal==='Меньше половины'?'selected':''}>Меньше половины</option>
  <option value="0" ${String(sVal)==='0'?'selected':''}>0</option>
  <option value="CUSTOM">Ручной ввод</option>
- </select>`;
+ </select><button type="button" class="qty-btn" aria-label="Увеличить остаток" onclick="adjustChecklistVolume('${escName}', 1, '${cat}', '${safeId}')">+</button>`;
  }
  } 
  else {
@@ -4150,6 +4153,14 @@ body.crew-live.ws-live #dynamic-list-container .ws-quick-checklist .vol-select{w
  }, 100);
  }
 
+ function adjustChecklistVolume(name, delta, cat, safeId) {
+ const levels=['0','Меньше половины','Половина','Полная'];
+ const current=levels.indexOf(String(checklistValue(name)));
+ const next=current<0?0:Math.max(0,Math.min(levels.length-1,current+delta));
+ const select=document.getElementById('controls-'+safeId)?.querySelector('select');
+ if(select){select.value=levels[next];select.dispatchEvent(new Event('change',{bubbles:true}));}
+ triggerHaptic();
+ }
  function handleVolumeSelection(select, name, cat, safeId) {
  if (select.value === 'CUSTOM') {
  let container = document.getElementById('controls-' + safeId);
@@ -6905,7 +6916,7 @@ window.TeikuWorkbench=(()=>{
    // Keep one decoded thumbnail per product, rather than a second hidden copy.
    row.querySelector('.crew-order-photo')?.remove();
    const value=state.userBasket?.[name],locked=state.itemStatusMap?.[typeof getStatusKey==='function'?getStatusKey(name):name];const text=locked?.locked&&['order','new_shop'].includes(state.currentMode)?'В пути':value===undefined||value==='-'?(state.currentMode==='checklist'?'Не заполнено':''):typeof value==='number'||/^\d/.test(String(value))?value+' '+(record.unit||'шт'):value;
-   const right=details.querySelector('.ws-price');if(right.textContent!==text)right.textContent=text;details.classList.toggle('ws-stock-missing',stockMode&&value==='Закончилось');details.classList.toggle('ws-filled',state.currentMode==='checklist'&&value!==undefined&&value!==null&&value!=='-');
+   const right=details.querySelector('.ws-price');if(right.textContent!==text)right.textContent=text;details.classList.toggle('ws-stock-missing',stockMode&&value==='Закончилось');details.classList.toggle('ws-filled',state.currentMode==='checklist'&&checklistAnswered(checklistValue(name)));
   }
   const rows=[...root.querySelectorAll('.ws-mini-item')],hasGlobal=!orderMode&&!stockMode&&records.some(r=>String(r.globalCat||'').trim()),globals=[...new Set(records.map(r=>r.globalCat||'Основное меню'))];if(!globals.includes(settings.global))settings.global=globals[0]||'Основное меню';const subs=[...new Set(records.filter(r=>!hasGlobal||(r.globalCat||'Основное меню')===settings.global).map(r=>r.cat||'Прочее'))];if(!subs.includes(settings.sub))settings.sub=subs[0]||'Прочее';
   let pickers=root.querySelector(':scope > .ws-mobile-choices');const signature=JSON.stringify([hasGlobal,globals,subs,settings]);if(!pickers){pickers=W.el('div','ws-mobile-choices');root.prepend(pickers)}

@@ -2431,7 +2431,7 @@ body.dash-edition #content .u-planner-modes{align-items:center!important;gap:10p
 body.dash-edition #content .u-planner-modes label{margin-left:auto;display:flex;align-items:center;gap:10px;font-size:12px}
 body.dash-edition #content .u-planner-modes .ap-new-actions{display:flex;gap:8px;flex-wrap:wrap}
 body.dash-edition #content .u-planner-modes #ap-month{width:165px!important}
-body.dash-edition #content .ap-metrics{display:none!important}
+body.dash-edition #content .ap-metrics{display:grid!important}
 body.ws-live.dash-dense.dash-edition #main-content #content.edition-view .ap-board{display:grid!important;grid-template-columns:minmax(0,1.8fr) minmax(240px,1fr)!important;gap:18px!important;align-items:start!important}
 body.dash-edition #content[data-u-planner-mode=ideas] .ap-lane:not([data-u-lane=ideas]),body.dash-edition #content[data-u-planner-mode=work] .ap-lane:not([data-u-lane=work]),body.dash-edition #content[data-u-planner-mode=done] .ap-lane:not([data-u-lane=done]){display:none!important}
 body.dash-edition #content .ap-lane{grid-column:1;background:var(--edition-paper)!important;border:1px solid var(--edition-line)!important;border-radius:4px!important;padding:0 18px 16px!important;min-width:0}
@@ -2602,6 +2602,20 @@ body.dash-edition .mp-photo-tools>summary{cursor:pointer;font-size:12px}
 body.dash-edition .mp-photo-tools .studio-menu-photo{border:0!important;padding:0!important}
 body.dash-edition .mp-photo-tools .studio-menu-photo small{display:none!important}
 @media(max-width:800px){body.dash-edition .mp-photo-tools{flex-basis:100%;width:100%;box-sizing:border-box}}
+</style><style>
+@media(min-width:801px){#content[data-studio-view="graphs"] #graph-table{display:table!important;width:max-content!important;min-width:100%!important;table-layout:auto!important}#content[data-studio-view="graphs"] .u-graph-calendar,#content[data-studio-view="graphs"] .dash-graph-focus{display:none!important}}
+#content[data-studio-view="marketplace"] .svod-dashboard-layout{grid-template-columns:minmax(0,1fr)!important}
+#content[data-studio-view="marketplace"] .svod-left-col{width:100%!important;min-width:0!important;flex:1!important}
+</style><style>
+@media(min-width:801px){
+body #main-content #content[data-studio-view="graphs"] #graph-table{display:table!important;table-layout:fixed!important;width:calc(290px + var(--graph-employee-count,24)*116px)!important;min-width:100%!important;max-width:none!important}
+body #main-content #content[data-studio-view="graphs"] #graph-table thead{display:table-header-group!important}
+body #main-content #content[data-studio-view="graphs"] #graph-table tbody{display:table-row-group!important}
+body #main-content #content[data-studio-view="graphs"] #graph-table tr{display:table-row!important}
+body #main-content #content[data-studio-view="graphs"] #graph-table :is(th,td){display:table-cell!important}
+body #main-content #content[data-studio-view="graphs"] #graph-table :is(.user-header-cell,td:has(.graph-input)){width:116px!important;min-width:116px!important;max-width:116px!important}
+body #main-content #content[data-studio-view="graphs"] .graphs-wrapper{overflow-x:auto!important;max-width:100%!important;min-width:0!important}
+}
 </style></head>
 <body class="ws-live">
 <div id="mobile-overlay" onclick="toggleSidebar()"></div>
@@ -5495,7 +5509,30 @@ setStudioNavigation(false);
         row.classList.add('selected-row');
     };
 
+    function graphPeopleControls(target){
+ const today=new Intl.DateTimeFormat('sv-SE',{timeZone:'Europe/Moscow'}).format(new Date());
+ const selected=window.graphPeopleDate||today;
+ return '<details class="card graph-people"><summary style="cursor:pointer;margin-bottom:12px">Фильтр сотрудников по дате</summary><div style="display:flex;gap:12px;flex-wrap:wrap;align-items:end"><label>Дата<input id="graph-people-date" type="date" value="'+selected+'" onchange="window.graphPeopleDate=this.value;refreshGraphPeople()"></label><label>Показать<select id="graph-people-mode" onchange="window.graphPeopleMode=this.value;refreshGraphPeople()"><option value="work" '+(window.graphPeopleMode!=='off'?'selected':'')+'>Кто на смене</option><option value="off" '+(window.graphPeopleMode==='off'?'selected':'')+'>У кого выходной</option></select></label></div><div id="graph-people-result" aria-live="polite"></div></details>';
+ }
+ function refreshGraphPeople(){
+ const out=document.getElementById('graph-people-result');if(!out)return;
+ const date=document.getElementById('graph-people-date').value,mode=document.getElementById('graph-people-mode').value;
+ if(!/^\d{4}-\d{2}-\d{2}$/.test(date)){out.textContent='Выберите дату.';return;}
+ const [year,month,day]=date.split('-').map(Number),target=getTargetDateLogic();
+ const data=year===target.year&&month-1===target.month&&window.graphDraft?window.graphDraft:cachedData.schedules?.[year+'_'+(month-1)];
+ out.replaceChildren();if(!data){out.textContent='За этот месяц график ещё не заполнен.';return;}
+ const list=document.createElement('ul');let unknown=0;
+ for(const name of Object.keys(data).filter(k=>!k.startsWith('_')&&k!=='comment'&&data[k]&&typeof data[k]==='object').sort((a,b)=>a.localeCompare(b,'ru'))){
+ const cell=data[name][day]||{},text=String(typeof cell==='string'?cell:cell.text||'').trim(),shift=cell.shift||'';
+ const val=text.toUpperCase(),off=!text||shift==='OFF'||/^(ВЫХ|ВЫХОДНОЙ|ВЫШ|ОТП|БЛН|OFF)/.test(val),any=shift==='ANY_SHOP'||val.includes('ЛЮБ');
+ if(any){unknown++;continue;}
+ if((mode==='off'&&off)||(mode==='work'&&!off&&!any&&!!text)){const li=document.createElement('li');li.textContent=name+(mode==='work'?' — '+text:'');list.append(li);}
+ }
+ const count=document.createElement('p');count.textContent=(mode==='off'?'Выходной: ':'На смене: ')+list.children.length;out.append(count,list);
+ if(unknown){const note=document.createElement('small');note.textContent='Без определённой смены: '+unknown+'. Пустые ячейки считаются выходными.';out.append(note);}
+ }
     function renderGraphsTab() {
+        requestAnimationFrame(refreshGraphPeople);
         const box = document.getElementById('content');
         let schedules = cachedData.schedules || {};
         
@@ -5605,8 +5642,9 @@ setStudioNavigation(false);
                 <button style="padding:10px 20px; border-radius:10px; font-weight:bold; cursor:pointer; transition:0.2s; ${btnStyleNext}" onclick="changeGraphMonth('next')">Следующий месяц</button>
             </div>
 
+            ${graphPeopleControls(target)}
             <div class="graphs-wrapper">
-            <table style="min-width:100%; border-collapse:collapse; font-size:16.8px;" id="graph-table">
+            <table style="min-width:100%;border-collapse:collapse;font-size:16.8px;--graph-employee-count:${allUsers.length}" id="graph-table" data-employee-count="${allUsers.length}">
                 <thead>
                     <tr>
                         <th class="meta-cell stick-left-1" style="border:1px solid #ccc; padding:8px; text-align:center; min-width:45px; max-width:45px;">Дата</th>
@@ -6095,6 +6133,7 @@ setStudioNavigation(false);
     }
 
   function renderMarketplaceTab() {
+        requestAnimationFrame(()=>{const box=document.getElementById("content");if(!box||box.querySelector("#mp-send-visible"))return;const bar=document.createElement("div");bar.style.cssText="display:flex;justify-content:flex-end;margin:0 0 14px";const button=document.createElement("button");button.id="mp-send-visible";button.className="btn-save";button.textContent="Отправить сводку в Telegram";button.onclick=()=>sendMpSummaryToBot();bar.append(button);box.prepend(bar);});
         const box = document.getElementById('content');
         let records = cachedData.marketplace || {};
         let shops = ["Бояринова", "Гагарина", "Вертолетчиков", "Липчанского", "Новокосино", "Новокосино 2", "Старое Павлино", "Ухтомского ополчения"];
@@ -6212,29 +6251,7 @@ setStudioNavigation(false);
         let grandColor = grandTotal < 0 ? "var(--brand-danger)" : "var(--brand-maroon)";
         let isSvodOpen = expandedDivs.has('mp_svod_table');
         
-        html += `
-        <div class="svod-right-col">
-            <div class="card" style="padding:0;">
-                <div class="cat-group-header" style="padding:20px 24px; cursor:pointer; display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--line-delicate);" onclick="toggleCatElements('mp_svod_table', 'arrow_mp_svod')">
-                    <h3 style="margin:0!important; font-size:21.6px!important;">СВОДНАЯ ТАБЛИЦА</h3>
-                    <span id="arrow_mp_svod" style="color:var(--text-muted);">${isSvodOpen ? '▲' : '▼'}</span>
-                </div>
-                <div class="mp_svod_table" style="display:${isSvodOpen ? 'block' : 'none'}; padding:0;">
-                    <table style="width:100%; margin:0;">
-                        ${shops.map(s => `
-                            <tr>
-                                <td style="padding:15px; border-bottom:1px solid var(--line-delicate); font-size:21.6px;"><b>${s}</b></td>
-                                <td style="text-align:right; font-weight:900; color:${currentTotals[s] < 0 ? 'var(--brand-danger)' : 'var(--brand-olive)'}; border-bottom:1px solid var(--line-delicate); font-family: var(--font-data) !important; font-size:24px;">${currentTotals[s].toFixed(2)} ₽</td>
-                            </tr>`).join('')}
-                        <tr style="background:var(--bg-paper);">
-                            <td style="padding:20px; font-size:24px;"><b>ИТОГО</b></td>
-                            <td style="text-align:right; color:${grandColor}; padding:20px;"><b style="font-family: var(--font-data) !important; font-size:28.8px;">${grandTotal.toFixed(2)} ₽</b></td>
-                        </tr>
-                    </table>
-                    <div style="padding:20px;"><button class="btn-save" style="width:100%; font-size:19.2px;" onclick="sendMpSummaryToBot()">Отправить сводку в Телеграм</button></div>
-                </div>
-            </div>
-        </div></div>`;
+        html += '</div>';
 
         box.innerHTML = html;
         if(typeof studioPolishUI==='function')studioPolishUI(box);
@@ -11647,7 +11664,7 @@ window.AdminPlanner=(()=>{
   if(!ready||saving||generating)return;
   const period=day().slice(0,7),missing=Object.entries(series).some(([id,s])=>s?.enabled&&s.startMonth<=period&&!tasks().some(t=>t.seriesId===id&&t.occurrenceMonth===period));
   if(!missing)return;generating=true;const now=new Date().toISOString();
-  try{await db.ref('admin_planner').transaction(current=>{if(!current)return;const data={...current,tasks:{...current.tasks},series:{...current.series}};let changed=false;for(const id of Object.keys(data.series))if(addOccurrence(data,id,period,now))changed=true;return changed?data:undefined;},undefined,false)}catch{showMessage('Не удалось создать задачи нового месяца. Повторим при следующем открытии планнера.')}finally{generating=false}
+  try{const result=await db.ref('admin_planner').transaction(current=>{if(!current)return;const data={...current,tasks:{...current.tasks},series:{...current.series}};let changed=false;for(const id of Object.keys(data.series))if(addOccurrence(data,id,period,now))changed=true;return changed?data:undefined;},undefined,false)}catch{showMessage('Не удалось создать задачи нового месяца. Повторим при следующем открытии планнера.')}finally{generating=false}
  }
  function reminders(now=new Date()){
   const today=day(now),todayN=Date.parse(today+'T12:00:00Z');
@@ -11683,6 +11700,18 @@ window.AdminPlanner=(()=>{
    ok=true;error='';
   }catch(e){error=e.plannerValidation?e.message:'Не удалось сохранить задачу. Изменения не отправлены; попробуйте ещё раз.';showMessage(error)}finally{saving=false}if(ok)maintainSeries();return ok;
  }
+ async function removeTask(id){
+  const task=records[id];if(!task||saving)return;
+  if(!confirm('Удалить задачу «'+task.title+'»?'+(task.seriesId?' Повторение этой задачи также будет остановлено.':'')))return;
+  saving=true;
+  try{await db.ref('admin_planner').transaction(current=>{
+   const data=current||{};data.tasks||={};data.series||={};const old=data.tasks[id];
+   if(old?.seriesId){const sid=old.seriesId;if(data.series[sid])data.series[sid].enabled=false;
+    for(const [key,t] of Object.entries(data.tasks))if(key!==id&&t?.seriesId===sid&&t.status!=='done'&&t.occurrenceMonth>=(old.occurrenceMonth||''))delete data.tasks[key];}
+   delete data.tasks[id];return data;
+  },undefined,false);if(!result.committed)throw Error('not committed');openCards.delete(id);document.getElementById('ap-editor')?.close();}
+  catch(e){showMessage('Не удалось удалить задачу. Повторите попытку.');}finally{saving=false;}
+ }
  function report(){return tasks().filter(t=>t.status==='done'&&t.completedAt&&day(new Date(t.completedAt)).slice(0,7)===month).sort((a,b)=>a.completedAt.localeCompare(b.completedAt))}
  function reportEntries(){
   const entries=report().map(t=>({...t,title:t.kind==='project'?'Проект: '+t.title:t.title}));
@@ -11704,7 +11733,7 @@ window.AdminPlanner=(()=>{
  function editor(id,project=false){
   let dialog=document.getElementById('ap-editor');if(!dialog){dialog=document.createElement('dialog');dialog.id='ap-editor';dialog.className='ap-dialog';document.body.append(dialog)}
   const t=records[id]||{kind:project?'project':'task'};
-  dialog.innerHTML=`<form id="ap-form"><h3>${id?'Карточка задачи':'Новая задача'}</h3><input id="ap-id" type="hidden" value="${esc(id||'')}"><label>Что хочу сделать<input id="ap-title" required maxlength="250" value="${esc(t.title||'')}" placeholder="Например, обновить памятку для новичков"></label>${projectFields(t)}<label>Идея, детали или результат<textarea id="ap-notes" maxlength="5000">${esc(t.notes||'')}</textarea></label><div class="ap-fields"><label>Плановый срок<input type="date" id="ap-due" value="${esc(t.due||'')}"></label><label>Напомнить<select id="ap-remind">${[[-1,'Не напоминать'],[0,'В день срока'],[1,'За 1 день'],[3,'За 3 дня'],[7,'За неделю']].map(([v,label])=>`<option value="${v}" ${Number(t.remindDays??1)===v?'selected':''}>${label}</option>`).join('')}</select></label></div><div class="ap-repeat-settings"><label>Повторение<select id="ap-repeat"><option value="none">Разовая задача</option><option value="monthly" ${t.seriesId&&series[t.seriesId]?.enabled?'selected':''}>Каждый месяц</option></select></label><div id="ap-repeat-fields" ${t.seriesId&&series[t.seriesId]?.enabled?'':'hidden'}><label>День месяца<input id="ap-repeat-day" type="number" min="1" max="31" step="1" value="${esc(series[t.seriesId]?.dueDay||Number(t.due?.slice(-2))||Number(day().slice(-2)))}"></label><p class="ap-repeat-note">Укажите первый срок выше. Если в месяце нет выбранного числа, срок — последний день месяца. Каждый месяц создаётся отдельная карточка; история выполнения сохраняется. Изменения повторения действуют для этой и будущих задач.</p></div></div><label>Статус<select id="ap-status">${[['ideas','Идея'],['work','В работе'],['done','Готово']].map(([v,title])=>`<option value="${v}" ${(t.status||'ideas')===v?'selected':''}>${title}</option>`).join('')}</select></label>${t.completedAt?`<p>Выполнено ${stamp(t.completedAt)}</p>`:''}<p class="ap-form-error" role="alert"></p><div class="ap-dialog-actions"><button type="button" data-ap-cancel>Отмена</button><button class="btn-save" type="submit">Сохранить</button></div></form>`;
+  dialog.innerHTML=`<form id="ap-form"><h3>${id?'Карточка задачи':'Новая задача'}</h3><input id="ap-id" type="hidden" value="${esc(id||'')}"><label>Что хочу сделать<input id="ap-title" required maxlength="250" value="${esc(t.title||'')}" placeholder="Например, обновить памятку для новичков"></label>${projectFields(t)}<label>Идея, детали или результат<textarea id="ap-notes" maxlength="5000">${esc(t.notes||'')}</textarea></label><div class="ap-fields"><label>Плановый срок<input type="date" id="ap-due" value="${esc(t.due||'')}"></label><label>Напомнить<select id="ap-remind">${[[-1,'Не напоминать'],[0,'В день срока'],[1,'За 1 день'],[3,'За 3 дня'],[7,'За неделю']].map(([v,label])=>`<option value="${v}" ${Number(t.remindDays??1)===v?'selected':''}>${label}</option>`).join('')}</select></label></div><div class="ap-repeat-settings"><label>Повторение<select id="ap-repeat"><option value="none">Разовая задача</option><option value="monthly" ${t.seriesId&&series[t.seriesId]?.enabled?'selected':''}>Каждый месяц</option></select></label><div id="ap-repeat-fields" ${t.seriesId&&series[t.seriesId]?.enabled?'':'hidden'}><label>День месяца<input id="ap-repeat-day" type="number" min="1" max="31" step="1" value="${esc(series[t.seriesId]?.dueDay||Number(t.due?.slice(-2))||Number(day().slice(-2)))}"></label><p class="ap-repeat-note">Укажите первый срок выше. Если в месяце нет выбранного числа, срок — последний день месяца. Каждый месяц создаётся отдельная карточка; история выполнения сохраняется. Изменения повторения действуют для этой и будущих задач.</p></div></div><label>Статус<select id="ap-status">${[['ideas','Идея'],['work','В работе'],['done','Готово']].map(([v,title])=>`<option value="${v}" ${(t.status||'ideas')===v?'selected':''}>${title}</option>`).join('')}</select></label>${t.completedAt?`<p>Выполнено ${stamp(t.completedAt)}</p>`:''}<p class="ap-form-error" role="alert"></p><div class="ap-dialog-actions">${id?`<button type="button" data-ap-delete="${esc(id)}" style="color:#943f57">Удалить задачу</button>`:''}<button type="button" data-ap-cancel>Отмена</button><button class="btn-save" type="submit">Сохранить</button></div></form>`;
   syncRepeatFields(dialog);syncProjectFields(dialog);dialog.showModal();dialog.querySelector('#ap-title').focus();
  }
  function syncRepeatFields(dialog){
@@ -11734,6 +11763,7 @@ window.AdminPlanner=(()=>{
  async function importPrototype(){for(const t of prototypeTasks()){const clean={title:t.title,notes:t.notes||'',status:t.status||'ideas',due:t.due||'',createdAt:t.createdAt||new Date().toISOString(),completedAt:t.completedAt||null,remindDays:1};if(!await write(t.id,clean))break}}
  function exportReport(){const cell=s=>'"'+String(s??'').replace(/^[=+@-]/,"'$&").replace(/"/g,'""')+'"',rows=[['Задача','Результат / заметки','Плановый срок','Выполнено (Москва)','По сроку'],...reportEntries().map(t=>[t.title,t.notes,date(t.due),stamp(t.completedAt),timing(t)])],url=URL.createObjectURL(new Blob(['\uFEFF'+rows.map(r=>r.map(cell).join(';')).join('\r\n')],{type:'text/csv;charset=utf-8'}));const link=document.createElement('a');link.href=url;link.download='Teiku_планнер_'+month+'.csv';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}
  document.addEventListener('click',e=>{
+  const del=e.target.closest('[data-ap-delete]');if(del){removeTask(del.dataset.apDelete);return;}
   const add=e.target.closest('[data-ap-subadd]');if(add){const list=document.getElementById('ap-subtask-editor-list');list.insertAdjacentHTML('beforeend',subtaskEditorRow('sub_'+crypto.randomUUID()));list.lastElementChild.querySelector('[data-ap-subtitle]').focus();return}
   const remove=e.target.closest('[data-ap-subremove]');if(remove){remove.closest('[data-ap-subrow]').remove();return}
   const toggle=e.target.closest('[data-ap-toggle]');
@@ -11817,6 +11847,8 @@ const button=e.target.closest('[data-ap-new],[data-ap-new-project],[data-ap-edit
   if(table.id==='graph-table')graphFocus(table);
  }
  function graphFocus(table){
+  if(!mobile.matches){table.dataset.singlePerson='false';for(const cell of table.querySelectorAll('[data-mobile-column-hidden]'))cell.dataset.mobileColumnHidden='false';return;}
+
   const people=[...table.querySelectorAll('thead .user-header-cell')].map(cell=>({name:clean(cell.querySelector('textarea')?.value||cell.querySelector('input')?.value||cell.textContent),index:cell.cellIndex}));
   if(!people.length)return;
   if(graphPerson===null||graphPerson!=='all'&&!people.some(p=>p.name===graphPerson))graphPerson=people[0].name;
@@ -11995,14 +12027,14 @@ const button=e.target.closest('[data-ap-new],[data-ap-new-project],[data-ap-edit
   const pages=[],coverage=[];let canvas,ctx,y,pageNumber=0,shops=[],indexes=[],colWidths=[];
   const font=(size=16,weight=400)=>{ctx.font=weight+' '+size+'px Onest,Arial,sans-serif'};
   function wrap(value,width){const out=[];let line='';for(const token of clean(value).split(' ')){if(!token)continue;const candidate=line?line+' '+token:token;if(ctx.measureText(candidate).width<=width){line=candidate;continue}if(line){out.push(line);line=''}let part='';for(const char of token){if(part&&ctx.measureText(part+char).width>width){out.push(part);part=''}part+=char}line=part}out.push(line);return out}
-  function finish(){if(!canvas)return;ctx.fillStyle='#777';font(13);ctx.textAlign='left';ctx.fillText('Чек-листы · Страница '+pageNumber,0,HEIGHT-15);const image=canvas.toDataURL('image/jpeg',.94);if(pageNumber>1)pdf.addPage('a3','landscape');pdf.addImage(image,'JPEG',8,8,404,281,undefined,'FAST');pages.push({number:pageNumber,rows:coverage.filter(x=>x.page===pageNumber).length});canvas=null}
+  function finish(){if(!canvas)return;ctx.fillStyle='#777';font(13);ctx.textAlign='left';ctx.fillText('Чек-листы · Страница '+pageNumber,0,HEIGHT-15);const image=canvas.toDataURL('image/jpeg',.94);if(pageNumber>1)pdf.addPage('a3','landscape');const pw=pdf.internal.pageSize.getWidth(),ph=pdf.internal.pageSize.getHeight(),w=pw-16,h=Math.min(ph-16,w*HEIGHT/WIDTH);pdf.addImage(image,'JPEG',8,8,w,h,undefined,'FAST');pages.push({number:pageNumber,rows:coverage.filter(x=>x.page===pageNumber).length});canvas=null}
   function start(){finish();pageNumber++;canvas=document.createElement('canvas');canvas.width=WIDTH*SCALE;canvas.height=HEIGHT*SCALE;ctx=canvas.getContext('2d');ctx.scale(SCALE,SCALE);ctx.fillStyle='#fff';ctx.fillRect(0,0,WIDTH,HEIGHT);ctx.textBaseline='top';ctx.fillStyle='#171717';font(25,600);ctx.fillText('Чек-листы по кофейням',0,0);font(14);ctx.fillStyle='#666';ctx.fillText('Сформировано '+new Intl.DateTimeFormat('ru-RU',{dateStyle:'short',timeStyle:'short',timeZone:'Europe/Moscow'}).format(new Date()),0,37);font(15,500);
-   const headers=['Товар',...shops.map(s=>s.name+'\n'+s.date)].map((s,i)=>wrap(s,colWidths[i]-16));const hh=Math.max(52,...headers.map(lines=>lines.length*19+16));ctx.fillStyle='#eeedef';ctx.fillRect(0,66,WIDTH,hh);let x=0;headers.forEach((lines,i)=>{ctx.fillStyle='#353236';ctx.textAlign=i?'center':'left';lines.forEach((line,k)=>ctx.fillText(line,x+(i?colWidths[i]/2:8),74+k*19));x+=colWidths[i]});ctx.textAlign='left';y=66+hh+8;
+   const headers=['Товар',...shops.map(s=>s.name+'\n'+s.date),'Товар'].map((s,i)=>wrap(s,colWidths[i]-16));const hh=Math.max(52,...headers.map(lines=>lines.length*19+16));ctx.fillStyle='#eeedef';ctx.fillRect(0,66,WIDTH,hh);let x=0;headers.forEach((lines,i)=>{ctx.fillStyle='#353236';ctx.textAlign=i?'center':'left';lines.forEach((line,k)=>ctx.fillText(line,x+(i?colWidths[i]/2:8),74+k*19));x+=colWidths[i]});ctx.textAlign='left';y=66+hh+8;
   }
-  function group(name,continued=false){font(16,500);const lines=wrap(name+(continued?' · продолжение':''),WIDTH-20),height=lines.length*LINE+12;if(y+height+LINE+14>BOTTOM)start();ctx.fillStyle='#e5e3e6';ctx.fillRect(0,y,WIDTH,height);ctx.fillStyle='#302d32';ctx.textAlign='left';lines.forEach((l,i)=>ctx.fillText(l,8,y+6+i*LINE));y+=height}
-  for(let offset=0;offset<model.shops.length;offset+=8){shops=model.shops.slice(offset,offset+8);indexes=shops.map((_,i)=>offset+i);colWidths=[310,...shops.map(()=> (WIDTH-310)/shops.length)];start();
+  function group(name,continued=false){font(16,500);const lines=wrap(name+(continued?' · продолжение':''),Math.min(colWidths[0],colWidths.at(-1))-16),height=lines.length*LINE+12;if(y+height+LINE+14>BOTTOM)start();ctx.fillStyle='#e5e3e6';ctx.fillRect(0,y,WIDTH,height);ctx.fillStyle='#302d32';ctx.textAlign='left';lines.forEach((l,i)=>(ctx.fillText(l,8,y+6+i*LINE),ctx.fillText(l,WIDTH-colWidths.at(-1)+8,y+6+i*LINE)));y+=height}
+  for(let offset=0;offset<model.shops.length;offset+=6){shops=model.shops.slice(offset,offset+6);indexes=shops.map((_,i)=>offset+i);colWidths=[270,...shops.map(()=> (WIDTH-540)/shops.length),270];start();
    for(let gi=0;gi<model.groups.length;gi++){const g=model.groups[gi];group(g.name);
-    for(let ri=0;ri<g.rows.length;ri++){if(ri%20===0)await new Promise(r=>setTimeout(r,0));const row=g.rows[ri];font(16);const cells=[row.name,...indexes.map(i=>row.values[i]?.value??'-')],lines=cells.map((v,i)=>wrap(v,colWidths[i]-18)),count=Math.max(...lines.map(l=>l.length));let at=0;
+    for(let ri=0;ri<g.rows.length;ri++){if(ri%20===0)await new Promise(r=>setTimeout(r,0));const row=g.rows[ri];font(16);const cells=[row.name,...indexes.map(i=>row.values[i]?.value??'-'),row.name],lines=cells.map((v,i)=>wrap(v,colWidths[i]-18)),count=Math.max(...lines.map(l=>l.length));let at=0;
      while(at<count){let capacity=Math.floor((BOTTOM-y-14)/LINE);if(capacity<1){start();group(g.name,true);capacity=Math.floor((BOTTOM-y-14)/LINE)}const take=Math.min(count-at,capacity),height=take*LINE+14;ctx.fillStyle=ri%2?'#f7f6f7':'#fff';ctx.fillRect(0,y,WIDTH,height);let x=0;lines.forEach((cell,i)=>{font(16,i?500:400);ctx.fillStyle='#302d32';ctx.textAlign=i?'center':'left';cell.slice(at,at+take).forEach((line,k)=>ctx.fillText(line,x+(i?colWidths[i]/2:8),y+7+k*LINE));ctx.strokeStyle='#dedcdf';ctx.lineWidth=.6;ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x,y+height);ctx.stroke();x+=colWidths[i]});ctx.strokeStyle='#e8e6e8';ctx.beginPath();ctx.moveTo(0,y+height);ctx.lineTo(WIDTH,y+height);ctx.stroke();coverage.push({page:pageNumber,group:gi,row:ri,from:at,to:at+take,total:count,shops:indexes.slice()});y+=height;at+=take;if(at<count){start();group(g.name,true);await new Promise(r=>setTimeout(r,0))}}
     }
    }
@@ -12355,7 +12387,7 @@ window.TeikuWorkbench=(()=>{
  function checklist(){const cards=box.querySelector('#checklist-mobile-cards');if(!cards)return;let select=box.querySelector('.u-check-shop');if(!select){select=make('select','u-check-shop');select.setAttribute('aria-label','Кофейня в чек-листе');const shops=[...new Set([...cards.querySelectorAll('.check-shop summary')].map(s=>text(s.querySelector('b')||s).split('Отчёт')[0].trim()))];if(!shops.length)return;for(const name of ['Все кофейни',...shops]){const option=make('option',null,name);option.value=name;select.append(option)}select.value=checkShop||'Все кофейни';select.onchange=()=>{checkShop=select.value;refresh()};cards.before(select)}
   for(const shop of cards.querySelectorAll('.check-shop'))shop.hidden=checkShop&&checkShop!=='Все кофейни'&&!text(shop.querySelector('summary')).includes(checkShop);
  }
- function graphs(){const table=box.querySelector('#graph-table'),focus=box.querySelector('.dash-graph-focus select');if(!table||!focus)return;let workspace=box.querySelector('.u-graph-calendar');if(!workspace){workspace=make('section','u-graph-calendar');table.before(workspace)}
+ function graphs(){const table=box.querySelector('#graph-table'),focus=box.querySelector('.dash-graph-focus select');if(table&&!matchMedia('(max-width:800px)').matches){box.dataset.uGraphMode='table';const workspace=box.querySelector('.u-graph-calendar');if(workspace)workspace.hidden=true;return;}if(!table||!focus)return;let workspace=box.querySelector('.u-graph-calendar');if(!workspace){workspace=make('section','u-graph-calendar');table.before(workspace)}
   modes(workspace,'graph-modes',[['calendar','Календарь'],['table','Таблица']],graphMode,id=>{graphMode=id;refresh()});box.dataset.uGraphMode=graphMode;
   const headers=[...table.querySelectorAll('thead .user-header-cell')];for(const h of headers){if(h.querySelector('.u-graph-column-actions'))continue;const buttons=[...h.querySelectorAll('button')];if(!buttons.length)continue;const menu=make('details','u-graph-column-actions');menu.append(make('summary',null,'Действия'));for(const b of buttons)menu.append(b);h.append(menu)}const header=headers.find(h=>(h.querySelector('textarea')?.value||'').replace(/\s+/g,' ').trim()===focus.value);if(!header){workspace.hidden=true;box.dataset.uGraphMode='table';return}workspace.hidden=false;
   const rows=[...table.querySelectorAll('tr.graph-row')].filter(r=>/^\d+$/.test(text(r.cells[0]))),inputs=rows.map(r=>r.cells[header.cellIndex]?.querySelector('textarea.graph-input'));
@@ -12411,7 +12443,7 @@ window.TeikuWorkbench=(()=>{
  function market(){const summary=box.querySelector('.u-market-total'),layout=box.querySelector('.svod-dashboard-layout');if(!summary||!layout)return;let group=box.querySelector('.ref-market-summary');if(!group){group=make('section','ref-market-summary');layout.before(group)}if(summary.parentElement!==group)group.append(summary);const today=[...layout.querySelectorAll('.svod-left-col>.card')].find(n=>/^Расход за сегодня/.test(n.textContent.trim()));if(today){today.classList.add('ref-market-today');group.append(today)}const svod=layout.querySelector('.mp_svod_table')?.closest('.card');if(svod){svod.classList.add('ref-market-svod');const title=svod.querySelector('.cat-group-header h3');if(title&&title.textContent!=='Сводная таблица')title.textContent='Сводная таблица'}const actions=document.querySelector('#dynamic-action-bar .mp-action-buttons');if(actions&&!actions.querySelector('[data-ref-add-expense]')){const b=make('button','btn-add','Добавить данные');b.type='button';b.dataset.refAddExpense='';b.onclick=addExpense;actions.append(b)}}
  async function addExpense(){if(typeof isMpEditMode!=='undefined'&&isMpEditMode&&!await saveMpEdits())return;let modal=document.getElementById('ref-expense-dialog');if(modal){modal.showModal();return}modal=make('dialog','ref-expense-dialog');modal.id='ref-expense-dialog';const form=make('form');form.method='dialog';const title=make('h3',null,'Добавить расход'),period=getMpPeriod(),now=new Date(),today=period.year===now.getFullYear()&&period.month===now.getMonth()?now.getDate():1,initial=period.year+'-'+String(period.month+1).padStart(2,'0')+'-'+String(today).padStart(2,'0');
   const field=(label,control)=>{const n=make('label',null,label);n.append(control);return n};const shop=make('select');shop.name='address';shop.required=true;shop.append(new Option('Выберите кофейню',''));for(const name of shopListAll)shop.append(new Option(name,name));const amount=make('input');amount.name='amount';amount.type='number';amount.min='0.01';amount.step='0.01';amount.required=true;amount.inputMode='decimal';const date=make('input');date.name='date';date.type='date';date.value=initial;date.required=true;const error=make('p','ref-form-error');error.setAttribute('role','alert');const controls=make('div','ref-dialog-actions'),cancel=make('button','btn-add','Отмена'),save=make('button','btn-save','Сохранить запись');cancel.type='button';save.type='submit';cancel.onclick=()=>modal.close();controls.append(cancel,save);form.append(title,field('Кофейня',shop),field('Сумма, ₽',amount),field('Дата расхода',date),error,controls);modal.append(form);document.body.append(modal);let ref=null,record=null;
-  form.addEventListener('submit',async e=>{e.preventDefault();if(save.disabled||!form.reportValidity())return;const value=Number(amount.value);if(!Number.isFinite(value)||value<=0){error.textContent='Введите сумму больше нуля.';return}const timestamp=new Date(date.value+'T12:00:00').getTime();if(!Number.isFinite(timestamp)){error.textContent='Укажите дату расхода.';return}save.disabled=true;cancel.disabled=true;error.textContent='';try{if(!ref)ref=db.ref('marketplace_records').push();record={address:shop.value,amount:Math.round(value*100)/100,timestamp,vendor:'Вручную',source:'dashboard',createdAt:record?.createdAt||Date.now()};await ref.set(record);cachedData.marketplace=cachedData.marketplace||{};cachedData.marketplace[ref.key]=record;modal.close();modal.remove();if(box.dataset.studioView==='marketplace')renderMarketplaceTab()}catch(err){error.textContent='Не удалось сохранить. Повторите попытку. Если запись уже ушла, повтор не создаст дубликат.';save.disabled=false;cancel.disabled=false}});modal.addEventListener('close',()=>{if(!save.disabled)modal.remove()});modal.showModal()
+  form.addEventListener('submit',async e=>{e.preventDefault();if(save.disabled||!form.reportValidity())return;const value=Number(amount.value);if(!Number.isFinite(value)||value<=0){error.textContent='Введите сумму больше нуля.';return}const timestamp=new Date(date.value+'T12:00:00').getTime();if(!Number.isFinite(timestamp)){error.textContent='Укажите дату расхода.';return}save.disabled=true;cancel.disabled=true;error.textContent='';try{if(!ref)ref=db.ref('marketplace_records').push();record={address:shop.value,amount:Math.round(value*100)/100,timestamp,vendor:'Ozon',source:'dashboard',createdAt:record?.createdAt||Date.now()};await ref.set(record);cachedData.marketplace=cachedData.marketplace||{};cachedData.marketplace[ref.key]=record;modal.close();modal.remove();if(box.dataset.studioView==='marketplace')renderMarketplaceTab()}catch(err){error.textContent='Не удалось сохранить. Повторите попытку. Если запись уже ушла, повтор не создаст дубликат.';save.disabled=false;cancel.disabled=false}});modal.addEventListener('close',()=>{if(!save.disabled)modal.remove()});modal.showModal()
  }
  function planner(){const board=box.querySelector('.ap-board');if(!board)return;let side=board.querySelector('.ref-planner-deadlines');if(!side){side=make('aside','ref-planner-deadlines');side.append(make('h3',null,'Ближайшие сроки'));board.append(side)}const mode=box.querySelector('.u-planner-modes'),month=box.querySelector('.ap-page> .ap-toolbar #ap-month')?.closest('label'),actions=box.querySelector('.ap-page> .ap-toolbar .ap-new-actions');if(mode){if(month)mode.append(month);if(actions)mode.append(actions)}for(const toolbar of box.querySelectorAll('.ap-page> .ap-toolbar'))toolbar.classList.add('ref-planner-oldtoolbar');const due=n=>{const d=n.querySelector('.ap-toggle-text small')?.textContent.match(/(\d{1,2})\.(\d{2})\.(\d{4})/);return d?Number(d[3]+d[2]+d[1].padStart(2,'0')):null};const cards=[...board.querySelectorAll('.ap-task')].filter(n=>due(n)&&!n.classList.contains('ap-done')).sort((a,b)=>due(a)-due(b));const signature=cards.map(n=>n.querySelector('[data-ap-toggle]')?.dataset.apToggle+':'+n.querySelector('.ap-toggle-text').textContent).join('|');if(side.dataset.signature===signature)return;side.dataset.signature=signature;while(side.children.length>1)side.lastElementChild.remove();for(const card of cards.slice(0,5)){const button=make('button','ref-deadline'),label=make('b',null,card.querySelector('.ap-toggle-text b').textContent),date=make('small',null,card.querySelector('.ap-toggle-text small').textContent);button.type='button';button.append(label,date);button.onclick=()=>{const lane=card.closest('.ap-lane'),mode=box.querySelector('.u-planner-modes [data-mode="'+lane.dataset.uLane+'"]');mode?.click();const toggle=card.querySelector('[data-ap-toggle]');if(toggle?.getAttribute('aria-expanded')!=='true')toggle?.click();card.scrollIntoView({behavior:'smooth',block:'center'})};side.append(button)}if(!cards.length)side.append(make('p',null,'Нет открытых задач со сроком.'))}
  function espresso(){for(const card of box.querySelectorAll('.u-recipe-reading')){const editing=card.classList.contains('u-recipe-editing');for(const select of card.querySelectorAll('select')){if(!select.dataset.refOriginalDisabled)select.dataset.refOriginalDisabled=select.disabled?'true':'false';select.disabled=!editing||select.dataset.refOriginalDisabled==='true'}}}
@@ -12435,6 +12467,9 @@ function recipes(){if(box.dataset.studioView!=='menu')return;
 }
 function refresh(){calendar();recipes()}
 new MutationObserver(()=>{if(!pending){pending=true;requestAnimationFrame(()=>{pending=false;refresh()})}}).observe(box,{childList:true,subtree:true});refresh();window.MobileDashboardPolish={refresh};})();
+</script><script>
+document.addEventListener('input',e=>{if(e.target.closest('#graph-table'))requestAnimationFrame(refreshGraphPeople)});
+document.addEventListener('change',e=>{if(e.target.closest('#graph-table'))requestAnimationFrame(refreshGraphPeople)});
 </script></body>
 </html>
 
